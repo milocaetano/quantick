@@ -48,6 +48,7 @@ impl KernelLayout {
     /// Parameterless operations accept zero. Panics on zero lookbacks or
     /// arithmetic overflow in storage sizing.
     #[must_use]
+    #[inline]
     pub fn new(kind: KernelKind, length: usize, auxiliary: usize) -> Self {
         use KernelKind::*;
         let window = |n: usize| n.checked_add(4).expect("kernel window size overflow");
@@ -98,6 +99,7 @@ impl KernelLayout {
     }
     /// Number of u64 words, including every ring and queue entry.
     #[must_use]
+    #[inline]
     pub fn words(&self) -> usize {
         self.words
     }
@@ -126,6 +128,7 @@ impl KernelLayout {
     /// Advance without allocation or hidden mutable state. Inputs follow native
     /// argument order; conditions use 1/0, and booleans return 1/0.
     /// Panics on a mismatched slice.
+    #[inline]
     pub fn push(&self, s: &mut [u64], inputs: [f64; 3]) -> f64 {
         assert_eq!(s.len(), self.words);
         let [x, y, z] = inputs;

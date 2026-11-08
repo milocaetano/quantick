@@ -15,24 +15,6 @@ impl Eval<'_> {
         Ok(())
     }
 
-    pub(super) fn conditional(
-        &mut self,
-        condition: NodeId,
-        yes: NodeId,
-        no: Option<NodeId>,
-    ) -> Result<Value, PineError> {
-        let selected = self.cond(condition)?;
-        if selected {
-            if let Some(no) = no {
-                self.advance_skipped(no)?;
-            }
-            self.eval(yes)
-        } else {
-            self.advance_skipped(yes)?;
-            no.map_or(Ok(Value::Na), |no| self.eval(no))
-        }
-    }
-
     pub(super) fn advance_skipped(&mut self, node: NodeId) -> Result<(), PineError> {
         if !self.has_kernel(node) {
             return Ok(());
@@ -61,6 +43,11 @@ impl Eval<'_> {
         site: u32,
         args: &[Arg],
     ) -> Result<Value, PineError> {
+        // An acyclic script visits each textual site/path once. Only loops
+        // need the initial-state image and changing-source replay cache.
+        if !self.script.program.may_repeat {
+            return self.kernel_call(id, builtin, site, args);
+        }
         let key = (site, self.path);
         let mut values = Vec::with_capacity(args.len());
         for arg in args {

@@ -62,20 +62,22 @@ impl Arena {
         auxiliary: usize,
         inputs: [f64; 3],
     ) -> f64 {
-        let requested = KernelLayout::new(kind, length, auxiliary);
-        let (record, fresh) = self.record(KERNELS, key(identity), 4 + requested.words());
-        let layout = if fresh {
+        let existing = self.kernel_record(identity);
+        let requested = KernelLayout::new(
+            kind,
+            existing.map_or(length, |record| index(self.words[record + 2])),
+            existing.map_or(auxiliary, |record| index(self.words[record + 3])),
+        );
+        let (record, fresh) = existing.map_or_else(
+            || self.record(KERNELS, key(identity), 4 + requested.words()),
+            |record| (record, false),
+        );
+        if fresh {
             self.words[record + 2] = length as u64;
             self.words[record + 3] = auxiliary as u64;
             requested.initialize(&mut self.words[record + 4..record + 4 + requested.words()]);
-            requested
-        } else {
-            KernelLayout::new(
-                kind,
-                index(self.words[record + 2]),
-                index(self.words[record + 3]),
-            )
-        };
+        }
+        let layout = requested;
         layout.push(
             &mut self.words[record + 4..record + 4 + layout.words()],
             inputs,

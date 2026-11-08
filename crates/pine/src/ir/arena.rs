@@ -5,7 +5,6 @@ use std::rc::Rc;
 pub(crate) const GLOBALS: usize = 0;
 pub(crate) const LOCALS: usize = 3;
 pub(crate) const REGISTERS: usize = 6;
-pub(crate) const RETURNS: usize = 9;
 pub(crate) const FLAGS: usize = 12;
 const HEADER: usize = 32;
 const PATHS: usize = 15;
@@ -16,6 +15,7 @@ pub(crate) struct Arena {
     pub words: Vec<u64>,
 }
 
+#[inline(always)]
 fn index(word: u64) -> usize {
     usize::try_from(word).expect("arena offset fits address space")
 }
@@ -140,10 +140,12 @@ impl Arena {
         }
     }
 
+    #[inline(always)]
     pub fn len(&self, list: usize) -> usize {
         index(self.words[list + 1])
     }
 
+    #[inline(always)]
     fn cell(&self, list: usize, slot: usize) -> usize {
         assert!(slot < self.len(list));
         index(self.words[list]) + slot * 2
@@ -171,6 +173,7 @@ impl Arena {
         self.words[list + 1] = length as u64;
     }
 
+    #[inline(always)]
     pub fn get(&self, list: usize, slot: usize) -> Value {
         let cell = self.cell(list, slot);
         match self.words[cell] {
@@ -183,6 +186,37 @@ impl Arena {
         }
     }
 
+    #[inline]
+    pub fn number(&self, list: usize, slot: usize) -> Option<f64> {
+        let cell = self.cell(list, slot);
+        match self.words[cell] {
+            0 => Some(f64::NAN),
+            1 => Some(f64::from_bits(self.words[cell + 1])),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn copy_value(&mut self, from: usize, source: usize, to: usize, target: usize) {
+        let source = self.cell(from, source);
+        let target_cell = self.cell(to, target);
+        if source == target_cell {
+            return;
+        }
+        if self.words[source] == 4 {
+            let mut cursor = index(self.words[source + 1]);
+            let value = decode(&self.words, &mut cursor);
+            self.set(to, target, value);
+        } else {
+            if self.words[target_cell] == 4 {
+                self.release(index(self.words[target_cell + 1]));
+            }
+            self.words[target_cell] = self.words[source];
+            self.words[target_cell + 1] = self.words[source + 1];
+        }
+    }
+
+    #[inline(always)]
     pub fn set(&mut self, list: usize, slot: usize, value: Value) {
         let cell = self.cell(list, slot);
         if self.words[cell] == 4 {
@@ -202,19 +236,6 @@ impl Arena {
         self.words[cell + 1] = payload;
     }
 
-    pub fn push_address(&mut self, address: usize) {
-        let length = self.len(RETURNS);
-        self.resize(RETURNS, length + 1);
-        let cell = self.cell(RETURNS, length);
-        self.words[cell + 1] = address as u64;
-    }
-    pub fn pop_address(&mut self) -> usize {
-        let length = self.len(RETURNS);
-        let cell = self.cell(RETURNS, length - 1);
-        let address = index(self.words[cell + 1]);
-        self.resize(RETURNS, length - 1);
-        address
-    }
     pub fn values(&self, list: usize) -> Vec<Value> {
         (0..self.len(list))
             .map(|slot| self.get(list, slot))
@@ -228,6 +249,7 @@ impl Arena {
     }
 }
 
+#[inline(always)]
 fn scalar_words(value: &Value) -> (u64, u64) {
     match value {
         Value::Na => (0, 0),
@@ -249,6 +271,7 @@ fn scalar_words(value: &Value) -> (u64, u64) {
     }
 }
 
+#[inline(always)]
 fn scalar(tag: u64, payload: u64) -> Value {
     match tag {
         0 => Value::Na,

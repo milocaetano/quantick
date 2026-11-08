@@ -22,7 +22,7 @@ use quantick_indicators::{
     Ctx, IndicatorBar, InputValue, MarkerLocation, ObjectStore, Rgba8, SourceId,
 };
 
-use crate::ast::{BinOp, NodeId, VarMode};
+use crate::ast::{NodeId, VarMode};
 use crate::builtins::Builtin;
 use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
@@ -33,7 +33,7 @@ mod arena;
 mod ir_loops;
 #[path = "ir/runtime.rs"]
 mod ir_runtime;
-use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS, RETURNS};
+use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
 #[path = "ir/kernel_state.rs"]
 mod kernel_state;
 mod kernels;
@@ -149,6 +149,7 @@ pub(crate) struct Eval<'a> {
     /// Current frame base in `locals`.
     frame_base: usize,
     type_context: u32,
+    prepared_arguments: bool,
     semantic_run: crate::semantics::Run<Vec<u64>>,
 }
 
@@ -162,7 +163,20 @@ impl<'a> Eval<'a> {
         staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
-        state.arena.resize(REGISTERS, script.program.entries.len());
+        if state.arena.len(REGISTERS) != script.program.entries.len() {
+            state.arena.resize(REGISTERS, script.program.entries.len());
+            for (id, literal) in &script.program.constants {
+                use crate::ir::program::Literal;
+                let value = match literal {
+                    Literal::Num(n) => Value::Num(*n),
+                    Literal::Bool(b) => Value::Bool(*b),
+                    Literal::Color(c) => Value::Color(*c),
+                    Literal::Str(s) => Value::Str(s.clone()),
+                    Literal::Na => Value::Na,
+                };
+                state.arena.set(REGISTERS, id.index(), value);
+            }
+        }
         Self {
             script,
             inputs,
@@ -177,6 +191,7 @@ impl<'a> Eval<'a> {
             path: 0,
             frame_base: 0,
             type_context: 0,
+            prepared_arguments: false,
             semantic_run: crate::semantics::Run::default(),
         }
     }
@@ -239,10 +254,7 @@ impl<'a> Eval<'a> {
     }
 
     fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
-        let base = self.state.arena.len(RETURNS);
-        let result = self.execute(id);
-        self.state.arena.resize(RETURNS, base);
-        result
+        self.execute(id)
     }
 
     /// Write a value through a node's resolution (the `for` loop variable).
@@ -311,31 +323,6 @@ impl<'a> Eval<'a> {
             self.script.max_bars_back,
             !self.semantic_run.skipped,
         ))
-    }
-
-    fn binary(&mut self, op: BinOp, lhs: NodeId, rhs: NodeId) -> Result<Value, PineError> {
-        match op {
-            BinOp::And => {
-                // Short-circuit; na counts false (Pine).
-                if !self.cond(lhs)? {
-                    if !self.script.version.lazy_boolean() {
-                        self.advance_skipped(rhs)?;
-                    }
-                    return Ok(Value::Bool(false));
-                }
-                Ok(Value::Bool(self.cond(rhs)?))
-            }
-            BinOp::Or => {
-                if self.cond(lhs)? {
-                    if !self.script.version.lazy_boolean() {
-                        self.advance_skipped(rhs)?;
-                    }
-                    return Ok(Value::Bool(true));
-                }
-                Ok(Value::Bool(self.cond(rhs)?))
-            }
-            _ => unreachable!("non-logical operators execute register instructions"),
-        }
     }
 
     fn user_call(
@@ -417,6 +404,7 @@ impl<'a> Eval<'a> {
         }
         // Output calls first: they stage into the plot row.
         match builtin {
+            Builtin::Indicator => return Ok(Value::Na),
             Builtin::PlotCandle | Builtin::PlotBar => return self.candle_plot(id, args),
             Builtin::Plot | Builtin::Hline => {
                 let value = match args.first() {
@@ -472,7 +460,7 @@ impl<'a> Eval<'a> {
             // fill() is fully resolved at load time; at eval it is a no-op.
             // Accepted-but-inert output calls still evaluate their first
             // argument (consistency: kernels inside advance every bar).
-            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition | Builtin::Indicator => {
+            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition => {
                 if let Some(arg) = args.first() {
                     let _ = self.eval(arg.value)?;
                 }
@@ -501,6 +489,14 @@ impl<'a> Eval<'a> {
                 value
                     .as_num()
                     .ok_or_else(|| self.type_err(args[position].value, "a number", value))
+            });
+        }
+        if self.prepared_arguments {
+            return args.get(position).map_or(Ok(f64::NAN), |arg| {
+                let value = self.register(arg.value);
+                value
+                    .as_num()
+                    .ok_or_else(|| self.type_err(arg.value, "a number", &value))
             });
         }
         match args.get(position) {

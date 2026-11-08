@@ -1,5 +1,5 @@
 //! Register machine. Syntax is inspected only by the compiler.
-use super::{Eval, FLAGS, GLOBALS, LOCALS, REGISTERS, RETURNS, Value, values_equal};
+use super::{Eval, FLAGS, GLOBALS, LOCALS, REGISTERS, Value, values_equal};
 use crate::{
     ast::{BinOp, NodeId, UnOp, VarMode},
     error::{ErrorCode, PineError},
@@ -10,17 +10,67 @@ use std::rc::Rc;
 
 impl Eval<'_> {
     pub(super) fn execute(&mut self, entry: NodeId) -> Result<Value, PineError> {
-        let stack_base = self.state.arena.len(RETURNS);
         let mut pc = self.script.program.entries[entry.index()];
         loop {
             let instruction = &self.script.program.instructions[pc];
             pc += 1;
             match instruction {
-                Instruction::Enter(id) => {
-                    self.state.arena.push_address(pc);
-                    pc = self.script.program.entries[id.index()];
+                Instruction::Copy(id, source) => {
+                    self.state
+                        .arena
+                        .copy_value(REGISTERS, source.index(), REGISTERS, id.index())
                 }
-                Instruction::Return(id) => {
+                Instruction::Read(id, Resolution::Global(slot)) => {
+                    self.state
+                        .arena
+                        .copy_value(GLOBALS, *slot as usize, REGISTERS, id.index())
+                }
+                Instruction::Read(id, Resolution::Local(slot)) => self.state.arena.copy_value(
+                    LOCALS,
+                    self.frame_base + *slot as usize,
+                    REGISTERS,
+                    id.index(),
+                ),
+                Instruction::Store(id, target, source, mode) => {
+                    match target {
+                        Resolution::Global(slot) => {
+                            self.state.arena.copy_value(
+                                REGISTERS,
+                                source.index(),
+                                GLOBALS,
+                                *slot as usize,
+                            );
+                            if *mode != VarMode::Plain {
+                                self.state
+                                    .arena
+                                    .set(FLAGS, *slot as usize, Value::Bool(true));
+                            }
+                        }
+                        Resolution::Local(slot) => self.state.arena.copy_value(
+                            REGISTERS,
+                            source.index(),
+                            LOCALS,
+                            self.frame_base + *slot as usize,
+                        ),
+                        _ => {}
+                    }
+                    self.state
+                        .arena
+                        .copy_value(REGISTERS, source.index(), REGISTERS, id.index());
+                }
+                Instruction::Jump(target) => pc = *target,
+                Instruction::JumpUnless(condition, expected, target) => {
+                    let value = self.register(*condition);
+                    let selected = value
+                        .as_cond()
+                        .ok_or_else(|| self.type_err(*condition, "a bool condition", &value))?;
+                    if selected != *expected {
+                        pc = *target;
+                    }
+                }
+                Instruction::Advance(node) => self.advance_skipped(*node)?,
+                Instruction::Enter(_) => unreachable!("compiler flattens entry operations"),
+                Instruction::Coerce(id) => {
                     let value = self.register(*id).coerce(
                         self.script.types.coercions[self.type_context as usize][id.index()],
                     );
@@ -35,11 +85,8 @@ impl Eval<'_> {
                         value
                     };
                     self.set_register(*id, value);
-                    if self.state.arena.len(RETURNS) == stack_base {
-                        return Ok(self.register(entry));
-                    }
-                    pc = self.state.arena.pop_address();
                 }
+                Instruction::Return(_) => return Ok(self.register(entry)),
                 Instruction::Initialized(id, slot, target) => {
                     if self.state.arena.get(FLAGS, *slot as usize) == Value::Bool(true) {
                         self.set_register(*id, self.state.arena.get(GLOBALS, *slot as usize));
@@ -51,12 +98,15 @@ impl Eval<'_> {
         }
     }
 
-    fn register(&self, id: NodeId) -> Value {
+    #[inline]
+    pub(super) fn register(&self, id: NodeId) -> Value {
         self.state.arena.get(REGISTERS, id.index())
     }
+    #[inline]
     fn set_register(&mut self, id: NodeId, value: Value) {
         self.state.arena.set(REGISTERS, id.index(), value);
     }
+    #[inline]
     fn read_slot(&mut self, id: NodeId, resolution: Resolution) -> Result<Value, PineError> {
         match resolution {
             Resolution::Global(slot) => Ok(self.state.arena.get(GLOBALS, slot as usize)),
@@ -70,6 +120,7 @@ impl Eval<'_> {
             _ => Err(self.err(id, ErrorCode::PineType, "value has no executable slot")),
         }
     }
+    #[inline]
     fn store_slot(&mut self, resolution: Resolution, value: Value) {
         match resolution {
             Resolution::Global(slot) => self.state.arena.set(GLOBALS, slot as usize, value),
@@ -82,6 +133,7 @@ impl Eval<'_> {
         }
     }
 
+    #[inline(always)]
     fn execute_operation(&mut self, instruction: &Instruction) -> Result<(), PineError> {
         use Instruction as I;
         let (id, value) = match instruction {
@@ -145,9 +197,16 @@ impl Eval<'_> {
                 (*id, result)
             }
             I::Binary(id, op, lhs, rhs) => (*id, self.register_binary(*op, *lhs, *rhs)?),
-            I::Logical(id, op, lhs, rhs) => (*id, self.binary(*op, *lhs, *rhs)?),
-            I::Conditional(id, condition, yes, no) => {
-                (*id, self.conditional(*condition, *yes, *no)?)
+            I::Condition(id, source) => {
+                let value = self.register(*source);
+                (
+                    *id,
+                    Value::Bool(
+                        value
+                            .as_cond()
+                            .ok_or_else(|| self.type_err(*source, "a bool condition", &value))?,
+                    ),
+                )
             }
             I::Switch(id, subject, arms) => {
                 let subject = subject.map(|node| self.eval(node)).transpose()?;
@@ -177,6 +236,30 @@ impl Eval<'_> {
                 (*id, Value::Tuple(Rc::new(values)))
             }
             I::History(id, subject, offset) => (*id, self.history(*id, *subject, *offset)?),
+            I::Input(id, input) => (
+                *id,
+                super::input_value(&self.inputs[*input], self.bar, self.ctx),
+            ),
+            I::Plot(id, plot, source) => {
+                let value = if let Some(source) = source {
+                    let value = self.register(*source);
+                    value
+                        .as_num()
+                        .ok_or_else(|| self.type_err(*source, "a number", &value))?
+                } else {
+                    f64::NAN
+                };
+                if let Some(plot) = plot {
+                    self.row[*plot] = value;
+                }
+                (*id, Value::Na)
+            }
+            I::Kernel(id, builtin, site, args) => {
+                let previous = std::mem::replace(&mut self.prepared_arguments, true);
+                let result = self.kernel_call(*id, *builtin, *site, args);
+                self.prepared_arguments = previous;
+                (*id, result?)
+            }
             I::Builtin(id, builtin, args) => (*id, self.builtin_call(*id, *builtin, args)?),
             I::User(id, index, args) => (*id, self.user_call(*id, *index, args)?),
             I::Method(id, object, field, args) => {
@@ -208,13 +291,41 @@ impl Eval<'_> {
                     "expression has no executable operation",
                 ));
             }
-            I::Enter(_) | I::Return(_) | I::Initialized(..) => unreachable!("control instruction"),
+            I::Jump(_)
+            | I::JumpUnless(..)
+            | I::Advance(_)
+            | I::Enter(_)
+            | I::Return(_)
+            | I::Coerce(_)
+            | I::Initialized(..) => {
+                unreachable!("control instruction")
+            }
         };
         self.set_register(id, value);
         Ok(())
     }
 
+    #[inline(always)]
     fn register_binary(&self, op: BinOp, lhs: NodeId, rhs: NodeId) -> Result<Value, PineError> {
+        if let (Some(l), Some(r)) = (
+            self.state.arena.number(REGISTERS, lhs.index()),
+            self.state.arena.number(REGISTERS, rhs.index()),
+        ) {
+            return Ok(match op {
+                BinOp::Eq => Value::Bool(l == r),
+                BinOp::Ne => Value::Bool(l != r),
+                BinOp::Lt => Value::Bool(l < r),
+                BinOp::Le => Value::Bool(l <= r),
+                BinOp::Gt => Value::Bool(l > r),
+                BinOp::Ge => Value::Bool(l >= r),
+                BinOp::Add => Value::Num(l + r),
+                BinOp::Sub => Value::Num(l - r),
+                BinOp::Mul => Value::Num(l * r),
+                BinOp::Div => Value::Num(if r == 0.0 { f64::NAN } else { l / r }),
+                BinOp::Mod => Value::Num(if r == 0.0 { f64::NAN } else { l % r }),
+                _ => unreachable!("logical branch instruction"),
+            });
+        }
         let left = self.register(lhs);
         let right = self.register(rhs);
         if matches!(op, BinOp::Eq | BinOp::Ne) {

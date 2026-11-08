@@ -130,6 +130,14 @@ impl<'a> Eval<'a> {
                     .ok_or_else(|| self.type_err(args[0].value, "a bool condition", value))
             });
         }
+        if self.prepared_arguments {
+            return args.first().map_or(Ok(false), |arg| {
+                let value = self.register(arg.value);
+                value
+                    .as_cond()
+                    .ok_or_else(|| self.type_err(arg.value, "a bool condition", &value))
+            });
+        }
         match args.first() {
             Some(arg) => self.cond(arg.value),
             None => Ok(false),

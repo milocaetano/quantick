@@ -50,3 +50,50 @@ fn slot_ir_commit_preview_parity() {
         }
     }
 }
+
+#[test]
+fn slot_ir_eager_paths_history_functions() {
+    let source = "//@version=5\nindicator(\"paths\")\nf(x) => ta.ema(x, 2)\ny = ta.crossover(close, 4) ? f(close) : f(close + 10)\nh = f(close)[1]\nplot(y)\nplot(h)\n";
+    let mut script = ScriptIndicator::new(compile(source, "paths").unwrap(), source);
+    let mut yes = quantick_indicators::ta::Ema::new(2);
+    let mut no = quantick_indicators::ta::Ema::new(2);
+    let mut cross = quantick_indicators::ta::CrossOver::new();
+    let mut previous = f64::NAN;
+    for (bar_index, close) in [3.0, 6.0, 2.0, 9.0, 1.0, 8.0].into_iter().enumerate() {
+        let bar = IndicatorBar {
+            open_time: 0,
+            close_time: 1,
+            open: close,
+            high: close,
+            low: close,
+            close,
+            buy_volume: 1.0,
+            sell_volume: 0.0,
+            trade_count: 1.0,
+        };
+        let mut ctx = Ctx {
+            bar_index,
+            cvd: &[],
+        };
+        let first = yes.push(close);
+        let second = no.push(close + 10.0);
+        let expected = if cross.push(close, 4.0) {
+            first
+        } else {
+            second
+        };
+        for _ in 0..3 {
+            let preview = script.preview(&bar, &mut ctx).unwrap();
+            assert!(
+                preview.values[0] == expected || preview.values[0].is_nan() && expected.is_nan()
+            );
+            assert!(
+                preview.values[1] == previous || preview.values[1].is_nan() && previous.is_nan()
+            );
+        }
+        script.on_close(&bar, &mut ctx).unwrap();
+        let value = script.plots().column(PlotId::new(0))[bar_index];
+        assert!(value == expected || value.is_nan() && expected.is_nan());
+        previous = first;
+    }
+}

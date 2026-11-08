@@ -102,6 +102,36 @@ each issue's Touch and integrated serially by the coordinator. This replaces the
 skeleton's freeze blocker: closed enums and dispatch matches may connect the
 owned handler without moving unrelated behavior or broadening the feature scope.
 
+## Executable slots and rollback state
+
+Child 4 lowers checked syntax into register instructions, explicit branch targets,
+and pre-resolved global/local slots. The AST remains inspection metadata: the C41
+test deletes it before running. Straight-line operands are expanded at compile
+time; logical and conditional execution uses jumps, with explicit eager-kernel
+advancement on skipped arms. Context-dependent coercions remain explicit
+instructions. Literal registers without contextual conversions initialize once.
+
+One `Vec<u64>` owns the mutable semantic image: globals, initialization flags,
+locals and result registers, call paths, history rings and staged samples, kernel
+lengths and payloads, object identifiers, revision, records and text. Offsets and
+allocation bookkeeping live in that image too. Preview takes one contiguous
+copy and restores it, preserving `varip` slots and the monotone object identifier
+counter. Strings and tuples are encoded values, not pointers to mutable heaps.
+`ObjectStore` is a regenerated immutable output projection, never transactional
+authority. Native indicator APIs remain unchanged.
+
+Packed TA kernels update caller-owned word slices directly, including rings and
+monotonic queues. Their outputs match the native arithmetic bits pinned before
+implementation, including NaN recovery. Acyclic scripts visit each textual
+site/path once. Scripts with loops retain temporary per-run initial images and
+argument/result caches so repeated visits replace that bar's result rather than
+advance a kernel repeatedly. Those caches are discarded after evaluation.
+
+`slot_ir_commit_preview_parity` covers the original hand-calculated fixture;
+`slot_ir_eager_paths_history_functions` combines a stateful condition, separate
+function paths, history and repeated previews. Arena tests independently check
+copy-only reconstruction, reclaimed text/frame storage and bounded history.
+
 ## Performance scenario
 
 `cargo bench -p quantick-pine --bench interp` retains the prior single-indicator
