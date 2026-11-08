@@ -284,7 +284,10 @@ fn shortcuts_body(ui: &mut egui::Ui) {
     egui::Grid::new("window_help_shortcuts").show(ui, |ui| {
         for (label, shortcut) in rows {
             ui.label(label);
-            ui.weak(super::shortcut_text(ui.ctx(), &shortcut));
+            ui.label(crate::theme::supporting_text(
+                ui,
+                super::shortcut_text(ui.ctx(), &shortcut),
+            ));
             ui.end_row();
         }
     });

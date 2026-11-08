@@ -54,7 +54,7 @@ pub fn draw(panel: &mut GetDataPanel, ui: &mut egui::Ui, out_dir: &str, offered:
 
 fn draw_source_row(ui: &mut egui::Ui) {
     let palette = theme::get(ui.ctx());
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new("Source")
                 .color(palette.text_muted())
@@ -187,13 +187,10 @@ fn draw_calendar(panel: &mut GetDataPanel, ui: &mut egui::Ui) {
             .inner_margin(10.0)
             .rounding(4.0)
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "Type a symbol and look up its days — quantick asks the \
-                         terminal what it holds before you pick.",
-                    )
-                    .color(palette.text_muted())
-                    .small(),
+                crate::theme::supporting_label(
+                    ui,
+                    "Type a symbol and look up its days — quantick asks the \
+                     terminal what it holds before you pick.",
                 );
             });
         return;
@@ -311,8 +308,11 @@ fn draw_context_row(panel: &mut GetDataPanel, ui: &mut egui::Ui) {
             "1m, 2m, 5m and 15m all come from these. Broker candles carry no \
              order flow, so the chart shows none before the tape starts.",
         )
-        .color(palette.text_muted())
-        .small(),
+        .color(if palette.resolved.dark {
+            palette.text_muted()
+        } else {
+            palette.text_support()
+        }),
     );
 }
 
@@ -348,9 +348,11 @@ fn draw_day_before_row(panel: &mut GetDataPanel, ui: &mut egui::Ui) {
         panel.day_before_change = Some(wanted);
     }
     ui.label(
-        egui::RichText::new(panel.day_before_note())
-            .color(palette.text_muted())
-            .small(),
+        egui::RichText::new(panel.day_before_note()).color(if palette.resolved.dark {
+            palette.text_muted()
+        } else {
+            palette.text_support()
+        }),
     );
 }
 
@@ -389,8 +391,11 @@ fn draw_clock_row(panel: &mut GetDataPanel, ui: &mut egui::Ui) {
              the times in the file will be written in, so it is stated, not measured. \
              B3 brokers run at -03:00.",
         )
-        .color(palette.text_muted())
-        .small(),
+        .color(if palette.resolved.dark {
+            palette.text_muted()
+        } else {
+            palette.text_support()
+        }),
     );
 }
 
@@ -405,7 +410,7 @@ fn draw_estimate_and_button(panel: &mut GetDataPanel, ui: &mut egui::Ui, out_dir
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new(headline).color(palette.warn()));
                     if let Some(fix) = fix {
-                        ui.label(egui::RichText::new(fix).color(palette.text_muted()).small());
+                        crate::theme::supporting_label(ui, fix);
                     }
                 });
             ui.add_space(6.0);

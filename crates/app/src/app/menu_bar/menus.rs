@@ -175,7 +175,7 @@ impl WindowMenu<'_> {
                                     ui.separator();
                                 }
                                 Item::Caption(text) => {
-                                    ui.weak(text);
+                                    ui.label(crate::theme::supporting_text(ui, text));
                                 }
                                 Item::Row(id) => self.row(ui, state, level, id, commands),
                                 Item::Live(rows) => {
@@ -232,7 +232,7 @@ impl WindowMenu<'_> {
                 !empty && (self.chart_shown || !chart_row),
                 egui::Button::new(submenu(id).0)
                     .selected(state.path[level] == Some(id))
-                    .shortcut_text(icons::CARET_LEFT),
+                    .shortcut_text(crate::theme::supporting_text(ui, icons::CARET_LEFT)),
             )
             .on_disabled_hover_text(if empty {
                 "No workspace files opened yet"
@@ -295,7 +295,10 @@ impl WindowMenu<'_> {
         };
         let mut button = egui::Button::new(label).selected(self.selected(id));
         if let Some(shortcut) = shortcut_of(id) {
-            button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
+            button = button.shortcut_text(crate::theme::supporting_text(
+                ui,
+                super::shortcut_text(ui.ctx(), &shortcut),
+            ));
         }
         let blocked = self.panel_blocked(id);
         let mut response = ui.add_enabled(self.enabled(id) && blocked.is_none(), button);
@@ -430,7 +433,10 @@ impl WindowMenu<'_> {
         for (index, layout) in layouts.iter().enumerate() {
             let mut button = egui::Button::new(layout.name.as_str());
             if let Some(shortcut) = layout_tab_shortcut(index) {
-                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
+                button = button.shortcut_text(crate::theme::supporting_text(
+                    ui,
+                    super::shortcut_text(ui.ctx(), &shortcut),
+                ));
             }
             if self
                 .live_row(ui, true, button.selected(layout.id == active))
@@ -470,7 +476,10 @@ impl WindowMenu<'_> {
             // binding beside the name.
             let mut button = egui::Button::new(preset.label).selected(current.id == preset.id);
             if let Some(shortcut) = layout_preset_shortcut(index) {
-                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
+                button = button.shortcut_text(crate::theme::supporting_text(
+                    ui,
+                    super::shortcut_text(ui.ctx(), &shortcut),
+                ));
             }
             if self.live_row(ui, true, button).clicked() {
                 commands.push(MenuCommand::ApplyLayoutPreset(preset));
@@ -489,8 +498,10 @@ impl WindowMenu<'_> {
         } else {
             "Hide context charts"
         };
-        let button = egui::Button::new(label)
-            .shortcut_text(super::shortcut_text(ui.ctx(), &COLLAPSE_CONTEXT_SHORTCUT));
+        let button = egui::Button::new(label).shortcut_text(crate::theme::supporting_text(
+            ui,
+            super::shortcut_text(ui.ctx(), &COLLAPSE_CONTEXT_SHORTCUT),
+        ));
         if self.live_row(ui, ui.is_enabled(), button).clicked() {
             commands.push(MenuCommand::ToggleContextCharts);
         }
@@ -549,7 +560,8 @@ impl WindowMenu<'_> {
             .live_row(
                 ui,
                 has_legend && self.chart_shown,
-                egui::Button::new(legend_label).shortcut_text(keys),
+                egui::Button::new(legend_label)
+                    .shortcut_text(crate::theme::supporting_text(ui, keys)),
             )
             .on_hover_text(LEGEND_HOVER)
             .on_disabled_hover_text("This chart has no indicators, so there is no legend to fold")

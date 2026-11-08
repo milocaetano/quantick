@@ -934,11 +934,11 @@ impl ReplayView {
             "Show the file format"
         };
         if ui
-            .link(
-                egui::RichText::new(label)
-                    .color(palette.text_muted())
-                    .small(),
-            )
+            .link(egui::RichText::new(label).color(if palette.resolved.dark {
+                palette.text_muted()
+            } else {
+                palette.text_support()
+            }))
             .clicked()
         {
             self.show_format = !self.show_format;
@@ -955,12 +955,18 @@ impl ReplayView {
                     .max_height(220.0)
                     .id_salt("replay_format_help")
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(format::FORMAT_HELP)
+                        for paragraph in format::FORMAT_HELP.split("\n\n") {
+                            let rich = egui::RichText::new(paragraph)
                                 .monospace()
-                                .small()
-                                .color(palette.text_muted()),
-                        );
+                                .text_style(egui::TextStyle::Body)
+                                .color(if palette.resolved.dark {
+                                    palette.text_muted()
+                                } else {
+                                    palette.text_support()
+                                });
+                            ui.add(egui::Label::new(rich).selectable(true).wrap());
+                            ui.add_space(6.0);
+                        }
                     });
             });
     }
@@ -1253,6 +1259,62 @@ crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supporting_guidance_fits_narrow_surfaces() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [320.0, 520.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                theme::sync(&ctx, &appearance);
+                let mut view = ReplayView::new(
+                    Some("C:/recordings/a-very-long-session-folder/market/session-data"),
+                    None,
+                );
+                view.show_format = true;
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            view.draw_folder_row(ui);
+                            view.draw_format_help(ui);
+                            crate::replay_get_data::draw(&mut view.get_data, ui, &view.folder, &[]);
+                        });
+                    },
+                );
+                let mut prose = 0;
+                for clipped in &output.shapes {
+                    if let egui::Shape::Text(text) = &clipped.shape {
+                        let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                        if text.galley.job.text.contains("Expected layout")
+                            || text.galley.job.text.contains("Type a symbol")
+                        {
+                            prose += 1;
+                            assert!(
+                                bounds.right() <= width + 0.5,
+                                "guidance extends past its surface: {bounds:?}"
+                            );
+                            if width < 400.0 {
+                                assert!(text.galley.rows.len() > 1, "narrow guidance wraps");
+                            }
+                            assert!(text.galley.job.sections[0].format.font_id.size >= 12.0);
+                        }
+                    }
+                }
+                assert_eq!(
+                    prose, 2,
+                    "expanded format and lookup prerequisites are rendered"
+                );
+            }
+        }
+    }
 
     #[test]
     fn counts_are_grouped_for_reading() {

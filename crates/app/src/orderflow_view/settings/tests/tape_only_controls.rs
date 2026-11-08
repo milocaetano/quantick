@@ -6,6 +6,57 @@ use quantick_orderflow::{BubbleSizeReference, LaneWindow};
 
 type PaintedText = Vec<(String, egui::Rect)>;
 
+#[test]
+fn supporting_guidance_fits_narrow_surfaces() {
+    use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        for width in [320.0, 520.0] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let mut view = view(false);
+            let config: crate::config::AppConfig =
+                toml::from_str(include_str!("../../../../config/feeds.toml")).unwrap();
+            let (binding, settings) = AssetBinding::bind(
+                AssetBubblesStore::default().shared(),
+                &config,
+                ("metatrader-b3", "WINV26"),
+                view.look.presets(),
+                false,
+            );
+            view.bind_asset(binding, &settings);
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 1000.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .show(ctx, |ui| view.draw_bubble_presets(ui, false));
+                },
+            );
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.job.text.starts_with("settings kept for asset") =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .expect("asset persistence is explained");
+            assert!(text.pos.x + text.galley.rect.right() <= width + 0.5);
+            assert!(text.galley.job.sections[0].format.font_id.size >= 12.0);
+        }
+    }
+}
+
 fn collect_text(shape: egui::Shape, text: &mut PaintedText) {
     match shape {
         egui::Shape::Text(shape) => text.push((

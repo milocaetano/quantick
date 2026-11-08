@@ -1,6 +1,67 @@
 use super::*;
 use crate::style::ChartStyle;
 
+#[test]
+fn supporting_guidance_fits_narrow_surfaces() {
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        for width in [320.0, 520.0] {
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                crate::theme::sync(&ctx, &appearance);
+                let mut surface = ChartSettingsSurface::default();
+                let style = ChartStyle::default();
+                let env = env(&style, Instant::now());
+                for tab in surface.tabs() {
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 4000.0),
+                        )),
+                        ..Default::default()
+                    };
+                    input
+                        .viewports
+                        .entry(egui::ViewportId::ROOT)
+                        .or_default()
+                        .native_pixels_per_point = Some(scale);
+                    let output = ctx.run(input, |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            tab.draw(ui, &env);
+                        });
+                    });
+                    let note = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text)
+                                if text.galley.job.text.starts_with("Appearance changes")
+                                    || text
+                                        .galley
+                                        .job
+                                        .text
+                                        .starts_with("Changes apply to this chart") =>
+                            {
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                        .expect("the settings persistence note is painted");
+                    assert!(note.pos.x + note.galley.rect.right() <= width + 0.5);
+                    if width < 400.0 {
+                        assert!(
+                            note.galley.rows.len() >= 2,
+                            "consequences wrap instead of shrinking"
+                        );
+                    }
+                    assert!(note.galley.job.sections[0].format.font_id.size >= 12.0);
+                }
+            }
+        }
+    }
+}
+
 fn env(style: &ChartStyle, now: Instant) -> SurfaceEnv<'_> {
     SurfaceEnv {
         style,

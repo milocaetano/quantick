@@ -54,7 +54,23 @@ fn draw_scope_section(
         } else {
             format!("{} · {}", descriptor.description, descriptor.id)
         };
-        ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
+        if can_edit || crate::theme::get(ui.ctx()).resolved.dark {
+            ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                let response =
+                    ui.add_enabled(false, eframe::egui::Checkbox::without_text(&mut selected));
+                response.widget_info(|| {
+                    eframe::egui::WidgetInfo::selected(
+                        eframe::egui::WidgetType::Checkbox,
+                        false,
+                        selected,
+                        &label,
+                    )
+                });
+                crate::theme::supporting_label(ui, label);
+            });
+        }
         if can_edit {
             if selected {
                 configured_scopes.insert(descriptor.id.clone());
@@ -194,6 +210,12 @@ impl ControlAccess {
         ui.separator();
         ui.strong("Read scopes for the next connection");
         let can_edit = matches!(self.state, AccessState::Disabled);
+        if !can_edit {
+            crate::theme::supporting_label(
+                ui,
+                "Current grants are read-only. Disable access before changing scopes.",
+            );
+        }
         let Self {
             contract,
             configured_scopes,
@@ -227,7 +249,8 @@ impl ControlAccess {
         // paper position.
         ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
         ui.strong("Let an assistant read your private session data");
-        ui.small(
+        crate::theme::supporting_label(
+            ui,
             "Still reading only: nothing here places an object, changes a chart or touches a position. What it adds is the material the rest of the reading leaves out — your paper account, the words you wrote on the chart, redacted diagnostic logs, evidence bundles and pictures of the window. A client asks for this tier by name, and the connected-clients list below says which one it holds.",
         );
         draw_scope_section(
@@ -242,7 +265,8 @@ impl ControlAccess {
         // window; everything here lets it put something in it.
         ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
         ui.strong("Let an assistant answer on the chart");
-        ui.small(
+        crate::theme::supporting_label(
+            ui,
             "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings or touch a position. Rearranging your charts is the separate grant below.",
         );
         draw_scope_section(
@@ -258,7 +282,8 @@ impl ControlAccess {
         // as though it only looked at it.
         ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
         ui.strong("Let an assistant rearrange your charts");
-        ui.small(
+        crate::theme::supporting_label(
+            ui,
             "Changes which charts are on screen, where they sit and how wide they are — the same things the layout picker does. Nothing here places or removes an object, and nothing here touches a position. A chart put away keeps its drawings, its indicators and its bars, and comes back with them.",
         );
         draw_scope_section(
@@ -269,7 +294,10 @@ impl ControlAccess {
             is_cockpit_permission,
         );
         if !can_edit {
-            ui.small("Disable access before changing scopes; re-enabling rotates the token and requires a new handshake.");
+            crate::theme::supporting_label(
+                ui,
+                "Disable access before changing scopes; re-enabling rotates the token and requires a new handshake.",
+            );
         }
 
         ui.separator();
@@ -365,5 +393,70 @@ impl ControlAccess {
             projection.worst_capture_us,
             projection.budget_violations
         ));
+    }
+}
+
+#[cfg(test)]
+mod readability_tests {
+    use super::*;
+    use eframe::egui;
+
+    #[test]
+    fn supporting_guidance_fits_narrow_surfaces() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [320.0, 520.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                crate::theme::sync(&ctx, &appearance);
+                let mut access = ControlAccess::new();
+                let original = access.configured_scopes.clone();
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 3000.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| access.draw_panel_body(ui));
+                    },
+                );
+                assert_eq!(access.configured_scopes, original);
+                let mut paragraphs = 0;
+                for shape in output.shapes {
+                    if let egui::Shape::Text(text) = shape.shape
+                        && [
+                            "Still reading only:",
+                            "Objects an assistant",
+                            "Changes which charts",
+                        ]
+                        .iter()
+                        .any(|prefix| text.galley.job.text.starts_with(prefix))
+                    {
+                        paragraphs += 1;
+                        assert!(text.pos.x + text.galley.rect.right() <= width + 0.5);
+                        assert!(text.galley.job.sections[0].format.font_id.size >= 12.0);
+                    }
+                }
+                assert_eq!(paragraphs, 3);
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        draw_scope_section(
+                            ui,
+                            &access.contract,
+                            &mut access.configured_scopes,
+                            false,
+                            |_| true,
+                        );
+                    });
+                });
+                assert_eq!(
+                    access.configured_scopes, original,
+                    "read-only grants are immutable"
+                );
+            }
+        }
     }
 }
