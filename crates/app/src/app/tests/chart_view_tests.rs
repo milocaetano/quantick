@@ -338,6 +338,79 @@ fn the_overlay_stands_down_while_the_popup_is_open() {
     );
 }
 
+/// Nothing charted under a standing overlay: the canvas is one surface. No pane
+/// header, band or layout strip is painted across the logo, the logo stands in
+/// the middle of the whole canvas, and the panes come back on the frame the
+/// overlay goes down.
+#[test]
+fn an_offline_empty_tab_gives_the_overlay_the_whole_canvas() {
+    const CHROME: [&str; 4] = ["ORDER FLOW", "\u{192}xIndicators", "Layout 1", "TRAIL"];
+    let (mut app, _notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    app.active_tab_mut().notice = quantick_feed::FeedNotice::attention("MT5 is down", "Open it.");
+    let panes = run_frame(&mut app, &ctx);
+    let header = painted_text_center(&panes, "ORDER FLOW").expect("the band names the pane");
+    for chrome in CHROME {
+        assert!(
+            painted_text(&panes).iter().any(|text| text == chrome),
+            "{chrome}"
+        );
+    }
+
+    let past = metrics::wall_clock_ms() - quantick_chart::connection_state::OVERLAY_DELAY_MS;
+    let config = app.config.clone();
+    app.active_tab_mut().connection = Default::default();
+    app.active_tab_mut().observe_connection(&config, past, None);
+    let whole = run_frame(&mut app, &ctx);
+    let texts = painted_text(&whole);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.starts_with("No connection to"))
+    );
+    assert!(texts.iter().any(|text| text == "Reconnect"));
+    for chrome in CHROME {
+        assert!(
+            !texts.iter().any(|text| text == chrome),
+            "no pane chrome: {chrome}"
+        );
+    }
+    let logos: Vec<_> = whole
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Mesh(mesh) if mesh.vertices.len() > 100 => {
+                let bounds = mesh.vertices.iter().fold(egui::Rect::NOTHING, |bounds, v| {
+                    bounds.union(egui::Rect::from_min_max(v.pos, v.pos))
+                });
+                Some((clipped.clip_rect, bounds))
+            }
+            _ => None,
+        })
+        .collect();
+    let [(canvas, logo)] = logos.as_slice() else {
+        panic!("one logo mesh: {logos:?}");
+    };
+    assert!(
+        canvas.contains(header),
+        "the overlay covers where the band stood"
+    );
+    assert!(canvas.contains_rect(*logo));
+    assert!(
+        (logo.center().x - canvas.center().x).abs() < canvas.width() * 0.02,
+        "the logo is centred in the canvas: {logo:?} in {canvas:?}"
+    );
+
+    app.active_tab_mut().connection = Default::default();
+    let back = run_frame(&mut app, &ctx);
+    for chrome in CHROME {
+        assert!(
+            painted_text(&back).iter().any(|text| text == chrome),
+            "back: {chrome}"
+        );
+    }
+}
+
 /// The word and the state answer the same stall on one frame, and a feed that
 /// is offline offers the one-click Reconnect a script can name too. Quiet does
 /// not: reconnecting an open socket fixes nothing.

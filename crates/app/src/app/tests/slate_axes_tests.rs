@@ -340,17 +340,16 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                 }
                 assert_eq!(plates.len(), 1, "one compact Light loading backing");
                 let plate = plates[0];
-                let slate = output
-                    .shapes
-                    .iter()
-                    .rposition(|clipped| {
-                        matches!(&clipped.shape,
+                let slate = output.shapes.iter().rposition(|clipped| {
+                    matches!(&clipped.shape,
                     egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(37, 47, 55)
                         && rect.rect.intersects(empty))
-                    })
-                    .unwrap();
+                });
+                // Nothing charted: the overlay owns the canvas and no pane paints
+                // Slate under it, but any Slate still drawn must sit below the plate.
                 assert!(
-                    slate < plate && text.iter().all(|(index, _)| *index > plate),
+                    slate.is_none_or(|slate| slate < plate)
+                        && text.iter().all(|(index, _)| *index > plate),
                     "backing covers Slate before glyphs paint"
                 );
                 for (_, text) in text {

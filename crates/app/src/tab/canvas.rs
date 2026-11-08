@@ -143,6 +143,9 @@ impl Tab {
             return;
         }
         let frame = self.canvas_frame(area);
+        if self.connection.overlay_owns_canvas() {
+            return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
+        }
         let rects = self.draw_context_column(ui, &frame, chrome);
 
         // Which shared mark the pointer is over, on each pane, against the
@@ -184,7 +187,7 @@ impl Tab {
         // has actually built. The lower of the two is what gets drawn: a
         // layout may name a pane the tab is still building, and half a canvas
         // is better than a frame of nothing.
-        self.last_canvas_width = area.width();
+        self.last_canvas = area;
         let context_wanted = self
             .layout
             .kinds()
