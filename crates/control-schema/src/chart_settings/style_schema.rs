@@ -81,7 +81,7 @@ pub(super) fn chart_style(generator: &mut schemars::SchemaGenerator) -> schemars
     schemars::json_schema!({
         "type": "object",
         "additionalProperties": false,
-        "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. Geometry and opacity are canonical decimal strings in inclusive bounds.",
+        "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
         "required": ["candles", "canvas"],
         "properties": {
             "ownership": ownership,

@@ -405,3 +405,96 @@ fn light_time_grid_reads_and_switches_as_the_theme_paints_it() {
     );
     assert!(!pane.layer_switched_on(ChartLayer::TimeGrid, &app.runtime.style));
 }
+
+/// The health line speaks for the focused pane's resolved grids, the same
+/// answer the `layers.visibility` read gives, on either theme and whichever
+/// of the trader's switches the pane holds.
+#[test]
+fn health_summary_grids_agree_with_the_layers_read_on_light_and_dark() {
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    for (theme, name) in [
+        (quantick_appearance::LIGHT, "light"),
+        (quantick_appearance::DARK, "dark"),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        app.runtime
+            .appearance
+            .apply_candidate(theme, false)
+            .unwrap();
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory(&format!("health-grids-{name}"));
+        grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut observer = connect(&directory, &options("observer", &[]));
+        let mut cockpit = connect(
+            &directory,
+            &options("cockpit", &["cockpit", "cockpit.layout"]),
+        );
+        let mut at = app.health.last_summary;
+        let mut read = |app: &mut QuantickApp, observer: &mut LocalClient| {
+            let layers = snapshot(app, observer);
+            let on = |id: &str| {
+                layers["panes"][0]["layers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|layer| layer["id"] == id)
+                    .map(|layer| layer["requested"].as_bool().unwrap())
+                    .unwrap()
+            };
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let sink = Sink(log.clone());
+            let subscriber = tracing_subscriber::fmt()
+                .json()
+                .without_time()
+                .with_writer(move || sink.clone())
+                .finish();
+            at += std::time::Duration::from_secs(2);
+            tracing::subscriber::with_default(subscriber, || app.maybe_emit_summary(at, &ctx));
+            let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+            let row = text
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .find(|row| row["fields"]["event_code"] == "APP_HEALTH_SUMMARY")
+                .expect("a health summary was due");
+            (
+                (on("grid"), on("time_grid")),
+                (
+                    row["fields"]["chart_grid_enabled"].as_bool().unwrap(),
+                    row["fields"]["chart_time_grid_enabled"].as_bool().unwrap(),
+                ),
+            )
+        };
+        let (layers, health) = read(&mut app, &mut observer);
+        assert_eq!(health, layers, "{name} fresh pane");
+        assert_eq!(
+            layers.1,
+            name == "light",
+            "{name} time grid follows the theme"
+        );
+        for (id, visible) in [
+            ("time_grid", !layers.1),
+            ("grid", !layers.0),
+            ("time_grid", layers.1),
+        ] {
+            let payload = layer_input(&app, id, visible);
+            unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+            run_frame(&mut app, &ctx);
+            let (layers, health) = read(&mut app, &mut observer);
+            assert_eq!(health, layers, "{name} after {id}={visible}");
+        }
+        disable_test_gateway(&mut app, &ctx);
+    }
+}

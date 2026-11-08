@@ -56,6 +56,41 @@ impl ChartStyle {
             ..ChartColorOwnership::default()
         };
     }
+    /// The first theme-owned field this style changes, as a refusal naming the
+    /// ownership marker that would make the value the trader's. `stored` is the
+    /// style the pane holds and `shown` the style it paints: a value equal to
+    /// either is an echo, not an edit. A theme-owned value is replaced by the
+    /// theme on resolve, so accepting an edit would drop it silently.
+    pub fn theme_owned_edit(&self, stored: &Self, shown: &Self) -> Option<&'static str> {
+        macro_rules! owned {
+            ($marker:ident, $($path:ident).+) => {
+                if self.ownership.$marker == Inheritance::Theme
+                    && self.$($path).+ != stored.$($path).+
+                    && self.$($path).+ != shown.$($path).+
+                {
+                    return Some(concat!(
+                        stringify!($($path).+),
+                        " is owned by the theme and the new value would be ignored;                          set ownership.",
+                        stringify!($marker),
+                        " to \"explicit\" to make it yours"
+                    ));
+                }
+            };
+        }
+        owned!(fill_opacity, candles.fill_opacity);
+        owned!(bull_fill, candles.bull_fill);
+        owned!(bear_fill, candles.bear_fill);
+        owned!(bull_outline, candles.bull_outline);
+        owned!(bear_outline, candles.bear_outline);
+        owned!(wick, candles.wick);
+        owned!(background, canvas.background);
+        owned!(grid, canvas.grid);
+        owned!(outline_width, candles.outline_width);
+        owned!(outline_opacity, candles.outline_opacity);
+        owned!(wick_opacity, candles.wick_opacity);
+        owned!(time_grid, canvas.time_grid_enabled);
+        None
+    }
     /// Resolve inherited fields from a validated theme. RGB-only fields are
     /// guaranteed opaque by the appearance resolver, so no alpha is discarded.
     pub fn apply_theme(&mut self, theme: &ResolvedTheme) -> bool {

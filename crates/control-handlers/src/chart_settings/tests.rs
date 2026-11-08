@@ -58,10 +58,14 @@ fn effective_style_readback_resolves_stale_theme_values_for_time_and_bookmap_upd
             surface,
         )
         .unwrap();
-        let mut supplied = ChartStyle::default();
-        supplied.candles.bull_fill = [251, 1, 249];
-        supplied.candles.bear_outline = [2, 250, 3];
-        supplied.canvas.background = [248, 4, 247];
+        // The pane's stored seed holds stale values the theme-owned fields
+        // never show; sending them back is an echo, and the surface resolves
+        // them rather than keeping them.
+        let mut seed = ChartStyle::default();
+        seed.candles.bull_fill = [251, 1, 249];
+        seed.candles.bear_outline = [2, 250, 3];
+        seed.canvas.background = [248, 4, 247];
+        let mut supplied = seed;
         supplied.candles.wick_width = 2.5;
         let expected = surface.resolve(supplied);
         assert_ne!(supplied.candles.bull_fill, expected.candles.bull_fill);
@@ -75,7 +79,7 @@ fn effective_style_readback_resolves_stale_theme_values_for_time_and_bookmap_upd
             &mut candles,
             input,
             Some(target),
-            Some(current),
+            Some(seed),
             surface,
         )
         .unwrap();
@@ -263,4 +267,97 @@ fn update_candles_reaches_both_the_default_and_the_thin_contour() {
         assert_eq!(style.candles.outline_width, width);
         assert_eq!(contour(&style).0, device_px, "outline width {width}");
     }
+}
+
+/// A value that changes a theme-owned field would be dropped on resolve. The
+/// call refuses it, naming the ownership marker that makes it the trader's,
+/// for every theme-owned field; an echo of what the pane shows is no edit.
+#[test]
+fn update_candles_refuses_a_changed_theme_owned_value_and_names_the_marker() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let light =
+        quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
+    let surface = StyleSurface::new(light.resolved(), false);
+    let current = surface.resolve(ChartStyle::default());
+    let (target, wire_target) = target();
+    type Edit = (&'static str, &'static str, fn(&mut ChartStyle));
+    let edits: [Edit; 12] = [
+        ("fill_opacity", "candles.fill_opacity", |s| {
+            s.candles.fill_opacity = 0.123
+        }),
+        ("bull_fill", "candles.bull_fill", |s| {
+            s.candles.bull_fill = [251, 1, 249]
+        }),
+        ("bear_fill", "candles.bear_fill", |s| {
+            s.candles.bear_fill = [251, 1, 249]
+        }),
+        ("bull_outline", "candles.bull_outline", |s| {
+            s.candles.bull_outline = [251, 1, 249]
+        }),
+        ("bear_outline", "candles.bear_outline", |s| {
+            s.candles.bear_outline = [251, 1, 249]
+        }),
+        ("wick", "candles.wick", |s| s.candles.wick = [251, 1, 249]),
+        ("background", "canvas.background", |s| {
+            s.canvas.background = [251, 1, 249]
+        }),
+        ("grid", "canvas.grid", |s| s.canvas.grid = [251, 1, 249]),
+        ("outline_width", "candles.outline_width", |s| {
+            s.candles.outline_width = 3.0
+        }),
+        ("outline_opacity", "candles.outline_opacity", |s| {
+            s.candles.outline_opacity = 0.123
+        }),
+        ("wick_opacity", "candles.wick_opacity", |s| {
+            s.candles.wick_opacity = 0.123
+        }),
+        ("time_grid", "canvas.time_grid_enabled", |s| {
+            s.canvas.time_grid_enabled = !s.canvas.time_grid_enabled
+        }),
+    ];
+    let update = |style: ChartStyle| {
+        apply(
+            &mut ChartSettingsSession::default(),
+            &mut settings(),
+            ChartSettingsInput::UpdateCandles {
+                target: Some(wire_target),
+                style: document(style),
+            },
+            Some(target),
+            Some(current),
+            surface,
+        )
+    };
+    for (marker, field, edit) in edits {
+        let mut supplied = current;
+        edit(&mut supplied);
+        let Err(PresetError::Refused(message)) = update(supplied) else {
+            panic!("{field}: a changed theme-owned value must be refused");
+        };
+        assert!(message.contains(field), "{message}");
+        assert!(
+            message.contains(&format!("ownership.{marker} to \"explicit\"")),
+            "{message}"
+        );
+        // Claiming the field makes the same value the trader's, and it lands.
+        let mut claimed = document(supplied);
+        claimed["ownership"][marker] = json!("explicit");
+        let applied = apply(
+            &mut ChartSettingsSession::default(),
+            &mut settings(),
+            ChartSettingsInput::UpdateCandles {
+                target: Some(wire_target),
+                style: claimed,
+            },
+            Some(target),
+            Some(current),
+            surface,
+        )
+        .unwrap();
+        assert!(applied.result.changed, "{field}");
+    }
+    assert!(
+        update(current).is_ok(),
+        "an echo of the shown style is no edit"
+    );
 }

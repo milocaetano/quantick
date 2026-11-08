@@ -5863,7 +5863,7 @@
               },
               "style": {
                 "additionalProperties": false,
-                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. Geometry and opacity are canonical decimal strings in inclusive bounds.",
+                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
                 "properties": {
                   "candles": {
                     "additionalProperties": false,
@@ -6205,7 +6205,7 @@
             "anyOf": [
               {
                 "additionalProperties": false,
-                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. Geometry and opacity are canonical decimal strings in inclusive bounds.",
+                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
                 "properties": {
                   "candles": {
                     "additionalProperties": false,
