@@ -7,7 +7,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 const COLLECTIONS: usize = 30;
 pub(super) fn allocate(arena: &mut Arena) -> usize {
-    let record = arena.allocate(6);
+    let record = arena.allocate(9);
     arena.words[record] = arena.words[COLLECTIONS];
     arena.words[COLLECTIONS] = record as u64;
     record + 3
@@ -44,6 +44,13 @@ pub(crate) fn collect(arena: &mut Arena) {
         }
         history = arena.words[history] as usize;
     }
+    let mut pending: Vec<_> = live.iter().copied().collect();
+    while let Some(handle) = pending.pop() {
+        let parent = super::view::parent(arena, handle);
+        if parent != 0 && live.insert(parent) {
+            pending.push(parent);
+        }
+    }
     let mut link = COLLECTIONS;
     let mut record = arena.words[link] as usize;
     while record != 0 {
@@ -76,16 +83,7 @@ pub(crate) fn restore_varip(current: &Arena, snapshot: &mut Arena, modes: &[VarM
             continue;
         }
         if let Value::Collection(map, offset) = current.get(GLOBALS, slot) {
-            let target = *copied.entry(offset).or_insert_with(|| {
-                let target = if existing.contains(&(offset as usize)) {
-                    offset as usize
-                } else {
-                    allocate(snapshot)
-                };
-                snapshot.replace(target, current.values(offset as usize));
-                snapshot.set_at(target - 2, current.get_at(offset as usize - 2));
-                target
-            });
+            let target = transplant(current, snapshot, offset as usize, &existing, &mut copied);
             snapshot.set(
                 GLOBALS,
                 slot,
@@ -93,6 +91,34 @@ pub(crate) fn restore_varip(current: &Arena, snapshot: &mut Arena, modes: &[VarM
             );
         }
     }
+}
+fn transplant(
+    current: &Arena,
+    snapshot: &mut Arena,
+    source: usize,
+    existing: &BTreeSet<usize>,
+    copied: &mut BTreeMap<usize, usize>,
+) -> usize {
+    if let Some(target) = copied.get(&source) {
+        return *target;
+    }
+    let target = if existing.contains(&source) {
+        source
+    } else {
+        allocate(snapshot)
+    };
+    copied.insert(source, target);
+    snapshot.replace(target, current.values(source));
+    snapshot.set_at(target - 2, current.get_at(source - 2));
+    let parent = super::view::parent(current, source);
+    snapshot.words[target + 3] = if parent == 0 {
+        0
+    } else {
+        transplant(current, snapshot, parent, existing, copied) as u64
+    };
+    snapshot.words[target + 4] = current.words[source + 4];
+    snapshot.words[target + 5] = current.words[source + 5];
+    target
 }
 #[cfg(test)]
 mod tests {

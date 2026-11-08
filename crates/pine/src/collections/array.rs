@@ -1,7 +1,8 @@
-//! Array sequence operations and numeric reductions.
+use super::view;
+// Array sequence operations and numeric reductions.
 use super::{
     Op,
-    runtime::{grow, index, number, receiver},
+    runtime::{index, number, receiver},
 };
 use crate::{eval::arena::Arena, types::Value, version::Version};
 use std::rc::Rc;
@@ -28,25 +29,25 @@ pub(super) fn execute(
                 _ => index(&args[1], size, op == Insert, version)?,
             };
             let previous = if slot < size {
-                arena.get(record, slot)
+                view::get(arena, record, slot)
             } else {
                 Value::Na
             };
             match op {
-                Set => arena.set(record, slot, args[2].clone()),
+                Set => view::set(arena, record, slot, args[2].clone()),
                 Insert => {
-                    grow(size, 1)?;
-                    arena.resize(record, size + 1);
+                    view::grow(arena, record, 1)?;
+                    view::resize(arena, record, size + 1);
                     for i in (slot..size).rev() {
-                        arena.copy_value(record, i, record, i + 1);
+                        view::copy_value(arena, record, i, record, i + 1);
                     }
-                    arena.set(record, slot, args[2].clone());
+                    view::set(arena, record, slot, args[2].clone());
                 }
                 Remove(false) | Pop | Shift => {
                     for i in slot..size - 1 {
-                        arena.copy_value(record, i + 1, record, i);
+                        view::copy_value(arena, record, i + 1, record, i);
                     }
-                    arena.resize(record, size - 1);
+                    view::resize(arena, record, size - 1);
                 }
                 _ => {}
             }
@@ -57,32 +58,37 @@ pub(super) fn execute(
             })
         }
         Push | Unshift => {
-            grow(size, 1)?;
-            arena.resize(record, size + 1);
+            view::grow(arena, record, 1)?;
+            view::resize(arena, record, size + 1);
             if op == Unshift {
                 for i in (0..size).rev() {
-                    arena.copy_value(record, i, record, i + 1);
+                    view::copy_value(arena, record, i, record, i + 1);
                 }
             }
-            arena.set(record, if op == Push { size } else { 0 }, args[1].clone());
+            view::set(
+                arena,
+                record,
+                if op == Push { size } else { 0 },
+                args[1].clone(),
+            );
             Ok(Value::Na)
         }
         Concat => {
             let other = receiver(&args[1], false)?;
-            let values = arena.values(other);
-            grow(size, values.len())?;
-            arena.resize(record, size + values.len());
+            let values = view::values(arena, other);
+            view::grow(arena, record, values.len())?;
+            view::resize(arena, record, size + values.len());
             for (i, value) in values.into_iter().enumerate() {
-                arena.set(record, size + i, value);
+                view::set(arena, record, size + i, value);
             }
             Ok(args[0].clone())
         }
         Reverse => {
             for i in 0..size / 2 {
-                let left = arena.get(record, i);
-                let right = arena.get(record, size - i - 1);
-                arena.set(record, i, right);
-                arena.set(record, size - i - 1, left);
+                let left = view::get(arena, record, i);
+                let right = view::get(arena, record, size - i - 1);
+                view::set(arena, record, i, right);
+                view::set(arena, record, size - i - 1, left);
             }
             Ok(Value::Na)
         }
@@ -93,15 +99,15 @@ pub(super) fn execute(
                 return Err("array.fill range out of bounds".into());
             }
             for i in from..to {
-                arena.set(record, i, args[1].clone());
+                view::set(arena, record, i, args[1].clone());
             }
             Ok(Value::Na)
         }
         Contains(false) | IndexOf | LastIndexOf => {
             let found = if op == LastIndexOf {
-                (0..size).rfind(|i| arena.get(record, *i) == args[1])
+                (0..size).rfind(|i| view::get(arena, record, *i) == args[1])
             } else {
-                (0..size).find(|i| arena.get(record, *i) == args[1])
+                (0..size).find(|i| view::get(arena, record, *i) == args[1])
             };
             Ok(if op == Contains(false) {
                 Value::Bool(found.is_some())
@@ -111,7 +117,7 @@ pub(super) fn execute(
         }
         Sum | Avg | Min | Max => {
             let nums: Vec<_> = (0..size)
-                .filter_map(|i| arena.get(record, i).as_num())
+                .filter_map(|i| view::get(arena, record, i).as_num())
                 .filter(|n| !n.is_nan())
                 .collect();
             let value = if nums.is_empty() {
@@ -132,7 +138,7 @@ pub(super) fn execute(
                 _ => ",",
             };
             let values: Vec<_> = (0..size)
-                .map(|i| match arena.get(record, i) {
+                .map(|i| match view::get(arena, record, i) {
                     Value::Str(s) => s.to_string(),
                     Value::Num(n) => n.to_string(),
                     Value::Bool(b) => b.to_string(),

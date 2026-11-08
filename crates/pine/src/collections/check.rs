@@ -233,6 +233,12 @@ impl Checker<'_> {
                 }
                 if op == Avg { Base::Float } else { element }
             }
+            Slice => {
+                arity(3, 3)?;
+                require(1, &Base::Int)?;
+                require(2, &Base::Int)?;
+                first.base.clone()
+            }
             Sort | SortIndices => {
                 arity(1, 2)?;
                 if !matches!(element, Base::Int | Base::Float | Base::String) {

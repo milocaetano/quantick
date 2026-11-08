@@ -3,6 +3,7 @@ mod array;
 mod runtime;
 mod sorting;
 mod storage;
+mod view;
 mod words;
 use crate::error::ErrorCode;
 pub(crate) use runtime::execute;
@@ -48,6 +49,7 @@ pub enum Op {
     Min,
     Max,
     Join,
+    Slice,
     Sort,
     SortIndices,
     Put,
@@ -183,6 +185,7 @@ const REGISTRY: &[(&str, Op)] = &[
     ("array.min", Op::Min),
     ("array.max", Op::Max),
     ("array.join", Op::Join),
+    ("array.slice", Op::Slice),
     ("array.sort", Op::Sort),
     ("array.sort_indices", Op::SortIndices),
     ("map.put", Op::Put),
@@ -218,6 +221,7 @@ pub(crate) fn arguments(op: Op) -> &'static [&'static str] {
         Concat => &["id1", "id2"],
         Push | Unshift | Contains(false) | IndexOf | LastIndexOf => &["id", "value"],
         Fill => &["id", "value", "index_from", "index_to"],
+        Slice => &["id", "index_from", "index_to"],
         Sort | SortIndices => &["id", "order"],
         Join => &["id", "separator"],
         _ => &["id"],

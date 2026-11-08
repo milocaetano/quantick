@@ -1,4 +1,5 @@
-//! Stable scalar sorting; returned indices are an independent collection.
+use super::view;
+// Stable scalar sorting; returned indices are an independent collection.
 use super::{Op, runtime::create};
 use crate::{eval::arena::Arena, types::Value};
 use std::cmp::Ordering;
@@ -29,7 +30,7 @@ pub(super) fn execute(
         Some(Value::Str(s)) if s.as_str() == "descending" => true,
         _ => return Err("array sort order must be order.ascending or order.descending".into()),
     };
-    let values = arena.values(record);
+    let values = view::values(arena, record);
     let mut indices: Vec<_> = (0..values.len()).collect();
     indices.sort_by(|a, b| {
         let ordering = compare(&values[*a], &values[*b]);
@@ -47,7 +48,7 @@ pub(super) fn execute(
         ))
     } else {
         for (slot, index) in indices.into_iter().enumerate() {
-            arena.set(record, slot, values[index].clone());
+            view::set(arena, record, slot, values[index].clone());
         }
         Ok(Value::Na)
     }

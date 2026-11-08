@@ -1,4 +1,5 @@
-//! Ordered scalar records stored in the one authoritative arena.
+use super::view;
+// Ordered scalar records stored in the one authoritative arena.
 use super::{Element, Op};
 use crate::{eval::arena::Arena, types::Value, version::Version};
 const MAX_ELEMENTS: usize = 100_000;
@@ -105,15 +106,18 @@ pub(crate) fn execute(
             | Values
     );
     let record = receiver(&args[0], map)?;
-    let size = arena.len(record);
+    let size = view::len(arena, record);
+    if op == Slice {
+        return view::slice(arena, record, number(&args[1])?, number(&args[2])?);
+    }
     match op {
         Size(_) => Ok(Value::Num((if map { size / 2 } else { size }) as f64)),
         Clear(_) => {
-            arena.resize(record, 0);
+            view::resize(arena, record, 0);
             Ok(Value::Na)
         }
         Copy(_) => {
-            let values = arena.values(record);
+            let values = view::values(arena, record);
             let copy = create(arena, map, values);
             let target = receiver(&copy, map)?;
             let missing = arena.get_at(record - 2);
@@ -123,19 +127,21 @@ pub(crate) fn execute(
         Keys | Values => {
             let values = (if op == Keys { 0 } else { 1 }..size)
                 .step_by(2)
-                .map(|i| arena.get(record, i))
+                .map(|i| view::get(arena, record, i))
                 .collect();
             Ok(create(arena, false, values))
         }
         Get(true) | Remove(true) | Contains(true) | Put => {
             let found = (0..size)
                 .step_by(2)
-                .find(|i| arena.get(record, *i) == args[1]);
+                .find(|i| view::get(arena, record, *i) == args[1]);
             if op == Contains(true) {
                 return Ok(Value::Bool(found.is_some()));
             }
-            let previous =
-                found.map_or_else(|| arena.get_at(record - 2), |i| arena.get(record, i + 1));
+            let previous = found.map_or_else(
+                || arena.get_at(record - 2),
+                |i| view::get(arena, record, i + 1),
+            );
             if op == Put {
                 if args[1].is_na() {
                     return Err("map key cannot be na".into());
@@ -144,25 +150,25 @@ pub(crate) fn execute(
                     Some(i) => i,
                     None => {
                         grow(size, 2)?;
-                        arena.resize(record, size + 2);
-                        arena.set(record, size, args[1].clone());
+                        view::resize(arena, record, size + 2);
+                        view::set(arena, record, size, args[1].clone());
                         size
                     }
                 };
-                arena.set(record, slot + 1, args[2].clone());
+                view::set(arena, record, slot + 1, args[2].clone());
             } else if op == Remove(true)
                 && let Some(slot) = found
             {
                 for i in slot..size - 2 {
-                    arena.copy_value(record, i + 2, record, i);
+                    view::copy_value(arena, record, i + 2, record, i);
                 }
-                arena.resize(record, size - 2);
+                view::resize(arena, record, size - 2);
             }
             Ok(previous)
         }
         PutAll => {
             let other = receiver(&args[1], true)?;
-            let values = arena.values(other);
+            let values = view::values(arena, other);
             for pair in values.as_chunks::<2>().0 {
                 execute(
                     arena,
