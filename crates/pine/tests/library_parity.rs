@@ -440,3 +440,22 @@ fn builtin_field_defaults_evaluate_at_construction() {
         );
     }
 }
+
+#[test]
+fn varip_collection_types_reject_recursive_drawing_fields() {
+    let source = include_str!("fixtures/libraries/varip_restrictions.pine");
+    let errors = quantick_pine::compile(source, "restricted").unwrap_err();
+    assert!(errors.iter().any(|e| e.message.contains("varip")), "{errors:?}");
+    for field in ["line mark", "box mark", "label mark"] {
+        for declaration in ["varip values = array.new<Drawing>()", "type Holder\n    varip array<Drawing> values"] {
+            let source = format!("//@version=6\nindicator(\"restricted\")\ntype Drawing\n    {field}\n{declaration}\nplot(close)\n");
+            assert!(quantick_pine::compile(&source, "restricted").is_err());
+        }
+        let source = format!("//@version=6\nindicator(\"allowed\")\ntype Drawing\n    {field}\nvarip item = Drawing.new()\nvar values = array.new<Drawing>()\nplot(close)\n");
+        assert!(quantick_pine::compile(&source, "allowed").is_ok());
+    }
+    let source = "//@version=6\nindicator(\"cycle\")\ntype Node\n    float value\n    array<Node> children\nvarip values = array.new<Node>()\nplot(close)\n";
+    assert!(quantick_pine::compile(source, "cycle").is_ok());
+    let source = "//@version=6\nindicator(\"field\")\ntype Drawing\n    varip line mark\nplot(close)\n";
+    assert!(quantick_pine::compile(source, "field").is_err());
+}
