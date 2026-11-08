@@ -70,6 +70,7 @@ mod menu_bar_tests;
 mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
+mod pane_focus_click_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_grid_tests;

@@ -1,0 +1,189 @@
+//! A click activates whichever pane it lands in, in every layout and every
+//! collapse state the canvas can draw, and only a split marks focus.
+
+use super::*;
+
+/// One layout and collapse state, and the panes it leaves on screen.
+struct Arrangement {
+    name: &'static str,
+    layout: CanvasLayout,
+    flow_collapsed: bool,
+    context_collapsed: bool,
+    slots_collapsed: &'static [bool],
+    drawn: &'static [PaneSide],
+}
+
+const FLOW: PaneSide = PaneSide::Flow;
+const TOP: PaneSide = PaneSide::Time(0);
+const BOTTOM: PaneSide = PaneSide::Time(1);
+
+const ARRANGEMENTS: &[Arrangement] = &[
+    Arrangement {
+        name: "time+flow",
+        layout: CanvasLayout::TimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[false],
+        drawn: &[TOP, FLOW],
+    },
+    Arrangement {
+        name: "time+flow, flow put away",
+        layout: CanvasLayout::TimeAndFlow,
+        flow_collapsed: true,
+        context_collapsed: false,
+        slots_collapsed: &[false],
+        drawn: &[TOP],
+    },
+    Arrangement {
+        name: "time+flow, context put away",
+        layout: CanvasLayout::TimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: true,
+        slots_collapsed: &[false],
+        drawn: &[FLOW],
+    },
+    Arrangement {
+        name: "time+time+flow",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[false, false],
+        drawn: &[TOP, BOTTOM, FLOW],
+    },
+    Arrangement {
+        name: "time+time+flow, flow put away",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: true,
+        context_collapsed: false,
+        slots_collapsed: &[false, false],
+        drawn: &[TOP, BOTTOM],
+    },
+    Arrangement {
+        name: "time+time+flow, top chart collapsed",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[true, false],
+        drawn: &[BOTTOM, FLOW],
+    },
+    Arrangement {
+        name: "time+time+flow, bottom chart collapsed",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[false, true],
+        drawn: &[TOP, FLOW],
+    },
+    Arrangement {
+        name: "time+time+flow, flow and top chart put away",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: true,
+        context_collapsed: false,
+        slots_collapsed: &[true, false],
+        drawn: &[BOTTOM],
+    },
+    Arrangement {
+        name: "time+time+flow, context put away",
+        layout: CanvasLayout::TimeTimeAndFlow,
+        flow_collapsed: false,
+        context_collapsed: true,
+        slots_collapsed: &[false, false],
+        drawn: &[FLOW],
+    },
+    Arrangement {
+        name: "time",
+        layout: CanvasLayout::Time,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[false],
+        drawn: &[TOP],
+    },
+    Arrangement {
+        name: "flow",
+        layout: CanvasLayout::Single,
+        flow_collapsed: false,
+        context_collapsed: false,
+        slots_collapsed: &[],
+        drawn: &[FLOW],
+    },
+];
+
+fn arrange(app: &mut QuantickApp, ctx: &egui::Context, arrangement: &Arrangement) {
+    let tab = app.active_tab_mut();
+    tab.set_flow_collapsed(false);
+    tab.set_context_collapsed(false);
+    tab.set_layout(arrangement.layout);
+    run_frame(app, ctx);
+    run_frame(app, ctx);
+    let tab = app.active_tab_mut();
+    let shares = vec![
+        1.0 / arrangement.slots_collapsed.len().max(1) as f32;
+        arrangement.slots_collapsed.len()
+    ];
+    tab.restore_context_heights(&shares, arrangement.slots_collapsed);
+    tab.set_context_collapsed(arrangement.context_collapsed);
+    tab.set_flow_collapsed(arrangement.flow_collapsed);
+    run_frame(app, ctx);
+    run_frame(app, ctx);
+}
+
+fn chart_centre(app: &QuantickApp, side: PaneSide, name: &str) -> egui::Pos2 {
+    app.active_tab()
+        .pane(side)
+        .frame
+        .chart_area
+        .unwrap_or_else(|| panic!("{name}: {side:?} is drawn and has a chart"))
+        .center()
+}
+
+#[test]
+fn a_click_activates_every_drawn_pane_in_every_arrangement() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    for arrangement in ARRANGEMENTS {
+        let name = arrangement.name;
+        arrange(&mut app, &ctx, arrangement);
+        assert_eq!(
+            app.active_tab().drawn_panes().count(),
+            arrangement.drawn.len(),
+            "{name}: panes on screen"
+        );
+        // Forward then back, so every pane takes focus from every other.
+        let order = arrangement
+            .drawn
+            .iter()
+            .chain(arrangement.drawn.iter().rev());
+        for side in order.copied() {
+            let at = chart_centre(&app, side, name);
+            click_chart(&mut app, &ctx, at);
+            assert_eq!(
+                app.active_tab().focused_side(),
+                side,
+                "{name}: the click at {at:?} activates {side:?}"
+            );
+        }
+    }
+}
+
+/// The trader's report: two context charts, flow put away, and a click on
+/// the bottom chart did nothing.
+#[test]
+fn the_bottom_chart_takes_focus_with_the_flow_pane_put_away() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    let arrangement = ARRANGEMENTS
+        .iter()
+        .find(|arrangement| arrangement.name == "time+time+flow, flow put away")
+        .expect("the reported arrangement");
+    arrange(&mut app, &ctx, arrangement);
+    assert_eq!(app.active_tab().focused_side(), TOP);
+    let at = chart_centre(&app, BOTTOM, arrangement.name);
+    click_chart(&mut app, &ctx, at);
+    assert_eq!(app.active_tab().focused_side(), BOTTOM);
+    // And it stays there across frames: nothing resets it to the top chart.
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().focused_side(), BOTTOM);
+}

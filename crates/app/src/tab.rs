@@ -59,9 +59,11 @@ pub const BOOK_GENERATION_STRIDE: u64 = 1_000_000;
 /// Bound depth work per frame so a burst cannot starve egui input/rendering.
 /// The live envelope owns the figure, because the book queue is sized from it.
 const BOOK_DRAIN_BUDGET: usize = crate::live_envelope::BURST_DEPTH_UPDATES_PER_FRAME;
-/// Thickness of the rule marking the focused pane (§11: an accent under the
-/// pane's top edge, never a box drawn around market data).
-const FOCUS_RULE_PX: f32 = 1.0;
+/// Thickness of the accent frame marking the focused pane. Drawn only while
+/// two or more panes are on screen: a lone pane is focused by definition. The
+/// trader asked for it over the old 1 px header rule, which read as nothing
+/// and left no way to tell which chart a click had activated.
+const FOCUS_FRAME_PX: f32 = 2.0;
 /// Width of the grip bar on a collapsed column's rail.
 const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
 /// Height of that grip bar. Long enough to read as a handle at a glance,
