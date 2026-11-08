@@ -1,4 +1,6 @@
 //! Dense compiled tables, owned by child 4 after skeleton integration.
+mod kernel_reach;
+pub(crate) mod program;
 use crate::{
     ast::{Ast, NodeId, VarMode},
     builtins::Builtin,
@@ -69,6 +71,7 @@ pub struct TypeProgram {
 #[derive(Clone)]
 pub struct CompiledScript {
     pub(crate) version: crate::version::Version,
+    pub(crate) program: program::Program,
     /// The arena.
     pub ast: Ast,
     /// The `Script` root.

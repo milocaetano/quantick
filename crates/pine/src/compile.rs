@@ -189,7 +189,8 @@ impl Compiler {
     }
 
     fn finish(self) -> CompiledScript {
-        CompiledScript {
+        let mut compiled = CompiledScript {
+            program: crate::ir::program::Program::default(),
             version: self.checked_types.version,
             ast: self.ast,
             root: self.root,
@@ -213,7 +214,9 @@ impl Compiler {
             call_site_count: self.call_site_count as usize,
             history_series_count: self.history_series_count as usize,
             max_bars_back: self.max_bars_back,
-        }
+        };
+        compiled.program = crate::ir::program::Program::lower(&compiled);
+        compiled
     }
 
     // ---- helpers over the arena ------------------------------------------

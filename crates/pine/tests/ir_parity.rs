@@ -5,7 +5,10 @@ use quantick_pine::{ScriptIndicator, compile};
 #[test]
 fn slot_ir_commit_preview_parity() {
     let source = include_str!("fixtures/ir/rollback.pine");
-    let compiled = compile(source, "rollback").unwrap_or_else(|errors| panic!("{errors:?}"));
+    let mut compiled = compile(source, "rollback").unwrap_or_else(|errors| panic!("{errors:?}"));
+    // Production execution must use lowered instructions even when the source
+    // syntax is absent. A wrapper around the old tree walker fails here.
+    compiled.ast = quantick_pine::ast::Ast::new();
     let mut script = ScriptIndicator::new(compiled, source);
     for line in include_str!("golden/ir/rollback.csv").lines().skip(1) {
         let cells: Vec<_> = line.split(',').collect();

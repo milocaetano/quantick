@@ -2,7 +2,7 @@
 //! and history writes remain in the selected execution only.
 use super::{Eval, Kernel, Value};
 use crate::{
-    ast::{Arg, NodeId, NodeKind},
+    ast::{Arg, NodeId},
     builtins::Builtin,
     error::{ErrorCode, PineError},
 };
@@ -51,61 +51,7 @@ impl Eval<'_> {
     }
 
     fn has_kernel(&self, node: NodeId) -> bool {
-        self.has_kernel_in(node, self.type_context)
-    }
-    fn has_kernel_in(&self, node: NodeId, context: u32) -> bool {
-        let visit = |node| self.has_kernel_in(node, context);
-        if self.script.call_sites[node.index()].is_some() {
-            return true;
-        }
-        match self.kind(node) {
-            NodeKind::Script { statements } | NodeKind::Block { statements } => {
-                statements.iter().any(|n| visit(*n))
-            }
-            NodeKind::Declare { value, .. }
-            | NodeKind::TupleDeclare { value, .. }
-            | NodeKind::Reassign { value, .. } => visit(*value),
-            NodeKind::ExprStmt { expr } => visit(*expr),
-            NodeKind::Unary { operand, .. } => visit(*operand),
-            NodeKind::Binary { lhs, rhs, .. } => visit(*lhs) || visit(*rhs),
-            NodeKind::History { subject, offset } => visit(*subject) || visit(*offset),
-            NodeKind::Ternary {
-                condition,
-                if_true,
-                if_false,
-            } => visit(*condition) || visit(*if_true) || visit(*if_false),
-            NodeKind::If {
-                condition,
-                then_block,
-                otherwise,
-            } => visit(*condition) || visit(*then_block) || otherwise.is_some_and(visit),
-            NodeKind::For {
-                from, to, by, body, ..
-            } => visit(*from) || visit(*to) || by.is_some_and(visit) || visit(*body),
-            NodeKind::While { condition, body } => visit(*condition) || visit(*body),
-            NodeKind::Switch { subject, arms } => {
-                subject.is_some_and(visit)
-                    || arms.iter().any(|(a, b)| a.is_some_and(visit) || visit(*b))
-            }
-            NodeKind::Member { object, .. } => visit(*object),
-            NodeKind::Tuple { items } => items.iter().any(|n| visit(*n)),
-            NodeKind::Call { callee, args } => {
-                args.iter().any(|a| visit(a.value))
-                    || match self.script.resolutions[callee.index()] {
-                        crate::compile::Resolution::Function(i) => {
-                            let (child, target) = self
-                                .script
-                                .types
-                                .dispatch
-                                .get(&(context, node.index()))
-                                .map_or((context, i), |(child, target, _)| (*child, *target));
-                            self.has_kernel_in(self.script.functions[target as usize].body, child)
-                        }
-                        _ => false,
-                    }
-            }
-            _ => false,
-        }
+        self.script.program.kernel_reach[self.type_context as usize][node.index()]
     }
 
     pub(super) fn cached_kernel(
