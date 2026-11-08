@@ -27,3 +27,13 @@ pub mod script;
 pub use compile::{CompiledScript, compile};
 pub use error::{ErrorCode, PineError, Span};
 pub use script::ScriptIndicator;
+
+// Feature child ownership is documented in docs/pine-parity.md.
+pub mod calendar;
+pub mod candle_plots;
+pub mod collections;
+pub mod ir;
+pub mod libraries;
+pub mod semantics;
+pub mod types;
+pub mod version;

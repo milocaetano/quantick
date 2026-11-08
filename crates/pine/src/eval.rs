@@ -36,63 +36,7 @@ mod pure;
 /// indicator instead of freezing the worker (§3.5).
 pub const LOOP_BUDGET: u32 = 10_000;
 
-/// A runtime value. `na` for numbers is NaN inside `Num`; the distinct `Na`
-/// covers non-numeric contexts.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// A number (NaN = na).
-    Num(f64),
-    /// A boolean.
-    Bool(bool),
-    /// A packed RGBA color.
-    Color(u32),
-    /// A string (thin Rc: fat pointers would push Value past 16 bytes,
-    /// and strings never ride the hot numeric path).
-    Str(Rc<String>),
-    /// A function's multi-return (thin Rc, same reasoning).
-    Tuple(Rc<Vec<Value>>),
-    /// A draw-object handle (`line.new` & co.).
-    Obj(ObjKind, u32),
-    /// `na` outside numeric context.
-    Na,
-}
-
-/// Which store a [`Value::Obj`] handle points into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjKind {
-    /// A `line` handle.
-    Line,
-    /// A `box` handle.
-    Box,
-    /// A `label` handle.
-    Label,
-}
-
-impl Value {
-    /// Numeric view: numbers pass through, `na` is NaN, anything else is a
-    /// type error at the caller.
-    fn as_num(&self) -> Option<f64> {
-        match self {
-            Value::Num(v) => Some(*v),
-            Value::Na => Some(f64::NAN),
-            _ => None,
-        }
-    }
-
-    /// Condition view: bools pass, `na` is false (Pine's rule).
-    fn as_cond(&self) -> Option<bool> {
-        match self {
-            Value::Bool(b) => Some(*b),
-            Value::Na => Some(false),
-            Value::Num(v) if v.is_nan() => Some(false),
-            _ => None,
-        }
-    }
-
-    fn is_na(&self) -> bool {
-        matches!(self, Value::Na) || matches!(self, Value::Num(v) if v.is_nan())
-    }
-}
+pub use crate::types::{ObjKind, Value};
 
 /// One kernel instance behind a `(call site, path)` key.
 #[derive(Clone)]
@@ -669,8 +613,8 @@ impl<'a> Eval<'a> {
             // The newest known bar: during any evaluation that is the bar
             // being evaluated (catch-up replays included) — documented.
             Builtin::LastBarIndex => self.ctx.bar_index as f64,
-            Builtin::Time => bar.open_time as f64,
-            Builtin::TimeClose => bar.close_time as f64,
+            Builtin::Time => crate::calendar::open_time(bar),
+            Builtin::TimeClose => crate::calendar::close_time(bar),
             Builtin::BarstateIsConfirmed => return Ok(Value::Bool(self.is_commit)),
             Builtin::BarstateIsLast => return Ok(Value::Bool(!self.is_commit)),
             other => {

@@ -141,6 +141,53 @@ fn bench(name: &str, source: &str, bars: &[IndicatorBar]) {
     black_box(indicator.plots().len());
 }
 
+/// Ten instances receive every partial-bar update, then one commit per ten trades.
+/// Setup is excluded; retained state and rollback costs are included.
+fn bench_ten_indicators(bars: &[IndicatorBar]) {
+    const INDICATORS: usize = 10;
+    const TRADES_PER_BAR: usize = 10;
+    let sources = [EMA_SCRIPT, FLOW_SCRIPT, FORCE_BAR, EXHAUSTION_REVERSAL];
+    let mut stack: Vec<_> = (0..INDICATORS)
+        .map(|i| {
+            let source = sources[i % sources.len()];
+            ScriptIndicator::new(compile(source, "stack").expect("stack compiles"), source)
+        })
+        .collect();
+    let mut cvd = Vec::with_capacity(bars.len());
+    let mut sum = 0.0;
+    let start = Instant::now();
+    for (bar_index, bar) in bars.iter().enumerate() {
+        sum += bar.delta();
+        cvd.push(sum);
+        let mut ctx = Ctx {
+            bar_index,
+            cvd: &cvd,
+        };
+        for _ in 0..TRADES_PER_BAR - 1 {
+            for indicator in &mut stack {
+                black_box(
+                    indicator
+                        .preview(black_box(bar), &mut ctx)
+                        .expect("stack preview"),
+                );
+            }
+        }
+        for indicator in &mut stack {
+            indicator
+                .on_close(black_box(bar), &mut ctx)
+                .expect("stack commit");
+        }
+    }
+    let elapsed = start.elapsed();
+    let trades = bars.len() * TRADES_PER_BAR;
+    println!(
+        "ten-indicator stack: {trades} trade updates, {:.1} ns/trade total, {:.1} ns/indicator/update",
+        elapsed.as_secs_f64() * 1e9 / trades as f64,
+        elapsed.as_secs_f64() * 1e9 / (trades * INDICATORS) as f64
+    );
+    black_box(stack);
+}
+
 fn main() {
     let n = 100_000;
     println!("interpreter benchmark: {n} deterministic bars (budget: 50 us/commit)\n");
@@ -157,4 +204,5 @@ fn main() {
     let active = make_active_bars(n);
     bench("force_bar", FORCE_BAR, &active);
     bench("exh_reversal", EXHAUSTION_REVERSAL, &active);
+    bench_ten_indicators(&active[..10_000]);
 }

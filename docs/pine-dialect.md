@@ -204,3 +204,15 @@ Every rejection is a load-time error naming its reason:
 
 Errors render as `file.pine:line:col: message (CODE)`; loading reports
 *every* problem at once, not just the first.
+
+## Measured PineTS proxy baseline
+
+The isolated oracle described in [pine-parity.md](pine-parity.md) pins PineTS
+0.13.1 and compares fixed authored fixtures, not a verified TradingView run.
+SMA, EMA, RSI, ATR, standard deviation, crossover and pivot-high match all 1,344
+compared cells at `1e-8` absolute plus `1e-8` relative tolerance. `ta.macd` is an
+explicit unimplemented baseline case: it fails with `PINE_UNKNOWN_NAME`, leaving
+576 of 1,920 requested cells unverified. This is not an accepted numerical
+substitution or a passing parity case. App snapshots prove reproducibility only;
+they are not oracle equivalence. Current timezone, typing, collection, library,
+candle-output and version restrictions remain in force.
