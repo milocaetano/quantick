@@ -25,7 +25,10 @@ pub enum LayerSource {
     Local,
     Orderflow(OrderflowSwitch),
     Footprint,
+    /// The horizontal price grid, kept in the chart style.
     Grid,
+    /// The vertical time grid, kept in the chart style.
+    TimeGrid,
     Drawings,
 }
 
@@ -43,6 +46,9 @@ pub enum Persistence {
     /// The order-flow look, saved per asset with its bubble settings while
     /// that asset's "Save changes for this asset" is on.
     OrderflowPreset,
+    /// The chart's appearance, saved with its style: a fresh chart takes its
+    /// theme's answer until the trader switches it.
+    ChartStyle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -76,7 +82,7 @@ pub struct LayerDescriptor {
 pub struct ChartLayer(pub &'static LayerDescriptor);
 
 impl ChartLayer {
-    pub const ALL: [Self; 25] = builtins::ALL;
+    pub const ALL: [Self; 26] = builtins::ALL;
     pub const fn id(self) -> &'static str {
         self.0.id
     }

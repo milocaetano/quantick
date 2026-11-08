@@ -227,3 +227,28 @@ fn light_choice_before_the_title_strip_migrates_to_current_light() {
         "the old file has no table"
     );
 }
+
+/// A Light choice saved before the TradingView chart opens on it: white plot,
+/// time grid, black contours. A Dark choice keeps being Dark.
+#[test]
+fn light_choice_before_the_tradingview_chart_migrates_to_current_light() {
+    let old = include_str!("legacy-light-f32407a0.toml");
+    let scratch = ScratchDir::new("legacy-light-tradingview");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    assert_eq!(store.resolved(), &ResolvedTheme::parse(LIGHT).unwrap());
+    assert!(store.resolved().chart_time_grid);
+    assert_eq!(
+        store.resolved().color(Token::ChartCanvas).to_array(),
+        [255; 4]
+    );
+    let scratch = ScratchDir::new("legacy-dark-tradingview");
+    let path = scratch.join("appearance.toml");
+    let dark = include_str!("legacy-dark-f32407a0.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), dark).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Dark));
+    assert_eq!(store.resolved(), &ResolvedTheme::parse(dark).unwrap());
+}

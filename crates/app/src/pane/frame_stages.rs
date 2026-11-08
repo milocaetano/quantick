@@ -23,6 +23,7 @@ use crate::indicators::IndicatorViews;
 use crate::orderflow_view::{LiveLane, OrderflowView, VisibleBarTimeline};
 use crate::style::CandleStyle;
 use crate::viewport::Viewport;
+use quantick_stores::footprint_presentation::{CandleStyles, LadderSlots};
 
 use super::PaneChrome;
 use super::draw_frame::DrawFrame;
@@ -441,6 +442,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         indicators: &'s IndicatorViews,
         clear_depth: bool,
         base: &'s CandleStyle,
+        ladders: LadderSlots<'s>,
     ) -> CandlePass<'s, 'f> {
         CandlePass {
             frame: self.frame,
@@ -451,7 +453,8 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             half: self.dress.half,
             candle_lane: self.dress.candle_lane,
             content_half: self.dress.content_half,
-            style: self.dress.style(base),
+            styles: CandleStyles::new(base, self.dress.faded.as_ref(), ladders),
+            pixel: None,
         }
     }
 

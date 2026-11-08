@@ -3,6 +3,32 @@
 //! line is set at so the chip stays inside the price gutter. The host lays
 //! the text out and paints; nothing here measures a glyph.
 use crate::constants::{AXIS_LABEL_FONT_PX, AXIS_LABEL_GAP_PX, PRICE_GUTTER_PX};
+use crate::style::CandleStyle;
+use quantick_appearance::{ResolvedTheme, Token};
+
+/// The last-price chip's colour over a bar rising (`up`) or falling.
+///
+/// Dark wears the candle's own outline colour, so chip and candle always
+/// agree. A light theme draws every contour in one dark ink, which says
+/// nothing about direction; its chip wears the theme's own pair instead,
+/// still one per direction, as TradingView's does.
+#[must_use]
+pub fn last_price_rgb(theme: &ResolvedTheme, candles: &CandleStyle, up: bool) -> [u8; 3] {
+    if theme.dark {
+        return if up {
+            candles.bull_outline
+        } else {
+            candles.bear_outline
+        };
+    }
+    let token = if up {
+        Token::LastPriceUp
+    } else {
+        Token::LastPriceDown
+    };
+    let [r, g, b, _] = theme.color(token).to_array();
+    [r, g, b]
+}
 
 /// Padding either side of a tag's text, in pixels.
 pub const TAG_PAD_X_PX: f32 = 3.0;
@@ -69,3 +95,33 @@ pub fn second_line_font_px(width_at_full: f32) -> f32 {
 #[cfg(test)]
 #[path = "price_tag_tests.rs"]
 mod price_tag_tests;
+
+#[cfg(test)]
+mod last_price_tests {
+    use super::*;
+    use crate::style::CandlePreset;
+
+    /// Light's contours are all black; its chip keeps the green and black it
+    /// wore before. Dark's chip stays the candle's outline, custom or not.
+    #[test]
+    fn the_last_price_chip_keeps_a_colour_per_direction() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let candles = CandlePreset::OrderFlow.style();
+        assert_eq!(last_price_rgb(&light, &candles, true), [0x3D, 0x85, 0x40]);
+        assert_eq!(last_price_rgb(&light, &candles, false), [0, 0, 0]);
+        // The slate plot's chip keeps its outline colours too.
+        assert_eq!(
+            last_price_rgb(light.bookmap(), &candles, true),
+            [0x68, 0xE0, 0xC9]
+        );
+        assert_eq!(
+            last_price_rgb(light.bookmap(), &candles, false),
+            [0xFF, 0x89, 0x8B]
+        );
+        let dark = ResolvedTheme::default();
+        let mut custom = candles;
+        custom.bull_outline = [1, 2, 3];
+        assert_eq!(last_price_rgb(&dark, &custom, true), [1, 2, 3]);
+        assert_eq!(last_price_rgb(&dark, &custom, false), candles.bear_outline);
+    }
+}

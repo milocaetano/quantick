@@ -52,7 +52,9 @@ impl SavedLayers {
 #[derive(Debug, Default)]
 pub struct LayerActions {
     pub grid: Option<bool>,
-    /// The pane whose canvas requested the grid change.
+    /// The vertical time grid, asked for the same way.
+    pub time_grid: Option<bool>,
+    /// The pane whose canvas requested either grid change.
     pub grid_pane: Option<u64>,
     pub indicators_changed: bool,
     pub footprint_changed: bool,

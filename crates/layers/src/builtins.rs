@@ -235,8 +235,8 @@ impl ChartLayer {
     });
     pub const Grid: Self = Self(&LayerDescriptor {
         id: "grid",
-        label: "grid",
-        hint: "price and time gridlines behind the candles",
+        label: "price grid",
+        hint: "horizontal gridlines at the price labels, behind the candles",
         source: LayerSource::Grid,
         scope: LayerScope::Pane,
         persistence: Persistence::Layers,
@@ -246,6 +246,22 @@ impl ChartLayer {
         needs_depth: false,
         capture_gates_visibility: false,
         default_on: true,
+        projection_demand: false,
+    });
+    pub const TimeGrid: Self = Self(&LayerDescriptor {
+        id: "time_grid",
+        label: "time grid",
+        hint: "vertical gridlines at the time labels, behind the candles. A fresh chart \
+               takes its theme's answer (Light on, Dark off); switching it makes it yours",
+        source: LayerSource::TimeGrid,
+        scope: LayerScope::Pane,
+        persistence: Persistence::ChartStyle,
+        requirement: Requirement::None,
+        on_tape: false,
+        needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
         projection_demand: false,
     });
     pub const LastPrice: Self = Self(&LayerDescriptor {
@@ -297,11 +313,9 @@ impl ChartLayer {
     pub const DaySeparator: Self = Self(&LayerDescriptor {
         id: "day_separator",
         label: "day separator",
-        hint: "a near-invisible rule across the candles and a tick on the time axis where \
-                 the display day turns over: the old day's last bar time left of the tick, the \
-                 new day's date and first bar time right of it, and the leftmost bar's date \
-                 pinned to the axis's left edge. A day with no bars is not drawn: the mark \
-                 lands on the first bar that exists",
+        hint: "a near-invisible rule across the candles where the display day turns over; \
+                 the time axis names the new day by its number whether this is on or off. A \
+                 day with no bars is not drawn: the rule lands on the first bar that exists",
         source: LayerSource::Local,
         scope: LayerScope::Pane,
         persistence: Persistence::Layers,
@@ -408,7 +422,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 25] = [
+pub const ALL: [ChartLayer; 26] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -423,6 +437,7 @@ pub const ALL: [ChartLayer; 25] = [
     ChartLayer::TapeOnly,
     ChartLayer::NativeTape,
     ChartLayer::Grid,
+    ChartLayer::TimeGrid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,
     ChartLayer::SeamDivider,

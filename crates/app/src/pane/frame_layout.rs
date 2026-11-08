@@ -214,7 +214,7 @@ pub(super) struct CandleDress {
     pub(super) half: f32,
     pub(super) candle_lane: f32,
     pub(super) content_half: f32,
-    faded: Option<CandleStyle>,
+    pub(super) faded: Option<CandleStyle>,
 }
 
 impl CandleDress {
@@ -261,11 +261,5 @@ impl CandleDress {
             content_half,
             faded,
         }
-    }
-
-    /// The style the candles paint in: the faded one while the footprint
-    /// dresses them, else the chart's own.
-    pub(super) fn style<'s>(&'s self, base: &'s CandleStyle) -> &'s CandleStyle {
-        self.faded.as_ref().unwrap_or(base)
     }
 }

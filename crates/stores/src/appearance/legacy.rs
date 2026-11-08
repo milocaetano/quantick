@@ -11,8 +11,10 @@
 //! ab24b5e3: dc9dd4d48a5122ac41e7d7ac40e3a3c0d34882dc (white canvas, slate order flow).
 //! ee7ea6b5: Light e5c858db7d1a2cb7269312d0437ecc9ae5a532b1 and Dark
 //! 2dc1249fef0b0c3b352b5a714e1498bdb2e1a656 (before the title strip and tab tokens).
+//! f32407a0: Light b9f2ee41b626ec8418b580b5b3f2e7f102f92076 and Dark
+//! 66bc4a047727c5ee42d67b138d61001b084dfbef (before the TradingView light chart).
 
-const LIGHT_SOURCES: [&str; 9] = [
+const LIGHT_SOURCES: [&str; 10] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
@@ -22,12 +24,14 @@ const LIGHT_SOURCES: [&str; 9] = [
     include_str!("legacy-light-d4a42dc1.toml"),
     include_str!("legacy-light-ab24b5e3.toml"),
     include_str!("legacy-light-ee7ea6b5.toml"),
+    include_str!("legacy-light-f32407a0.toml"),
 ];
-const DARK_SOURCES: [&str; 4] = [
+const DARK_SOURCES: [&str; 5] = [
     include_str!("legacy-dark-66aa9abc.toml"),
     include_str!("legacy-dark-7ec67e50.toml"),
     include_str!("legacy-dark-d4a42dc1.toml"),
     include_str!("legacy-dark-ee7ea6b5.toml"),
+    include_str!("legacy-dark-f32407a0.toml"),
 ];
 
 /// Only generated choice siblings call this; authored base documents stay exact.

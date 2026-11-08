@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
+use crate::chart_layers::ChartLayer;
 use crate::metrics;
 use crate::metrics::FrameStats;
 use crate::statusbar;
@@ -183,6 +184,7 @@ struct HealthSummary<'a> {
     style: &'a crate::style::ChartStyle,
     style_revision: u64,
     candle_preset: &'static str,
+    pane: &'a crate::pane::ChartPane,
     geometry: WindowGeometry,
     book: OrderflowHealth,
     envelope: envelope::EnvelopeReading,
@@ -215,6 +217,7 @@ impl<'a> HealthSummary<'a> {
             style_revision: app.runtime.style_revision,
             candle_preset: CandlePreset::detect(&app.runtime.style.candles)
                 .map_or("custom", CandlePreset::log_value),
+            pane: app.focused_pane(),
             geometry,
             envelope: envelope::observe(&app.runtime.tabs, trades_per_s, book_updates_per_s),
             book,
@@ -352,7 +355,8 @@ impl<'a> HealthSummary<'a> {
             candle_outline_opacity = self.style.candles.outline_opacity,
             candle_outline_width_px = self.style.candles.outline_width,
             chart_background_enabled = self.style.canvas.background_enabled,
-            chart_grid_enabled = self.style.canvas.grid_enabled,
+            chart_grid_enabled = self.pane.layer_switched_on(ChartLayer::Grid, self.style),
+            chart_time_grid_enabled = self.pane.layer_switched_on(ChartLayer::TimeGrid, self.style),
             replay_active = self.tab.replay.is_some(),
             replay_speed = self.tab.replay.as_ref().map(|r| r.status.speed()),
             replay_playing = self.tab.replay.as_ref().map(|r| r.status.is_playing()),
@@ -464,6 +468,7 @@ pub(super) fn emit_style_changed(
         wick_width_px = candles.wick_width,
         chart_background_enabled = style.canvas.background_enabled,
         chart_grid_enabled = style.canvas.grid_enabled,
+        chart_time_grid_enabled = style.canvas.time_grid_enabled,
         action = "redraw_only",
         "candle appearance changed"
     );

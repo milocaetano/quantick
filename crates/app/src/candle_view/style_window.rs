@@ -9,6 +9,8 @@ use crate::style::{
 };
 
 use super::color32;
+use crate::theme::Palette;
+use quantick_chart::candle_pixels::{CandleYs, lone_candle};
 
 /// What changed while drawing the appearance window.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -33,16 +35,22 @@ pub fn draw_style_contents(
     } else {
         crate::theme::get(ui.ctx())
     };
-    draw_preview(ui, style, &palette);
+    draw_preview(ui, style, &palette, !bookmap);
     ui.separator();
     draw_body_settings(
         ui,
         &mut style.candles,
         &mut style.ownership,
         &mut response.changed,
+        !bookmap,
     );
     ui.separator();
-    draw_outline_settings(ui, &mut style.candles, &mut response.changed);
+    draw_outline_settings(
+        ui,
+        &mut style.candles,
+        &mut style.ownership,
+        &mut response.changed,
+    );
     ui.separator();
     draw_wick_settings(
         ui,
@@ -87,6 +95,7 @@ pub fn draw_body_settings(
     style: &mut CandleStyle,
     ownership: &mut quantick_chart::style::ChartColorOwnership,
     changed: &mut bool,
+    pixel: bool,
 ) {
     ui.heading("Body");
     let previous_mode = style.body_mode;
@@ -144,7 +153,7 @@ pub fn draw_body_settings(
                 .text("body width")
                 .step_by(0.01),
         )
-        .on_hover_text("how much of its slot a candle body fills — the look while zoomed in")
+        .on_hover_text("how much of its slot a body fills; time charts only narrow TradingView's")
         .changed();
     *changed |= ui
         .add(
@@ -158,11 +167,13 @@ pub fn draw_body_settings(
         )
         .changed();
     *changed |= ui
-        .add(
+        .add_enabled(
+            !pixel,
             egui::Slider::new(&mut style.corner_radius, 0.0..=8.0)
                 .text("corner radius px")
                 .step_by(0.25),
         )
+        .on_disabled_hover_text("square whole-pixel candles here, as TradingView's")
         .changed();
     *changed |= ui
         .add(
@@ -173,22 +184,38 @@ pub fn draw_body_settings(
         .changed();
 }
 
-pub fn draw_outline_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut bool) {
+pub fn draw_outline_settings(
+    ui: &mut egui::Ui,
+    style: &mut CandleStyle,
+    ownership: &mut quantick_chart::style::ChartColorOwnership,
+    changed: &mut bool,
+) {
     ui.heading("Outline");
-    *changed |= ui
-        .add(
-            egui::Slider::new(&mut style.outline_opacity, 0.0..=1.0)
-                .text("outline opacity")
-                .step_by(0.01),
-        )
-        .changed();
-    *changed |= ui
-        .add(
-            egui::Slider::new(&mut style.outline_width, 0.5..=4.0)
-                .text("outline thickness px")
-                .step_by(0.05),
-        )
-        .changed();
+    let slider =
+        |value, range, text, step| egui::Slider::new(value, range).text(text).step_by(step);
+    let opacity = slider(
+        &mut style.outline_opacity,
+        0.0..=1.0,
+        "outline opacity",
+        0.01,
+    );
+    *changed |= owned(ui.add(opacity), &mut ownership.outline_opacity);
+    let width = slider(
+        &mut style.outline_width,
+        0.5..=4.0,
+        "outline thickness px",
+        0.05,
+    );
+    *changed |= owned(ui.add(width), &mut ownership.outline_width);
+}
+
+/// Whether a slider moved; one that did makes its value the trader's.
+fn owned(response: egui::Response, owner: &mut quantick_appearance::Inheritance) -> bool {
+    let changed = response.changed();
+    if changed {
+        *owner = quantick_appearance::Inheritance::Explicit;
+    }
+    changed
 }
 
 pub fn draw_wick_settings(
@@ -218,13 +245,8 @@ pub fn draw_wick_settings(
                 *changed |= edit_color(ui, &mut style.wick, &mut ownership.wick);
             });
         }
-        *changed |= ui
-            .add(
-                egui::Slider::new(&mut style.wick_opacity, 0.0..=1.0)
-                    .text("wick opacity")
-                    .step_by(0.01),
-            )
-            .changed();
+        let opacity = egui::Slider::new(&mut style.wick_opacity, 0.0..=1.0).text("wick opacity");
+        *changed |= owned(ui.add(opacity.step_by(0.01)), &mut ownership.wick_opacity);
         *changed |= ui
             .add(
                 egui::Slider::new(&mut style.wick_width, 0.5..=4.0)
@@ -268,9 +290,24 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     });
 
     *changed |= ui
-        .checkbox(&mut style.canvas.grid_enabled, "show price grid")
+        .checkbox(
+            &mut style.canvas.grid_enabled,
+            "show price grid (horizontal)",
+        )
         .changed();
-    ui.add_enabled_ui(style.canvas.grid_enabled, |ui| {
+    if ui
+        .checkbox(
+            &mut style.canvas.time_grid_enabled,
+            "show time grid (vertical)",
+        )
+        .on_hover_text("a line at each time label")
+        .changed()
+    {
+        style.ownership.time_grid = quantick_appearance::Inheritance::Explicit;
+        *changed = true;
+    }
+    let any_grid = style.canvas.grid_enabled || style.canvas.time_grid_enabled;
+    ui.add_enabled_ui(any_grid, |ui| {
         ui.horizontal(|ui| {
             ui.label("grid colour");
             *changed |= edit_color(ui, &mut style.canvas.grid, &mut style.ownership.grid);
@@ -285,7 +322,7 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     });
 }
 
-pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::theme::Palette) {
+pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &Palette, pixel: bool) {
     ui.add_space(4.0);
     let width = ui.available_width().max(260.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 112.0), egui::Sense::hover());
@@ -304,6 +341,12 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::them
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
                 egui::Stroke::new(1.0_f32, color32(grid)),
             );
+        }
+    }
+    if let Some(grid) = style.canvas.time_grid_rgba() {
+        for fraction in [0.2_f32, 0.4, 0.6, 0.8] {
+            let x = egui::lerp(rect.x_range(), fraction);
+            painter.vline(x, rect.y_range(), egui::Stroke::new(1.0_f32, color32(grid)));
         }
     }
 
@@ -336,6 +379,7 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::them
         rect.top() + 41.0,
         rect.bottom() - 35.0,
         style.candles.resolved(true, false),
+        pixel,
     );
     draw_preview_candle(
         &painter,
@@ -345,6 +389,7 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::them
         rect.top() + 34.0,
         rect.bottom() - 29.0,
         style.candles.resolved(false, true),
+        pixel,
     );
 
     // Aggression bubbles remain the top layer, mirroring the real chart.
@@ -369,15 +414,23 @@ pub fn draw_preview_candle(
     body_top: f32,
     body_bottom: f32,
     paint: ResolvedCandlePaint,
+    pixel: bool,
 ) {
+    if pixel {
+        let ys = CandleYs::new(high, body_top, body_bottom, low);
+        let ppp = painter.ctx().pixels_per_point();
+        let pixels = lone_candle(x, ys, PREVIEW_BODY_PT, ppp, &paint);
+        return super::paint_pixels(painter, &pixels, &paint);
+    }
     if let Some(wick) = paint.wick {
         let stroke = egui::Stroke::new(paint.wick_width, color32(wick));
         painter.line_segment([egui::pos2(x, high), egui::pos2(x, body_top)], stroke);
         painter.line_segment([egui::pos2(x, body_bottom), egui::pos2(x, low)], stroke);
     }
+    let half = PREVIEW_BODY_PT / 2.0;
     let body = egui::Rect::from_min_max(
-        egui::pos2(x - 15.0, body_top),
-        egui::pos2(x + 15.0, body_bottom),
+        egui::pos2(x - half, body_top),
+        egui::pos2(x + half, body_bottom),
     );
     let radius = paint
         .corner_radius
@@ -397,6 +450,9 @@ pub fn draw_preview_candle(
         );
     }
 }
+
+/// How wide the preview's candle bodies are drawn, in points.
+const PREVIEW_BODY_PT: f32 = 30.0;
 
 fn edit_color(
     ui: &mut egui::Ui,

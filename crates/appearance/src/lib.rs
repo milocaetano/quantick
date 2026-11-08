@@ -21,8 +21,8 @@ mod typography;
 
 pub use color::PremultipliedRgba;
 pub use document::{
-    BookmapOverride, ColorValue, PremultipliedValue, ResolvedTheme, ThemeDocument,
-    TitleStripOverride,
+    AXIS_RESERVATION_RANGE, BookmapOverride, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes, ColorValue,
+    PremultipliedValue, ResolvedTheme, ThemeDocument, TitleStripOverride,
 };
 pub use error::ThemeError;
 pub use palette::Token;

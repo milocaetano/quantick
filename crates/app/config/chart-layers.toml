@@ -72,8 +72,6 @@ drawings = true
 backfill_divider = false
 
 # On: where the display day turns over, a near-invisible rule across the
-# candles and a tick on the time axis with the old day's last bar time and the
-# new day's date and first bar time. The time labels carry a clock time only,
-# so this is how a chart spanning midnight tells one day from the next, and
-# when each session ended and started.
+# candles. The time axis names the new day by its number either way, as
+# TradingView does; the rule is what marks the turn across the chart.
 day_separator = true

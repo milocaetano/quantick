@@ -52,7 +52,7 @@ fn appearance_gateway_publishes_every_owner_atomically_and_replays_durable_retry
     );
     assert_eq!(
         app.runtime.style.canvas.background_rgba(),
-        palette.resolved.color(Token::Canvas).to_array()
+        palette.resolved.color(Token::ChartCanvas).to_array()
     );
     let text = crate::drawings::DrawingTool::by_id("text").unwrap();
     let drawing = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, text);

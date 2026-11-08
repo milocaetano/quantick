@@ -17,9 +17,10 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
     );
     let ui = crate::theme::axes(ctx);
     let plot = area.with_max_x(gutter.left()).with_max_y(strip.top());
+    let chart_canvas = *ui.get(quantick_appearance::Token::ChartCanvas);
     assert!(
-        has_fill(output, area, ui.canvas()),
-        "the frame uses the shared Light canvas"
+        has_fill(output, area, chart_canvas),
+        "the frame uses the Light chart canvas"
     );
     assert!(
         has_fill(output, plot, crate::theme::bookmap(ctx).canvas()),
@@ -38,7 +39,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
             None
         }
     });
-    assert_eq!(strip_fill, Some(ui.canvas()), "time axes share one canvas");
+    assert_eq!(strip_fill, Some(chart_canvas), "time axes share one canvas");
     assert!(
         !output.shapes.iter().any(|shape| matches!(&shape.shape,
         egui::Shape::Rect(rect) if rect.fill == crate::theme::bookmap(ctx).canvas()
@@ -124,13 +125,14 @@ fn slate_chart_axis_text_uses_root_ink_while_plot_text_uses_surface_ink() {
                 surface.text_primary(),
                 "axis must not inherit Slate text ink"
             );
-            if section.format.color == ui.text_muted() {
+            if section.format.color == *ui.get(quantick_appearance::Token::AxisInk) {
                 ticks[axis] += 1;
             }
         }
     }
+    // Round instants a steady distance apart: a narrow strip may hold one.
     assert!(
-        ticks.iter().all(|count| *count > 1),
+        ticks[0] > 1 && ticks[1] >= 1,
         "price and time labels must both be present: {ticks:?}"
     );
 }
@@ -233,8 +235,10 @@ fn authored_dark_axes_keep_their_surface_ink_and_timestamp_backing() {
             }
         }
     }
+    // The time strip labels round instants a steady distance apart, so a
+    // narrow pane may hold one; each price column holds several.
     assert!(
-        ticks.iter().all(|count| *count >= 2),
+        ticks[..2].iter().all(|count| *count >= 2) && ticks[2] >= 1,
         "authored axis ticks: {ticks:?}"
     );
 

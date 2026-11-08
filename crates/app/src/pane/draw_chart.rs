@@ -64,15 +64,13 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
-        self.frame.axis_metrics = quantick_appearance::AxisMetrics::new(
-            &crate::theme::get(painter.ctx()).resolved.typography,
-        );
+        self.frame.axis_metrics = crate::theme::get(painter.ctx()).resolved.axis_metrics();
         let layout = self.lay_out(area, chrome);
         let axes = theme::axes(painter.ctx());
         let light_flow = self.orderflow.is_some() && !axes.resolved.dark;
         let fill = |rect, color| painter.rect_filled(rect, egui::Rounding::ZERO, color);
         let background = if light_flow {
-            axes.canvas()
+            *axes.get(quantick_appearance::Token::ChartCanvas)
         } else {
             start.canvas_background
         };
@@ -159,6 +157,12 @@ impl ChartPane {
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
         let axis_x = layout.areas.price_gutter.left();
+        // The vertical grid stands where the time labels do; tape only has none.
+        let time_marks = self.time_marks(&frame, chrome);
+        let time_grid_xs = match chrome.style.canvas.time_grid_rgba() {
+            Some(_) if !layout.tape_only => time_marks.1.iter().map(|mark| mark.x).collect(),
+            _ => Vec::new(),
+        };
         renderers.grid(&mut GridPass {
             painter,
             chart_rect,
@@ -172,6 +176,7 @@ impl ChartPane {
             snap_horizontal: !axes.resolved.dark
                 && self.orderflow.is_none()
                 && chrome.style.ownership.grid == quantick_appearance::Inheritance::Theme,
+            time_grid_xs: &time_grid_xs,
         });
         // The day rule over the grid, under the candles; none in tape-only.
         let day_turns = self.day_turns(&frame, chrome);
@@ -204,8 +209,18 @@ impl ChartPane {
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
         if !layout.tape_only {
-            let mut candle_pass =
-                history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+            // The footprint dresses only the bars it has a ladder for.
+            let ladders = self.presentation.footprint.ladder_slots(
+                frame.prefix.len(),
+                self.state.bar_footprints(),
+                frame.partial_visible.map(|_| frame.closed_total),
+            );
+            let base = &chrome.style.candles;
+            let mut candle_pass = history.candle_pass(&self.indicators, clear_depth, base, ladders);
+            candle_pass.pixel = quantick_chart::candle_pixels::pixel_bodies(
+                self.orderflow.is_some(),
+                history.dress.faded.is_some() || history.dress.candle_lane > 0.0,
+            );
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);
@@ -255,8 +270,7 @@ impl ChartPane {
         self.frame.bands = carved;
         super::lane_rail::paint_lane_rail(self, painter, chart_rect);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
-        let turns = day_turns.as_deref();
-        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, turns, chrome);
+        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, chrome, &time_marks);
         let clock = layout
             .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))

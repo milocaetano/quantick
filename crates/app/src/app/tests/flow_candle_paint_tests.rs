@@ -512,11 +512,22 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             pane.frame.candles_right,
             app.active_tab().time_pane().unwrap().frame.area,
         );
+        // The panes keep their places in every theme. Inside them Light sizes
+        // its axes as TradingView does, so only a return to Dark must give
+        // back Dark's exact chart geometry.
+        let (first_area, first_time_area) = (current_geometry.0, current_geometry.4);
+        let kept = geometry.get_or_insert((source, current_geometry));
         assert_eq!(
-            *geometry.get_or_insert(current_geometry),
-            current_geometry,
+            (kept.1.0, kept.1.4),
+            (first_area, first_time_area),
             "theme switching must preserve both pane layouts"
         );
+        if kept.0 == source {
+            assert_eq!(
+                kept.1, current_geometry,
+                "a theme gives back its own layout"
+            );
+        }
         let dark = crate::style::ChartStyle::default();
         let circles = regional_circles(&app, &output);
         assert!(!circles.is_empty(), "the fixture must paint bubbles");
@@ -532,11 +543,15 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
                 )
             })
             .collect();
-        assert_eq!(
-            bubble_geometry.get_or_insert_with(|| current_bubble_geometry.clone()),
-            &current_bubble_geometry,
-            "the slate canvas changes composited colors, never bubble geometry"
-        );
+        // Light's axes reserve their own room, so the plot (and the bubbles
+        // in it) may sit differently; a theme always gives back its own.
+        let kept = bubble_geometry.get_or_insert_with(|| (source, current_bubble_geometry.clone()));
+        if kept.0 == source {
+            assert_eq!(
+                kept.1, current_bubble_geometry,
+                "the slate canvas changes composited colors, never bubble geometry"
+            );
+        }
         if source == quantick_appearance::DARK {
             assert_eq!(
                 dark_circles.get_or_insert_with(|| circles.clone()),
