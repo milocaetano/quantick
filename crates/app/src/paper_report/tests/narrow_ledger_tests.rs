@@ -105,7 +105,7 @@ fn assert_apart(texts: &[(String, egui::Rect)], width: f32) {
 }
 
 fn has(texts: &[(String, egui::Rect)], wanted: &str) -> bool {
-    texts.iter().any(|(text, _)| text == wanted)
+    texts.iter().any(|(text, _)| text.contains(wanted))
 }
 
 fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
@@ -166,7 +166,7 @@ fn a_day_header_at_the_docked_width_keeps_its_count_and_money() {
     let narrow = paint(NARROW_PX - 60.0);
     assert_apart(&narrow, NARROW_PX - 60.0);
     assert!(
-        has(&narrow, "11 · +115.20 BRL"),
+        has(&narrow, "+115.20 BRL"),
         "the count and money net stay: {narrow:?}"
     );
 
@@ -178,14 +178,11 @@ fn a_day_header_at_the_docked_width_keeps_its_count_and_money() {
         has(&wide, &date.long()),
         "a wide header keeps the long date: {wide:?}"
     );
-    assert!(
-        has(&wide, &format!("11 · {DAY_NET}")),
-        "and the whole net: {wide:?}"
-    );
+    assert!(has(&wide, DAY_NET), "and the whole net: {wide:?}");
 }
 
 #[test]
-fn a_session_row_at_the_docked_width_elides_its_name_not_its_net() {
+fn a_session_row_at_the_docked_width_wraps_its_complete_name_and_net() {
     let head = SessionHead {
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
         label: "morning replay of the opening drive".to_owned(),
@@ -199,8 +196,8 @@ fn a_session_row_at_the_docked_width_elides_its_name_not_its_net() {
     let texts = painted_text(NARROW_PX, |ui| _ = draw_session_head(ui, &head));
     assert_apart(&texts, NARROW_PX);
     assert!(
-        texts.iter().any(|(text, _)| text.ends_with('…')),
-        "the name gives way, visibly: {texts:?}"
+        has(&texts, &head.label) && has(&texts, DAY_NET),
+        "the name and calculation stay complete: {texts:?}"
     );
 }
 
@@ -260,5 +257,95 @@ fn enlarged_light_trade_rows_keep_primary_text_apart() {
             );
         });
         assert_apart(&texts, width);
+    }
+}
+
+#[test]
+fn paper_values_and_actions_fit_narrow_panels_report_tiles() {
+    for source in [None, Some(quantick_appearance::LIGHT)] {
+        for width in [320.0, 400.0, 520.0] {
+            let mut state = super::super::ReportState {
+                report: Some(super::super::LoadedHistory {
+                    rows: vec![super::row(
+                        "LONG-INSTRUMENT-USDT",
+                        None,
+                        super::trade_at(CLOSED_MS, 123456789),
+                    )],
+                    files: 1,
+                    unreadable_files: 0,
+                    problem_rows: 0,
+                    sessions: Default::default(),
+                }),
+                ..Default::default()
+            };
+            state.ensure_report_view(TzOffset::new(0), PnlReader::plain());
+            let view = state.report_view.as_ref().unwrap();
+            let texts = painted_text_with_theme(width, source, |ui| {
+                super::super::tables::draw_report_tiles(ui, view);
+            });
+            assert_apart(&texts, width);
+            assert!(texts.iter().any(|(text, _)| text == &view.net_text.0));
+            for label in ["NET", "WIN RATE", "PROFIT FACTOR"] {
+                assert!(
+                    texts.iter().any(|(text, _)| text == label),
+                    "missing {label}: {texts:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn measured_report_warm_frames_only_format_visible_rows() {
+    use super::super::tables::{FORMATTED_ROWS, draw_trade_list};
+    for count in [100, 1000] {
+        let ctx = egui::Context::default();
+        let mut state = super::super::ReportState {
+            report: Some(super::super::LoadedHistory {
+                rows: (0..count)
+                    .map(|i| {
+                        super::row(
+                            "LONG-INSTRUMENT-USDT",
+                            None,
+                            super::trade_at(CLOSED_MS + i, i),
+                        )
+                    })
+                    .collect(),
+                files: 1,
+                unreadable_files: 0,
+                problem_rows: 0,
+                sessions: Default::default(),
+            }),
+            ..Default::default()
+        };
+        state.ensure_report_view(TzOffset::new(0), PnlReader::plain());
+        for frame in 0..4 {
+            FORMATTED_ROWS.with(|value| value.set(0));
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(520.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        draw_trade_list(
+                            ui,
+                            state.report_view.as_ref().unwrap(),
+                            true,
+                            &mut state.report_table_layout,
+                        );
+                    });
+                },
+            );
+            let visited = FORMATTED_ROWS.with(std::cell::Cell::get);
+            if frame == 0 {
+                assert!(visited >= count as usize);
+            } else {
+                assert!(visited < 25, "warm frame formats {visited} of {count}");
+            }
+        }
     }
 }

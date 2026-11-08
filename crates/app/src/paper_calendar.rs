@@ -18,7 +18,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::paper_chrome::{fmt_signed_points, points_color};
+use crate::paper_chrome::fmt_signed_points;
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -187,7 +187,11 @@ fn draw_day_cell(
         // a single number is. A day that netted exactly zero is neither —
         // the same verdict `points_color` gives it everywhere else, and
         // painting a scratch green would be the optimistic lie.
-        let base = points_color(&palette, stat.net);
+        let base = match stat.net.cmp(&rust_decimal::Decimal::ZERO) {
+            std::cmp::Ordering::Greater => palette.buy(),
+            std::cmp::Ordering::Less => palette.sell(),
+            std::cmp::Ordering::Equal => palette.text_muted(),
+        };
         ui.painter().rect_filled(
             body,
             egui::Rounding::same(3.0),

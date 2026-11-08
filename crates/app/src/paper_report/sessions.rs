@@ -18,9 +18,6 @@ use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
 
-use quantick_paper::report::fit::count_and_net;
-
-use super::rows::paint_fitted;
 use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
 use crate::paper_calendar::{CalendarAction, CalendarState, DayIndex, draw_month, today};
 use crate::paper_chrome::{pill_toggle, points_color};
@@ -74,7 +71,7 @@ impl LedgerSessions {
         history: Option<&LoadedHistory>,
         tz: TzOffset,
     ) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for pill in SourceFilter::PILLS {
                 let on = self.state.view.filter.source == pill;
                 if pill_toggle(ui, pill.label(), on, pill.hover()).clicked() {
@@ -149,7 +146,7 @@ impl LedgerSessions {
         if self.state.view.filter.is_default() {
             return;
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new(format!(
                     "{shown} of {total} · {} hidden",
@@ -199,7 +196,7 @@ impl LedgerSessions {
         let (_, _, text) = self.state.tag_text.as_mut()?;
         let mut send = false;
         let mut field_id = None;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new("#")
                     .monospace()
@@ -261,50 +258,66 @@ impl LedgerSessions {
 /// and net. A click folds it; the menu renames or deletes it.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
-    let width = ui.available_width();
+    let (glyph, glyph_ink) =
+        source_glyph(&palette, head.source).unwrap_or(("", palette.text_faint()));
+    let mut job = egui::text::LayoutJob::default();
+    for (text, font_id, color) in [
+        (
+            format!(
+                "{} ",
+                if head.folded {
+                    icons::CARET_RIGHT
+                } else {
+                    icons::CARET_DOWN
+                }
+            ),
+            palette.body_font(10.0),
+            palette.text_faint(),
+        ),
+        (format!("{glyph} "), palette.body_font(10.0), glyph_ink),
+        (
+            format!("{}\n", head.label),
+            palette.mono_font(10.0),
+            palette.text_primary(),
+        ),
+    ] {
+        job.append(
+            &text,
+            0.0,
+            egui::TextFormat {
+                font_id,
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    let numbers = crate::paper_chrome::financial_text(
+        &palette,
+        &format!("{} \u{00b7} {}", head.count, head.net.1),
+        palette.mono_font(10.0),
+        points_color(&palette, head.net.0),
+    );
+    for section in numbers.sections {
+        job.append(&numbers.text[section.byte_range], 0.0, section.format);
+    }
+    job.break_on_newline = true;
+    job.wrap.max_rows = usize::MAX;
+    job.wrap.max_width = (ui.available_width() - SESSION_INDENT_PX - 6.0).max(1.0);
+    let galley = ui.painter().layout_job(job);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
+        egui::vec2(ui.available_width(), galley.size().y + 12.0),
         egui::Sense::click(),
     );
     let mut press = None;
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
         if head.focused || response.hovered() {
-            painter.rect_filled(rect, egui::Rounding::ZERO, palette.border());
+            ui.painter()
+                .rect_filled(rect, egui::Rounding::ZERO, palette.border());
         }
-        let mid = rect.center().y;
-        let mut x = rect.left() + SESSION_INDENT_PX;
-        let caret = if head.folded {
-            icons::CARET_RIGHT
-        } else {
-            icons::CARET_DOWN
-        };
-        painter.text(
-            egui::pos2(x, mid),
-            egui::Align2::LEFT_CENTER,
-            caret,
-            palette.body_font(10.0),
-            palette.text_faint(),
-        );
-        x += palette.layout(14.0);
-        if let Some((glyph, color)) = source_glyph(&palette, head.source) {
-            painter.text(
-                egui::pos2(x, mid),
-                egui::Align2::LEFT_CENTER,
-                glyph,
-                palette.body_font(10.0),
-                color,
-            );
-        }
-        x += palette.layout(14.0);
-        let rights = count_and_net(head.count, &head.net.1);
-        paint_fitted(
-            painter,
-            palette.mono_font(10.0),
-            [x, rect.right() - 6.0, mid],
-            &[&head.label],
-            &[&rights[0], &rights[1]],
-            [palette.text_primary(), points_color(&palette, head.net.0)],
+        ui.painter().galley(
+            rect.min + egui::vec2(SESSION_INDENT_PX, 6.0),
+            galley,
+            palette.text_primary(),
         );
     }
     if response.clicked() {
