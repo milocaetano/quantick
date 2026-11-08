@@ -29,7 +29,7 @@ use super::super::{
 };
 #[cfg(any(feature = "control-harness", test))]
 use super::HOOK_ACTOR_CLIENT_NAME;
-use super::{ActionOrigin, ControlAccess, UI_ACTOR_CLIENT_NAME};
+use super::{ActionOrigin, ControlAccess, RecordedActor, UI_ACTOR_CLIENT_NAME};
 #[cfg(any(feature = "control-harness", test))]
 use quantick_control::{
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
@@ -37,6 +37,39 @@ use quantick_control::{
 };
 
 impl ControlAccess {
+    /// Each frame: every recording a tab is playing with a control trace
+    /// beside it re-injects the recorded actions at their logical replay
+    /// time (contract §11), through this same door. When an entry is due is
+    /// `TraceWalks::collect_due`'s. Runs whether or not local access is
+    /// enabled: replay determinism does not depend on a client being
+    /// connected.
+    pub(crate) fn service_replay_trace(&mut self, app: &mut ControlWindow) {
+        let due = self
+            .trace_reinjection
+            .collect_due(app.tab_reads().tabs(), &mut self.next_trace_sequence);
+        for entry in due {
+            if let Err(error) = self.invoke_local_action(
+                app,
+                entry.capability_id.as_str(),
+                entry.capability_version,
+                entry.canonical_input,
+                ActionOrigin::TraceReplay(Box::new(RecordedActor {
+                    actor_kind: entry.actor_kind,
+                    client_name: entry.client_name.clone(),
+                })),
+            ) {
+                tracing::warn!(
+                    target: "quantick::control",
+                    event_code = "CONTROL_TRACE_REPLAY_REFUSED",
+                    capability = %entry.capability_id,
+                    version = entry.capability_version,
+                    code = %error.code,
+                    "a traced action was refused on replay"
+                );
+            }
+        }
+    }
+
     /// Invoke one registered action from inside the application — the hotkey,
     /// the `QUANTICK_CONTROL_MARK` hook, a test, or a replayed trace entry.
     /// Validates the input and the result against the action's schemas, and
