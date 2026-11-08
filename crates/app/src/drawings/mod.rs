@@ -38,7 +38,7 @@ pub use quantick_drawings::{
     new_drawing_from_defaults, reset_tool_default, save_tool_default,
 };
 pub use style::{StyleColor32, shortcut_key};
-pub(crate) use style::{painted_color, to_color32};
+pub(crate) use style::{painted_color, text_backing, to_color32};
 pub use tool_tabs::draw_extra_tab;
 
 /// One drawn mark, holding the registry tool that paints it.

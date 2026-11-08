@@ -116,17 +116,28 @@ type Picked = egui::InnerResponse<Option<String>>;
 
 /// A footer dropdown, amber when the trader changed it: the pick, on its button.
 fn dropdown(ui: &mut Ui, id: &str, shown: (&str, bool), options: &[&str]) -> Picked {
-    let colors = theme::get(ui.ctx());
+    let (colors, width) = (theme::get(ui.ctx()), ui.available_width().min(140.0));
     let text = RichText::new(shown.0).color(either(shown.1, colors.amber(), colors.text_primary()));
     let mut picked = None;
-    let combo = egui::ComboBox::from_id_salt(id).selected_text(text);
-    let button = combo.show_ui(ui, |ui| {
-        for option in options {
-            if ui.selectable_label(*option == shown.0, *option).clicked() {
-                picked = Some((*option).to_owned());
-            }
-        }
-    });
+    let combo = egui::ComboBox::from_id_salt(id)
+        .selected_text(text)
+        .width(width)
+        .truncate();
+    let button = ui
+        .allocate_ui_with_layout(
+            egui::vec2(width, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                combo.show_ui(ui, |ui| {
+                    for option in options {
+                        if ui.selectable_label(*option == shown.0, *option).clicked() {
+                            picked = Some((*option).to_owned());
+                        }
+                    }
+                })
+            },
+        )
+        .inner;
     egui::InnerResponse::new(picked, button.response)
 }
 
@@ -224,9 +235,10 @@ fn draw_list(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing) 
 /// Bars (kind and size) and Workspace, then what Enter does.
 fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing, names: &[&str]) {
     let colors = theme::get(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.set_height(30.0);
-        if !palette.commands_mode() {
+    // Controls and the variable-length Enter action have independent rows.
+    // Each wraps within the measured popup width, including long workspace names.
+    if !palette.commands_mode() {
+        ui.horizontal_wrapped(|ui| {
             let ((kind, size), changed) = (palette.bar_parts(listing), palette.bar_changed());
             ui.label(faint(&colors, "BARS"));
             if let Some(kind) = dropdown(ui, "palette_bars", (&kind, changed), &BAR_KINDS).inner {
@@ -252,13 +264,13 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
             if let Some(name) = picked.inner {
                 palette.set_workspace(&name);
             }
-            if palette.switch_target().is_none() {
-                ui.label(faint(&colors, format!("Ctrl {RETURN} background")));
-            }
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(format!("{}  {RETURN}", palette.primary_label(listing)));
         });
+    }
+    ui.horizontal_wrapped(|ui| {
+        if !palette.commands_mode() && palette.switch_target().is_none() {
+            ui.label(faint(&colors, format!("Ctrl {RETURN} background")));
+        }
+        ui.add(egui::Label::new(format!("{}  {RETURN}", palette.primary_label(listing))).wrap());
     });
 }
 
@@ -447,7 +459,7 @@ mod market_palette_surface_tests {
         (output.shapes.iter())
             .find_map(|shape| match &shape.shape {
                 egui::epaint::Shape::Text(text) if text.galley.text() == needle => {
-                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                    Some(text.visual_bounding_rect())
                 }
                 _ => None,
             })
@@ -501,6 +513,78 @@ mod market_palette_surface_tests {
 
     fn query_id() -> egui::Id {
         egui::Id::new("market_palette").with("query")
+    }
+
+    #[test]
+    fn market_footer_fits_long_queries() {
+        for width in [460.0, 640.0] {
+            for query in [
+                "",
+                "no-market-match",
+                "very-long-market-symbol-that-is-not-configured",
+                ">",
+            ] {
+                let ctx = egui::Context::default();
+                let mut palette = MarketPalette::opened(query, None);
+                let mut data = snapshot();
+                let workspace = "A long workspace name with several words";
+                data.workspaces = vec![workspace.into()];
+                palette.set_workspace(workspace);
+                let listing = palette.listing(&data.world());
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width + 16.0, 300.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            ui.set_width(width);
+                            draw_footer(ui, &mut palette, &listing, &[workspace]);
+                        });
+                    },
+                );
+                for shape in &output.shapes {
+                    if let egui::Shape::Rect(rect) = &shape.shape {
+                        assert!(
+                            shape.clip_rect.expand(1.0).contains_rect(rect.rect),
+                            "footer control stays reachable inside its effective clip"
+                        );
+                    }
+                }
+                let texts: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        if let egui::Shape::Text(t) = &shape.shape {
+                            let rect = t.visual_bounding_rect();
+                            assert!(
+                                shape.clip_rect.expand(1.0).contains_rect(rect),
+                                "footer text is inside the effective clip: {}",
+                                t.galley.text()
+                            );
+                            Some((t.galley.text(), rect))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for (i, (name, rect)) in texts.iter().enumerate() {
+                    assert!(
+                        rect.right() <= width + 9.0,
+                        "{query}: {name} exceeds footer {rect:?}"
+                    );
+                    for (other, bounds) in &texts[i + 1..] {
+                        assert!(
+                            !rect.shrink(1.0).intersects(*bounds),
+                            "{query}: {name} overlaps {other}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Hovering selects a row only while the pointer moves; a pointer resting
