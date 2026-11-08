@@ -322,7 +322,11 @@ impl OrderflowPane for OrderflowPaneRead<'_> {
         self.pane.footprint_config(self.window)
     }
     fn opening_scale(&self) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
-        self.pane.opening_scale_snapshot()
+        let view = self.pane.orderflow.as_ref();
+        quantick_control_schema::orderflow::OpeningScaleSnapshot {
+            tape: view.map(|v| v.cached_config().volume_dots.ignore_opening_burst_in_scale),
+            candle: view.is_some_and(crate::orderflow_view::OrderflowView::ignore_flow_opening),
+        }
     }
     fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
         self.tab.tape_age_at(now_ms)

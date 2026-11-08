@@ -111,7 +111,7 @@ impl TabRecipeHost for BookTabs<'_> {
             for (pane, _) in tab.panes() {
                 let spec = pane.state.spec();
                 let style = pane.footprint_config(&app.runtime.footprint_config).style;
-                (pane.layout_id(), pane.layer_mask(&app.runtime.style)).hash(&mut hash);
+                (pane.layout_id(), pane.layer_read().mask(&app.runtime.style)).hash(&mut hash);
                 (style.id(), spec.id(), spec.parameter(), spec.choice()).hash(&mut hash);
             }
         }
@@ -150,7 +150,7 @@ impl TabRecipeHost for BookTabs<'_> {
 pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe> {
     let tab = runtime.tabs.by_id(id)?;
     let saved = super::arrangement_adapter::saved_tab_of(tab);
-    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_states(&runtime.style));
+    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_read().states(&runtime.style));
     let context = tab.panes().filter(|(_, side)| *side != PaneSide::Flow);
     let context_layers = context.map(|(pane, _)| pane_layers(pane)).collect();
     let layers = (pane_layers(&tab.flow_pane), context_layers);
@@ -204,7 +204,8 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
         return;
     };
     for (pane, side) in tab.panes_with_sides_mut() {
-        pane.apply_layer_states(&layer_states(recipe.for_pane(side.index()).1));
+        pane.layer_write()
+            .apply_states(&layer_states(recipe.for_pane(side.index()).1));
         if let Some(style) = style {
             pane.presentation.footprint.config.pin_style(style, window);
         }

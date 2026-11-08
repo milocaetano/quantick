@@ -51,7 +51,6 @@ mod frame_stages;
 mod gesture_input;
 mod history_worker;
 pub(crate) mod lane_rail;
-mod layer_painters;
 mod layers;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {

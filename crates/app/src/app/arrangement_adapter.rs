@@ -187,7 +187,7 @@ impl ArrangementAdapter<'_> {
         let inherited_capital = self.active_tab().paper.account().capital().clone();
         let inherited_money = self.active_tab().paper.account().instrument_money().clone();
         let inherited_pnl = self.active_tab().paper.account().pnl_settings().clone();
-        let inherited_layers = self.active_tab().flow_pane.layer_states(self.style);
+        let inherited_layers = self.active_tab().flow_pane.layer_read().states(self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
@@ -232,7 +232,8 @@ impl ArrangementAdapter<'_> {
         // bring back the chrome they switched off.
         self.active_tab_mut()
             .flow_pane
-            .apply_layer_states(&inherited_layers);
+            .layer_write()
+            .apply_states(&inherited_layers);
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.

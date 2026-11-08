@@ -72,14 +72,20 @@ fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
     let mut discarded = LayerActions::default();
     pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
     pane.set_layer_visible(ChartLayer::LaneMarks, false, &mut discarded);
-    assert!(!pane.projection_demand(), "nobody is asking");
+    assert!(!pane.layer_read().projection_demand(), "nobody is asking");
 
     pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut discarded);
-    assert!(pane.projection_demand(), "the strip alone asks");
+    assert!(
+        pane.layer_read().projection_demand(),
+        "the strip alone asks"
+    );
 
     pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
     pane.set_layer_visible(ChartLayer::LaneMarks, true, &mut discarded);
-    assert!(pane.projection_demand(), "the lane's marks alone ask");
+    assert!(
+        pane.layer_read().projection_demand(),
+        "the lane's marks alone ask"
+    );
 }
 
 /// A chart that has never been configured follows the window's setup —
@@ -1383,7 +1389,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
 
     // The armed tool alone decides it, and that is not a shortcut: arming
     // the crosshair turns its layer back on through
-    // `unhide_layer_for_armed_tool`, so "armed but not drawing" is a state
+    // `PaneLayerWrite::unhide_for_tool`, so "armed but not drawing" is a state
     // the app does not have. A second conjunct testing the layer would
     // read as a condition that can be met and never be false — and the
     // assertion guarding it would pass only by setting the field behind
@@ -1391,7 +1397,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
     // rule the code did not deliver.
     pane.set_layer_visible(ChartLayer::Crosshair, false, &mut discarded);
     with_chrome(Tool::Crosshair, |chrome| {
-        pane.unhide_layer_for_armed_tool(chrome);
+        pane.layer_write().unhide_for_tool(chrome);
     });
     assert!(
         pane.layer_visible(ChartLayer::Crosshair, &crate::style::ChartStyle::default()),
