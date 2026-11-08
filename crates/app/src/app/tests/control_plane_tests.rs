@@ -2103,9 +2103,10 @@ fn observer_per_scope_capture_cost() {
 }
 
 /// Heap work one coherent capture of every scope may do on the loaded
-/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux.
+/// fixture, about 15% over the readings: 1273 allocations, 77592 bytes on
+/// Windows, 77582 on Linux (recalibrated after #786 added venue candles).
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 77500;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 89300;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
