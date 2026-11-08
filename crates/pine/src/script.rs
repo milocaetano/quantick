@@ -27,6 +27,7 @@ pub struct ScriptIndicator {
     state: ScriptState,
     /// Reused row scratch (one cell per plot).
     row: Vec<f64>,
+    candles: Vec<Option<quantick_indicators::CandleSample>>,
     /// The paint `barcolor` asked for on the run that just finished. Scratch
     /// like `row`: cleared at the top of every run, so a bar that stops
     /// calling `barcolor` stops being painted instead of inheriting the
@@ -73,7 +74,9 @@ impl ScriptIndicator {
             inputs: compiled.inputs.clone(),
             fills: compiled.fills.clone(),
         };
-        let plots = PlotBuffer::for_plots(&compiled.plots);
+        let plots =
+            PlotBuffer::for_plots(&compiled.plots).with_candle_plots(compiled.candle_plots.clone());
+        let candles = vec![None; compiled.candle_plots.len()];
         let state = ScriptState::new(compiled.global_slots);
         let row = vec![f64::NAN; compiled.plots.len()];
         Self {
@@ -84,6 +87,7 @@ impl ScriptIndicator {
             plots,
             state,
             row,
+            candles,
             paint: None,
             timezone: crate::calendar::CalendarTimezone::default(),
         }
@@ -116,6 +120,7 @@ impl ScriptIndicator {
         is_commit: bool,
     ) -> Result<(), EvalError> {
         self.row.fill(f64::NAN);
+        self.candles.fill(None);
         self.paint = None;
         let mut eval = Eval::new(
             &self.compiled,
@@ -125,6 +130,7 @@ impl ScriptIndicator {
             &mut self.state,
             Staged {
                 row: &mut self.row,
+                candles: &mut self.candles,
                 paint: &mut self.paint,
             },
             is_commit,
@@ -160,7 +166,8 @@ impl Indicator for ScriptIndicator {
         self.state.commit_bar(self.compiled.max_bars_back);
         // The append is the last step: an Err above leaves no half row. The
         // paint rides with it so a row and its colour can never disagree.
-        self.plots.push_row_painted(&self.row, self.paint);
+        self.plots
+            .push_row_with_candles(&self.row, self.paint, &self.candles);
         Ok(())
     }
 
@@ -182,6 +189,7 @@ impl Indicator for ScriptIndicator {
         // Travels in the frame, never into the committed channel: the forming
         // bar wears this colour until it closes and earns its own.
         frame.paint = self.paint;
+        frame.candles = self.candles.clone();
         Ok(frame)
     }
 
@@ -206,6 +214,7 @@ impl Indicator for ScriptIndicator {
         self.state.reset();
         self.plots.clear();
         self.row.fill(f64::NAN);
+        self.candles.fill(None);
         self.paint = None;
     }
 

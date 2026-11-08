@@ -195,7 +195,7 @@ Every rejection is a load-time error naming its reason:
 | `strategy.*` | `PINE_NO_STRATEGY` — backtesting consumes plots through the host |
 | `array.* matrix.* map.* table.*` | `PINE_NO_COLLECTIONS` |
 | calendar builtins (`year`, `month`, `dayofweek`, …) | `PINE_NO_CALENDAR` |
-| `plotcandle` / `plotbar`, `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
+| `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
 
 ## Error codes
 
@@ -237,3 +237,21 @@ Malformed offsets and IANA names are rejected explicitly (API `TimezoneError`,
 script `PINE_TYPE`). Fixed offsets have no DST transitions. No machine timezone
 or clock is consulted. Dates use the proleptic Gregorian calendar, including
 negative epoch timestamps. This is fixed-offset calendar support, not IANA parity.
+
+
+### Headless candle and bar plots
+
+`plotcandle(open, high, low, close, title, color, wickcolor, bordercolor=...)`
+and `plotbar(open, high, low, close, title, color)` declare separate headless
+OHLC columns. Positional bordercolor retains its Pine position (9); use the
+named argument when omitting intervening options. Prices and colors may vary
+per bar; titles must be constant. Any `na` price suppresses the entire sample.
+High and low are the maximum and minimum of all four supplied prices.
+Explicit `na` colors remain absent; omitted colors default to blue.
+
+Consumers read declarations and committed samples through
+`Indicator::plots().candle_specs()` / `candle_column(index)`, and forming
+samples through `PreviewFrame::candles`. Reset clears rows while preserving
+declarations. These columns do not enter scalar plot rendering or fill handles;
+this release adds no app renderer. Calls must be at top level. `editable`,
+`show_last`, and `display` are rejected explicitly in this headless subset.

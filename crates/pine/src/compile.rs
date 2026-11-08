@@ -32,6 +32,8 @@ use crate::error::{PineError, Span};
 use crate::lexer;
 use crate::parser;
 
+#[path = "candle_plots/lower.rs"]
+mod candle_lower;
 mod declarations;
 mod fold;
 mod resolve;
@@ -83,10 +85,15 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
 enum PendingPlot {
     /// `plot(...)`.
     Plot,
+    Candle {
+        is_bar: bool,
+    },
     /// `hline(...)` — a plot column of a constant value.
     Hline,
     /// `plotshape(...)` / `plotchar(...)`.
-    Shape { is_char: bool },
+    Shape {
+        is_char: bool,
+    },
 }
 
 struct Compiler {
@@ -99,6 +106,7 @@ struct Compiler {
     overlay: bool,
     inputs: Vec<InputSpec>,
     plots: Vec<PlotSpec>,
+    candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
     resolutions: Vec<Resolution>,
     call_sites: Vec<Option<CallSiteId>>,
     plot_of_call: Vec<Option<usize>>,
@@ -143,6 +151,7 @@ impl Compiler {
             overlay: false,
             inputs: Vec::new(),
             plots: Vec::new(),
+            candle_plots: Vec::new(),
             pending_plots: Vec::new(),
             resolutions: vec![Resolution::None; n],
             call_sites: vec![None; n],
@@ -173,6 +182,7 @@ impl Compiler {
             overlay: self.overlay,
             inputs: self.inputs,
             plots: self.plots,
+            candle_plots: self.candle_plots,
             fills: self.fills,
             warnings: self.warnings,
             resolutions: self.resolutions,

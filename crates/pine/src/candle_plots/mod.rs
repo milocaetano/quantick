@@ -1,10 +1,35 @@
-//! Existing rejection policy extracted without enabling new behavior.
-use crate::error::ErrorCode;
+//! Headless candle/bar plot argument vocabulary.
+use crate::ast::Arg;
 
-/// The baseline rejection; the owning child may replace it with supported lowering.
-pub(crate) fn rejection() -> (ErrorCode, &'static str) {
-    (
-        ErrorCode::PineUnsupported,
-        "plotcandle/plotbar are not supported: the chart already draws the bars",
-    )
+/// Positional arguments through the supported color fields.
+pub(crate) const CANDLE_ARGS: &[&str] = &[
+    "open",
+    "high",
+    "low",
+    "close",
+    "title",
+    "color",
+    "wickcolor",
+    "editable",
+    "show_last",
+    "bordercolor",
+    "display",
+];
+pub(crate) const BAR_ARGS: &[&str] = &[
+    "open",
+    "high",
+    "low",
+    "close",
+    "title",
+    "color",
+    "editable",
+    "show_last",
+    "display",
+];
+
+pub(crate) fn argument<'a>(args: &'a [Arg], names: &[&str], name: &str) -> Option<&'a Arg> {
+    let position = names.iter().position(|candidate| *candidate == name)?;
+    args.iter()
+        .find(|arg| arg.name.as_deref() == Some(name))
+        .or_else(|| args.iter().filter(|arg| arg.name.is_none()).nth(position))
 }
