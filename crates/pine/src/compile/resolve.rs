@@ -539,7 +539,7 @@ impl Compiler {
             | Builtin::TaLowestBars
             | Builtin::TaMom
             | Builtin::MathSum => (1, "length"),
-            Builtin::TaVwma => (2, "length"),
+            Builtin::TaVwma => (1, "length"),
             Builtin::TaAtr => (0, "length"),
             // Both sides of a pivot size the same window; checking the left
             // one reaches the same allocation the right one feeds.

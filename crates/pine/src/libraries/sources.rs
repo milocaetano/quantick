@@ -48,10 +48,17 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
         if source.len() > 4_000_000 || self.next > 128 {
             return Err(error("local library source budget exceeded"));
         }
-        let version = lexer::lex(source)
-            .map_err(|mut errors| errors.remove(0))?
-            .version
-            .map_or(5, |(version, _)| version);
+        let lexed = lexer::lex(source).map_err(|mut errors| errors.remove(0))?;
+        if lexed
+            .tokens
+            .iter()
+            .any(|token| matches!(&token.tok, Tok::Ident(name) if name.starts_with("qlib")))
+        {
+            return Err(error(
+                "identifiers beginning with `qlib` are reserved for local library linking",
+            ));
+        }
+        let version = lexed.version.map_or(5, |(version, _)| version);
         if prefix.is_some() && version != self.version {
             return Err(error(
                 "local libraries must use the importing script's Pine version",
@@ -62,6 +69,8 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
         let mut body = String::new();
         let mut names = BTreeMap::new();
         let mut exports = BTreeMap::new();
+        let mut private_methods = Vec::new();
+        let mut library_headers = 0;
         for line in source.lines() {
             let trimmed = line.trim();
             if let Some(import) = trimmed.strip_prefix("import ") {
@@ -98,7 +107,10 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                 self.next += 1;
                 let linked = self.link(&library, Some(child_prefix));
                 self.stack.pop();
-                let (linked, public) = linked?;
+                let (linked, public) = linked.map_err(|mut failure| {
+                    failure.message = format!("local library `{key}`: {}", failure.message);
+                    failure
+                })?;
                 if aliases.insert(parts[2].to_owned(), public).is_some() {
                     return Err(error(format!("duplicate library alias `{}`", parts[2])));
                 }
@@ -109,9 +121,20 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                 body.push('\n');
                 continue;
             }
-            if prefix.is_some()
-                && (trimmed.starts_with("library(") || trimmed.starts_with("//@version="))
-            {
+            if prefix.is_some() && trimmed.starts_with("library(") {
+                let header = lexer::lex(trimmed).map_err(|mut errors| errors.remove(0))?;
+                if !matches!(
+                    header.tokens.get(2).map(|token| &token.tok),
+                    Some(Tok::Str(_))
+                ) || !trimmed.ends_with(')')
+                {
+                    return Err(error("library declaration requires a literal title"));
+                }
+                library_headers += 1;
+                body.push('\n');
+                continue;
+            }
+            if prefix.is_some() && trimmed.starts_with("//@version=") {
                 body.push('\n');
                 continue;
             }
@@ -124,6 +147,13 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                 exports.insert(name.trim().to_owned(), name.trim().to_owned());
             }
             if let Some(prefix) = &prefix {
+                if exported.is_none()
+                    && let Some(method) = declaration.strip_prefix("method ")
+                    && let Some((name, _)) = method.split_once('(')
+                {
+                    private_methods.push(name.trim().to_owned());
+                    names.insert(name.trim().to_owned(), format!("{prefix}{}", name.trim()));
+                }
                 let name = declaration
                     .strip_prefix("type ")
                     .map(str::trim)
@@ -133,6 +163,16 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                             .filter(|_| declaration.contains("=>"))
                             .map(|(name, _)| name.trim())
                     });
+                let name = name.or_else(|| {
+                    declaration
+                        .split_once('=')
+                        .filter(|(_, rhs)| !rhs.starts_with('>'))
+                        .and_then(|(left, _)| {
+                            (!left.starts_with(char::is_whitespace)).then_some(left)
+                        })
+                        .and_then(|left| left.split_whitespace().last())
+                        .filter(|name| name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                });
                 if let Some(name) =
                     name.filter(|name| !name.starts_with("method ") && !name.contains(' '))
                 {
@@ -146,15 +186,25 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
             body.push_str(declaration);
             body.push('\n');
         }
+        if prefix.is_some() && library_headers != 1 {
+            return Err(error(
+                "local source requires exactly one library declaration",
+            ));
+        }
         let tokens = lexer::lex(&body)
             .map_err(|mut errors| errors.remove(0))?
             .tokens;
+        let scopes = super::source_scopes::scopes(&body);
         let mut edits = Vec::new();
         let mut index = 0;
         while index < tokens.len() {
             let token = &tokens[index];
             if let Tok::Ident(name) = &token.tok {
+                let protected = scopes.iter().any(|(start, end, locals)| {
+                    (*start..*end).contains(&token.span.start) && locals.contains(name)
+                });
                 if let Some(public) = aliases.get(name)
+                    && !protected
                     && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Dot))
                     && let Some(member) = tokens.get(index + 2)
                     && let Tok::Ident(field) = &member.tok
@@ -166,7 +216,17 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                     index += 3;
                     continue;
                 }
-                if let Some(renamed) = names.get(name) {
+                let member = index > 0 && tokens[index - 1].tok == Tok::Dot;
+                let named_argument = matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Eq))
+                    && index > 0
+                    && matches!(tokens[index - 1].tok, Tok::LParen | Tok::Comma);
+                if let Some(renamed) = names.get(name)
+                    && (!member
+                        || private_methods.contains(name)
+                            && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::LParen)))
+                    && !protected
+                    && !named_argument
+                {
                     edits.push((token.span.start, token.span.end, renamed.clone()));
                 }
             }

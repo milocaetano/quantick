@@ -4,8 +4,18 @@ use crate::{
     error::{ErrorCode, PineError},
 };
 
-pub(crate) fn prepare(ast: &mut Ast) -> Result<(), Vec<PineError>> {
+pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<PineError>> {
     let mut errors = Vec::new();
+    let implicit_bools: Vec<_> = ast
+        .user_types
+        .iter()
+        .flat_map(|ty| &ty.fields)
+        .filter(|field| two_state_bool && field.type_name == "bool" && !field.explicit_default)
+        .map(|field| field.default)
+        .collect();
+    for id in implicit_bools {
+        ast.replace(id, NodeKind::Bool(false));
+    }
     for definition in &ast.user_types {
         let mut fields = std::collections::BTreeSet::new();
         for field in &definition.fields {
@@ -40,7 +50,30 @@ pub(crate) fn prepare(ast: &mut Ast) -> Result<(), Vec<PineError>> {
                 )
             };
             let valid = literal(field.default)
-                || matches!(ast.node(field.default).kind, NodeKind::Unary { op: crate::ast::UnOp::Neg, operand } if literal(operand));
+                || matches!(ast.node(field.default).kind, NodeKind::Unary { op: crate::ast::UnOp::Neg, operand } if matches!(ast.node(operand).kind, NodeKind::Int(_) | NodeKind::Float(_)));
+            let value = match ast.node(field.default).kind {
+                NodeKind::Unary {
+                    op: crate::ast::UnOp::Neg,
+                    operand,
+                } => &ast.node(operand).kind,
+                ref value => value,
+            };
+            let compatible = match value {
+                NodeKind::Na => field.type_name != "bool" || !two_state_bool,
+                NodeKind::Int(_) => matches!(field.type_name.as_str(), "int" | "float"),
+                NodeKind::Float(_) => field.type_name == "float",
+                NodeKind::Bool(_) => field.type_name == "bool",
+                NodeKind::Str(_) => field.type_name == "string",
+                NodeKind::Color(_) => field.type_name == "color",
+                _ => false,
+            };
+            if valid && !compatible {
+                errors.push(PineError::new(
+                    ErrorCode::PineType,
+                    span,
+                    "user-object default does not match its declared field type",
+                ));
+            }
             if !valid {
                 errors.push(PineError::new(
                     ErrorCode::PineType,

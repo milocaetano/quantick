@@ -12,7 +12,14 @@ impl Parser<'_> {
                     return Some(None);
                 };
                 let result = self.try_function_def(&name, start);
-                if result.is_some() {
+                if let Some(id) = result {
+                    if self.ast.annotations(id).first().is_none_or(Vec::is_empty) {
+                        self.errors.push(PineError::new(
+                            ErrorCode::PineType,
+                            start,
+                            "method receiver requires an explicit type",
+                        ));
+                    }
                     self.ast.methods.push(name);
                 }
                 Some(result)
@@ -45,7 +52,8 @@ impl Parser<'_> {
                 break;
             };
             self.advance();
-            let default = if self.eat(&Tok::Eq) {
+            let explicit_default = self.eat(&Tok::Eq);
+            let default = if explicit_default {
                 self.expression()?
             } else {
                 self.ast.push(NodeKind::Na, self.span())
@@ -54,6 +62,7 @@ impl Parser<'_> {
                 name: field_name,
                 type_name,
                 default,
+                explicit_default,
             });
             self.end_of_statement();
         }

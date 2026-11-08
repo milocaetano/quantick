@@ -1,9 +1,15 @@
 //! C90-C93: retained-child acceptance, runnable offline without Node.
+#[path = "parity_support/native.rs"]
+mod native;
 mod parity_support;
+#[path = "parity_support/retained.rs"]
+mod retained;
 use parity_support::{bars, golden, root, run, snapshot};
 
 #[test]
 fn combined_offline_golden_parity() {
+    assert_eq!(retained::scalar_goldens(), 100);
+    assert_eq!(native::kernel_goldens(), 3072);
     let report = parity_support::oracle_report();
     assert!(report.contains("matching_cells=1920/1920"), "{report}");
     assert!(report.contains("rejected_cells=0/1920"), "{report}");
@@ -40,6 +46,28 @@ fn combined_app_script_regression() {
 
 #[test]
 fn combined_report_and_dialect_contract() {
+    let historical = include_str!("golden/oracle-report.txt");
+    assert!(historical.contains("matching_cells=1344/1920"));
+    assert!(historical.contains("rejected_cells=576/1920"));
+    let proxy: Vec<f64> = include_str!("golden/semantics/conditional-proxy.csv")
+        .lines()
+        .skip(2)
+        .map(|line| line.parse().unwrap())
+        .collect();
+    assert_eq!(proxy, vec![1.0, 0.0, 4.0, 0.0, 9.0]);
+    let mut tape = bars("tick");
+    tape.truncate(5);
+    for (index, bar) in tape.iter_mut().enumerate() {
+        bar.close = (index + 1) as f64;
+    }
+    let current = run(
+        "//@version=5\nindicator(\"eager\")\nplot(bar_index % 2 == 0 ? ta.cum(close) : 0)\n",
+        &tape,
+    );
+    use quantick_indicators::Indicator;
+    let actual = current.plots().column(quantick_indicators::PlotId::new(0));
+    assert_eq!(actual, &[1.0, 0.0, 6.0, 0.0, 15.0]);
+    assert_ne!(actual, proxy);
     let report = parity_support::corpus_report();
     assert!(report.contains("positive_load_rate=13/13"), "{report}");
     assert!(report.contains("negative_rejections=7/7"), "{report}");

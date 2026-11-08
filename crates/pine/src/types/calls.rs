@@ -291,7 +291,6 @@ impl Checker<'_> {
             TaChange | TaMom => (1, 2),
             TaValueWhen => (3, 3),
             TaMacd => (4, 4),
-            TaVwma => (3, 3),
             TaPivotHigh | TaPivotLow => (3, 3),
             _ => (2, 2),
         };
@@ -301,7 +300,7 @@ impl Checker<'_> {
             let length = match b {
                 TaAtr => true,
                 TaMacd => i > 0,
-                TaVwma => i == 2,
+                TaVwma => i == 1,
                 TaValueWhen => i == 2,
                 TaPivotHigh | TaPivotLow => i > 0,
                 TaSma | TaEma | TaRma | TaWma | TaRsi | TaStdev | TaHighest | TaLowest

@@ -467,3 +467,10 @@ enums, remote libraries and nonliteral field defaults are not implemented.
 Local library sources currently use the importing script's Pine version;
 version mismatches are rejected explicitly. Linking is bounded to 128 sources,
 32 nested imports and four million bytes of expanded source.
+
+Local library linking reserves identifiers beginning with `qlib` for generated
+names. Library globals and private methods are isolated from the importing
+script; only exported declarations are available through the import alias.
+Method receivers require explicit types. User-object field defaults are checked
+against their declared types even when the type is unused; an omitted v6 bool
+field defaults to false, while an explicit `na` bool default is rejected.

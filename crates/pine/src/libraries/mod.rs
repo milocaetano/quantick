@@ -1,5 +1,6 @@
 //! Caller-supplied local libraries and user-defined objects.
 mod prepare;
+mod source_scopes;
 mod sources;
 
 pub(crate) use prepare::prepare;
@@ -18,6 +19,7 @@ pub(crate) struct Field {
     pub name: String,
     pub type_name: String,
     pub default: NodeId,
+    pub explicit_default: bool,
 }
 
 /// Resolved object operation; field and type identities are compile-time slots.

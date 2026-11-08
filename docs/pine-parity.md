@@ -256,7 +256,7 @@ matching proxy cells; the current numerical oracle expects 1,920/1,920. The
 positive compiler corpus remains 13/13, invalid rejection 7/7, and its oracle
 coverage remains 0/21 plot columns. App snapshot coverage remains 9/9 and direct
 app oracle coverage remains 0/9. The child-1 semantic corrections are recorded
-separately below and in the accepted snapshot changes; these denominators are
+in the preceding semantic policy section; these denominators are
 not a general real-world script success rate.
 
 Library fixtures are independently authored hand-calculated acceptance data,
@@ -264,3 +264,29 @@ not PineTS verification. C61 covers exact local resolution, references, methods,
 preview rollback, missing/cyclic/remote diagnostics and v5/v6 field history.
 The mixed collection fixture was committed before its implementation and will
 join final acceptance after the collections child integrates.
+
+### Golden execution inventory (integration in progress)
+
+Every committed file under `crates/pine/tests/golden` is classified below.
+Numeric denominators describe separate evidence kinds and must not be added
+into a single oracle-parity claim.
+
+| Files | Pine test execution or evidence role |
+| --- | --- |
+| `oracle/*.csv` (24 files) | C90 `combined_offline_golden_parity`: 1,920 proxy cells, absolute plus relative tolerance; all compared |
+| `ir/native-kernels.csv` | C90: 3,072 native pre-IR cells through public Pine compilation, repeated preview and commit; exact finite bits and NaN identity |
+| `ir/rollback.csv` | `slot_ir_commit_preview_parity`: authored transaction/history sequence, including varip preview progression |
+| `types/scalars.csv`, `version/{v5,v6}.csv`, `libraries/main.csv`, `semantics/{conditional,loop}.csv` | C90 additionally compares 100 retained cells, independently of the 1,920-cell oracle denominator; original named child tests also execute these files |
+| `calendar/fields.csv` | `calendar_from_bar_time`: 42 authored date-field cells, timestamp and fixed-offset fixtures |
+| `candle_plots/plots.csv` | `candle_and_bar_plot_parity`: three authored OHLC/color rows for two output channels, preview/commit/reset comparisons |
+| `app-*.txt` (9 files) | C92 and `oracle_baseline_and_determinism`: exact structural snapshots; direct oracle coverage remains 0/9 |
+| `corpus-report.txt` | `corpus_measurement_baseline`: exact deterministic load/error/coverage report |
+| `oracle-report.txt` | Historical child-0 report, retained unchanged: 1,344/1,920 matches and 576 rejected cells; current behavior is explicitly different |
+| `semantics/conditional-proxy.csv` | Historical conditional proxy observation (1,0,4,0,9), intentionally different from the approved eager policy (1,0,6,0,15); not an equality golden for current semantics |
+| `libraries/mixed.csv` | Authored fixture committed before implementation; execution pending collection integration |
+| `calendar/README.md`, `candle_plots/README.md`, `libraries/README.md`, `version/provenance.md` | Provenance and fixture interpretation, not executable output data |
+
+The native fixture audit exposed and corrected the VWMA registration: public
+`ta.vwma(source, length)` obtains volume from the input bar, matching its evaluator
+and documented contract. No oracle implementation was copied or translated.
+The collection child's additional goldens must join this inventory after integration.

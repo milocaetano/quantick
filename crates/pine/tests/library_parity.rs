@@ -150,3 +150,70 @@ fn nested_shallow_copy_and_polymorphic_fields() {
     }
     script.on_close(&bar, &mut ctx).unwrap();
 }
+
+#[test]
+fn object_declarations_validate_unused_defaults_and_receivers() {
+    for body in [
+        "type Point\n    float x = \"bad\"",
+        "type Point\n    bool x = na",
+        "method read(object) => object",
+        "method read() => 1",
+    ] {
+        assert!(
+            quantick_pine::compile(
+                &format!("//@version=6\nindicator(\"reject\")\n{body}\n"),
+                "reject"
+            )
+            .is_err(),
+            "{body}"
+        );
+    }
+    assert!(quantick_pine::compile("//@version=6\nindicator(\"bool\")\ntype Flag\n    bool value\nf = Flag.new()\nplot(f.value ? 1 : 0)\n", "bool").is_ok());
+}
+
+#[test]
+fn library_private_names_and_field_labels_do_not_escape() {
+    let library = "//@version=6\nlibrary(\"Scope\")\nvalue = 7.0\nexport type Point\n    float value = 2.0\nmethod secret(Point self) => self.value\nexport read(Point point) => point.secret() + value\nexport identity(float value) => value\nexport relay() => identity(value = 4)\n";
+    let source = "//@version=6\nindicator(\"scope\")\nimport local/Scope/1 as scope\nvalue = 20.0\np = scope.Point.new()\nplot(scope.read(p))\nplot(scope.identity(value = 3))\nplot(scope.relay())\nplot(value)\n";
+    let compiled = compile_with_libraries(source, "scope", |_| Some(library.into())).unwrap();
+    let mut script = ScriptIndicator::new(compiled, source);
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 2.0,
+        high: 2.0,
+        low: 2.0,
+        close: 2.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[0.0],
+    };
+    assert_eq!(
+        script.preview(&bar, &mut ctx).unwrap().values,
+        vec![9.0, 3.0, 4.0, 20.0]
+    );
+    for call in [
+        "p.secret()",
+        "scope.secret(p)",
+        "secret(p)",
+        "qlib0_secret(p)",
+    ] {
+        assert!(
+            compile_with_libraries(&format!("{source}plot({call})\n"), "scope", |_| Some(
+                library.into()
+            ))
+            .is_err(),
+            "{call}"
+        );
+    }
+    assert!(
+        compile_with_libraries(source, "scope", |_| Some(
+            "export read(float x) => x".into()
+        ))
+        .is_err()
+    );
+}
