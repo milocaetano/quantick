@@ -1149,7 +1149,8 @@ impl BookEngine {
             &request.closed,
             request.partial.as_ref(),
             live_edge,
-        );
+        )
+        .with_lane_lead_ms(request.tape_lead_ms(live_edge));
         let timeline = if self.config.native_tape() {
             timeline.with_full_lane_coverage()
         } else {
@@ -1534,6 +1535,7 @@ mod tests {
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         };
         let frame = |projection: HeatmapProjection| VisibleOrderflow {
             projection: Arc::new(projection),
@@ -2219,6 +2221,7 @@ mod tests {
             tape_level_ticks,
             candle_level_ticks,
             lane_bars: vec![(900, 1_100)],
+            tape_lead_share: 0.0,
         };
         let engine_with = |dots: bool| {
             let mut engine = BookEngine::new("BTCUSDT");

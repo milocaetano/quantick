@@ -184,7 +184,11 @@ fn layer_visibility_survives_a_restart() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.runtime.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let mask = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
@@ -207,7 +211,10 @@ fn layer_visibility_survives_a_restart() {
     app.layer_wiring().maintain(&egui::Context::default());
     assert_eq!(
         app.runtime.workspace.layers().mask(),
-        app.active_tab().flow_pane.layer_mask(&app.runtime.style),
+        app.active_tab()
+            .flow_pane
+            .layer_read()
+            .mask(&app.runtime.style),
         "a settled canvas writes nothing further"
     );
 
@@ -256,7 +263,11 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.runtime.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let mask = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     app.layer_wiring().maintain(&egui::Context::default());

@@ -93,7 +93,11 @@ pub(super) fn apply_launch_phase(
     // An env var is not a user edit: what the autostart hooks switched on
     // must not be written back as though the user had asked for it every
     // launch from now on. Same rule the indicator state follows.
-    let staged_layers = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let staged_layers = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);

@@ -25,7 +25,7 @@
 //!   them, which is the claim.
 //!
 //! The application thread is served through the `#[cfg(test)]` seams in
-//! `control/gateway/retry_seams.rs` where a test has to see what reached it:
+//! `control/gateway/tests/retry_seams_tests.rs` where a test has to see what reached it:
 //! [`crate::control::ServedRequest::began`] is the flag the idempotency store's
 //! unknown-outcome branch reads, so "the retry did not act" is asserted on
 //! exactly the thing that decides it.

@@ -157,7 +157,8 @@ fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
     let (layer, on) = some_layer(&app, edited, 0);
     let tab = app.runtime.tabs.by_id_mut(edited).expect("an open tab");
     tab.flow_pane
-        .apply_layer_states(&std::collections::BTreeMap::from([(layer, !on)]));
+        .layer_write()
+        .apply_states(&std::collections::BTreeMap::from([(layer, !on)]));
     frames(&mut app, 3);
     observe_tab(&mut app, other);
 
@@ -444,7 +445,9 @@ fn a_context_pane_layer_edit_lands_on_that_pane_in_the_copy() {
         .find(|known| known.id() == layer)
         .expect("a registered layer");
     let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
-    tab.time_panes[0].apply_layer_states(&std::collections::BTreeMap::from([(layer_id, !was)]));
+    tab.time_panes[0]
+        .layer_write()
+        .apply_states(&std::collections::BTreeMap::from([(layer_id, !was)]));
     observe_tab(&mut app, first);
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(first).1, "the edit marks the tab");

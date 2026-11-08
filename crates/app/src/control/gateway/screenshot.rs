@@ -1,4 +1,9 @@
 //! Native frame admission and delivery, pinned to one market window.
+//!
+//! Immediate Glow child viewports do not service Screenshot commands in eframe
+//! 0.29. A child target captures only its requested final paint, using the
+//! same renderer readback as the root Screenshot path. No callbacks or GPU
+//! reads run idle.
 use super::server::elapsed_us_since;
 use super::{
     CONTROL_MAX_SCREENSHOT_WAITERS, CONTROL_SCREENSHOT_GRACE_MS, ControlAccess, RawScreenshot,
@@ -7,19 +12,26 @@ use super::{
 use crate::app::ControlWindow;
 use eframe::egui;
 use quantick_control::{
-    limits::{CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME},
+    limits::{
+        CONTROL_SCREENSHOT_MAX_PIXELS, CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME,
+    },
     wire::WireU64,
 };
+use quantick_control_host::window_capture::CaptureTicket;
 use quantick_control_schema::scene::SceneSnapshot;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+#[path = "tests/rendered_capture_tests.rs"]
+mod rendered_capture_tests;
 
 /// One UI-frame owner, docked on ControlAccess as a single field.
 pub(super) struct CaptureService {
     pub screenshot: Option<RawScreenshot>,
     pub frames: quantick_control_host::window_capture::WindowFrames<PaintedScene, RawScreenshot>,
-    pub rendered_tx: crossbeam_channel::Sender<super::rendered_capture::RenderedFrame>,
-    pub rendered_rx: crossbeam_channel::Receiver<super::rendered_capture::RenderedFrame>,
+    pub rendered_tx: crossbeam_channel::Sender<RenderedFrame>,
+    pub rendered_rx: crossbeam_channel::Receiver<RenderedFrame>,
     pub served: usize,
     pub service_us: u64,
     pub awaiting: std::collections::VecDeque<UiRequest>,
@@ -325,7 +337,7 @@ impl ControlAccess {
         if window.get() == 0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
         } else {
-            self.queue_rendered_capture(ctx, window, ticket);
+            self.captures.queue_rendered_capture(ctx, window, ticket);
         }
         ctx.request_repaint();
     }
@@ -359,5 +371,88 @@ impl ControlAccess {
             self.captures.local_window = None;
         }
         self.captures.awaiting.clear();
+    }
+}
+
+pub(super) struct RenderedFrame {
+    window: WireU64,
+    generation: u64,
+    image: Arc<egui::ColorImage>,
+    pixels_per_point: f32,
+}
+struct RenderCapture {
+    window: WireU64,
+    ticket: CaptureTicket,
+    sender: crossbeam_channel::Sender<RenderedFrame>,
+}
+impl RenderCapture {
+    fn publish(&self, size: [u32; 2], scale: f32, read: impl FnOnce() -> egui::ColorImage) {
+        if !self.ticket.is_active()
+            || self.sender.is_full()
+            || size.contains(&0)
+            || u64::from(size[0]).saturating_mul(u64::from(size[1])) > CONTROL_SCREENSHOT_MAX_PIXELS
+        {
+            return;
+        }
+        let image = Arc::new(read());
+        if image.size != [size[0] as usize, size[1] as usize] || !self.ticket.is_active() {
+            return;
+        }
+        let _ = self.sender.try_send(RenderedFrame {
+            window: self.window,
+            generation: self.ticket.generation(),
+            image,
+            pixels_per_point: scale,
+        });
+    }
+}
+impl CaptureService {
+    fn queue_rendered_capture(&self, ctx: &egui::Context, window: WireU64, ticket: CaptureTicket) {
+        let capture = RenderCapture {
+            window,
+            ticket,
+            sender: self.rendered_tx.clone(),
+        };
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Debug,
+            egui::Id::new("native_capture_final_paint"),
+        ));
+        // Appended after all target drawing; Debug is egui's last paint order.
+        // Explicitly place this final layer above any debug layers already drawn.
+        ctx.move_to_top(painter.layer_id());
+        painter.add(egui::PaintCallback {
+            rect: ctx.screen_rect(),
+            callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |info, painter| {
+                capture.publish(info.screen_size_px, info.pixels_per_point, || {
+                    painter.read_screen_rgba(info.screen_size_px)
+                });
+            })),
+        });
+    }
+    pub(super) fn harvest_rendered(&mut self, app: &mut ControlWindow) {
+        while let Ok(frame) = self.rendered_rx.try_recv() {
+            let target = frame.window;
+            let image = frame.image;
+            let raw = RawScreenshot {
+                window_id: Some(target),
+                source_window_id: Some(target),
+                width_px: u32::try_from(image.size[0]).unwrap_or(0),
+                height_px: u32::try_from(image.size[1]).unwrap_or(0),
+                pixels_per_point: frame.pixels_per_point,
+                rgba: super::evidence::ScreenshotPixels::new(move || {
+                    image
+                        .pixels
+                        .iter()
+                        .flat_map(egui::Color32::to_srgba_unmultiplied)
+                        .collect()
+                }),
+            };
+            if self
+                .frames
+                .accept_generation(target, target, frame.generation, raw)
+            {
+                app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
+            }
+        }
     }
 }

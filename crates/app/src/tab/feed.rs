@@ -394,7 +394,7 @@ impl Tab {
 
     fn set_candle_aggression(&mut self, on: bool) {
         let state = std::collections::BTreeMap::from([(ChartLayer::CandleAggression, on)]);
-        self.flow_pane.apply_layer_states(&state);
+        self.flow_pane.layer_write().apply_states(&state);
     }
 
     /// Open wearing the layout the feed declares, if it declares one.
