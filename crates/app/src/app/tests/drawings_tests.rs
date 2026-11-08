@@ -2903,7 +2903,7 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
 
-    // Automatic placement now sends the panel to a chart corner (§D3),
+    // Automatic placement opens the panel beside the object (§D3),
     // deliberately clear of the object — so park it over the stroke by
     // hand. What this proves is pointer routing over an opaque panel, not
     // where the panel opens.
@@ -3576,7 +3576,7 @@ fn the_object_manager_opens_beside_the_rail() {
 /// failure the whole tool exists to avoid, in the only moment it is used
 /// under pressure.
 #[test]
-fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
+fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // tick(2) with an odd trade count: the last print leaves a bar open,
     // which `app_with_history`'s tick(1) never does.
     let (mut app, evt_tx, _commands, _book) = test_app();
@@ -3607,8 +3607,31 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     let right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
+    // Free by default: without the magnet the mark keeps the cursor's price.
+    let before = app.active_tab().flow_pane.drawings.items().len();
+    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+    click_chart(&mut app, &ctx, egui::pos2(x, 200.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 1,
+        "the free click placed a new mark"
+    );
+    let free = app
+        .active_tab()
+        .flow_pane
+        .drawings
+        .items()
+        .last()
+        .map(|mark| mark.points[0].price);
+
+    app.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 2,
+        "the magnetic click placed a new mark"
+    );
     let placed = app.active_tab().flow_pane.drawings.items().last();
     let Some(placed) = placed else {
         panic!("the mark was not placed on the forming bar");
@@ -3630,6 +3653,11 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
         (anchor.price - low).abs() < 1e-9,
         "the mark must hang from the forming bar's low ({low}), not the cursor ({})",
         anchor.price
+    );
+    let free = free.expect("the free mark was placed");
+    assert!(
+        (free - low).abs() > 1e-6,
+        "without the magnet the mark stays at the cursor ({free}), off the low ({low})"
     );
 }
 
@@ -4288,6 +4316,16 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
             .iter()
             .any(|text| text.contains("Rectangle settings")),
         "the settings window must be visible before the resize gesture"
+    );
+    // It opens beside the rectangle, never on it (§D3), even though its
+    // drawn width is not the one the first placement assumed.
+    let panel = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+        .expect("the inspector is open");
+    let drawn = egui::Rect::from_two_pos(first_anchor, second_anchor);
+    assert!(
+        !panel.intersects(drawn),
+        "the panel must not cover the drawing it configures: {panel:?} vs {drawn:?}"
     );
 
     drag_chart(&mut app, &ctx, first_anchor, egui::pos2(560.0, 240.0));

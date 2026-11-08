@@ -6,7 +6,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
-Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a slate `#434A52` plot with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#B5832B`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a slate `#434A52` plot with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#B5832B`, buy/sell arrow marks TradingView green `#089981` and red `#F23645`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
 
 
 ## Bookmap surface
@@ -301,7 +301,8 @@ markers (`theme` or `explicit`); missing legacy markers mean explicit.
 
 New drawings use semantic `drawing_default`, buy/sell marks use
 `drawing_buy`/`drawing_sell`, anchored VWAP uses `drawing_vwap`, and fixed-range
-profiles use `drawing_profile`. Light supplies amber strokes and text, translucent
+profiles use `drawing_profile`. Light supplies amber strokes and text (green and
+red for buy/sell marks), translucent
 fills derived from those strokes, and a white `drawing_readout_plate`. Its profile
 source remains `#7A8EC2`, calibrated to the earlier muted blue-gray histogram:
 the reference's approximately `#B1BCD9` fill already includes the existing 0.55

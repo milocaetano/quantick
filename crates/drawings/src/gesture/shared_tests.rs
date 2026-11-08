@@ -86,3 +86,46 @@ fn an_instant_past_the_newest_closed_bar_still_fades() {
 
     assert!(clamped);
 }
+
+/// A magnetic mark grabbed by its body on a mirror pane is dragged by its
+/// one anchor, so it lands on the bar's extreme under the hand as on its own
+/// pane; a free mark, or any other body, still translates.
+#[test]
+fn a_magnetic_mark_body_drag_on_a_mirror_moves_its_anchor() {
+    let pick = |snap| SharedPick {
+        owner: 1,
+        index: 3,
+        anchor: None,
+        locked: false,
+        magnet: false,
+        snap,
+    };
+    for snap in [AnchorSnap::BarLow, AnchorSnap::BarHigh] {
+        assert_eq!(
+            shared_drag_of(&pick(snap), true),
+            SharedDrag::Anchor {
+                index: 3,
+                anchor: 0
+            }
+        );
+        assert_eq!(
+            shared_drag_of(&pick(snap), false),
+            SharedDrag::Body { index: 3 }
+        );
+    }
+    assert_eq!(
+        shared_drag_of(&pick(AnchorSnap::Pointer), true),
+        SharedDrag::Body { index: 3 }
+    );
+    let handle = SharedPick {
+        anchor: Some(1),
+        ..pick(AnchorSnap::Pointer)
+    };
+    assert_eq!(
+        shared_drag_of(&handle, false),
+        SharedDrag::Anchor {
+            index: 3,
+            anchor: 1
+        }
+    );
+}

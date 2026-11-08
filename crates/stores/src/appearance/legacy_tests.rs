@@ -88,10 +88,14 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
         let store = AppearanceStore::open(path.clone());
         assert_eq!(store.source(), Some(known));
         assert_eq!(store.builtin(), None);
-        assert_eq!(
-            store.resolved().color(Token::ChartGrid),
-            store.resolved().color(Token::Control)
-        );
+        // A source from before `chart_grid` existed draws its grid in the
+        // control color; a later one authors its own.
+        if !known.contains("chart_grid") {
+            assert_eq!(
+                store.resolved().color(Token::ChartGrid),
+                store.resolved().color(Token::Control)
+            );
+        }
         assert_eq!(load(&path).unwrap().source(), Some(known));
         let choice_path = scratch.join("appearance.toml.choice.toml");
         for custom in [

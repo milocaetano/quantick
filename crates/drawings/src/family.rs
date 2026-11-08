@@ -22,10 +22,9 @@ pub enum Constrain {
 ///
 /// Almost every tool answers [`AnchorSnap::Pointer`]: the trader chose the
 /// price by pointing at it, and the OHLC magnet is theirs to switch on. A
-/// *mark* is the exception — it is a note about a bar, not a level, and it
-/// only reads as a mark when it sits clear of the candle it belongs to. It
-/// snaps whether or not the magnet is on, because a mark floating inside a
-/// candle body is the failure the tool exists to avoid.
+/// *mark* lands anywhere too, but its magnet is its own rule: switched on
+/// (the rail's, or the object's own), it hangs from the bar's low or high
+/// rather than the nearest of the four OHLC prices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AnchorSnap {
     #[default]
@@ -51,7 +50,13 @@ impl AnchorSnap {
     /// this anchor at all. A tool that snaps by its own rule has none.
     #[must_use]
     pub fn takes_magnet(self) -> bool {
-        matches!(self, Self::Pointer | Self::VisibleLevels)
+        !matches!(self, Self::NearestOhlc)
+    }
+
+    /// Whether the magnet hangs this anchor from the bar's low or high.
+    #[must_use]
+    pub fn is_bar_extreme(self) -> bool {
+        matches!(self, Self::BarLow | Self::BarHigh)
     }
 }
 
