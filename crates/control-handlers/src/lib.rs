@@ -42,6 +42,7 @@ pub mod orderflow_settings;
 pub mod pnl_display;
 pub mod price_tag_progress;
 pub mod recovery;
+pub mod retry_matrix;
 pub mod schema_documents;
 pub mod semantic;
 pub mod session;

@@ -28,7 +28,8 @@
 //! Derived from the registry, never written by hand: which capabilities are
 //! mutable, the policy each declares, what the gateway therefore does with a
 //! key, and whether any grant reaches the capability at all. Written in the
-//! family module, because no registry knows it: which read reconciles a call. [`drift`] is what keeps the written half
+//! family module, because no registry knows it: which read reconciles a call. The drift check in
+//! `quantick_control_handlers::retry_matrix` is what keeps the written half
 //! honest against the derived half — a mutable capability with no row, a row
 //! for nothing, a declared policy the descriptor no longer publishes, a
 //! readback capability or scope the registry does not carry or that can
@@ -42,20 +43,15 @@
 //!
 //! # Cost
 //!
-//! None at run time. The table is `const` data; [`drift`] and the renderer run
+//! None at run time. The table is `const` data; the drift check and the
+//! renderer in `quantick_control_handlers::retry_matrix` run
 //! only from `main`'s dump path, before a window exists, and from tests.
 
-mod drift;
 mod reach;
-mod render;
 mod rows;
 
 pub use crate::readback::*;
-pub use drift::{
-    Drift, MAX_SCHEMA_HOPS, branches, drift, read_needs, readable, row_drift, schema_has_path,
-};
 pub use reach::{Holder, ceiling, holder, profiles_in_ceiling_order};
-pub use render::{PREAMBLE, RenderedRow, enforced, policy_name, render, summary};
 pub use rows::{FAMILIES, READBACKS, readback};
 
 /// The banner the generated file opens with. Load-bearing, as the inventory's
