@@ -396,12 +396,12 @@ fn a_dynamic_offset_raises_the_floor_instead_of_replacing_it() {
 
 #[test]
 fn a_refused_family_keeps_its_reason_as_a_bare_name() {
-    // `dayofweek` is a variable in Pine, so it reaches the name arm rather
+    // `second` is a variable in Pine, so it reaches the name arm rather
     // than the call or member arms; "unknown name" would be the wrong reason
     // for a name the dialect knows and refuses.
-    let errors = compile_err("//@version=5\nindicator(\"t\")\nplot(dayofweek)\n");
+    let errors = compile_err("//@version=5\nindicator(\"t\")\nplot(second)\n");
     assert!(
-        errors.iter().any(|e| e.code == ErrorCode::PineNoCalendar),
+        errors.iter().any(|e| e.code == ErrorCode::PineUnsupported),
         "{errors:?}"
     );
 }

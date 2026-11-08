@@ -48,6 +48,8 @@ pub enum Builtin {
     Time,
     /// `time_close`
     TimeClose,
+    /// Calendar variable or function.
+    Calendar(crate::calendar::CalendarField),
     /// `barstate.isconfirmed`
     BarstateIsConfirmed,
     /// `barstate.islast`
@@ -214,6 +216,30 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("last_bar_index", Builtin::LastBarIndex),
     ("time", Builtin::Time),
     ("time_close", Builtin::TimeClose),
+    (
+        "year",
+        Builtin::Calendar(crate::calendar::CalendarField::Year),
+    ),
+    (
+        "month",
+        Builtin::Calendar(crate::calendar::CalendarField::Month),
+    ),
+    (
+        "dayofmonth",
+        Builtin::Calendar(crate::calendar::CalendarField::DayOfMonth),
+    ),
+    (
+        "dayofweek",
+        Builtin::Calendar(crate::calendar::CalendarField::DayOfWeek),
+    ),
+    (
+        "hour",
+        Builtin::Calendar(crate::calendar::CalendarField::Hour),
+    ),
+    (
+        "minute",
+        Builtin::Calendar(crate::calendar::CalendarField::Minute),
+    ),
     ("barstate.isconfirmed", Builtin::BarstateIsConfirmed),
     ("barstate.islast", Builtin::BarstateIsLast),
     ("ta.sma", Builtin::TaSma),
@@ -376,9 +402,9 @@ pub fn rejection_of(name: &str) -> Option<(crate::error::ErrorCode, &'static str
              consumes their plots through the host instead",
         ),
         "array" | "matrix" | "map" | "table" => crate::collections::rejection(),
-        "year" | "month" | "dayofmonth" | "dayofweek" | "hour" | "minute" | "second" => (
-            ErrorCode::PineNoCalendar,
-            "calendar builtins are not supported: activity-sampled bars are not on a clock",
+        "second" => (
+            ErrorCode::PineUnsupported,
+            "second is not supported by this calendar subset",
         ),
         "plotcandle" | "plotbar" => crate::candle_plots::rejection(),
         "max_bars_back" => (
@@ -457,7 +483,7 @@ mod tests {
         assert!(message.contains("activity-sampled"));
         assert!(rejection_of("strategy.entry").is_some());
         assert!(rejection_of("array.new_float").is_some());
-        assert!(rejection_of("dayofweek").is_some());
+        assert!(rejection_of("dayofweek").is_none());
         assert!(rejection_of("close").is_none());
     }
 

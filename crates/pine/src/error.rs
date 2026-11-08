@@ -72,8 +72,6 @@ pub enum ErrorCode {
     PineNoStrategy,
     /// Collections (`array.* matrix.* map.* table.*`) are not in v1.
     PineNoCollections,
-    /// Calendar builtins / time-coordinate drawing are not in v1.
-    PineNoCalendar,
     /// Any other rejected construct (`plotcandle`, `xloc.bar_time`, …).
     PineUnsupported,
     /// A name that resolves to nothing (with a did-you-mean note).
@@ -112,7 +110,6 @@ impl ErrorCode {
         ErrorCode::PineNoTimeframe,
         ErrorCode::PineNoStrategy,
         ErrorCode::PineNoCollections,
-        ErrorCode::PineNoCalendar,
         ErrorCode::PineUnsupported,
         ErrorCode::PineUnknownName,
         ErrorCode::PineArity,
@@ -136,7 +133,6 @@ impl ErrorCode {
             ErrorCode::PineNoTimeframe => "PINE_NO_TIMEFRAME",
             ErrorCode::PineNoStrategy => "PINE_NO_STRATEGY",
             ErrorCode::PineNoCollections => "PINE_NO_COLLECTIONS",
-            ErrorCode::PineNoCalendar => "PINE_NO_CALENDAR",
             ErrorCode::PineUnsupported => "PINE_UNSUPPORTED",
             ErrorCode::PineUnknownName => "PINE_UNKNOWN_NAME",
             ErrorCode::PineArity => "PINE_ARITY",
