@@ -1,0 +1,15 @@
+//@version=6
+indicator("Mixed slice history")
+type Node
+    array<float> window
+    map<string, Node> names
+parent = array.from(close, close + 1)
+node = Node.new(parent.slice(0, 1), map.new<string, Node>())
+node.names.put("self", node)
+previous = node[1]
+prior = bar_index > 0 ? previous.names.get("self").window.get(0) : 0
+copy = node.copy()
+copy.window.set(0, close + 2)
+plot(node.window.get(0))
+plot(prior)
+plot(copy.names.get("self") == node ? 1 : 0)
