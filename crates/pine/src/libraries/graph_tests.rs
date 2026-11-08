@@ -1,14 +1,18 @@
 //! Authored mixed-graph contracts: cycles, alias identity and preview relocation.
 use super::*;
 fn object(arena: &mut Arena, fields: &[Value]) -> Value {
-    let record = arena.allocate(4);
+    let record = arena.allocate(7);
     arena.words[record] = arena.words[31];
     arena.words[31] = record as u64;
     arena.replace(record + 1, fields.to_vec());
+    arena.replace(record + 4, vec![Value::Bool(true); fields.len()]);
     Value::UserObject((record + 1) as u32)
 }
 fn handle(value: &Value) -> usize {
-    match value { Value::UserObject(h) | Value::Collection(_, h) => *h as usize, _ => panic!("reference") }
+    match value {
+        Value::UserObject(h) | Value::Collection(_, h) => *h as usize,
+        _ => panic!("reference"),
+    }
 }
 #[test]
 fn mixed_cycle_reachability_reclamation_and_first_preview() {
@@ -42,7 +46,10 @@ fn object_only_snapshot_shares_and_varip_updates_existing_alias() {
     state.arena.make_mut().set(GLOBALS, 1, root.clone());
     let snapshot = state.snapshot();
     assert!(matches!(state.arena, crate::collections::Image::Shared(_)));
-    state.arena.make_mut().set(handle(&root), 0, Value::Num(9.0));
+    state
+        .arena
+        .make_mut()
+        .set(handle(&root), 0, Value::Num(9.0));
     state.restore(snapshot, &[VarMode::Varip, VarMode::Var]);
     assert_eq!(state.arena.get(GLOBALS, 0), state.arena.get(GLOBALS, 1));
     assert_eq!(state.arena.get(handle(&root), 0), Value::Num(9.0));

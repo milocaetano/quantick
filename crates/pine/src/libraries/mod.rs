@@ -20,6 +20,7 @@ pub(crate) struct Field {
     pub type_name: String,
     pub default: NodeId,
     pub explicit_default: bool,
+    pub varip: bool,
 }
 
 /// Resolved object operation; field and type identities are compile-time slots.
@@ -33,4 +34,32 @@ pub enum ObjectOp {
     Set(u32),
     /// Copy an object's fields into a fresh reference.
     Copy,
+}
+
+/// Resolve generic object collection constructors to immutable numeric type slots.
+pub(crate) fn collection_constructor(
+    name: &str,
+    ast: &crate::ast::Ast,
+) -> Option<crate::collections::Op> {
+    use crate::collections::{Element, Op};
+    let user = |name: &str| {
+        ast.user_types
+            .iter()
+            .position(|ty| ty.name == name)
+            .map(|i| Element::User(i as u32))
+    };
+    if let Some(name) = name.strip_prefix("array.new_") {
+        return user(name).map(Op::NewArray);
+    }
+    let name = name.strip_prefix("map.new_")?;
+    let (key, value) = name.split_once('_')?;
+    let key = match key {
+        "int" => Element::Int,
+        "float" => Element::Float,
+        "bool" => Element::Bool,
+        "string" => Element::String,
+        "color" => Element::Color,
+        _ => return None,
+    };
+    Some(Op::NewMap(key, user(value)?))
 }

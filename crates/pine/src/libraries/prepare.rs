@@ -31,6 +31,7 @@ pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<Pin
                 field.type_name.as_str(),
                 "int" | "float" | "bool" | "string" | "color" | "line" | "box" | "label"
             ) && !ast.user_types.iter().any(|ty| ty.name == field.type_name)
+                && !valid_collection_field(&field.type_name, ast)
             {
                 errors.push(PineError::new(
                     ErrorCode::PineType,
@@ -49,7 +50,9 @@ pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<Pin
                         | NodeKind::Na
                 )
             };
-            let valid = literal(field.default)
+            let builtin_type = builtin_default(ast, field.default);
+            let valid = builtin_type.is_some()
+                || literal(field.default)
                 || matches!(ast.node(field.default).kind, NodeKind::Unary { op: crate::ast::UnOp::Neg, operand } if matches!(ast.node(operand).kind, NodeKind::Int(_) | NodeKind::Float(_)));
             let value = match ast.node(field.default).kind {
                 NodeKind::Unary {
@@ -58,14 +61,18 @@ pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<Pin
                 } => &ast.node(operand).kind,
                 ref value => value,
             };
-            let compatible = match value {
-                NodeKind::Na => field.type_name != "bool" || !two_state_bool,
-                NodeKind::Int(_) => matches!(field.type_name.as_str(), "int" | "float"),
-                NodeKind::Float(_) => field.type_name == "float",
-                NodeKind::Bool(_) => field.type_name == "bool",
-                NodeKind::Str(_) => field.type_name == "string",
-                NodeKind::Color(_) => field.type_name == "color",
-                _ => false,
+            let compatible = if let Some(kind) = builtin_type {
+                field.type_name == kind || (kind == "int" && field.type_name == "float")
+            } else {
+                match value {
+                    NodeKind::Na => field.type_name != "bool" || !two_state_bool,
+                    NodeKind::Int(_) => matches!(field.type_name.as_str(), "int" | "float"),
+                    NodeKind::Float(_) => field.type_name == "float",
+                    NodeKind::Bool(_) => field.type_name == "bool",
+                    NodeKind::Str(_) => field.type_name == "string",
+                    NodeKind::Color(_) => field.type_name == "color",
+                    _ => false,
+                }
             };
             if valid && !compatible {
                 errors.push(PineError::new(
@@ -78,7 +85,7 @@ pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<Pin
                 errors.push(PineError::new(
                     ErrorCode::PineType,
                     span,
-                    "user-object defaults must be literals",
+                    "user-object defaults must be literals or builtin variables",
                 ));
             }
         }
@@ -146,5 +153,37 @@ pub(crate) fn prepare(ast: &mut Ast, two_state_bool: bool) -> Result<(), Vec<Pin
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn valid_collection_field(name: &str, ast: &Ast) -> bool {
+    let scalar = |name| matches!(name, "int" | "float" | "bool" | "string" | "color");
+    let value = |name| scalar(name) || ast.user_types.iter().any(|ty| ty.name == name);
+    let words: Vec<_> = name.split_whitespace().collect();
+    match words.as_slice() {
+        ["array", element] => value(element),
+        ["map", key, element] => scalar(key) && value(element),
+        _ => false,
+    }
+}
+
+fn builtin_default(ast: &Ast, node: crate::ast::NodeId) -> Option<&'static str> {
+    use crate::builtins::Builtin::*;
+    let name = match &ast.node(node).kind {
+        NodeKind::Name(name) => name.clone(),
+        NodeKind::Member { object, field } => {
+            let NodeKind::Name(name) = &ast.node(*object).kind else {
+                return None;
+            };
+            format!("{name}.{field}")
+        }
+        _ => return None,
+    };
+    match crate::builtins::Builtin::lookup(&name)? {
+        BarIndex | LastBarIndex | Time | TimeClose | Calendar(_) => Some("int"),
+        BarstateIsConfirmed | BarstateIsLast => Some("bool"),
+        Open | High | Low | Close | Volume | BuyVolume | SellVolume | Delta | Cvd | TradeCount
+        | Hl2 | Hlc3 | Ohlc4 | Hlcc4 | TaTr => Some("float"),
+        _ => None,
     }
 }

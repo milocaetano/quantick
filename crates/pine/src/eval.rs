@@ -87,9 +87,6 @@ impl ScriptState {
         crate::collections::restore_varip(&self.arena, arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
-                if !matches!(self.arena.get(GLOBALS, slot), Value::Collection(..)) {
-                    arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
-                }
                 arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }

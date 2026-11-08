@@ -425,6 +425,12 @@ impl Compiler {
                 Resolution::Object(crate::libraries::ObjectOp::New(index as u32));
             return;
         }
+        if let Some(op) = crate::libraries::collection_constructor(&name, &self.ast) {
+            let builtin = Builtin::Collection(op);
+            self.resolutions[callee.index()] = Resolution::Builtin(builtin);
+            self.builtin_call(id, builtin, args, ctx);
+            return;
+        }
         if let Some(builtin) = Builtin::lookup(&name) {
             self.resolutions[callee.index()] = Resolution::Builtin(builtin);
             self.builtin_call(id, builtin, args, ctx);

@@ -55,6 +55,7 @@ pub type FunctionDispatch = std::collections::BTreeMap<(u32, usize), (u32, u32, 
 /// Type-directed lowering without runtime source-name lookups.
 #[derive(Clone, Default)]
 pub struct TypeProgram {
+    pub object_field_modes: Vec<Vec<bool>>,
     /// Per-call-context user-field slots for polymorphic functions.
     pub object_ops: std::collections::BTreeMap<(u32, usize), crate::libraries::ObjectOp>,
     pub(crate) version: crate::version::Version,

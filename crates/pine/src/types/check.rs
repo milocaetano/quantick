@@ -47,6 +47,12 @@ pub(crate) fn validate(
     checker.contexts[0] = (checker.coercions, checker.integer_divisions);
     let (coercions, integer_divisions) = checker.contexts.into_iter().unzip();
     super::Checked {
+        object_field_modes: checker
+            .ast
+            .user_types
+            .iter()
+            .map(|ty| ty.fields.iter().map(|f| f.varip).collect())
+            .collect(),
         version,
         coercions,
         integer_divisions,

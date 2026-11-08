@@ -16,6 +16,7 @@ pub(crate) use storage::{collect, restore_varip};
 /// Element types admitted by the scalar collection constructors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Element {
+    User(u32),
     Int,
     Float,
     Bool,

@@ -397,15 +397,46 @@ fn builtin_field_defaults_evaluate_at_construction() {
     let source = include_str!("fixtures/libraries/defaults.pine");
     let compiled = quantick_pine::compile(source, "defaults").unwrap_or_else(|e| panic!("{e:?}"));
     let mut script = ScriptIndicator::new(compiled, source);
-    for (index, line) in include_str!("golden/libraries/defaults.csv").lines().enumerate() {
+    for (index, line) in include_str!("golden/libraries/defaults.csv")
+        .lines()
+        .enumerate()
+    {
         let expected: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
-        let bar = IndicatorBar { open_time: 0, close_time: 1, open: expected[0], high: expected[0], low: expected[0], close: expected[0], buy_volume: 3.0, sell_volume: 4.0, trade_count: 0.0 };
-        let mut ctx = Ctx { bar_index: index, cvd: &[] };
-        for _ in 0..2 { assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, &expected[1..]); }
+        let bar = IndicatorBar {
+            open_time: 0,
+            close_time: 1,
+            open: expected[0],
+            high: expected[0],
+            low: expected[0],
+            close: expected[0],
+            buy_volume: 3.0,
+            sell_volume: 4.0,
+            trade_count: 0.0,
+        };
+        let mut ctx = Ctx {
+            bar_index: index,
+            cvd: &[],
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                script.preview(&bar, &mut ctx).unwrap().values,
+                &expected[1..]
+            );
+        }
         script.on_close(&bar, &mut ctx).unwrap();
     }
-    for field in ["int value = close", "bool value = volume", "float value = math.abs(close)", "float value = unknown"] {
-        let source = format!("//@version=6\nindicator(\"invalid defaults\")\ntype Unused\n    {field}\nplot(close)\n");
-        assert!(quantick_pine::compile(&source, "invalid").is_err(), "{field}");
+    for field in [
+        "int value = close",
+        "bool value = volume",
+        "float value = math.abs(close)",
+        "float value = unknown",
+    ] {
+        let source = format!(
+            "//@version=6\nindicator(\"invalid defaults\")\ntype Unused\n    {field}\nplot(close)\n"
+        );
+        assert!(
+            quantick_pine::compile(&source, "invalid").is_err(),
+            "{field}"
+        );
     }
 }

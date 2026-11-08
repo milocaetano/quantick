@@ -44,14 +44,10 @@ impl Parser<'_> {
             if self.eat(&Tok::Newline) {
                 continue;
             }
-            let Tok::Ident(type_name) = self.peek().clone() else {
-                break;
-            };
-            self.advance();
-            let Tok::Ident(field_name) = self.peek().clone() else {
-                break;
-            };
-            self.advance();
+            let varip = self.eat(&Tok::KwVarip);
+            let mut words = self.parameter_words()?;
+            let field_name = words.pop()?;
+            let type_name = words.join(" ");
             let explicit_default = self.eat(&Tok::Eq);
             let default = if explicit_default {
                 self.expression()?
@@ -63,6 +59,7 @@ impl Parser<'_> {
                 type_name,
                 default,
                 explicit_default,
+                varip,
             });
             self.end_of_statement();
         }

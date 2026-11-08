@@ -440,8 +440,8 @@ Those proxy observations are not acceptance goldens. Collection goldens are
 independently authored calculations and use the established 1e-8 absolute plus
 1e-8 relative tolerance for fractional statistics.
 
-Nested collection elements, drawing elements and UDT elements are not implemented
-in this scalar stage. Unsupported namespace operations fail at compile time;
+Direct nested collection elements and drawing elements are not implemented.
+User-object elements are supported as described below. Unsupported namespace operations fail at compile time;
 they never silently return a substitute. `array.from` requires positional arguments.
 The independent original fixtures follow the primary
 [array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
@@ -455,14 +455,30 @@ occurs in Pine. Missing keys, import cycles, remote keys and depth beyond 32 fai
 with deterministic diagnostics. The original two-argument `compile` remains
 available for scripts without imports.
 
-`type`, typed fields, literal field defaults, `Type.new(...)`, field reads and
+`type`, typed fields, literal and builtin-variable field defaults, `Type.new(...)`, field reads and
 `:=` writes, `method` definitions and receiver calls use checked object references.
 Assignment aliases references; `object.copy()` creates a shallow copy. Object
 history preserves references. In v6 `object.field[1]` is rejected: use
 `previous = object[1]` followed by `previous.field`, or a temporary field series.
 The v5 field-history form remains supported. User-object mutable fields live in
-the runtime word arena and participate in preview rollback. `varip` fields,
-enums, remote libraries and nonliteral field defaults are not implemented.
+the runtime word arena and participate in preview rollback. A `varip` object
+variable preserves the reference, not every field mutation. Fields declared
+`varip` persist intrabar even through an ordinary `var` object reference; other
+fields of existing objects roll back. Enums, remote libraries and computed field
+defaults are not implemented. Supported builtin defaults include `bar_index`,
+`close` and `volume`, evaluated when the constructor executes.
+
+Arrays and scalar-keyed maps can hold user objects. Object fields may hold arrays
+and maps, including shared slices. Copies are shallow; mixed aliases, cycles and
+history roots are traced together. Object-only snapshots also share the arena
+until the first write. Unreachable object and collection records are reclaimed.
+
+First-ever preview allocation has no prior object image. When a `varip` reference
+retains such a new object, Quantick preserves its constructed graph as the baseline
+for subsequent rollback. This boundary is an explicit Quantick policy, not a
+verified TradingView parity claim. Existing instances always obey field modes.
+The primary [object documentation](https://www.tradingview.com/pine-script-docs/language/objects/)
+distinguishes reference persistence from field persistence.
 
 Local library sources currently use the importing script's Pine version;
 version mismatches are rejected explicitly. Linking is bounded to 128 sources,

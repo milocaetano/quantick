@@ -14,6 +14,44 @@ impl Checker<'_> {
         &self,
         words: &[String],
     ) -> Result<Option<(Base, Option<Qualifier>)>, String> {
+        if words.len() == 1 && words[0].contains(' ') {
+            return self.annotation(
+                &words[0]
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        if matches!(words.first().map(String::as_str), Some("array" | "map")) {
+            let element = |name: &String| {
+                self.annotation(std::slice::from_ref(name))
+                    .and_then(|v| v.map(|v| v.0).ok_or("missing element type".into()))
+            };
+            let scalar = |base: &Base| {
+                matches!(
+                    base,
+                    Base::Int | Base::Float | Base::Bool | Base::String | Base::Color
+                )
+            };
+            return match words {
+                [kind, value] if kind == "array" => {
+                    let value = element(value)?;
+                    if !scalar(&value) && !matches!(value, Base::UserType(_)) {
+                        return Err("unsupported array element type".into());
+                    }
+                    Ok(Some((Base::Array(Box::new(value)), None)))
+                }
+                [kind, key, value] if kind == "map" => {
+                    let key = element(key)?;
+                    let value = element(value)?;
+                    if !scalar(&key) || (!scalar(&value) && !matches!(value, Base::UserType(_))) {
+                        return Err("unsupported map element type".into());
+                    }
+                    Ok(Some((Base::Map(Box::new(key), Box::new(value)), None)))
+                }
+                _ => Err("invalid collection annotation".into()),
+            };
+        }
         if let Some(name) = words.last()
             && self.ast.user_types.iter().any(|ty| &ty.name == name)
         {

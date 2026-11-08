@@ -262,8 +262,8 @@ not a general real-world script success rate.
 Library fixtures are independently authored hand-calculated acceptance data,
 not PineTS verification. C61 covers exact local resolution, references, methods,
 preview rollback, missing/cyclic/remote diagnostics and v5/v6 field history.
-The mixed collection fixture was committed before its implementation and will
-join final acceptance after the collections child integrates.
+The mixed collection fixtures were committed before implementation and execute
+through public compile/preview/commit tests. Final integration acceptance remains pending.
 
 ### Golden execution inventory (integration in progress)
 
@@ -283,7 +283,10 @@ into a single oracle-parity claim.
 | `corpus-report.txt` | `corpus_measurement_baseline`: exact deterministic load/error/coverage report |
 | `oracle-report.txt` | Historical child-0 report, retained unchanged: 1,344/1,920 matches and 576 rejected cells; current behavior is explicitly different |
 | `semantics/conditional-proxy.csv` | Historical conditional proxy observation (1,0,4,0,9), intentionally different from the approved eager policy (1,0,6,0,15); not an equality golden for current semantics |
-| `libraries/mixed.csv` | Authored fixture committed before implementation; execution pending collection integration |
+| `libraries/mixed.csv` | `mixed_object_collection_golden`: shallow aliases across object fields, arrays and maps |
+| `libraries/eager.csv` | `object_eager_reads_preserve_conditional_mutations`: eager reads and conditional field writes |
+| `libraries/{varip_graph,history_graph}.csv` | `mixed_graph_history_and_first_preview_varip`: mixed cycles, first-preview persistent references and slice-backed object history |
+| `libraries/defaults.csv` | `builtin_field_defaults_evaluate_at_construction`: builtin defaults, repeated previews and commits |
 | `calendar/README.md`, `candle_plots/README.md`, `libraries/README.md`, `version/provenance.md` | Provenance and fixture interpretation, not executable output data |
 
 The native fixture audit exposed and corrected the VWMA registration: public
