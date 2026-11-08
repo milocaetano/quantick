@@ -13,11 +13,15 @@ use crate::{
     timezone::TzOffset,
 };
 use eframe::egui;
+use quantick_appearance::Token;
 use quantick_chart::bar_progress::BarProgressReading;
+use quantick_chart::candle_pixels::crisp_or_point as crisp;
+use quantick_chart::time_marks::{self, BarAt, TimeMark};
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
     layers: &[
         quantick_layers::ChartLayer::Grid,
+        quantick_layers::ChartLayer::TimeGrid,
         quantick_layers::ChartLayer::LastPrice,
         quantick_layers::ChartLayer::Crosshair,
         quantick_layers::ChartLayer::PointerPrice,
@@ -38,6 +42,8 @@ pub(in crate::pane) struct GridPass<'a, 'b> {
     pub claims: &'a PriceAxisClaims<'b>,
     pub style: &'a ChartStyle,
     pub snap_horizontal: bool,
+    /// Where the time labels stand this frame; empty while the time grid is off.
+    pub time_grid_xs: &'a [f32],
 }
 pub(in crate::pane) struct LastPricePass<'a> {
     pub painter: &'a egui::Painter,
@@ -75,19 +81,32 @@ fn grid(p: &mut GridPass<'_, '_>) {
         claims,
         style,
         snap_horizontal,
+        time_grid_xs,
     } = *p;
 
-    let grid = egui::Stroke::new(1.0_f32, grid_color(style));
+    // Light draws each line on whole device pixels, as TradingView does.
+    let ppp = painter.ctx().pixels_per_point();
+    let line = |at: f32| crisp(snap_horizontal, at, ppp);
+    if let Some(rgba) = style.canvas.time_grid_rgba() {
+        let color = super::super::painting::color32(rgba);
+        for &x in time_grid_xs {
+            let (line_x, width) = line(x);
+            let stroke = egui::Stroke::new(width, color);
+            painter.vline(line_x, chart_rect.y_range(), stroke);
+        }
+    }
+    let ink = axis_ink(&palette);
     let (lo, hi) = scale.range();
-    let font = palette.axis_font(chart::AXIS_LABEL_FONT_PX);
+    let size = palette.resolved.chart_axes.price_label_size;
+    let font = label_font(&palette, chart::AXIS_LABEL_FONT_PX, size);
     // Measured once per frame, the way the time strip measures its own:
     // every label on this axis is one line of the same font, so one
     // layout answers for all of them.
     let label_height = painter
-        .layout_no_wrap("0".to_owned(), font.clone(), palette.text_muted())
+        .layout_no_wrap("0".to_owned(), font.clone(), ink)
         .size()
         .y;
-    for tick in crate::chart::nice_ticks(lo, hi, 8) {
+    for tick in price_grid_ticks(&palette, lo, hi, chart_rect.height()) {
         let y = scale.y(tick);
         if y < chart_rect.top() || y > chart_rect.bottom() {
             continue;
@@ -95,11 +114,8 @@ fn grid(p: &mut GridPass<'_, '_>) {
         // The *line* is drawn either way: a gridline under a chip is
         // still the grid, and hiding it would put a gap in the chart
         // wherever the pointer went.
-        let line_y = if snap_horizontal {
-            painter.round_to_pixel_center(y)
-        } else {
-            y
-        };
+        let (line_y, width) = line(y);
+        let grid = egui::Stroke::new(width, grid_color(style));
         painter.hline(chart_rect.x_range(), line_y, grid);
         // The chips on this axis are the same font and padding as the
         // labels, so one extent answers for both — unlike the time strip,
@@ -107,16 +123,24 @@ fn grid(p: &mut GridPass<'_, '_>) {
         if pointer_compass::claimed(y, label_height, label_height, claims.heights()) {
             continue;
         }
+        // A label half off the pane reads as clipped, not as a price:
+        // TradingView keeps only the labels whose whole text fits.
+        let (top, bottom) = (chart_rect.top(), chart_rect.bottom());
+        if !(top + label_height / 2.0..=bottom - label_height / 2.0).contains(&y) {
+            continue;
+        }
         painter.text(
             egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
             egui::Align2::LEFT_CENTER,
             pointer_compass::price_text(tick),
             font.clone(),
-            palette.text_muted(),
+            ink,
         );
     }
     // The axis dividing line.
-    painter.vline(axis_x, chart_rect.y_range(), grid);
+    let rule = axis_rule(&palette, style, Token::PriceAxisRule);
+    let (rule_x, width) = crisp(!palette.resolved.dark, axis_x, ppp);
+    painter.vline(rule_x, chart_rect.y_range(), egui::Stroke::new(width, rule));
 }
 fn last_price(p: &mut LastPricePass<'_>) {
     let LastPricePass {
@@ -136,13 +160,11 @@ fn last_price(p: &mut LastPricePass<'_>) {
     if y < chart_rect.top() || y > chart_rect.bottom() {
         return;
     }
-    // Same predicate and same two colours the candle wears, so the chip
-    // and the bar it reports can never disagree about direction.
-    let rgb = if crate::candle_view::is_bullish(bar) {
-        style.candles.bull_outline
-    } else {
-        style.candles.bear_outline
-    };
+    // Same predicate the candle uses, so the chip and the bar it reports can
+    // never disagree about direction; the colours are the theme's choice.
+    let theme = &theme::get(painter.ctx()).resolved;
+    let up = crate::candle_view::is_bullish(bar);
+    let rgb = quantick_chart::price_tag::last_price_rgb(theme, &style.candles, up);
     let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
 
     // Runs through the live strip when one is shown (`axis_x` then sits
@@ -243,6 +265,14 @@ fn pointer(p: &mut PointerPass<'_>) {
     }
 }
 
+/// One frame's time labels, in the font they are written in.
+pub(in crate::pane) type StripMarks = (egui::FontId, Vec<TimeMark>);
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread laid the time labels out.
+    pub(crate) static MARK_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(in crate::pane) struct TimeStripPass<'a> {
     pub painter: &'a egui::Painter,
     pub strip: egui::Rect,
@@ -256,113 +286,123 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub candles_right: Option<f32>,
     pub viewport: &'a crate::viewport::Viewport,
     pub series: quantick_drawings::gesture::PaneSeriesRead<'a>,
-    /// Spans the day separator wrote dates or ticks on; labels stand aside.
-    pub reserved: &'a [(f32, f32)],
-    /// Dates the day separator wrote; a label in one stays a clock.
-    pub named: &'a [quantick_chart::day_turn::WrittenDate],
 }
 impl TimeStripPass<'_> {
-    pub fn paint(&self) {
-        let palette = theme::axes(self.painter.ctx());
-        let Self {
-            painter,
-            strip,
-            start,
-            end,
-            total,
-            chip,
-            ..
-        } = *self;
-        painter.line_segment(
-            [
-                egui::pos2(strip.left(), strip.top()),
-                egui::pos2(strip.right(), strip.top()),
-            ],
-            egui::Stroke::new(1.0_f32, grid_color(self.style)),
-        );
-        let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
-        let y = strip.center().y;
-        let visible = end.saturating_sub(start);
-        if visible == 0 {
-            return;
+    /// The strip's labels this frame, in the font they are written in.
+    ///
+    /// Intraday charts label round instants the way TradingView does
+    /// (`quantick_chart::time_marks`): `HH:MM`, the day number where a day
+    /// turns, the month and the year where those do. A chart cut at a day or
+    /// longer writes its UTC buckets' dates every few bars, as it always has.
+    pub fn marks(&self) -> StripMarks {
+        #[cfg(test)]
+        MARK_RUNS.with(|runs| runs.set(runs.get() + 1));
+        let palette = &theme::axes(self.painter.ctx());
+        let size = palette.resolved.chart_axes.time_label_size;
+        let font = label_font(palette, crate::chart::TIME_LABEL_FONT_PX, size);
+        if self.end <= self.start {
+            return (font, Vec::new());
         }
-        let (history_strip, _) = split_time_strip(strip, self.candles_right);
-
-        // Measured, not counted. One layout per format per frame — monospace,
-        // so a format's sample answers for every label written in it — and the
-        // stride comes out of pixels rather than out of a fixed label count
-        // that a narrower strip could not honour.
-        let width_of = |format: crate::chart::TimeLabelFormat| {
-            painter
-                .layout_no_wrap(
-                    format.sample().to_owned(),
-                    font.clone(),
-                    palette.text_muted(),
-                )
+        let (history_strip, _) = split_time_strip(self.strip, self.candles_right);
+        let width_of = |text: &str| {
+            self.painter
+                .layout_no_wrap(text.to_owned(), font.clone(), palette.text_muted())
                 .size()
                 .x
         };
-        let format = crate::chart::time_label_format(history_strip.width(), width_of);
-        // A chart cut at a day or longer writes dates, not clock times.
-        let interval_ms = self.series.spec.spec().time_interval_ms();
-        let calendar = interval_ms.and_then(crate::plot_area::calendar_label_sample);
-        let label_width = calendar.map_or_else(
-            || width_of(format),
-            |sample| {
-                painter
-                    .layout_no_wrap(sample.to_owned(), font.clone(), palette.text_muted())
-                    .size()
-                    .x
-            },
-        );
-        // Per *bar*, not per slot: the walk below steps a bar at a time and
-        // labels the bar it lands on, so how far apart two labels end up is
-        // how far apart two bars are.
-        let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), label_width);
-        // Compared with the last label painted, never with a slot skipped:
-        // a turn is named on the first label painted in it (unless the day
-        // separator wrote its date), seeded by the bar before the view.
-        let mut last_painted = start
+        let bars: Vec<BarAt> = (self.start..self.end)
+            .filter_map(|slot| {
+                let bar = self.series.closed_bar(slot)?;
+                let x = self
+                    .viewport
+                    .x_center(slot, history_strip.right(), self.total);
+                Some(BarAt {
+                    slot,
+                    x,
+                    open_ms: bar.open_time,
+                })
+            })
+            .collect();
+        let seed = self
+            .start
             .checked_sub(1)
             .and_then(|slot| self.series.slot_open_time(slot));
-        let mut ticks =
-            quantick_chart::day_turn::TickLabels::new(self.tz, format, last_painted, self.named);
+        let interval = self.series.spec.spec().time_interval_ms();
+        let (span, zoom) = (
+            (history_strip.left(), history_strip.right()),
+            self.viewport.px_per_bar(),
+        );
+        let marks = time_marks::strip_marks(&bars, seed, interval, self.tz, zoom, span, width_of);
+        (font, marks)
+    }
 
-        let mut index = start;
-        while index < end {
-            if let Some(bar) = self.series.closed_bar(index) {
-                let x = self.viewport.x_center(index, history_strip.right(), total);
-                // The whole label, not just its centre: a label centred a few
-                // pixels from the end drew its other half over the gutter.
-                if crate::chart::label_fits(
-                    x,
-                    label_width,
-                    history_strip.left(),
-                    history_strip.right(),
-                ) && !pointer_compass::time_claimed(chip, x, label_width)
-                    && !super::days::reserved_by(
-                        x - label_width / 2.0,
-                        x + label_width / 2.0,
-                        self.reserved,
-                    )
-                {
-                    let previous = last_painted.replace(bar.open_time);
-                    let text = interval_ms
-                        .and_then(|interval| {
-                            crate::plot_area::fmt_calendar_label(bar.open_time, interval, previous)
-                        })
-                        .unwrap_or_else(|| ticks.label_at(bar.open_time));
-                    painter.text(
-                        egui::pos2(x, y),
-                        egui::Align2::CENTER_CENTER,
-                        text,
-                        font.clone(),
-                        palette.text_muted(),
-                    );
-                }
+    /// The rule and `marks`' labels, as [`Self::marks`] laid them out.
+    pub fn paint(&self, (font, marks): &StripMarks) {
+        let palette = theme::axes(self.painter.ctx());
+        let painter = self.painter;
+        let strip = self.strip;
+        let rule = axis_rule(&palette, self.style, Token::TimeAxisRule);
+        let ppp = painter.ctx().pixels_per_point();
+        let (rule_y, width) = crisp(!palette.resolved.dark, strip.top(), ppp);
+        painter.line_segment(
+            [
+                egui::pos2(strip.left(), rule_y),
+                egui::pos2(strip.right(), rule_y),
+            ],
+            egui::Stroke::new(width, rule),
+        );
+        let ink = axis_ink(&palette);
+        let y = strip.center().y;
+        for mark in marks {
+            let galley = painter.layout_no_wrap(mark.text.clone(), font.clone(), ink);
+            if pointer_compass::time_claimed(self.chip, mark.x, galley.size().x) {
+                continue;
             }
-            index = index.saturating_add(stride);
+            let at = egui::pos2(mark.x, y) - galley.size() / 2.0;
+            painter.galley(at, galley, ink);
         }
+    }
+}
+
+/// The price gridlines: a steady spacing when the theme sets one, else the
+/// fixed ask of eight lines Dark has always drawn.
+pub(in crate::pane) fn price_grid_ticks(
+    palette: &crate::theme::Palette,
+    lo: f64,
+    hi: f64,
+    height_px: f32,
+) -> Vec<f64> {
+    match palette.resolved.chart_axes.price_line_spacing {
+        Some(spacing) => quantick_chart::price_grid::ticks(lo, hi, height_px, spacing),
+        None => crate::chart::nice_ticks(lo, hi, 8),
+    }
+}
+
+/// The axis font at `reference`, or at the size the theme fixes for it.
+fn label_font(palette: &crate::theme::Palette, reference: f32, size: Option<f32>) -> egui::FontId {
+    let mut font = palette.axis_font(reference);
+    if let Some(size) = size {
+        font.size = size;
+    }
+    font
+}
+
+/// Light themes write axis labels in their own ink; Dark keeps `text_muted`.
+pub(in crate::pane) fn axis_ink(palette: &crate::theme::Palette) -> egui::Color32 {
+    if palette.resolved.dark {
+        palette.text_muted()
+    } else {
+        *palette.get(Token::AxisInk)
+    }
+}
+
+/// Light themes rule their axes in their own colours; Dark rules them in the
+/// chart grid's, so its rules come and go with the grid switch.
+fn axis_rule(palette: &crate::theme::Palette, style: &ChartStyle, token: Token) -> egui::Color32 {
+    if palette.resolved.dark {
+        grid_color(style)
+    } else {
+        *palette.get(token)
     }
 }
 
@@ -420,7 +460,7 @@ impl LaneTimeAxisPass<'_> {
             2.0 * (galley.size().x + 2.0 * super::super::LANE_AXIS_GAP_PX)
         });
         let window_label = format!("tape · {}", quantick_orderflow::format_window_ms(window_ms));
-        let window_galley = painter.layout_no_wrap(window_label, font, palette.text_muted());
+        let window_galley = painter.layout_no_wrap(window_label, font, axis_ink(&palette));
         // A strip too narrow keeps the urgent label and drops this one. The
         // window is a setting the trader chose and can read from the tape's
         // own menu; how old the newest mark is exists nowhere else.
@@ -433,7 +473,7 @@ impl LaneTimeAxisPass<'_> {
             let rect =
                 egui::Align2::CENTER_CENTER.align_size_within_rect(window_galley.size(), strip);
             labelled.push(rect);
-            painter.galley(rect.min, window_galley, palette.text_muted());
+            painter.galley(rect.min, window_galley, axis_ink(&palette));
         }
         if let Some((end_ms, tz, geometry)) = clock {
             if let Some(galley) = warning.as_ref() {
@@ -553,11 +593,7 @@ fn paint_tape_clock(
     let format = crate::chart::TimeLabelFormat::Full;
     let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let label_width = painter
-        .layout_no_wrap(
-            format.sample().to_owned(),
-            font.clone(),
-            palette.text_muted(),
-        )
+        .layout_no_wrap(format.sample().to_owned(), font.clone(), axis_ink(&palette))
         .size()
         .x;
     let slot = label_width + 2.0 * super::super::LANE_AXIS_GAP_PX;
@@ -573,7 +609,7 @@ fn paint_tape_clock(
         |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
     // Fed only the labels painted: the first in a new day names it, seeded
     // by the window's start so the turn is named once the old day scrolls off.
-    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms), &[]);
+    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms));
     for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
         let x = x_of(instant);
         let rect = egui::Rect::from_center_size(
@@ -590,7 +626,7 @@ fn paint_tape_clock(
             egui::Align2::CENTER_CENTER,
             ticks.label_at(instant),
             font.clone(),
-            palette.text_muted(),
+            axis_ink(&palette),
         );
     }
 }

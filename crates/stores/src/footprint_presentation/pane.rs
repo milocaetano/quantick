@@ -38,3 +38,18 @@ pub struct PaneFootprint {
     /// re-fold at the snapshot cadence, never per paint.
     pub live_version: u64,
 }
+
+impl PaneFootprint {
+    /// The bars with a ladder: `closed` from `first_state_slot`, and the
+    /// forming bar's snapshot at `partial_slot` while it is on screen.
+    #[must_use]
+    pub fn ladder_slots<'a>(
+        &'a self,
+        first_state_slot: usize,
+        closed: &'a [quantick_engine::BarFootprint],
+        partial_slot: Option<usize>,
+    ) -> super::LadderSlots<'a> {
+        let live = self.live.as_ref().map(|(_, _, ladder)| ladder);
+        super::LadderSlots::new(first_state_slot, closed, partial_slot.zip(live))
+    }
+}

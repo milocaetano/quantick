@@ -44,6 +44,7 @@ impl PaneLayerRead<'_> {
                 .is_some_and(|owner| layer_switch(owner, switch)),
             LayerSource::Footprint => self.footprint.visible,
             LayerSource::Grid => self.style.grid(style),
+            LayerSource::TimeGrid => self.style.time_grid(style),
             LayerSource::Drawings => !self.drawings.all_hidden(),
         }
     }
@@ -102,6 +103,10 @@ impl ChartPane {
             LayerSource::Footprint => self.presentation.footprint.visible = effect.visible,
             LayerSource::Grid => {
                 actions.grid = Some(effect.visible);
+                actions.grid_pane = Some(self.id);
+            }
+            LayerSource::TimeGrid => {
+                actions.time_grid = Some(effect.visible);
                 actions.grid_pane = Some(self.id);
             }
             LayerSource::Drawings => match effect.write {

@@ -576,8 +576,7 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.frame.axis_metrics =
-            quantick_appearance::AxisMetrics::new(&crate::theme::get(ui.ctx()).resolved.typography);
+        self.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);

@@ -50,14 +50,13 @@ use quantick_control_host::idempotency;
 use quantick_control_host::rate::TokenBucket;
 mod local_action;
 mod panel;
-mod rendered_capture;
 mod screenshot;
 mod semantic;
 mod server;
 mod trace_replay;
 
 use semantic::SemanticBaseline;
-use trace_replay::TraceReinjection;
+use trace_replay::TraceWalks;
 // `runtime_id_bytes` is re-exported: `control/mod.rs` reaches it by path.
 pub(crate) use server::runtime_id_bytes;
 use server::{drain_bounded_since, gateway_main, random_bytes};
@@ -477,10 +476,8 @@ pub(crate) struct ControlAccess {
     /// attributed it to.
     replayed_author: Option<RecordedActor>,
     next_trace_sequence: u64,
-    /// The control trace of every replaying recording, keyed by session
-    /// path, loaded once and walked by logical replay time; a tab without a
-    /// replay costs the frame one comparison.
-    trace_reinjection: BTreeMap<PathBuf, TraceReinjection>,
+    /// The control trace of every replaying recording.
+    trace_reinjection: TraceWalks,
     /// The retained evidence bundles. The same handle the contract holds, so
     /// a worker paging a bundle and the window emptying the store are talking
     /// about one thing.
@@ -536,7 +533,7 @@ impl ControlAccess {
             notification_limits: BTreeMap::new(),
             replayed_author: None,
             next_trace_sequence: 1,
-            trace_reinjection: BTreeMap::new(),
+            trace_reinjection: TraceWalks::default(),
             evidence,
             captures: screenshot::CaptureService::default(),
         }
@@ -726,7 +723,7 @@ impl ControlAccess {
             return;
         };
 
-        self.harvest_rendered(app);
+        self.captures.harvest_rendered(app);
         self.emit_semantic_changes(app);
         // What the waiters spend, the drain does not get to spend again. They
         // are the same work against the same frame, so the ceiling has to be
@@ -798,6 +795,18 @@ impl ControlAccess {
         {
             ctx.request_repaint();
         }
+    }
+
+    /// Record the semantic changes since the last frame; with access disabled
+    /// nothing runs at all, the journal starts when the human opens the door
+    /// and records changes, not the state it found.
+    fn emit_semantic_changes(&mut self, app: &ControlWindow) {
+        let Some(mut baseline) = self.semantic_baseline.take() else {
+            self.semantic_baseline = Some(SemanticBaseline::capture(app));
+            return;
+        };
+        baseline.emit(app, &mut self.journal, metrics::wall_clock_ms());
+        self.semantic_baseline = Some(baseline);
     }
 
     pub fn needs_frame_service(&self) -> bool {
@@ -1336,6 +1345,7 @@ impl Drop for ControlAccess {
 // `#[cfg(test)]` module, and a seam declared above the shortcuts would hide
 // `MARK_SHORTCUT` from the behaviour matrix's walk.
 #[cfg(test)]
+#[path = "gateway/tests/retry_seams_tests.rs"]
 mod retry_seams;
 #[cfg(test)]
 pub(crate) use retry_seams::ServedRequest;

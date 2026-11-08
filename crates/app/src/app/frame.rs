@@ -793,6 +793,12 @@ pub(super) fn sync_appearance(
         crate::theme::sync(ctx, &runtime.appearance);
     }
     presets.sync_theme(&runtime.appearance);
+    for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+        let bookmap = pane.orderflow.is_some();
+        pane.presentation
+            .candles
+            .follow_theme(runtime.appearance.resolved(), bookmap);
+    }
     if runtime
         .chart_theme
         .sync(&mut runtime.style, &runtime.appearance)

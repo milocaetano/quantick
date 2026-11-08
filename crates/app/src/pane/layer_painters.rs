@@ -174,6 +174,38 @@ impl ChartPane {
         }
     }
 
+    /// This frame's time labels, laid out once for the strip and the
+    /// vertical grid that stands at their places.
+    pub(super) fn time_marks(
+        &self,
+        frame: &DrawFrame<'_>,
+        chrome: &PaneChrome<'_>,
+    ) -> crate::pane::render_registry::StripMarks {
+        self.time_strip(frame, chrome, None).marks()
+    }
+
+    /// The time strip this frame, standing aside for the pointer's `chip`.
+    fn time_strip<'s>(
+        &'s self,
+        frame: &'s DrawFrame<'_>,
+        chrome: &'s PaneChrome<'_>,
+        chip: Option<pointer_compass::TimeChip>,
+    ) -> crate::pane::render_registry::TimeStripPass<'s> {
+        crate::pane::render_registry::TimeStripPass {
+            painter: frame.painter,
+            strip: frame.areas.time_strip,
+            start: frame.start,
+            end: frame.end,
+            total: frame.total,
+            chip,
+            style: chrome.style,
+            tz: chrome.tz,
+            candles_right: self.frame.candles_right,
+            viewport: &frame.view,
+            series: self.series_read(),
+        }
+    }
+
     /// The axis marks and the candles' own dividers: the trader's levels and
     /// the last price on the gutter, the venue seam, the backfill boundary,
     /// the feed gaps, and the time strip.
@@ -183,17 +215,14 @@ impl ChartPane {
         axis_x: f32,
         levels: &[PriceAxisLevel],
         time_chip: Option<pointer_compass::TimeChip>,
-        turns: Option<&[DayTurn]>,
         chrome: &PaneChrome<'_>,
+        time_marks: &crate::pane::render_registry::StripMarks,
     ) {
         let &DrawFrame {
             painter,
-            areas,
             chart_rect,
             history_rect,
             total,
-            start,
-            end,
             scale,
             closed,
             partial,
@@ -271,47 +300,7 @@ impl ChartPane {
                     gaps: chrome.feed_gaps,
                 });
         }
-        // Before the time labels, which stand aside for the dates it writes.
-        let (mut reserved, mut named) = (Vec::new(), Vec::new());
-        if let Some(turns) = turns {
-            let series = self.series_read();
-            let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
-                painter,
-                history: history_rect,
-                strip: areas.time_strip,
-                total,
-                candle_width: cw,
-                viewport: &frame.view,
-                turns,
-                tz: chrome.tz,
-                first_visible: (start < end)
-                    .then(|| series.slot_open_time(start))
-                    .flatten()
-                    .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
-                chip: time_chip,
-                reserved: Vec::new(),
-                named: Vec::new(),
-            };
-            self.layer_renderers.day_separator(&mut day_pass);
-            reserved = day_pass.reserved;
-            named = day_pass.named;
-        }
-        crate::pane::render_registry::TimeStripPass {
-            reserved: &reserved,
-            named: &named,
-            painter,
-            strip: areas.time_strip,
-            start,
-            end,
-            total,
-            chip: time_chip,
-            style: chrome.style,
-            tz: chrome.tz,
-            candles_right: self.frame.candles_right,
-            viewport: &frame.view,
-            series: self.series_read(),
-        }
-        .paint();
+        self.time_strip(frame, chrome, time_chip).paint(time_marks);
     }
 
     /// Where the display day turns in view, or `None` with the separator
@@ -340,13 +329,9 @@ impl ChartPane {
             slots.filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
             chrome.tz,
         );
-        let turns = starts.into_iter().map(|(slot, date)| {
-            let before = slot
-                .checked_sub(1)
-                .and_then(|before| series.closed_bar(before));
-            let before = before.map(|bar| (bar.open_time, bar.close_time));
-            DayTurn::new(slot, date, before, series.slot_open_time(slot), chrome.tz)
-        });
+        let turns = starts
+            .into_iter()
+            .map(|(slot, date)| DayTurn { slot, date });
         Some(turns.collect())
     }
 

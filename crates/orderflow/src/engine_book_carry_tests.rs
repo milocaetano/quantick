@@ -102,6 +102,7 @@ fn request(now_ms: i64) -> ProjectionRequest {
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: vec![(PRINT_MS, now_ms)],
+            tape_lead_share: 0.0,
         }),
     }
 }
@@ -484,6 +485,7 @@ fn bench_the_live_book_on_the_worker_and_the_render_thread() {
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: vec![(RECORDED_MS, now_ms)],
+                tape_lead_share: 0.0,
             }),
         };
         let cache_now = started + Duration::from_millis(u64::try_from(frame * FRAME_MS).unwrap());

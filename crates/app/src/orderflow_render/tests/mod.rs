@@ -1519,6 +1519,7 @@ fn paint_one_current_row(style: &OrderflowRenderStyle, live: bool) -> (bool, boo
         carried: false,
         time_averaged: false,
         current_book: true,
+        lead_span: None,
     }]);
     projection.current_book = Some(quantick_orderflow::projection::BookSource {
         update_id: Some(1),
@@ -1804,6 +1805,7 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         x0,
         x1,
         reason: reason.to_owned(),
+        lead_span: None,
     };
     projection.gaps = std::sync::Arc::new(vec![
         gap(opening, 0.95, quantick_orderflow::BEFORE_CAPTURE),

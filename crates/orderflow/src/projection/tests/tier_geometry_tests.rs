@@ -160,6 +160,7 @@ fn check_placement(epoch: i64, mode: Option<bool>, lane: bool, now_offset: i64) 
                 tape_level_ticks: if tape_only { 1 } else { 5 },
                 candle_level_ticks: 10,
                 lane_bars: Vec::new(),
+                tape_lead_share: 0.0,
             },
             &closed,
             Some(&partial),

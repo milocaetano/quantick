@@ -74,7 +74,7 @@ pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::{TapeHorizontalGeometry, finite_unit_f64};
+pub use tape_geometry::{MAX_LEAD_SHARE, TapeHorizontalGeometry, finite_unit_f64};
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };
@@ -255,6 +255,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         };
 
         let mut drawn = false;
@@ -319,6 +320,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         });
     }
 
@@ -584,6 +586,7 @@ pub fn project_live_folded(
         settled.liquidity_reference,
         fold,
     );
+    let gaps = lane_heat::lead_gaps(history, timeline);
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
     //
@@ -594,6 +597,7 @@ pub fn project_live_folded(
         return LiveMarks {
             live_now_x,
             cells,
+            gaps,
             dropped_cells,
             current_book,
             ..LiveMarks::default()
@@ -742,6 +746,7 @@ pub fn project_live_folded(
         floored_quantity,
         live_now_x,
         cells,
+        gaps,
         dropped_cells,
         current_book,
     }

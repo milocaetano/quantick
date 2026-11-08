@@ -41,13 +41,21 @@ impl LayerWiring<'_> {
         layer: chart_layers::ChartLayer,
         visible: bool,
     ) {
-        if layer == chart_layers::ChartLayer::Grid {
-            self.tabs
+        if matches!(
+            layer,
+            chart_layers::ChartLayer::Grid | chart_layers::ChartLayer::TimeGrid
+        ) {
+            let candles = &mut self
+                .tabs
                 .runtime_mut(tab)
                 .pane_mut(side)
                 .presentation
-                .candles
-                .set_grid(self.style, visible);
+                .candles;
+            if layer == chart_layers::ChartLayer::Grid {
+                candles.set_grid(self.style, visible);
+            } else {
+                candles.set_time_grid(self.style, visible);
+            }
             *self.style_revision = self.style_revision.saturating_add(1);
             return;
         }
@@ -70,7 +78,7 @@ impl LayerWiring<'_> {
         if let Some(on) = actions.bar_progress {
             self.set_bar_progress(self.tabs.id_at(self.tabs.active_index()), on);
         }
-        if let Some(visible) = actions.grid {
+        if actions.grid.is_some() || actions.time_grid.is_some() {
             let tab = self.tabs.runtime_mut(self.tabs.active_index());
             let side = match actions.grid_pane {
                 Some(id) => tab
@@ -80,10 +88,13 @@ impl LayerWiring<'_> {
                 None => Some(tab.focused_side()),
             };
             if let Some(side) = side {
-                tab.pane_mut(side)
-                    .presentation
-                    .candles
-                    .set_grid(self.style, visible);
+                let candles = &mut tab.pane_mut(side).presentation.candles;
+                if let Some(visible) = actions.grid {
+                    candles.set_grid(self.style, visible);
+                }
+                if let Some(visible) = actions.time_grid {
+                    candles.set_time_grid(self.style, visible);
+                }
                 // The renderer and style log read this revision.
                 *self.style_revision = self.style_revision.saturating_add(1);
             }

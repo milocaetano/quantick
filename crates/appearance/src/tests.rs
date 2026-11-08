@@ -672,7 +672,14 @@ fn light_uses_beige_whisper_surfaces_green_bulls_and_black_bears_without_typogra
         (Token::TextPrimary, [32, 32, 32, 255]),
         (Token::Buy, [76, 175, 80, 255]),
         (Token::Sell, [0, 0, 0, 255]),
+        (Token::CandleBullOutline, [0, 0, 0, 255]),
         (Token::CandleBearOutline, [0, 0, 0, 255]),
+        (Token::CandleWick, [0, 0, 0, 255]),
+        // The chart area alone is TradingView's white; the chrome stays warm.
+        (Token::ChartCanvas, [255, 255, 255, 255]),
+        (Token::AxisInk, [19, 23, 34, 255]),
+        (Token::PriceAxisRule, [0, 0, 0, 0]),
+        (Token::TimeAxisRule, [224, 227, 235, 255]),
     ] {
         assert_eq!(light.color(token).to_array(), rgba, "{}", token.key());
     }

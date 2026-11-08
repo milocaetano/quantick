@@ -187,6 +187,15 @@ impl Default for AxisMetrics {
     }
 }
 impl AxisMetrics {
+    /// A theme's fixed reservations over the ones its axis font implies.
+    #[must_use]
+    pub fn with_axes(self, axes: crate::ChartAxes) -> Self {
+        Self {
+            gutter: axes.price_gutter.unwrap_or(self.gutter),
+            strip: axes.time_strip.unwrap_or(self.strip),
+            ..self
+        }
+    }
     pub fn new(typography: &Typography) -> Self {
         let scale = typography.scale(FontRole::ChartAxis);
         let width = match typography.get(FontRole::ChartAxis).family {

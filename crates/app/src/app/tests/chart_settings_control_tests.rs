@@ -523,7 +523,7 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     assert_eq!(crate::theme::get(&ctx).resolved, *theme);
     assert_eq!(
         app.runtime.style.canvas.background_rgba(),
-        theme.color(Token::Canvas).to_array()
+        theme.color(Token::ChartCanvas).to_array()
     );
     assert_eq!(app.runtime.style.candles.bull_fill, old_fill);
     assert_eq!(app.runtime.style.candles.wick_width, 3.0);

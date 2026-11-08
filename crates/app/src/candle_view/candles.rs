@@ -5,7 +5,8 @@ use quantick_engine::Bar;
 use quantick_indicators::Rgba8;
 
 use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
-use crate::style::CandleStyle;
+use crate::style::{CandleStyle, ResolvedCandlePaint};
+use quantick_chart::candle_pixels::CandleRun;
 
 /// Whether a bar reads as bullish, and so which of the two candle colours it
 /// wears.
@@ -97,6 +98,34 @@ pub fn draw_candle(
             rounding,
             egui::Stroke::new(width, color32(paint.outline)),
         );
+    }
+}
+
+/// Draw one candle by TradingView's whole-pixel rule: `run` decides where
+/// every pixel goes (`quantick_chart::candle_pixels`); this only paints
+/// them, as rectangles on device-pixel boundaries that nothing feathers.
+pub fn draw_pixel_candle(
+    painter: &egui::Painter,
+    run: &mut CandleRun,
+    xc: f32,
+    scale: &PriceScale,
+    bar: &Bar,
+    paint: &ResolvedCandlePaint,
+) {
+    paint_pixels(painter, &run.place_bar(scale, bar, xc, paint), paint);
+}
+
+/// Paints one candle's whole-pixel rectangles, as the time chart does.
+pub(super) fn paint_pixels(
+    painter: &egui::Painter,
+    pixels: &quantick_chart::candle_pixels::CandlePixels,
+    paint: &ResolvedCandlePaint,
+) {
+    let ppp = painter.ctx().pixels_per_point();
+    for (rect, color) in pixels.paints(paint).into_iter().flatten() {
+        let rect = rect.in_points(ppp);
+        let rect = egui::Rect::from_x_y_ranges(rect.left..=rect.right, rect.top..=rect.bottom);
+        painter.rect_filled(rect, egui::Rounding::ZERO, color32(color));
     }
 }
 

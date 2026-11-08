@@ -68,6 +68,21 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn a_document_without_the_time_grid_decodes_with_it_off() {
+        let document = encode(&toml_style());
+        assert_eq!(document["canvas"]["time_grid_enabled"], json!(false));
+        let mut older = document.clone();
+        older["canvas"]
+            .as_object_mut()
+            .unwrap()
+            .remove("time_grid_enabled");
+        assert_eq!(decode(older).unwrap(), toml_style());
+        let mut on = document;
+        on["canvas"]["time_grid_enabled"] = json!(true);
+        assert_ne!(decode(on).unwrap(), toml_style());
+    }
+
+    #[test]
     fn canonical_style_geometry_roundtrips_and_refuses_noncanonical_inputs() {
         let style: StyleFile = toml_style();
         let document = encode(&style);
