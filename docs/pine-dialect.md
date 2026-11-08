@@ -216,7 +216,7 @@ Every rejection is a load-time error naming its reason:
 | `request.*` | `PINE_NO_SECURITY` — activity-sampled charts have no timeframes |
 | `timeframe.*` | `PINE_NO_TIMEFRAME` |
 | `strategy.*` | `PINE_NO_STRATEGY` — backtesting consumes plots through the host |
-| `array.* matrix.* map.* table.*` | `PINE_NO_COLLECTIONS` |
+| unsupported `array.*`/`map.*`, all `matrix.* table.*` | `PINE_NO_COLLECTIONS` |
 | calendar builtins (`year`, `month`, `dayofweek`, …) | `PINE_NO_CALENDAR` |
 | `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
 
@@ -312,3 +312,96 @@ defines the supported differences; paired original fixtures live in
 Calendar support is unchanged. Request, timeframe and strategy namespaces
 remain rejected; version selection does not expand drawing or table support.
 Collections and UDT field history are handled by their respective feature owners.
+
+
+## Scalar collections (v5 and v6)
+
+Arrays and maps use typed scalar elements (`int`, `float`, `bool`, `string`,
+`color`). Explicit `array<T>` and `map<K,V>` declarations and generic constructors
+are accepted. Assignment aliases the same collection; `copy` allocates an
+independent collection. `map.keys` and `map.values` allocate independent arrays in
+insertion order. Overwriting a key retains its position; removing and reinserting
+it appends it. Iteration never uses sorted-key order.
+
+The following operations are implemented through both namespace calls and
+receiver methods (constructors and `array.from` are namespace-only):
+
+| Array operation | Arguments after the receiver |
+| --- | --- |
+| `array.size`, `array.clear`, `array.copy` | none |
+| `array.get`, `array.remove` | index |
+| `array.set`, `array.insert` | index, value |
+| `array.push`, `array.unshift` | value |
+| `array.pop`, `array.shift`, `array.first`, `array.last` | none |
+| `array.reverse` | none |
+| `array.concat` | second array; mutates and returns the first |
+| `array.fill` | value, optional index_from and exclusive index_to |
+| `array.includes`, `array.indexof`, `array.lastindexof` | value |
+| `array.sum`, `array.avg`, `array.min`, `array.max` | none; numeric arrays only |
+| `array.join` | optional separator, default comma |
+| `array.from` | positional scalar values with a common element type |
+
+| Map operation | Arguments after the receiver |
+| --- | --- |
+| `map.size`, `map.clear`, `map.copy`, `map.keys`, `map.values` | none |
+| `map.get`, `map.remove`, `map.contains` | key |
+| `map.put` | key, value; returns the previous value or missing |
+| `map.put_all` | second map; updates in that map's insertion order |
+
+`array.new<T>(size = 0, initial_value = na)` also accepts the scalar aliases
+`array.new_int`, `array.new_float`, `array.new_bool`, `array.new_string`, and
+`array.new_color`. v6 missing bool elements and map results are false.
+`map.new<K,V>()` creates an empty map. Internal constructor registry spellings
+are listed below solely so the documentation guard can track typed lowering:
+
+`map.new_int_int`
+`map.new_int_float`
+`map.new_int_bool`
+`map.new_int_string`
+`map.new_int_color`
+`map.new_float_int`
+`map.new_float_float`
+`map.new_float_bool`
+`map.new_float_string`
+`map.new_float_color`
+`map.new_bool_int`
+`map.new_bool_float`
+`map.new_bool_bool`
+`map.new_bool_string`
+`map.new_bool_color`
+`map.new_string_int`
+`map.new_string_float`
+`map.new_string_bool`
+`map.new_string_string`
+`map.new_string_color`
+`map.new_color_int`
+`map.new_color_float`
+`map.new_color_bool`
+`map.new_color_string`
+`map.new_color_color`
+
+
+For `get`, `set`, `insert`, and `remove`, v6 negative indices count backward
+from the array size before the operation. v5 rejects negative indices. Bounds,
+empty removals, invalid sizes and missing map keys used in insertion report a
+structured `PINE_TYPE` runtime error. Collections are capped at 100,000 elements
+or 50,000 map pairs. `fill` uses nonnegative half-open bounds in both versions.
+
+Snapshots share the authoritative contiguous word image until the first write.
+Aliases retain identity through copy-on-write; preview rolls back ordinary `var`
+collections, while `varip` mutations persist, including aliases held by ordinary
+`var`. History retains collection identities. Deterministic tracing reclaims
+unreachable collection records after commit; it does no tracing for scripts
+without collections.
+
+This is the documented scalar operation set, not the entire Pine collection API.
+Sorting, slices, binary search, percentile/statistical operations beyond the four
+reductions above, `min`/`max` rank arguments, legacy `T[]` annotations, nested
+collection elements, drawing elements and UDT elements are not implemented in
+this stage. Unsupported namespace operations fail at compile time; they never
+silently return a substitute. Generic annotations on function parameters are not
+yet accepted. `array.from` requires positional arguments. Collection `join`
+formatting is intended for scalar diagnostics, not full Pine format equivalence.
+The independent original fixtures follow the primary
+[array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
+[map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.

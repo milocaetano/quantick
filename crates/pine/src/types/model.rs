@@ -1,6 +1,6 @@
 //! Scalar identities and the ordered Pine qualifier lattice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Base {
+pub(crate) enum Base {
     Int,
     Float,
     Bool,
@@ -9,17 +9,19 @@ pub(super) enum Base {
     Na,
     Unknown,
     Tuple(Vec<Type>),
+    Array(Box<Base>),
+    Map(Box<Base>, Box<Base>),
     Handle(&'static str),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Qualifier {
+pub(crate) enum Qualifier {
     Const,
     Input,
     Simple,
     Series,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Type {
+pub(crate) struct Type {
     pub base: Base,
     pub qualifier: Qualifier,
 }
@@ -49,7 +51,7 @@ impl Type {
         self
     }
 }
-pub(super) fn accepts(expected: &Base, actual: &Base) -> bool {
+pub(crate) fn accepts(expected: &Base, actual: &Base) -> bool {
     expected == actual
         || matches!(actual, Base::Na | Base::Unknown)
         || matches!(
@@ -57,7 +59,7 @@ pub(super) fn accepts(expected: &Base, actual: &Base) -> bool {
             (Base::Float, Base::Int) | (Base::Bool, Base::Int | Base::Float)
         )
 }
-pub(super) fn common(a: &Type, b: &Type) -> Option<Type> {
+pub(crate) fn common(a: &Type, b: &Type) -> Option<Type> {
     let base = match (&a.base, &b.base) {
         (a, b) if a == b => a.clone(),
         (Base::Na | Base::Unknown, b) => b.clone(),
@@ -73,9 +75,25 @@ pub(super) fn common(a: &Type, b: &Type) -> Option<Type> {
     };
     Some(Type::new(base, a.qualifier.max(b.qualifier)))
 }
-pub(super) fn annotation(words: &[String]) -> Result<Option<(Base, Option<Qualifier>)>, String> {
+pub(crate) fn annotation(words: &[String]) -> Result<Option<(Base, Option<Qualifier>)>, String> {
     if words.is_empty() {
         return Ok(None);
+    }
+    if matches!(words.first().map(String::as_str), Some("array" | "map")) {
+        let element = |name: &String| {
+            annotation(std::slice::from_ref(name))
+                .and_then(|v| v.map(|v| v.0).ok_or("missing element type".into()))
+        };
+        return match words {
+            [kind, value] if kind == "array" => {
+                Ok(Some((Base::Array(Box::new(element(value)?)), None)))
+            }
+            [kind, key, value] if kind == "map" => Ok(Some((
+                Base::Map(Box::new(element(key)?), Box::new(element(value)?)),
+                None,
+            ))),
+            _ => Err("invalid collection type annotation".into()),
+        };
     }
     let (qualifier, name) = match words {
         [name] => (None, name.as_str()),

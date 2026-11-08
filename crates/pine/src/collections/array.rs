@@ -1,0 +1,145 @@
+//! Array sequence operations and numeric reductions.
+use super::{
+    Op,
+    runtime::{grow, index, number, receiver},
+};
+use crate::{eval::arena::Arena, types::Value, version::Version};
+use std::rc::Rc;
+pub(super) fn execute(
+    arena: &mut Arena,
+    version: Version,
+    op: Op,
+    args: &[Value],
+    record: usize,
+    size: usize,
+) -> Result<Value, String> {
+    use Op::*;
+    match op {
+        Get(false) | Set | Remove(false) | Insert | First | Last | Pop | Shift => {
+            let slot = match op {
+                First | Shift => index(&Value::Num(0.0), size, false, version)?,
+                Last | Pop => {
+                    if size == 0 {
+                        return Err("cannot read/remove an empty array".into());
+                    }
+                    size - 1
+                }
+                _ => index(&args[1], size, op == Insert, version)?,
+            };
+            let previous = if slot < size {
+                arena.get(record, slot)
+            } else {
+                Value::Na
+            };
+            match op {
+                Set => arena.set(record, slot, args[2].clone()),
+                Insert => {
+                    grow(size, 1)?;
+                    arena.resize(record, size + 1);
+                    for i in (slot..size).rev() {
+                        arena.copy_value(record, i, record, i + 1);
+                    }
+                    arena.set(record, slot, args[2].clone());
+                }
+                Remove(false) | Pop | Shift => {
+                    for i in slot..size - 1 {
+                        arena.copy_value(record, i + 1, record, i);
+                    }
+                    arena.resize(record, size - 1);
+                }
+                _ => {}
+            }
+            Ok(if matches!(op, Set | Insert) {
+                Value::Na
+            } else {
+                previous
+            })
+        }
+        Push | Unshift => {
+            grow(size, 1)?;
+            arena.resize(record, size + 1);
+            if op == Unshift {
+                for i in (0..size).rev() {
+                    arena.copy_value(record, i, record, i + 1);
+                }
+            }
+            arena.set(record, if op == Push { size } else { 0 }, args[1].clone());
+            Ok(Value::Na)
+        }
+        Concat => {
+            let other = receiver(&args[1], false)?;
+            let values = arena.values(other);
+            grow(size, values.len())?;
+            arena.resize(record, size + values.len());
+            for (i, value) in values.into_iter().enumerate() {
+                arena.set(record, size + i, value);
+            }
+            Ok(args[0].clone())
+        }
+        Reverse => {
+            for i in 0..size / 2 {
+                let left = arena.get(record, i);
+                let right = arena.get(record, size - i - 1);
+                arena.set(record, i, right);
+                arena.set(record, size - i - 1, left);
+            }
+            Ok(Value::Na)
+        }
+        Fill => {
+            let from = args.get(2).map_or(Ok(0), number)?;
+            let to = args.get(3).map_or(Ok(size), number)?;
+            if from > to || to > size {
+                return Err("array.fill range out of bounds".into());
+            }
+            for i in from..to {
+                arena.set(record, i, args[1].clone());
+            }
+            Ok(Value::Na)
+        }
+        Contains(false) | IndexOf | LastIndexOf => {
+            let found = if op == LastIndexOf {
+                (0..size).rfind(|i| arena.get(record, *i) == args[1])
+            } else {
+                (0..size).find(|i| arena.get(record, *i) == args[1])
+            };
+            Ok(if op == Contains(false) {
+                Value::Bool(found.is_some())
+            } else {
+                Value::Num(found.map_or(-1.0, |i| i as f64))
+            })
+        }
+        Sum | Avg | Min | Max => {
+            let nums: Vec<_> = (0..size)
+                .filter_map(|i| arena.get(record, i).as_num())
+                .filter(|n| !n.is_nan())
+                .collect();
+            let value = if nums.is_empty() {
+                f64::NAN
+            } else {
+                match op {
+                    Sum => nums.iter().sum(),
+                    Avg => nums.iter().sum::<f64>() / nums.len() as f64,
+                    Min => nums.iter().copied().fold(f64::INFINITY, f64::min),
+                    _ => nums.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                }
+            };
+            Ok(Value::Num(value))
+        }
+        Join => {
+            let separator = match args.get(1) {
+                Some(Value::Str(s)) => s.as_str(),
+                _ => ",",
+            };
+            let values: Vec<_> = (0..size)
+                .map(|i| match arena.get(record, i) {
+                    Value::Str(s) => s.to_string(),
+                    Value::Num(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            Ok(Value::Str(Rc::new(values.join(separator))))
+        }
+        _ => unreachable!("array operation"),
+    }
+}

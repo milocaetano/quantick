@@ -8,11 +8,11 @@ pub(crate) const REGISTERS: usize = 6;
 pub(crate) const FLAGS: usize = 12;
 const HEADER: usize = 32;
 const PATHS: usize = 15;
-const HISTORIES: usize = 18;
+pub(crate) const HISTORIES: usize = 18;
 
 #[derive(Clone)]
 pub(crate) struct Arena {
-    pub words: Vec<u64>,
+    pub words: crate::collections::Words,
 }
 
 #[inline(always)]
@@ -23,7 +23,7 @@ fn index(word: u64) -> usize {
 impl Default for Arena {
     fn default() -> Self {
         Self {
-            words: vec![0; HEADER],
+            words: vec![0; HEADER].into(),
         }
     }
 }
@@ -277,6 +277,7 @@ fn scalar_words(value: &Value) -> (u64, u64) {
             },
             u64::from(*id),
         ),
+        Value::Collection(map, offset) => (if *map { 14 } else { 13 }, u64::from(*offset)),
         Value::NaBool => (8, 0),
         Value::NaColor => (9, 0),
         Value::NaString => (10, 0),
@@ -298,6 +299,10 @@ fn scalar(tag: u64, payload: u64) -> Value {
                 _ => ObjKind::Label,
             },
             u32::try_from(payload).expect("object id"),
+        ),
+        13 | 14 => Value::Collection(
+            tag == 14,
+            u32::try_from(payload).expect("collection offset"),
         ),
         8 => Value::NaBool,
         9 => Value::NaColor,

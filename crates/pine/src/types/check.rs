@@ -52,7 +52,7 @@ pub(crate) fn validate(
         dispatch: checker.dispatch,
     }
 }
-pub(super) struct Checker<'a> {
+pub(crate) struct Checker<'a> {
     pub version: crate::version::Version,
     pub ast: &'a mut Ast,
     pub resolutions: &'a mut [Resolution],

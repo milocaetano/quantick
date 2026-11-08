@@ -30,6 +30,9 @@ const MAX_NEST_DEPTH: usize = 64;
 ///
 /// Every syntax error found, each with its span; the AST is only returned
 /// when the whole script parsed.
+#[path = "collections/parser.rs"]
+mod collection_parser;
+
 pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
     debug_assert!(
         !tokens.is_empty(),
@@ -199,6 +202,9 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> Option<NodeId> {
+        if self.collection_declaration_ahead() {
+            return self.collection_declaration();
+        }
         let start = self.span();
         match self.peek().clone() {
             Tok::KwVar | Tok::KwVarip => {
@@ -764,7 +770,7 @@ impl Parser<'_> {
                 }
                 Tok::Dot => {
                     self.advance();
-                    let Tok::Ident(field) = self.peek().clone() else {
+                    let Tok::Ident(mut field) = self.peek().clone() else {
                         let span = self.span();
                         self.errors.push(PineError::new(
                             ErrorCode::PineSyntax,
@@ -774,6 +780,20 @@ impl Parser<'_> {
                         return None;
                     };
                     self.advance();
+                    if field == "new" && self.eat(&Tok::Lt) {
+                        loop {
+                            let Tok::Ident(ty) = self.peek().clone() else {
+                                return None;
+                            };
+                            self.advance();
+                            field.push('_');
+                            field.push_str(&ty);
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(&Tok::Gt, "`>` after collection types");
+                    }
                     let span = self.spanned_from(start);
                     expr = self.ast.push(
                         NodeKind::Member {

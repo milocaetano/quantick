@@ -1,0 +1,149 @@
+//! Reachability and varip transplantation; every persistent record stays in words.
+use crate::{
+    ast::VarMode,
+    eval::arena::{Arena, GLOBALS, HISTORIES, LOCALS, REGISTERS},
+    types::Value,
+};
+use std::collections::{BTreeMap, BTreeSet};
+const COLLECTIONS: usize = 30;
+pub(super) fn allocate(arena: &mut Arena) -> usize {
+    let record = arena.allocate(6);
+    arena.words[record] = arena.words[COLLECTIONS];
+    arena.words[COLLECTIONS] = record as u64;
+    record + 3
+}
+fn mark(value: &Value, live: &mut BTreeSet<usize>) {
+    match value {
+        Value::Collection(_, offset) => {
+            live.insert(*offset as usize);
+        }
+        Value::Tuple(values) => {
+            for value in values.iter() {
+                mark(value, live);
+            }
+        }
+        _ => {}
+    }
+}
+pub(crate) fn collect(arena: &mut Arena) {
+    if arena.words[COLLECTIONS] == 0 {
+        return;
+    }
+    let mut live = BTreeSet::new();
+    for list in [GLOBALS, LOCALS, REGISTERS] {
+        for i in 0..arena.len(list) {
+            mark(&arena.get(list, i), &mut live);
+        }
+    }
+    let mut history = arena.words[HISTORIES] as usize;
+    while history != 0 {
+        for list in [history + 5, history + 8] {
+            for i in 0..arena.len(list) {
+                mark(&arena.get(list, i), &mut live);
+            }
+        }
+        history = arena.words[history] as usize;
+    }
+    let mut link = COLLECTIONS;
+    let mut record = arena.words[link] as usize;
+    while record != 0 {
+        let next = arena.words[record];
+        if live.contains(&(record + 3)) {
+            link = record;
+        } else {
+            arena.resize(record + 3, 0);
+            let payload = arena.offset(record + 3);
+            arena.release(payload);
+            arena.release(record);
+            arena.words[link] = next;
+        }
+        record = next as usize;
+    }
+}
+pub(crate) fn restore_varip(current: &Arena, snapshot: &mut Arena, modes: &[VarMode]) {
+    if current.words[COLLECTIONS] == 0 {
+        return;
+    }
+    let mut existing = BTreeSet::new();
+    let mut record = snapshot.words[COLLECTIONS] as usize;
+    while record != 0 {
+        existing.insert(record + 3);
+        record = snapshot.words[record] as usize;
+    }
+    let mut copied = BTreeMap::new();
+    for (slot, mode) in modes.iter().enumerate() {
+        if *mode != VarMode::Varip {
+            continue;
+        }
+        if let Value::Collection(map, offset) = current.get(GLOBALS, slot) {
+            let target = *copied.entry(offset).or_insert_with(|| {
+                let target = if existing.contains(&(offset as usize)) {
+                    offset as usize
+                } else {
+                    allocate(snapshot)
+                };
+                snapshot.replace(target, current.values(offset as usize));
+                snapshot.set_at(target - 2, current.get_at(offset as usize - 2));
+                target
+            });
+            snapshot.set(
+                GLOBALS,
+                slot,
+                Value::Collection(map, u32::try_from(target).expect("collection offset")),
+            );
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collections::{Element, Op, execute};
+    use crate::version::Version;
+    #[test]
+    fn collection_image_growth_reclamation_and_cow() {
+        let mut arena = Arena::default();
+        arena.resize(GLOBALS, 1);
+        let root = execute(&mut arena, Version::V5, Op::NewArray(Element::Float), &[]).unwrap();
+        arena.set(GLOBALS, 0, root.clone());
+        let snapshot = arena.clone();
+        for i in 0..1000 {
+            execute(
+                &mut arena,
+                Version::V5,
+                Op::Push,
+                &[root.clone(), Value::Num(f64::from(i))],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            execute(
+                &mut snapshot.clone(),
+                Version::V5,
+                Op::Size(false),
+                std::slice::from_ref(&root)
+            )
+            .unwrap(),
+            Value::Num(0.0)
+        );
+        assert_eq!(
+            execute(
+                &mut arena,
+                Version::V5,
+                Op::Size(false),
+                std::slice::from_ref(&root)
+            )
+            .unwrap(),
+            Value::Num(1000.0)
+        );
+        for _ in 0..100 {
+            execute(&mut arena, Version::V5, Op::From, &[Value::Num(5.0)]).unwrap();
+            collect(&mut arena);
+        }
+        let size = arena.words.len();
+        for _ in 0..1000 {
+            execute(&mut arena, Version::V5, Op::From, &[Value::Num(5.0)]).unwrap();
+            collect(&mut arena);
+        }
+        assert_eq!(arena.words.len(), size);
+    }
+}

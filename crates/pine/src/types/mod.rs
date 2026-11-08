@@ -3,8 +3,10 @@ use std::rc::Rc;
 
 mod arguments;
 mod calls;
-mod check;
-mod model;
+pub(crate) mod check;
+#[path = "../collections/check.rs"]
+mod collection_check;
+pub(crate) mod model;
 #[path = "../version/types.rs"]
 mod version_policy;
 pub(crate) use check::validate;
@@ -32,6 +34,8 @@ pub enum Value {
     Na,
     /// Missing boolean.
     NaBool,
+    /// Array or map identity, pointing into the authoritative runtime arena.
+    Collection(bool, u32),
     /// Missing color.
     NaColor,
     /// Missing string.

@@ -36,6 +36,9 @@ impl Checker<'_> {
     }
     pub fn builtin(&mut self, id: NodeId, b: Builtin, args: &[Arg], values: &[Type]) -> Type {
         use Builtin::*;
+        if let Collection(op) = b {
+            return self.collection(id, op, args, values);
+        }
         let q = values
             .iter()
             .fold(Qualifier::Const, |q, t| q.max(t.qualifier));
@@ -335,6 +338,18 @@ impl Checker<'_> {
             let object = *object;
             let field = field.clone();
             let ty = self.infer(object);
+            if let Base::Array(_) | Base::Map(..) = &ty.base {
+                let family = if matches!(ty.base, Base::Map(..)) {
+                    "map"
+                } else {
+                    "array"
+                };
+                if let Some(op) = crate::collections::lookup(&format!("{family}.{field}")) {
+                    return self.collection_method(id, op, ty, args, values);
+                }
+                self.error(id, "unknown collection method");
+                return Type::unknown();
+            }
             if !matches!(
                 ty.base,
                 Base::Handle("line" | "box" | "label") | Base::Unknown

@@ -276,6 +276,30 @@ impl Eval<'_> {
                     (*id, Value::Na)
                 } else {
                     let receiver = self.eval(*object)?;
+                    if let Value::Collection(map, _) = receiver {
+                        let family = if map { "map" } else { "array" };
+                        let Some(op) = crate::collections::lookup(&format!("{family}.{field}"))
+                        else {
+                            return Err(self.err(
+                                *id,
+                                ErrorCode::PineType,
+                                "unknown collection method",
+                            ));
+                        };
+                        let mut values = vec![receiver];
+                        for arg in args {
+                            values.push(self.eval(arg.value)?);
+                        }
+                        let value = crate::collections::execute(
+                            &mut self.state.arena,
+                            self.script.version,
+                            op,
+                            &values,
+                        )
+                        .map_err(|message| self.err(*id, ErrorCode::PineType, message))?;
+                        self.set_register(*id, value);
+                        return Ok(());
+                    }
                     let Value::Obj(kind, raw) = receiver else {
                         return Err(self.type_err(*object, "an object handle", &receiver));
                     };

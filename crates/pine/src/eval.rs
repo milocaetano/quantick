@@ -28,7 +28,7 @@ use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
 
 #[path = "ir/arena.rs"]
-mod arena;
+pub(crate) mod arena;
 #[path = "ir/loops.rs"]
 mod ir_loops;
 #[path = "ir/runtime.rs"]
@@ -81,9 +81,12 @@ impl ScriptState {
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
         let StateSnapshot { mut arena } = snapshot;
+        crate::collections::restore_varip(&self.arena, &mut arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
-                arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
+                if !matches!(self.arena.get(GLOBALS, slot), Value::Collection(..)) {
+                    arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
+                }
                 arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }
@@ -96,6 +99,7 @@ impl ScriptState {
     /// Commit the forming bar: flush staged history values into their rings.
     pub(crate) fn commit_bar(&mut self) {
         self.arena.commit_histories();
+        crate::collections::collect(&mut self.arena);
     }
 
     pub(crate) fn reset(&mut self) {
@@ -118,6 +122,8 @@ pub(crate) struct StateSnapshot {
 /// on the wrong candle.
 #[path = "candle_plots/eval.rs"]
 mod candle_eval;
+#[path = "collections/eval.rs"]
+mod collection_eval;
 
 pub(crate) struct Staged<'a> {
     /// One cell per plot; pushed by the caller after a clean run.
@@ -410,6 +416,7 @@ impl<'a> Eval<'a> {
         }
         // Output calls first: they stage into the plot row.
         match builtin {
+            Builtin::Collection(op) => return self.collection_call(id, op, args),
             Builtin::Indicator => return Ok(Value::Na),
             Builtin::PlotCandle | Builtin::PlotBar => return self.candle_plot(id, args),
             Builtin::Plot | Builtin::Hline => {
@@ -548,6 +555,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 fn describe(value: &Value) -> &'static str {
     match value {
         Value::Obj(..) => "an object handle",
+        Value::Collection(..) => "a collection handle",
         Value::Num(_) => "a number",
         Value::Bool(_) => "a bool",
         Value::Color(_) => "a color",
