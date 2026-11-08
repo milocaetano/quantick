@@ -74,9 +74,10 @@ impl OrderflowView {
             }
         });
         ui.horizontal(|ui| {
-            ui.add(
+            let hint = crate::theme::supporting_text(ui, "preset name");
+            crate::theme::preset_input(ui,
                 egui::TextEdit::singleline(self.look.name_draft_mut())
-                    .hint_text("preset name")
+                    .hint_text(hint)
                     .desired_width(150.0),
             );
             if ui
@@ -130,11 +131,14 @@ impl OrderflowView {
             let saved = asset
                 .unsaved()
                 .map_or_else(String::new, |why| format!(" — not saved: {why}"));
-            ui.small(format!(
-                "settings kept for asset {} only ({}){saved}",
-                asset.key(),
-                asset.source().as_str()
-            ));
+            crate::theme::supporting_label(
+                ui,
+                format!(
+                    "settings kept for asset {} only ({}){saved}",
+                    asset.key(),
+                    asset.source().as_str()
+                ),
+            );
         }
         if let Some(on) = save_switched {
             self.look.set_save_changes(on);

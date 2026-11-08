@@ -174,11 +174,13 @@ impl PresetsSection<'_> {
         });
         ui.horizontal(|ui| {
             let full = presets.is_full();
-            ui.add(
+            let hint = crate::theme::supporting_text(ui, "name this setup");
+            crate::theme::preset_input(
+                ui,
                 egui::TextEdit::singleline(name_draft)
                     .desired_width(150.0)
                     .char_limit(MAX_NAME_LEN)
-                    .hint_text("name this setup"),
+                    .hint_text(hint),
             );
             let can_save = !name_draft.trim().is_empty();
             let save = ui.add_enabled(can_save, egui::Button::new("save preset"));
@@ -550,7 +552,10 @@ impl FollowDefaultFooter {
                  setup used anywhere",
             )
             .clicked();
-        ui.small("Changes apply to this chart immediately and persist across restarts.");
+        crate::theme::supporting_label(
+            ui,
+            "Changes apply to this chart immediately and persist across restarts.",
+        );
         reset
     }
 }
