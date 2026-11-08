@@ -74,7 +74,10 @@ pub fn draw_style_contents(
         response.changed = true;
         response.applied_preset = Some(CandlePreset::OrderFlow);
     }
-    ui.small("Appearance changes redraw the chart only; feeds and book capture stay untouched.");
+    crate::theme::supporting_label(
+        ui,
+        "Appearance changes redraw the chart only; feeds and book capture stay untouched.",
+    );
     response
 }
 

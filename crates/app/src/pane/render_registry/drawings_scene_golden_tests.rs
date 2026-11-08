@@ -336,3 +336,92 @@ fn drawings_scene_golden() {
         );
     }
 }
+
+/// Text keeps its authored ink; a local backing supplies the missing contrast.
+#[cfg(test)]
+#[test]
+fn drawing_text_and_forms_remain_readable() {
+    use quantick_appearance::{Appearance, PremultipliedRgba, contrast};
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        for bookmap in [false, true] {
+            let ctx = egui::Context::default();
+            let mut appearance = Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let palette = if bookmap {
+                crate::theme::bookmap(&ctx)
+            } else {
+                crate::theme::get(&ctx)
+            };
+            let _scope = crate::theme::scope(&ctx, palette.clone());
+            for color in [
+                palette.color(quantick_appearance::Token::DrawingDefault),
+                egui::Color32::from_rgb(181, 131, 43),
+                egui::Color32::from_rgb(20, 30, 45),
+            ] {
+                let mut scene = MarkScene::default();
+                scene.shapes.push(quantick_drawings::MarkShape::Text {
+                    at: Px::new(100.0, 100.0),
+                    anchor: quantick_drawings::Align2([
+                        quantick_drawings::Align::Min,
+                        quantick_drawings::Align::Min,
+                    ]),
+                    text: "Light audit annotation".into(),
+                    font: quantick_drawings::FontSpec {
+                        family: quantick_drawings::FontFamily::Proportional,
+                        size_px: 12.0,
+                    },
+                    color: PremultipliedRgba::from_premultiplied(color.to_array()),
+                });
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    paint_scene(
+                        &ctx.layer_painter(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("annotation"),
+                        )),
+                        &scene,
+                    );
+                });
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape {
+                            Some(text)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("annotation text");
+                assert_eq!(
+                    text.galley.job.sections[0].format.color, color,
+                    "authored ink is preserved"
+                );
+                let backing = output.shapes.iter().find_map(|shape| {
+                    if let egui::Shape::Rect(rect) = &shape.shape {
+                        Some(rect)
+                    } else {
+                        None
+                    }
+                });
+                if palette.resolved.dark {
+                    assert!(backing.is_none(), "Dark and Bookmap paint are preserved");
+                } else {
+                    let background = backing.map_or(palette.canvas(), |rect| {
+                        assert!(
+                            rect.rect
+                                .contains_rect(text.galley.rect.translate(text.pos.to_vec2()))
+                        );
+                        rect.fill
+                    });
+                    let rgba =
+                        |c: egui::Color32| PremultipliedRgba::from_premultiplied(c.to_array());
+                    assert!(
+                        contrast::contrast_ratio(rgba(color), rgba(background)) >= 4.5,
+                        "text reads on its actual backing"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -49,3 +49,30 @@ pub fn painted_color(drawing: &Drawing) -> egui::Color32 {
 pub fn shortcut_key(shortcut: ToolShortcut) -> Option<egui::Key> {
     egui::Key::from_name(shortcut.key.encode_utf8(&mut [0; 4]))
 }
+
+/// A text-only backing on Light surfaces; strokes and authored ink stay intact.
+/// The current palette is scoped to the actual canvas (including Bookmap).
+pub(crate) fn text_backing(
+    palette: &crate::theme::Palette,
+    color: egui::Color32,
+    background: egui::Color32,
+) -> Option<egui::Color32> {
+    use quantick_appearance::contrast;
+    const TEXT_CONTRAST: f32 = 4.5;
+    if palette.resolved.dark || color.a() == 0 {
+        return None;
+    }
+    let rgba = |c: egui::Color32| PremultipliedRgba::from_premultiplied(c.to_array());
+    let ratio =
+        |back| contrast::contrast_ratio(contrast::over(rgba(color), rgba(back)), rgba(back));
+    if ratio(background) >= TEXT_CONTRAST {
+        return None;
+    }
+    Some(
+        if ratio(egui::Color32::BLACK) >= ratio(egui::Color32::WHITE) {
+            egui::Color32::BLACK
+        } else {
+            egui::Color32::WHITE
+        },
+    )
+}

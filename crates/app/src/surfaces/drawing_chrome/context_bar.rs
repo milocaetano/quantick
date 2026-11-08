@@ -99,7 +99,9 @@ pub(crate) fn draw(
     // opaque to the pointer, so leaving it up would let it eat the click that
     // places the next object — the selection it belongs to is the one they
     // just finished, not the one they are starting.
-    if env.drawing_tool_armed {
+    // The manager already exposes these actions. Keep the parked position,
+    // but give its footer the pointer until it closes.
+    if env.drawing_tool_armed || chrome.manager_open() {
         return ask;
     }
     // Suppressed means suppressed: nothing below this line runs, so the bar

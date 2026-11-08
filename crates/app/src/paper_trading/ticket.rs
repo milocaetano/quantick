@@ -18,7 +18,7 @@ use super::{
     ArmedPlacement, PaperTrading, TradingTabAction, cmd, kind_short, kind_word, reveal_folder,
     side_word_upper, strategies,
 };
-use crate::paper_chrome::{caption, fmt_decimal, pill_toggle, points_color};
+use crate::paper_chrome::{caption, financial_text, fmt_decimal, pill_toggle, points_color};
 use crate::paper_report::LedgerAction;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -70,8 +70,7 @@ impl PaperTrading {
         let Some(mark) = self.account.venue().mark_price() else {
             ui.label(
                 egui::RichText::new("no print yet - there is no market to trade against")
-                    .color(palette.text_muted())
-                    .small(),
+                    .color(palette.text_muted()),
             );
             return;
         };
@@ -117,12 +116,10 @@ impl PaperTrading {
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let palette = theme::get(ui.ctx());
         self.desk.gesture.hovered_order = None;
-        let mut pnl_mode_changed = false;
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             ui.label(
                 egui::RichText::new("Simulated fills from the tape - no broker.")
-                    .color(palette.text_muted())
-                    .small(),
+                    .color(palette.text_muted()),
             )
             .on_hover_text(
                 "A market order fills at the next print; a limit at its own price when \
@@ -130,8 +127,8 @@ impl PaperTrading {
              Nothing here touches a real account. Money comes from the point value \
              you declared, else from instruments.toml.",
             );
-            pnl_mode_changed = self.draw_pnl_mode_switch(ui);
         });
+        let pnl_mode_changed = ui.horizontal(|ui| self.draw_pnl_mode_switch(ui)).inner;
         ui.add_space(6.0);
 
         self.draw_position_card(ui);
@@ -216,16 +213,15 @@ impl PaperTrading {
         }
         self.draw_quantity_row(ui, derived_quantity.is_none());
         // The discreet line: what the number means, or why there is none.
-        // Small and quiet on purpose - it explains the size without taking
-        // the screen away from the chart.
+        // Supporting body text keeps the size explanation readable.
         let sentence = risk_state.sentence();
         if !sentence.is_empty() {
             let colour = if risk_blocks {
                 palette.warn()
             } else {
-                palette.text_faint()
+                palette.text_support()
             };
-            ui.label(egui::RichText::new(sentence).color(colour).small());
+            ui.label(egui::RichText::new(sentence).color(colour));
         }
         self.draw_order_fields(ui);
         let strategies_changed =
@@ -275,8 +271,7 @@ impl PaperTrading {
             } else {
                 "The button arms a click; the next chart click rests the order there."
             })
-            .color(palette.text_support())
-            .small(),
+            .color(palette.text_support()),
         );
         OrderEntryChanges {
             cmd_trading: cmd::draw_cmd_trading_settings(
@@ -295,12 +290,8 @@ impl PaperTrading {
     /// the risk per trade is deciding it (`typed` false).
     fn draw_quantity_row(&mut self, ui: &mut egui::Ui, typed: bool) {
         let palette = theme::get(ui.ctx());
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Qty")
-                    .color(palette.text_muted())
-                    .small(),
-            );
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Qty").color(palette.text_muted()));
             let step = if ui.input(|input| input.modifiers.shift) {
                 Decimal::TEN
             } else {
@@ -315,8 +306,20 @@ impl PaperTrading {
                 {
                     self.step_quantity(-step);
                 }
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        self.desk.ticket.qty_text.clone(),
+                        egui::TextStyle::Monospace.resolve(ui.style()),
+                        palette.text_primary(),
+                    )
+                    .size()
+                    .x
+                    + 12.0;
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.desk.ticket.qty_text).desired_width(56.0),
+                    egui::TextEdit::singleline(&mut self.desk.ticket.qty_text)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(width.max(56.0).min(ui.available_width() - 28.0)),
                 );
                 if ui
                     .small_button("+")
@@ -338,12 +341,8 @@ impl PaperTrading {
         let palette = theme::get(ui.ctx());
         // Type: three pills. Picking Limit or Stop is a promise of an
         // accent line on the chart, so the selected pill wears the accent.
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Type")
-                    .color(palette.text_muted())
-                    .small(),
-            );
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Type").color(palette.text_muted()));
             for kind in [EntryKind::Market, EntryKind::Limit, EntryKind::Stop] {
                 let on = self.desk.ticket.order_type == kind;
                 if pill_toggle(ui, kind_word(kind), on, "how the entry meets the market").clicked()
@@ -354,29 +353,21 @@ impl PaperTrading {
                 }
             }
         });
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Stop")
-                    .color(palette.text_muted())
-                    .small(),
-            )
-            .on_hover_text(
-                "optional protective stop, this many points on the losing side of the \
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Stop").color(palette.text_muted()))
+                .on_hover_text(
+                    "optional protective stop, this many points on the losing side of the \
                      entry; empty places no stop",
-            );
+                );
             ui.add(
                 egui::TextEdit::singleline(&mut self.desk.ticket.stop_offset_text)
                     .desired_width(52.0),
             );
-            ui.label(
-                egui::RichText::new("Target")
-                    .color(palette.text_muted())
-                    .small(),
-            )
-            .on_hover_text(
-                "optional profit target, this many points on the winning side of the \
+            ui.label(egui::RichText::new("Target").color(palette.text_muted()))
+                .on_hover_text(
+                    "optional profit target, this many points on the winning side of the \
                  entry; empty places no target",
-            );
+                );
             ui.add(
                 egui::TextEdit::singleline(&mut self.desk.ticket.profit_offset_text)
                     .desired_width(52.0),
@@ -424,28 +415,22 @@ impl PaperTrading {
                 egui::RichText::new(format!(
                     "{queued_entries} market order(s) await the next print"
                 ))
-                .color(palette.text_muted())
-                .small(),
+                .color(palette.text_muted()),
             );
         }
         if queued_closes > 0 {
-            ui.label(
-                egui::RichText::new("closing at the next print…")
-                    .color(palette.text_muted())
-                    .small(),
-            );
+            ui.label(egui::RichText::new("closing at the next print…").color(palette.text_muted()));
         }
         if orders.is_empty() && queued_entries == 0 {
             ui.label(egui::RichText::new("No working orders.").color(palette.text_muted()));
             ui.label(
                 egui::RichText::new("Pick Limit or Stop, then click a price on the chart.")
-                    .color(palette.text_support())
-                    .small(),
+                    .color(palette.text_support()),
             );
             return;
         }
         for order in orders {
-            let response = ui.horizontal(|ui| {
+            let response = ui.horizontal_wrapped(|ui| {
                 // A short accent dash, echoing the dashed chart line.
                 let (dash, _) =
                     ui.allocate_exact_size(egui::vec2(10.0, 12.0), egui::Sense::hover());
@@ -521,21 +506,20 @@ impl PaperTrading {
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let palette = theme::get(ui.ctx());
         let mut action = None;
-        ui.horizontal(|ui| {
-            let realized = self.account.realized_pnl_tint();
-            ui.label(
-                egui::RichText::new(self.account.realized_pnl_text())
-                    .monospace()
-                    .strong()
-                    .color(points_color(&palette, realized)),
-            );
+        let realized = self.account.realized_pnl_tint();
+        ui.label(financial_text(
+            &palette,
+            &self.account.realized_pnl_text(),
+            palette.mono_font(12.0),
+            points_color(&palette, realized),
+        ));
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new(format!(
                     "realized · {} trades",
                     self.account.venue().closed_trades().len()
                 ))
-                .color(palette.text_muted())
-                .small(),
+                .color(palette.text_muted()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -548,7 +532,7 @@ impl PaperTrading {
                 }
             });
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .small_button(icons::FOLDER_OPEN)
                 .on_hover_text(
@@ -566,13 +550,12 @@ impl PaperTrading {
                             "trades saved to: {}",
                             self.account.trades_dir().display()
                         ))
-                        .color(palette.text_muted())
-                        .small(),
+                        .color(palette.text_muted()),
                     )
                     .fill(palette.control())
                     .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                     .rounding(egui::Rounding::same(3.0))
-                    .min_size(egui::vec2(ui.available_width(), 20.0)),
+                    .wrap_mode(egui::TextWrapMode::Wrap),
                 )
                 .on_hover_text(format!(
                     "click to open the folder — {}\nthe folder button beside this picks a \

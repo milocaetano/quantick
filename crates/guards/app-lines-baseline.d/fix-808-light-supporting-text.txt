@@ -1,0 +1,5 @@
+# Issue #808: local egui supporting text and preset input treatments, readable
+# permission grants, wrapped selectable replay guidance, and active caret ink.
+# All 124 added production lines paint existing surfaces; no headless state.
+crates/app +124
+!budget +124
