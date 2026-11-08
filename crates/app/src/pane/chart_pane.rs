@@ -630,61 +630,7 @@ impl ChartPane {
             price_label: &self.price_band_label,
         }
         .bands(&areas);
-        // A drawing tool consumes the *primary button*, not the chart: pan, wheel zoom, pane
-        // dividers and collapse chevrons keep working while one is armed (audit S2).
-        let placement_id = self.interaction_id("drawing_placement");
-        #[cfg(any(feature = "drawing-harness", test))]
-        let hand = self
-            .gestures
-            .parked_hand
-            .map(|hand| (hand.constrain, hand.position));
-        #[cfg(not(any(feature = "drawing-harness", test)))]
-        let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
-        let options = gesture::PlacementOptions {
-            tool: chrome.toolrail.tool().drawing_tool(),
-            magnet: chrome.toolrail.magnet(),
-            constrain: if ui.input(|input| input.modifiers.shift) {
-                drawings::Constrain::Level
-            } else {
-                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
-            },
-            parked_position: hand.map(|hand| hand.1),
-        };
-        let placement = gesture_input::update_placement(
-            &mut self.gestures,
-            &mut self.drawings,
-            &gesture::DrawingProjection {
-                series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
-                    spec: &self.spec,
-                },
-                viewport: &self.model.viewport,
-                indicators: &self.indicators,
-            },
-            gesture_input::PlacementInput {
-                ui,
-                areas: &areas,
-                bands: &bands,
-                id: placement_id,
-                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
-            },
-            options,
-            gesture::PlacementDefaults {
-                presets: chrome.presets,
-                repeat: chrome.toolrail.repeat(),
-            },
-        );
-        if let Some(position) = placement.hover_position {
-            self.hover_pos = position.map(drawings::pos);
-        }
-        if placement.completion.arm_pointer {
-            chrome.toolrail.arm(Tool::Pointer);
-        }
-        if placement.completion.begin_text_edit {
-            *chrome.begin_text_edit = true;
-        }
-        let tool_armed = placement.tool_armed;
+        let tool_armed = self.handle_placement(ui, &areas, &bands, chrome);
         let total = self.slots();
 
         // Chart body: `canvas_gestures` pans and zooms it.
@@ -810,6 +756,71 @@ impl ChartPane {
         axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
         axes_and_panes::handle_indicator_pane_gestures(self, ui, &areas, chrome, primary_free);
+    }
+
+    /// The drawing tool's placement gesture; true while a tool is armed.
+    fn handle_placement(
+        &mut self,
+        ui: &egui::Ui,
+        areas: &PlotAreas,
+        bands: &bands::Bands,
+        chrome: &mut PaneChrome<'_>,
+    ) -> bool {
+        // A drawing tool consumes the *primary button*, not the chart: pan, wheel zoom, pane
+        // dividers and collapse chevrons keep working while one is armed (audit S2).
+        let placement_id = self.interaction_id("drawing_placement");
+        #[cfg(any(feature = "drawing-harness", test))]
+        let hand = self
+            .gestures
+            .parked_hand
+            .map(|hand| (hand.constrain, hand.position));
+        #[cfg(not(any(feature = "drawing-harness", test)))]
+        let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
+        let options = gesture::PlacementOptions {
+            tool: chrome.toolrail.tool().drawing_tool(),
+            magnet: chrome.toolrail.magnet(),
+            constrain: if ui.input(|input| input.modifiers.shift) {
+                drawings::Constrain::Level
+            } else {
+                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
+            },
+            parked_position: hand.map(|hand| hand.1),
+        };
+        let placement = gesture_input::update_placement(
+            &mut self.gestures,
+            &mut self.drawings,
+            &gesture::DrawingProjection {
+                series: gesture::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.model.viewport,
+                indicators: &self.indicators,
+            },
+            gesture_input::PlacementInput {
+                ui,
+                areas,
+                bands,
+                id: placement_id,
+                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
+            },
+            options,
+            gesture::PlacementDefaults {
+                presets: chrome.presets,
+                repeat: chrome.toolrail.repeat(),
+            },
+        );
+        if let Some(position) = placement.hover_position {
+            self.hover_pos = position.map(drawings::pos);
+        }
+        if placement.completion.arm_pointer {
+            chrome.toolrail.arm(Tool::Pointer);
+        }
+        if placement.completion.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        placement.tool_armed
     }
 
     /// The HUD anchor cached by the last draw, if the paper layer was

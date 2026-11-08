@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::ledger_rows::LedgerPage;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
@@ -21,8 +22,8 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv, ReportState,
-    TOTALS_STRIP_PX,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, LoadedHistory, ReportEnv,
+    ReportState, TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, financial_text, list_symbol_folders, points_color};
@@ -206,30 +207,7 @@ impl ReportState {
         // per frame as a week of them, so the untouched tail is never even
         // walked into a Vec.
         let page = LedgerPage::of(cut.kept.len(), self.ledger_pages);
-        let saved: Vec<Item<'_>> = cache
-            .map(|cache| {
-                cut.kept
-                    .iter()
-                    .rev()
-                    .take(page.shown)
-                    .map(|&index| {
-                        let row = &cache.rows[index];
-                        Item {
-                            trade: &row.trade,
-                            symbol: &row.symbol,
-                            live: None,
-                            meta: TradeMeta {
-                                session: row.session.as_ref(),
-                                trade_ref: row.trade_ref,
-                                source: row.source,
-                                tags: &row.tags,
-                                pnl: env.pnl.of(&row.symbol),
-                            },
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let saved = saved_items(cache, &cut.kept, page.shown, env.pnl);
 
         // Rows are cut newest first, so day headers open each day as the
         // list walks back in time.
@@ -242,22 +220,14 @@ impl ReportState {
             live: &live_keys,
             tz,
         };
-        let mut rows = Vec::new();
-        let mut inline_placed = false;
-        if !live.is_empty() || hidden_live > 0 {
-            rows.push(LedgerRow::Header("THIS SESSION", live.len()));
-            if hidden_live > 0 {
-                rows.push(LedgerRow::HiddenLive(hidden_live));
-            }
-            push_groups(&mut rows, &live, &view, &mut inline_placed);
-        }
-        if !saved.is_empty() {
-            rows.push(LedgerRow::Header("EARLIER SESSIONS", cut.kept.len()));
-            push_groups(&mut rows, &saved, &view, &mut inline_placed);
-        }
-        if page.remaining > 0 {
-            rows.push(LedgerRow::More(page.remaining));
-        }
+        let (rows, inline_placed) = ledger_rows(
+            &live,
+            hidden_live,
+            &saved,
+            cut.kept.len(),
+            page.remaining,
+            &view,
+        );
 
         // Totals over everything *in scope*, not everything listed: the
         // rows above are one revealed page and the strip must not swing
@@ -296,27 +266,7 @@ impl ReportState {
         let target = self.sessions.state.tag_target(self.live_pick(env), cache);
         let delete_key = self.sessions.state.key_press(false, &live_keys, cache);
         let presses = RowList {
-            layout_key: egui::Id::new((
-                self.ledger_layout_revision,
-                env.symbol,
-                env.dir,
-                env.session_journal_paths,
-                env.session_trades.len(),
-                rows.len(),
-                self.ledger_pages,
-                format!(
-                    "{:?}{:?}{:?}{:?}{:?}",
-                    self.sessions.state.view,
-                    self.collapsed_days,
-                    env.pnl.key(),
-                    tz,
-                    self.sessions
-                        .state
-                        .edit
-                        .as_ref()
-                        .map(|edit| (std::mem::discriminant(edit), edit.session()))
-                ),
-            )),
+            layout_key: self.ledger_layout_key(env, tz, rows.len()),
             rows: &rows,
             selected: self.selected_trade,
             selected_saved: self.sessions.state.selected_saved.as_ref(),
@@ -353,6 +303,31 @@ impl ReportState {
         draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
         self.draw_ledger_disclosure(ui);
         action
+    }
+
+    /// The row list's layout identity: anything that moves a row changes it.
+    fn ledger_layout_key(&self, env: &ReportEnv<'_>, tz: TzOffset, rows: usize) -> egui::Id {
+        egui::Id::new((
+            self.ledger_layout_revision,
+            env.symbol,
+            env.dir,
+            env.session_journal_paths,
+            env.session_trades.len(),
+            rows,
+            self.ledger_pages,
+            format!(
+                "{:?}{:?}{:?}{:?}{:?}",
+                self.sessions.state.view,
+                self.collapsed_days,
+                env.pnl.key(),
+                tz,
+                self.sessions
+                    .state
+                    .edit
+                    .as_ref()
+                    .map(|edit| (std::mem::discriminant(edit), edit.session()))
+            ),
+        ))
     }
 
     /// The selected live trade's journal entry — `Some(None)` for one no
@@ -735,6 +710,66 @@ impl RowList<'_, '_> {
 enum TradePick {
     Live(usize),
     Saved(Option<(SessionKey, TradeRef)>),
+}
+
+/// The revealed page of saved rows, newest first, as list items.
+fn saved_items<'a>(
+    cache: Option<&'a LoadedHistory>,
+    kept: &[usize],
+    shown: usize,
+    pnl: PnlReader<'a>,
+) -> Vec<Item<'a>> {
+    cache
+        .map(|cache| {
+            kept.iter()
+                .rev()
+                .take(shown)
+                .map(|&index| {
+                    let row = &cache.rows[index];
+                    Item {
+                        trade: &row.trade,
+                        symbol: &row.symbol,
+                        live: None,
+                        meta: TradeMeta {
+                            session: row.session.as_ref(),
+                            trade_ref: row.trade_ref,
+                            source: row.source,
+                            tags: &row.tags,
+                            pnl: pnl.of(&row.symbol),
+                        },
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The list's rows, newest first, and whether an inline edit row was placed.
+fn ledger_rows<'a>(
+    live: &'a [Item<'a>],
+    hidden_live: usize,
+    saved: &'a [Item<'a>],
+    kept: usize,
+    remaining: usize,
+    view: &GroupView<'_>,
+) -> (Vec<LedgerRow<'a>>, bool) {
+    let mut rows = Vec::new();
+    let mut inline_placed = false;
+    if !live.is_empty() || hidden_live > 0 {
+        rows.push(LedgerRow::Header("THIS SESSION", live.len()));
+        if hidden_live > 0 {
+            rows.push(LedgerRow::HiddenLive(hidden_live));
+        }
+        push_groups(&mut rows, live, view, &mut inline_placed);
+    }
+    if !saved.is_empty() {
+        rows.push(LedgerRow::Header("EARLIER SESSIONS", kept));
+        push_groups(&mut rows, saved, view, &mut inline_placed);
+    }
+    if remaining > 0 {
+        rows.push(LedgerRow::More(remaining));
+    }
+    (rows, inline_placed)
 }
 
 /// The strip under the list: trades and win rate over everything in scope,

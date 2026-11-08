@@ -635,6 +635,83 @@ fn connection_session(
     socket_key: u64,
     authority: &Arc<ConnectionAuthority>,
 ) -> Result<(), &'static str> {
+    let (accepted, remote_actor) = accept_client(stream, socket_key, authority)?;
+    let connection_id = &remote_actor.connection_id;
+    // One request timeout bounds how long a frame may take to arrive once it
+    // has started; a timeout with nothing received is an idle client and is
+    // not an error (see the read loop in `serve_requests`).
+    stream
+        .set_read_timeout(Some(authority.options.request_timeout))
+        .map_err(|_| codes::INSTANCE_GONE)?;
+    stream
+        .set_write_timeout(Some(authority.options.request_timeout))
+        .map_err(|_| codes::INSTANCE_GONE)?;
+
+    let writer_stream = stream.try_clone().map_err(|_| codes::INSTANCE_GONE)?;
+    let writer = Arc::new(Mutex::new(writer_stream));
+    let codec = BoundedCodec::default();
+    // Request IDs in flight on this connection (contract §5.2: a duplicate is
+    // rejected while the first is still executing). Requests that leave for
+    // the application thread and parked waits are in flight from the
+    // reader's point of view; a worker-side read is answered before the next
+    // frame is read.
+    let slots = ConnectionSlots::new(&authority.options);
+    (authority.wake)();
+    tracing::info!(
+        target: "quantick::control",
+        event_code = "CONTROL_CLIENT_CONNECTED",
+        connection_id = %connection_id,
+        client_name = %remote_actor.client_name,
+        effective_profile = %accepted.effective_profile,
+        "authenticated local control client connected"
+    );
+    serve_requests(
+        stream,
+        &writer,
+        &codec,
+        &slots,
+        &accepted,
+        &remote_actor,
+        authority,
+    );
+    // The socket is gone: this connection's parked waits release their slots
+    // at the manager's next pass instead of holding them to the deadline.
+    slots.closed.store(true, Ordering::Release);
+    // This connection's principal dies with it, so nothing it recorded can
+    // ever be replayed again. Freeing the entries keeps the store's cap for
+    // the connections that are still running.
+    authority
+        .idempotency
+        .forget_principal(&remote_actor.principal_id);
+
+    if authority
+        .statuses
+        .try_send(ConnectionStatus::Disconnected(connection_id.clone()))
+        .is_err()
+    {
+        tracing::warn!(
+            target: "quantick::control",
+            event_code = "CONTROL_CONNECTION_STATUS_DROPPED",
+            connection_id = %connection_id,
+            "reserved connection status capacity was unexpectedly exhausted"
+        );
+    }
+    (authority.wake)();
+    tracing::info!(
+        target: "quantick::control",
+        event_code = "CONTROL_CLIENT_DISCONNECTED",
+        connection_id = %connection_id,
+        "local control client disconnected"
+    );
+    Ok(())
+}
+
+/// Read, authenticate and admit a handshake; every refusal is answered first.
+fn accept_client(
+    stream: &mut TcpStream,
+    socket_key: u64,
+    authority: &Arc<ConnectionAuthority>,
+) -> Result<(quantick_control::handshake::HandshakeResponse, RemoteActor), &'static str> {
     stream
         .set_read_timeout(Some(authority.options.handshake_timeout))
         .map_err(|_| codes::AUTH_FAILED)?;
@@ -664,29 +741,7 @@ fn connection_session(
         client_name: handshake.client_name.clone(),
         connection_id: connection_id.clone(),
     };
-    let grant = HandshakeGrant {
-        protocol_versions: ProtocolVersionRange::new(
-            CURRENT_PROTOCOL_VERSION,
-            CURRENT_PROTOCOL_VERSION,
-        )
-        .expect("current protocol range is valid"),
-        instance_id: authority.identity.instance_id.clone(),
-        process_nonce: authority.identity.process_nonce.clone(),
-        bearer_token: authority.bearer_token.clone(),
-        connection_id: connection_id.clone(),
-        principal_id,
-        application_version: env!("CARGO_PKG_VERSION").to_owned(),
-        application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
-        profile_ceiling: authority.profile_ceiling.clone(),
-        granted_scopes: authority.granted_scopes.clone(),
-        // Advertise the timeout this gateway actually applies, so a client's
-        // own patience is derived from the truth rather than the default.
-        limits: ProtocolLimits {
-            request_timeout_ms: u64::try_from(authority.options.request_timeout.as_millis())
-                .unwrap_or(CONTROL_REQUEST_TIMEOUT_MS),
-            ..ProtocolLimits::default()
-        },
-    };
+    let grant = handshake_grant(authority, connection_id.clone(), principal_id);
     let accepted = match accept_handshake(&handshake, &grant, authority.contract.registry()) {
         Ok(response) => response,
         Err(error) => {
@@ -760,35 +815,55 @@ fn connection_session(
         (authority.wake)();
         return Err(codes::INSTANCE_GONE);
     }
-    // One request timeout bounds how long a frame may take to arrive once it
-    // has started; a timeout with nothing received is an idle client and is
-    // not an error (see the read loop below).
-    stream
-        .set_read_timeout(Some(authority.options.request_timeout))
-        .map_err(|_| codes::INSTANCE_GONE)?;
-    stream
-        .set_write_timeout(Some(authority.options.request_timeout))
-        .map_err(|_| codes::INSTANCE_GONE)?;
+    Ok((accepted, remote_actor))
+}
 
-    let writer_stream = stream.try_clone().map_err(|_| codes::INSTANCE_GONE)?;
-    let writer = Arc::new(Mutex::new(writer_stream));
-    let codec = BoundedCodec::default();
-    // Request IDs in flight on this connection (contract §5.2: a duplicate is
-    // rejected while the first is still executing). Requests that leave for
-    // the application thread and parked waits are in flight from the
-    // reader's point of view; a worker-side read is answered before the next
-    // frame is read.
-    let slots = ConnectionSlots::new(&authority.options);
-    (authority.wake)();
-    tracing::info!(
-        target: "quantick::control",
-        event_code = "CONTROL_CLIENT_CONNECTED",
-        connection_id = %connection_id,
-        client_name = %handshake.client_name,
-        effective_profile = %accepted.effective_profile,
-        "authenticated local control client connected"
-    );
+/// What this gateway offers a client that authenticates.
+fn handshake_grant(
+    authority: &ConnectionAuthority,
+    connection_id: ConnectionId,
+    principal_id: PrincipalId,
+) -> HandshakeGrant {
+    HandshakeGrant {
+        protocol_versions: ProtocolVersionRange::new(
+            CURRENT_PROTOCOL_VERSION,
+            CURRENT_PROTOCOL_VERSION,
+        )
+        .expect("current protocol range is valid"),
+        instance_id: authority.identity.instance_id.clone(),
+        process_nonce: authority.identity.process_nonce.clone(),
+        bearer_token: authority.bearer_token.clone(),
+        connection_id,
+        principal_id,
+        application_version: env!("CARGO_PKG_VERSION").to_owned(),
+        application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
+        profile_ceiling: authority.profile_ceiling.clone(),
+        granted_scopes: authority.granted_scopes.clone(),
+        // Advertise the timeout this gateway actually applies, so a client's
+        // own patience is derived from the truth rather than the default.
+        limits: ProtocolLimits {
+            request_timeout_ms: u64::try_from(authority.options.request_timeout.as_millis())
+                .unwrap_or(CONTROL_REQUEST_TIMEOUT_MS),
+            ..ProtocolLimits::default()
+        },
+    }
+}
 
+/// Check, prepare and dispatch each request until the socket ends.
+fn serve_requests(
+    stream: &mut TcpStream,
+    writer: &Arc<Mutex<TcpStream>>,
+    codec: &BoundedCodec,
+    slots: &Arc<ConnectionSlots>,
+    accepted: &quantick_control::handshake::HandshakeResponse,
+    remote_actor: &RemoteActor,
+    authority: &Arc<ConnectionAuthority>,
+) {
+    let connection_id = &remote_actor.connection_id;
+    let refuse = |request: &RequestEnvelope, code: &str, message: &str, retryable: bool| {
+        let error = known_error(code, message, retryable);
+        send_response(writer, codec, failure_response(request, error));
+    };
     let mut rate_limiter = TokenBucket::client_requests(Instant::now());
     loop {
         let request = match codec.read_request(stream) {
@@ -808,18 +883,8 @@ fn connection_session(
             Err(_) => break,
         };
         if !rate_limiter.allow(Instant::now()) {
-            send_response(
-                &writer,
-                &codec,
-                failure_response(
-                    &request,
-                    known_error(
-                        codes::BACKPRESSURE,
-                        "client request rate limit is exhausted",
-                        true,
-                    ),
-                ),
-            );
+            let message = "client request rate limit is exhausted";
+            refuse(&request, codes::BACKPRESSURE, message, true);
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_CLIENT_RATE_LIMITED",
@@ -829,18 +894,8 @@ fn connection_session(
             continue;
         }
         if slots.is_in_flight(&request.request_id) {
-            send_response(
-                &writer,
-                &codec,
-                failure_response(
-                    &request,
-                    known_error(
-                        codes::INVALID_REQUEST,
-                        "request_id is already in flight on this connection",
-                        false,
-                    ),
-                ),
-            );
+            let message = "request_id is already in flight on this connection";
+            refuse(&request, codes::INVALID_REQUEST, message, false);
             continue;
         }
         if authority.statuses.len()
@@ -856,33 +911,13 @@ fn connection_session(
             (authority.wake)();
         }
         if request.instance_id != authority.identity.instance_id {
-            send_response(
-                &writer,
-                &codec,
-                failure_response(
-                    &request,
-                    known_error(
-                        codes::INSTANCE_GONE,
-                        "request names a different running instance",
-                        false,
-                    ),
-                ),
-            );
+            let message = "request names a different running instance";
+            refuse(&request, codes::INSTANCE_GONE, message, false);
             continue;
         }
         if request.protocol_version != accepted.protocol_version {
-            send_response(
-                &writer,
-                &codec,
-                failure_response(
-                    &request,
-                    known_error(
-                        codes::VERSION_UNSUPPORTED,
-                        "request protocol version differs from the negotiated version",
-                        false,
-                    ),
-                ),
-            );
+            let message = "request protocol version differs from the negotiated version";
+            refuse(&request, codes::VERSION_UNSUPPORTED, message, false);
             continue;
         }
         let prepared = match authority
@@ -891,7 +926,7 @@ fn connection_session(
         {
             Ok(prepared) => prepared,
             Err(error) => {
-                send_response(&writer, &codec, failure_response(&request, error));
+                send_response(writer, codec, failure_response(&request, error));
                 continue;
             }
         };
@@ -904,7 +939,7 @@ fn connection_session(
         ) {
             Ok(ticket) => ticket,
             Err(answered) => {
-                send_response(&writer, &codec, *answered);
+                send_response(writer, codec, *answered);
                 continue;
             }
         };
@@ -912,45 +947,15 @@ fn connection_session(
             prepared,
             ticket,
             None,
-            &connection_id,
-            &remote_actor,
-            &accepted,
-            &codec,
-            &writer,
-            &slots,
+            connection_id,
+            remote_actor,
+            accepted,
+            codec,
+            writer,
+            slots,
             authority,
         );
     }
-    // The socket is gone: this connection's parked waits release their slots
-    // at the manager's next pass instead of holding them to the deadline.
-    slots.closed.store(true, Ordering::Release);
-    // This connection's principal dies with it, so nothing it recorded can
-    // ever be replayed again. Freeing the entries keeps the store's cap for
-    // the connections that are still running.
-    authority
-        .idempotency
-        .forget_principal(&remote_actor.principal_id);
-
-    if authority
-        .statuses
-        .try_send(ConnectionStatus::Disconnected(connection_id.clone()))
-        .is_err()
-    {
-        tracing::warn!(
-            target: "quantick::control",
-            event_code = "CONTROL_CONNECTION_STATUS_DROPPED",
-            connection_id = %connection_id,
-            "reserved connection status capacity was unexpectedly exhausted"
-        );
-    }
-    (authority.wake)();
-    tracing::info!(
-        target: "quantick::control",
-        event_code = "CONTROL_CLIENT_DISCONNECTED",
-        connection_id = %connection_id,
-        "local control client disconnected"
-    );
-    Ok(())
 }
 
 pub(super) fn activity_status_high_watermark(max_connections: usize) -> usize {
