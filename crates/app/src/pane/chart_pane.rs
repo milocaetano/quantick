@@ -463,6 +463,19 @@ impl ChartPane {
         }
     }
 
+    /// The palette this pane paints with: order flow takes the plot surface's.
+    pub fn palette(&self, ctx: &egui::Context) -> std::sync::Arc<crate::theme::Palette> {
+        let get = || crate::theme::get(ctx);
+        self.orderflow
+            .as_ref()
+            .map_or_else(get, |_| crate::theme::bookmap(ctx))
+    }
+    /// The style this pane's plot paints with, from the window's `style`.
+    pub fn plot_style(&self, style: &ChartStyle, ctx: &egui::Context) -> ChartStyle {
+        let palette = self.palette(ctx);
+        self.presentation.candles.resolve(style, &palette.resolved)
+    }
+
     /// The view the plot is carved for: the committed one while a close is only previewed.
     pub(crate) fn plot_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
         let lane = &self.orderflow.as_ref()?.cached_config().live_lane;
