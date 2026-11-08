@@ -30,7 +30,7 @@ pub(super) struct Brush;
 pub(super) const BRUSH_FAMILY: ToolFamily = ToolFamily {
     id: "brush",
     title: "Freehand",
-    icon: icons::SCRIBBLE,
+    icon: icons::PENCIL_SIMPLE,
     icon_strokes: &[],
     icon_dots: &[],
     icon_letter: None,
@@ -46,12 +46,10 @@ impl MarkTool for Brush {
     fn settings_title(&self) -> &'static str {
         "Pencil settings"
     }
-    /// `SCRIBBLE`, not `PENCIL`. In an app with an inspector, a pencil glyph
-    /// reads as "edit this"; the scribble shows the *result* instead of the
-    /// instrument, which is the only thing that says "whatever your hand
-    /// does is what you get".
+    /// The instrument, not the result: a scribble read as a snake on the
+    /// rail, and the trader asked for the pencil the tool is named after.
     fn icon(&self) -> &'static str {
-        icons::SCRIBBLE
+        icons::PENCIL_SIMPLE
     }
     fn hover_text(&self) -> &'static str {
         "Pencil - hold and draw (P)"
