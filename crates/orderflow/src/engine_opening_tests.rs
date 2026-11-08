@@ -93,6 +93,7 @@ fn inferred_grid_does_not_tombstone_the_initial_native_tape_window() {
                     tape_level_ticks: 1,
                     candle_level_ticks: 1,
                     lane_bars: vec![(717, 1_800)],
+                    tape_lead_share: 0.0,
                 }),
             },
             Instant::now(),

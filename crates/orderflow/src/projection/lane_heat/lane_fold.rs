@@ -308,6 +308,74 @@ impl Fold {
             .collect()
     }
 
+    /// The visible rows over `[from_ms, until_ms)`: each row's exact
+    /// interval there, and its closed history exact, or averaged on the bins
+    /// of `width_ms` when the lane averages.
+    fn lead(
+        &self,
+        history: &LiquidityHistory,
+        visible: impl Fn(&RowKey) -> bool + Copy,
+        (from_ms, until_ms): (i64, i64),
+        observed_end_ms: i64,
+        width_ms: Option<i64>,
+    ) -> Vec<DepthRun> {
+        let mut lead = Vec::new();
+        if until_ms <= from_ms {
+            return lead;
+        }
+        let mut push = |key: &RowKey, quantity: Decimal, low: i64, high: i64, averaged: bool| {
+            let (low, high) = (low.max(from_ms), high.min(until_ms).min(observed_end_ms));
+            if high > low {
+                lead.push(DepthRun {
+                    run: VisualLiquidityRun {
+                        generation: key.0,
+                        side: key.1,
+                        price_bucket: key.2,
+                        quantity,
+                        start_ms: low,
+                        end_ms: high,
+                    },
+                    time_averaged: averaged,
+                });
+            }
+        };
+        for (key, row) in self.rows.iter().filter(|(key, _)| visible(key)) {
+            if row.quantity > Decimal::ZERO {
+                push(key, row.quantity, row.since_ms, until_ms, false);
+            }
+            if width_ms.is_none() {
+                for interval in &row.closed {
+                    push(
+                        key,
+                        interval.quantity,
+                        interval.start_ms,
+                        interval.end_ms,
+                        false,
+                    );
+                }
+            }
+        }
+        let Some(width_ms) = width_ms else {
+            return lead;
+        };
+        for (key, low, high) in self.spans(history, visible, from_ms, observed_end_ms) {
+            let Some(row) = self.rows.get(&key) else {
+                continue;
+            };
+            let bins = bin_start(low.max(from_ms), width_ms)..high.min(until_ms);
+            for (&bin, &weighted) in row.bins.range(bins) {
+                // The bin's mean over all of it, as the window reads the same
+                // bin where it crosses the opening; only the drawing is cut.
+                let (mean_low, mean_high) = (bin.max(low), bin.saturating_add(width_ms).min(high));
+                if mean_high > mean_low {
+                    let mean = weighted / Decimal::from(mean_high - mean_low);
+                    push(&key, mean, mean_low, mean_high, true);
+                }
+            }
+        }
+        lead
+    }
+
     /// Drop what lies wholly before the bin edge at or before `start_ms`.
     fn evict(&mut self, start_ms: i64) {
         let from_ms = bin_start(start_ms, self.key.width_ms);
@@ -406,6 +474,7 @@ impl LaneFold {
     /// visible row's constant intervals while they fit `cap`; past it, each
     /// row's current interval exact and its history averaged on absolute bins
     /// of the finest ladder width that fits, never past `observed_end_ms`.
+    #[cfg(test)]
     pub(super) fn project(
         &mut self,
         history: &LiquidityHistory,
@@ -414,11 +483,29 @@ impl LaneFold {
         observed_end_ms: i64,
         cap: usize,
     ) -> Vec<DepthRun> {
+        let start_ms = window.start_ms;
+        self.project_with_lead(history, grouping, window, observed_end_ms, cap, start_ms)
+            .0
+    }
+
+    /// [`Self::project`], and the same rows over `[lead_start_ms,
+    /// window.start_ms)` beside it: on the bins and in the mode the window
+    /// chose, so the lead never moves the window's own runs.
+    pub(super) fn project_with_lead(
+        &mut self,
+        history: &LiquidityHistory,
+        grouping: EffectiveGrouping,
+        window: GroupingWindow,
+        observed_end_ms: i64,
+        cap: usize,
+        lead_start_ms: i64,
+    ) -> (Vec<DepthRun>, Vec<DepthRun>) {
         let render_end_ms = window.end_ms.min(window.open_run_end_ms);
         if render_end_ms <= window.start_ms || window.price_high <= window.price_low {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let start_ms = window.start_ms;
+        let keep_ms = lead_start_ms.min(start_ms);
         let visible = |row: &RowKey| {
             row.2 < window.price_high && row.2 + grouping.bucket_width > window.price_low
         };
@@ -434,7 +521,7 @@ impl LaneFold {
             .fold
             .as_ref()
             .map_or(TIME_AVERAGE_BIN_LADDER_MS[0], |fold| fold.key.width_ms);
-        let fold = self.fold(history, grouping, width_ms, start_ms);
+        let fold = self.fold(history, grouping, width_ms, keep_ms);
         let mut current = Vec::new();
         let mut closed = 0;
         for (key, row) in fold.rows.iter().filter(|(key, _)| visible(key)) {
@@ -468,7 +555,8 @@ impl LaneFold {
                     });
                 }
             }
-            return current;
+            let lead = fold.lead(history, visible, (keep_ms, start_ms), observed_end_ms, None);
+            return (current, lead);
         }
         let mut spans = fold.spans(history, visible, start_ms, observed_end_ms);
         let on_screen: Vec<_> = spans
@@ -481,10 +569,17 @@ impl LaneFold {
             fold
         } else {
             // Refolded from an earlier bin edge: its rows may start earlier.
-            let fold = self.fold(history, grouping, width_ms, start_ms);
+            let fold = self.fold(history, grouping, width_ms, keep_ms);
             spans = fold.spans(history, visible, start_ms, observed_end_ms);
             fold
         };
+        let lead = fold.lead(
+            history,
+            visible,
+            (keep_ms, start_ms),
+            observed_end_ms,
+            Some(width_ms),
+        );
         for (key, low, high) in spans {
             let Some(row) = fold.rows.get(&key) else {
                 continue;
@@ -504,6 +599,6 @@ impl LaneFold {
                 }
             }
         }
-        current
+        (current, lead)
     }
 }
