@@ -2,17 +2,15 @@
 //! declared rows.
 //!
 //! Row order is the registry's, not the table's: the renderer walks the
-//! registered capabilities and asks [`super::rows::readback`] for each one's
+//! registered capabilities and asks [`quantick_control_schema::retry_matrix::readback`] for each one's
 //! row, so which family declared a row cannot move a line of the document.
 
 use super::drift::read_needs;
-use super::reach::{Holder, holder};
-use super::rows::readback;
-use crate::readback::Readback;
-use crate::retry_matrix::GENERATED_MARKER;
 
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control_host::contract::CapabilityContract;
+use quantick_control_schema::readback::Readback;
+use quantick_control_schema::retry_matrix::{GENERATED_MARKER, Holder, holder, readback};
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

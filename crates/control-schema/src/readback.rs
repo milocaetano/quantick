@@ -19,7 +19,7 @@ pub struct Readback {
     /// The policy the descriptor is expected to publish. Not a second source
     /// of truth — the matrix renders the descriptor's own — but the tripwire:
     /// a descriptor whose policy moves without this row being revisited is
-    /// [`crate::retry_matrix::Drift::PolicyMoved`], because the readback that suited a retryable
+    /// `quantick_control_handlers::retry_matrix::Drift::PolicyMoved`, because the readback that suited a retryable
     /// call rarely suits one that is not.
     pub policy: IdempotencyPolicy,
     /// The read capability that shows the effect.
