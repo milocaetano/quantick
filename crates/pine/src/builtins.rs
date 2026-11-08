@@ -154,6 +154,10 @@ pub enum Builtin {
     Indicator,
     /// `plot(...)`
     Plot,
+    /// Headless OHLC candle output.
+    PlotCandle,
+    /// Headless OHLC bar output.
+    PlotBar,
     /// `plotshape(...)`
     PlotShape,
     /// `plotchar(...)`
@@ -289,6 +293,8 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("color.rgb", Builtin::ColorRgb),
     ("indicator", Builtin::Indicator),
     ("plot", Builtin::Plot),
+    ("plotcandle", Builtin::PlotCandle),
+    ("plotbar", Builtin::PlotBar),
     ("plotshape", Builtin::PlotShape),
     ("plotchar", Builtin::PlotChar),
     ("hline", Builtin::Hline),
@@ -352,6 +358,8 @@ impl Builtin {
             self,
             Builtin::Indicator
                 | Builtin::Plot
+                | Builtin::PlotCandle
+                | Builtin::PlotBar
                 | Builtin::PlotShape
                 | Builtin::PlotChar
                 | Builtin::Hline
@@ -409,7 +417,6 @@ pub fn rejection_of(name: &str) -> Option<(crate::error::ErrorCode, &'static str
             ErrorCode::PineUnsupported,
             "second is not supported by this calendar subset",
         ),
-        "plotcandle" | "plotbar" => crate::candle_plots::rejection(),
         "max_bars_back" => (
             ErrorCode::PineUnsupported,
             "max_bars_back() is capped by configuration; deeper history reads yield na",

@@ -67,6 +67,8 @@ pub struct CompiledScript {
     pub inputs: Vec<InputSpec>,
     /// The fixed plot registry, in top-level declaration order.
     pub plots: Vec<PlotSpec>,
+    /// Headless OHLC outputs, in declaration order.
+    pub candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
     /// Fills between plot pairs, resolved at load time.
     pub fills: Vec<FillSpec>,
     /// Load-time warnings (ignored args, inert `alertcondition`, missing

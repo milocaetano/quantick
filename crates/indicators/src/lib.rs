@@ -65,6 +65,6 @@ pub use objects::{
     ObjectSnapshot, ObjectStore,
 };
 pub use output::{
-    FillSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotBuffer, PlotId, PlotSpec, PlotStyle,
-    PreviewFrame, Rgba8, resolve_bar_paint,
+    CandlePlotSpec, CandleSample, FillSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotBuffer,
+    PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8, resolve_bar_paint,
 };

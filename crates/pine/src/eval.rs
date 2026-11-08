@@ -191,9 +191,13 @@ pub(crate) struct StateSnapshot {
 /// evaluation — and because the caller reads them together after a clean run:
 /// a row committed without its paint, or with a stale one, would put a colour
 /// on the wrong candle.
+#[path = "candle_plots/eval.rs"]
+mod candle_eval;
+
 pub(crate) struct Staged<'a> {
     /// One cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
+    pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
     /// The paint `barcolor` asked for; `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
 }
@@ -207,6 +211,7 @@ pub(crate) struct Eval<'a> {
     pub state: &'a mut ScriptState,
     /// One staged cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
+    pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
     /// The bar paint this run asked for (`barcolor`), staged like the row and
     /// read by the caller after a clean run. `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
@@ -238,6 +243,7 @@ impl<'a> Eval<'a> {
             ctx,
             state,
             row: staged.row,
+            candles: staged.candles,
             paint: staged.paint,
             is_commit,
             timezone: crate::calendar::CalendarTimezone::default(),
@@ -799,6 +805,7 @@ impl<'a> Eval<'a> {
         }
         // Output calls first: they stage into the plot row.
         match builtin {
+            Builtin::PlotCandle | Builtin::PlotBar => return self.candle_plot(id, args),
             Builtin::Plot | Builtin::Hline => {
                 let value = match args.first() {
                     Some(arg) => self.num(arg.value)?,
