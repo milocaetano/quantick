@@ -216,7 +216,7 @@ Every rejection is a load-time error naming its reason:
 | `request.*` | `PINE_NO_SECURITY` — activity-sampled charts have no timeframes |
 | `timeframe.*` | `PINE_NO_TIMEFRAME` |
 | `strategy.*` | `PINE_NO_STRATEGY` — backtesting consumes plots through the host |
-| `array.* matrix.* map.* table.*` | `PINE_NO_COLLECTIONS` |
+| unsupported `array.*`/`map.*`, all `matrix.* table.*` | `PINE_NO_COLLECTIONS` |
 | calendar builtins (`year`, `month`, `dayofweek`, …) | `PINE_NO_CALENDAR` |
 | `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
 
@@ -312,3 +312,137 @@ defines the supported differences; paired original fixtures live in
 Calendar support is unchanged. Request, timeframe and strategy namespaces
 remain rejected; version selection does not expand drawing or table support.
 Collections and UDT field history are handled by their respective feature owners.
+
+
+## Scalar collections (v5 and v6)
+
+Arrays and maps use typed scalar elements (`int`, `float`, `bool`, `string`,
+`color`). Explicit `array<T>` and `map<K,V>` declarations and generic constructors
+and typed function parameters are accepted, including legacy `T[]` annotations.
+Assignment aliases the same collection; `copy` allocates an
+independent collection. `map.keys` and `map.values` allocate independent arrays in
+insertion order. Overwriting a key retains its position; removing and reinserting
+it appends it. Iteration never uses sorted-key order.
+
+The following operations are implemented through both namespace calls and
+receiver methods (constructors and `array.from` are namespace-only):
+
+| Array operation | Arguments after the receiver |
+| --- | --- |
+| `array.size`, `array.clear`, `array.copy` | none |
+| `array.get`, `array.remove` | index |
+| `array.set`, `array.insert` | index, value |
+| `array.push`, `array.unshift` | value |
+| `array.pop`, `array.shift`, `array.first`, `array.last` | none |
+| `array.reverse` | none |
+| `array.concat` | second array; mutates and returns the first |
+| `array.fill` | value, optional index_from and exclusive index_to |
+| `array.includes`, `array.indexof`, `array.lastindexof` | value |
+| `array.sum`, `array.avg`, `array.median`, `array.mode`, `array.range` | none; numeric arrays only |
+| `array.min`, `array.max` | optional zero-based nth rank |
+| `array.abs`, `array.standardize` | none; returns an independent numeric array |
+| `array.stdev`, `array.variance` | optional biased flag (default true) |
+| `array.covariance` | second numeric array, optional biased flag (default true) |
+| `array.percentile_linear_interpolation`, `array.percentile_nearest_rank` | percentage in 0..100 |
+| `array.percentrank` | nonnegative element index |
+| `array.sort`, `array.sort_indices` | optional order.ascending (default) or order.descending |
+| `array.slice` | index_from, exclusive index_to; shared parent view |
+| `array.binary_search`, `array.binary_search_leftmost`, `array.binary_search_rightmost` | numeric value; requires ascending order |
+| `array.join` | optional separator, default comma |
+| `array.from` | positional scalar values with a common element type |
+
+| Map operation | Arguments after the receiver |
+| --- | --- |
+| `map.size`, `map.clear`, `map.copy`, `map.keys`, `map.values` | none |
+| `map.get`, `map.remove`, `map.contains` | key |
+| `map.put` | key, value; returns the previous value or missing |
+| `map.put_all` | second map; updates in that map's insertion order |
+
+`array.new<T>(size = 0, initial_value = na)` also accepts the scalar aliases
+`array.new_int`, `array.new_float`, `array.new_bool`, `array.new_string`, and
+`array.new_color`. v6 missing bool elements and map results are false.
+`map.new<K,V>()` creates an empty map. Internal constructor registry spellings
+are listed below solely so the documentation guard can track typed lowering:
+
+`map.new_int_int`
+`map.new_int_float`
+`map.new_int_bool`
+`map.new_int_string`
+`map.new_int_color`
+`map.new_float_int`
+`map.new_float_float`
+`map.new_float_bool`
+`map.new_float_string`
+`map.new_float_color`
+`map.new_bool_int`
+`map.new_bool_float`
+`map.new_bool_bool`
+`map.new_bool_string`
+`map.new_bool_color`
+`map.new_string_int`
+`map.new_string_float`
+`map.new_string_bool`
+`map.new_string_string`
+`map.new_string_color`
+`map.new_color_int`
+`map.new_color_float`
+`map.new_color_bool`
+`map.new_color_string`
+`map.new_color_color`
+
+
+For `get`, `set`, `insert`, and `remove`, v6 negative indices count backward
+from the array size before the operation. v5 rejects negative indices. Bounds,
+empty removals, invalid sizes and missing map keys used in insertion report a
+structured `PINE_TYPE` runtime error. Collections are capped at 100,000 elements
+or 50,000 map pairs. `fill` uses nonnegative half-open bounds in both versions.
+
+Snapshots share the authoritative contiguous word image until the first write.
+Aliases retain identity through copy-on-write; preview rolls back ordinary `var`
+collections, while `varip` mutations persist, including aliases held by ordinary
+`var`. History retains collection identities. Deterministic tracing reclaims
+unreachable collection records after commit; it does no tracing for scripts
+without collections.
+
+Sorting accepts numeric and string arrays. Empty strings and missing values sort
+last ascending and first descending; equal elements retain their original order.
+`sort_indices` returns an independent index array. A slice keeps its parent alive,
+including through history and rollback. Updating, sorting, inserting or removing
+through a slice updates its parent. Parent resizing can shrink the visible slice,
+then restore it; only edits through the slice change its maximum range. Growing a
+slice while its start is beyond the parent's current size reports `PINE_TYPE`.
+
+Numeric reductions skip missing samples; covariance skips pairs containing a
+missing value and requires equal array lengths. Empty/all-missing reductions
+return `na`, while standardization returns an empty array. Standardization keeps
+missing positions when numeric samples exist and uses population deviation.
+The integer overloads of `avg`, `median`, `stdev`, `variance`, linear percentile,
+and `percentrank` truncate results toward zero; integer standardization truncates
+each result. The [function reference](https://www.tradingview.com/pine-script-reference/v5/)
+lists int/float overloads for each of these functions and int/float-array overloads
+for `standardize`; `covariance` always returns float. Numeric `join` uses eight
+optional fractional digits, matching the default `str.tostring` format, and accepts
+only numeric or string arrays. v6 rejects explicit `na` boolean elements.
+
+The following edge policies are explicit dialect decisions, not verified
+TradingView observations. The function reference's `array.mode` entry says to
+choose the smallest value for a frequency tie or all-unique input; we follow that
+specific rule despite the arrays overview saying no mode returns `na`. A rank
+beyond the available numeric samples returns `na`. A zero-deviation standardized
+sample returns `na` from the mathematical normalization formula. Binary left/right
+searches return the first/last equal index, or the preceding/following insertion
+neighbor when absent. Thus left below the minimum is -1, right above the maximum
+is size; an empty array returns -1/0 respectively. Ordinary binary search returns
+the first equal index or -1. Primary documentation does not settle every extreme
+boundary. Read-only PineTS 0.13.1 probes (not TradingView) returned 0 for left below
+the minimum and 1 for constant standardization, differing from these policies.
+Those proxy observations are not acceptance goldens. Collection goldens are
+independently authored calculations and use the established 1e-8 absolute plus
+1e-8 relative tolerance for fractional statistics.
+
+Nested collection elements, drawing elements and UDT elements are not implemented
+in this scalar stage. Unsupported namespace operations fail at compile time;
+they never silently return a substitute. `array.from` requires positional arguments.
+The independent original fixtures follow the primary
+[array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
+[map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.

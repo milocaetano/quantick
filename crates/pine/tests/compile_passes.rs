@@ -143,7 +143,7 @@ fn the_reject_list_names_its_reasons() {
     assert!(errors.iter().any(|e| e.code == ErrorCode::PineNoStrategy));
 
     let errors =
-        compile_err("//@version=5\nindicator(\"t\")\na = array.new_float(3)\nplot(close)\n");
+        compile_err("//@version=5\nindicator(\"t\")\na = matrix.new_float(3)\nplot(close)\n");
     assert!(
         errors
             .iter()

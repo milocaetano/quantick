@@ -52,7 +52,7 @@ pub(crate) fn validate(
         dispatch: checker.dispatch,
     }
 }
-pub(super) struct Checker<'a> {
+pub(crate) struct Checker<'a> {
     pub version: crate::version::Version,
     pub ast: &'a mut Ast,
     pub resolutions: &'a mut [Resolution],
@@ -120,7 +120,7 @@ impl Checker<'_> {
                     Base::Bool => self.version.bool_coercion(),
                     Base::Color => 2,
                     Base::String => 3,
-                    _ => 0,
+                    _ => self.coercions[value.index()],
                 };
                 Type::new(base, qualifier.unwrap_or(actual.qualifier))
             }
@@ -244,7 +244,7 @@ impl Checker<'_> {
                     Base::Bool => self.version.bool_coercion(),
                     Base::Color => 2,
                     Base::String => 3,
-                    _ => 0,
+                    _ => self.coercions[value.index()],
                 };
                 let ty = Type::new(old.base, old.qualifier.max(actual.qualifier));
                 self.write(self.resolutions[id.index()], ty.clone());

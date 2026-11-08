@@ -3,8 +3,10 @@ use std::rc::Rc;
 
 mod arguments;
 mod calls;
-mod check;
-mod model;
+pub(crate) mod check;
+#[path = "../collections/check.rs"]
+mod collection_check;
+pub(crate) mod model;
 #[path = "../version/types.rs"]
 mod version_policy;
 pub(crate) use check::validate;
@@ -32,6 +34,8 @@ pub enum Value {
     Na,
     /// Missing boolean.
     NaBool,
+    /// Array or map identity, pointing into the authoritative runtime arena.
+    Collection(bool, u32),
     /// Missing color.
     NaColor,
     /// Missing string.
@@ -81,6 +85,10 @@ impl Value {
 
     pub(crate) fn coerce(self, kind: u8) -> Self {
         match kind {
+            5 => match self {
+                Value::Num(n) => Value::Num(n.trunc()),
+                other => other,
+            },
             4 => Value::Bool(self.as_cond().unwrap_or(false)),
             1 if self.is_na() => Value::NaBool,
             1 => Value::Bool(self.as_cond().unwrap_or(false)),

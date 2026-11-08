@@ -28,7 +28,7 @@ use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
 
 #[path = "ir/arena.rs"]
-mod arena;
+pub(crate) mod arena;
 #[path = "ir/loops.rs"]
 mod ir_loops;
 #[path = "ir/runtime.rs"]
@@ -54,7 +54,7 @@ pub use crate::types::{ObjKind, Value};
 #[derive(Default)]
 pub(crate) struct ScriptState {
     /// The sole authoritative mutable runtime image.
-    pub arena: Arena,
+    pub arena: crate::collections::Image,
     /// Retained draw objects (lines/boxes/labels, §2.6 caps).
     pub objects: ObjectStore,
 }
@@ -65,37 +65,43 @@ impl ScriptState {
         arena.resize(GLOBALS, global_slots);
         arena.resize(FLAGS, global_slots);
         Self {
-            arena,
+            arena: arena.into(),
             ..Self::default()
         }
     }
 
     /// One contiguous copy captures slots, payloads, kernels, histories and drawings.
-    pub(crate) fn snapshot(&self) -> StateSnapshot {
+    pub(crate) fn snapshot(&mut self) -> StateSnapshot {
         StateSnapshot {
-            arena: self.arena.clone(),
+            arena: self.arena.snapshot(),
         }
     }
 
     /// Restore after a preview. `varip` slots keep their preview mutations —
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
-        let StateSnapshot { mut arena } = snapshot;
+        let StateSnapshot { arena: mut image } = snapshot;
+        let arena = image.make_mut();
+        crate::collections::restore_varip(&self.arena, arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
-                arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
+                if !matches!(self.arena.get(GLOBALS, slot), Value::Collection(..)) {
+                    arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
+                }
                 arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }
         arena.words[object_state::NEXT_ID] =
             arena.words[object_state::NEXT_ID].max(self.arena.words[object_state::NEXT_ID]);
-        self.arena = arena;
+        self.arena = image;
         self.project_objects();
     }
 
     /// Commit the forming bar: flush staged history values into their rings.
     pub(crate) fn commit_bar(&mut self) {
-        self.arena.commit_histories();
+        let arena = self.arena.make_mut();
+        arena.commit_histories();
+        crate::collections::collect(arena);
     }
 
     pub(crate) fn reset(&mut self) {
@@ -106,7 +112,7 @@ impl ScriptState {
 
 /// What [`ScriptState::snapshot`] captures.
 pub(crate) struct StateSnapshot {
-    arena: Arena,
+    arena: crate::collections::Image,
 }
 
 /// What one run stages for its caller: this bar's plot cells and the candle
@@ -118,6 +124,8 @@ pub(crate) struct StateSnapshot {
 /// on the wrong candle.
 #[path = "candle_plots/eval.rs"]
 mod candle_eval;
+#[path = "collections/eval.rs"]
+mod collection_eval;
 
 pub(crate) struct Staged<'a> {
     /// One cell per plot; pushed by the caller after a clean run.
@@ -128,12 +136,16 @@ pub(crate) struct Staged<'a> {
 }
 
 /// One run of the script over one bar (commit or preview).
+pub(crate) struct RunState<'a> {
+    pub arena: &'a mut Arena,
+}
+
 pub(crate) struct Eval<'a> {
     pub script: &'a CompiledScript,
     pub inputs: &'a [InputValue],
     pub bar: &'a IndicatorBar,
     pub ctx: &'a Ctx<'a>,
-    pub state: &'a mut ScriptState,
+    pub state: RunState<'a>,
     /// One staged cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
     pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
@@ -165,6 +177,9 @@ impl<'a> Eval<'a> {
         staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
+        let state = RunState {
+            arena: state.arena.make_mut(),
+        };
         if state.arena.len(REGISTERS) != script.program.entries.len() {
             state.arena.resize(REGISTERS, script.program.entries.len());
             for (id, literal) in &script.program.constants {
@@ -410,6 +425,7 @@ impl<'a> Eval<'a> {
         }
         // Output calls first: they stage into the plot row.
         match builtin {
+            Builtin::Collection(op) => return self.collection_call(id, op, args),
             Builtin::Indicator => return Ok(Value::Na),
             Builtin::PlotCandle | Builtin::PlotBar => return self.candle_plot(id, args),
             Builtin::Plot | Builtin::Hline => {
@@ -548,6 +564,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 fn describe(value: &Value) -> &'static str {
     match value {
         Value::Obj(..) => "an object handle",
+        Value::Collection(..) => "a collection handle",
         Value::Num(_) => "a number",
         Value::Bool(_) => "a bool",
         Value::Color(_) => "a color",

@@ -11,6 +11,8 @@
 /// Every accepted builtin, by dialect name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    /// Typed collection operation.
+    Collection(crate::collections::Op),
     // ---- series variables (host/bar-provided) ----
     /// `open`
     Open,
@@ -393,6 +395,9 @@ impl Builtin {
     /// Resolve a dialect name (`close`, `ta.ema`, `barstate.islast`, …).
     #[must_use]
     pub fn lookup(name: &str) -> Option<Builtin> {
+        if let Some(op) = crate::collections::lookup(name) {
+            return Some(Self::Collection(op));
+        }
         BUILTINS
             .iter()
             .find(|(candidate, _)| *candidate == name)
@@ -403,7 +408,11 @@ impl Builtin {
     /// doc-drift test's source of truth.
     #[must_use]
     pub fn all_names() -> Vec<&'static str> {
-        BUILTINS.iter().map(|(name, _)| *name).collect()
+        BUILTINS
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(crate::collections::names())
+            .collect()
     }
 }
 

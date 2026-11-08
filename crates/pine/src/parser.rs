@@ -30,6 +30,9 @@ const MAX_NEST_DEPTH: usize = 64;
 ///
 /// Every syntax error found, each with its span; the AST is only returned
 /// when the whole script parsed.
+#[path = "collections/parser.rs"]
+mod collection_parser;
+
 pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
     debug_assert!(
         !tokens.is_empty(),
@@ -199,6 +202,9 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> Option<NodeId> {
+        if self.collection_declaration_ahead() {
+            return self.collection_declaration();
+        }
         let start = self.span();
         match self.peek().clone() {
             Tok::KwVar | Tok::KwVarip => {
@@ -317,6 +323,13 @@ impl Parser<'_> {
             })
             .collect();
         words.pop(); // variable name
+        if self.tokens.iter().any(|t| {
+            t.span.start >= start.start
+                && t.span.start < self.ast.node(value).span.start
+                && t.tok == Tok::LBracket
+        }) {
+            words.insert(0, "array".into());
+        }
         let id = self.ast.push(NodeKind::Declare { mode, name, value }, span);
         self.ast.annotate(id, vec![words]);
         id
@@ -382,16 +395,10 @@ impl Parser<'_> {
         let mut annotations = Vec::new();
         if *self.peek() != Tok::RParen {
             loop {
-                let Tok::Ident(param) = self.peek().clone() else {
+                let Some(mut words) = self.parameter_words() else {
                     self.pos = saved;
                     return None;
                 };
-                self.advance();
-                let mut words = vec![param];
-                while let Tok::Ident(word) = self.peek().clone() {
-                    self.advance();
-                    words.push(word);
-                }
                 params.push(words.pop().expect("parameter name"));
                 annotations.push(words);
                 if !self.eat(&Tok::Comma) {
@@ -764,7 +771,7 @@ impl Parser<'_> {
                 }
                 Tok::Dot => {
                     self.advance();
-                    let Tok::Ident(field) = self.peek().clone() else {
+                    let Tok::Ident(mut field) = self.peek().clone() else {
                         let span = self.span();
                         self.errors.push(PineError::new(
                             ErrorCode::PineSyntax,
@@ -774,6 +781,20 @@ impl Parser<'_> {
                         return None;
                     };
                     self.advance();
+                    if field == "new" && self.eat(&Tok::Lt) {
+                        loop {
+                            let Tok::Ident(ty) = self.peek().clone() else {
+                                return None;
+                            };
+                            self.advance();
+                            field.push('_');
+                            field.push_str(&ty);
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(&Tok::Gt, "`>` after collection types");
+                    }
                     let span = self.spanned_from(start);
                     expr = self.ast.push(
                         NodeKind::Member {
@@ -807,6 +828,9 @@ impl Parser<'_> {
             };
             let value = self.expression()?;
             let span = self.spanned_from(arg_start);
+            if matches!(name.as_deref(), Some("index_to" | "initial_value")) {
+                self.ast.reserve_default_zero(span);
+            }
             args.push(Arg { name, value, span });
             if !self.eat(&Tok::Comma) {
                 break;

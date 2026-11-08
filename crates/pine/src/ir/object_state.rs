@@ -1,5 +1,5 @@
 //! Arena-owned drawing records. The public store is regenerated output only.
-use super::{Arena, ScriptState, Value};
+use super::{Arena, RunState, ScriptState, Value};
 use quantick_indicators::{
     BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, ObjectId, ObjectStore, Rgba8,
 };
@@ -155,7 +155,7 @@ impl<T: Record> Drop for Edit<'_, T> {
     }
 }
 
-impl ScriptState {
+impl RunState<'_> {
     pub(super) fn new_object<T: Record>(&mut self, value: T) -> ObjectId {
         let id = u32::try_from(self.arena.words[NEXT_ID]).expect("object id");
         self.arena.words[NEXT_ID] += 1;
@@ -205,7 +205,7 @@ impl ScriptState {
                 let value = T::decode(self.arena.get(record + 2, 0));
                 self.arena.words[REVISION] += 1;
                 return Some(Edit {
-                    arena: &mut self.arena,
+                    arena: self.arena,
                     record,
                     value,
                 });
@@ -214,6 +214,8 @@ impl ScriptState {
         }
         None
     }
+}
+impl ScriptState {
     pub(crate) fn project_objects(&mut self) {
         let mut lines = Vec::new();
         let mut boxes = Vec::new();

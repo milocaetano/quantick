@@ -9,6 +9,23 @@ use crate::{
 use std::rc::Rc;
 
 impl Eval<'_> {
+    #[inline(always)]
+    fn coerce_register<const COLLECTION: bool>(&mut self, id: NodeId) {
+        let coercion = self.script.types.coercions[self.type_context as usize][id.index()];
+        let value = self.register(id).coerce(coercion);
+        if COLLECTION && coercion == 6 {
+            crate::collections::truncate(self.state.arena, &value);
+        }
+        let value = if self.script.types.integer_divisions[self.type_context as usize][id.index()] {
+            match value {
+                Value::Num(n) => Value::Num(n.trunc()),
+                value => value,
+            }
+        } else {
+            value
+        };
+        self.set_register(id, value);
+    }
     pub(super) fn execute(&mut self, entry: NodeId) -> Result<Value, PineError> {
         let mut pc = self.script.program.entries[entry.index()];
         loop {
@@ -67,22 +84,8 @@ impl Eval<'_> {
                 }
                 Instruction::Advance(node) => self.advance_skipped(*node)?,
                 Instruction::Enter(_) => unreachable!("compiler flattens entry operations"),
-                Instruction::Coerce(id) => {
-                    let value = self.register(*id).coerce(
-                        self.script.types.coercions[self.type_context as usize][id.index()],
-                    );
-                    let value = if self.script.types.integer_divisions[self.type_context as usize]
-                        [id.index()]
-                    {
-                        match value {
-                            Value::Num(n) => Value::Num(n.trunc()),
-                            value => value,
-                        }
-                    } else {
-                        value
-                    };
-                    self.set_register(*id, value);
-                }
+                Instruction::Coerce(id) => self.coerce_register::<false>(*id),
+                Instruction::CollectionCoerce(id) => self.coerce_register::<true>(*id),
                 Instruction::Return(_) => return Ok(self.register(entry)),
                 Instruction::Initialized(id, slot, target) => {
                     if self.state.arena.get(FLAGS, *slot as usize) == Value::Bool(true) {
@@ -270,12 +273,39 @@ impl Eval<'_> {
             I::Builtin(id, builtin, args) => (*id, self.builtin_call(*id, *builtin, args)?),
             I::User(id, index, args) => (*id, self.user_call(*id, *index, args)?),
             I::Method(id, object, field, args) => {
+                let receiver = self.eval(*object)?;
+                if let Value::Collection(map, _) = receiver {
+                    let family = if map { "map" } else { "array" };
+                    let Some(op) = crate::collections::lookup(&format!("{family}.{field}")) else {
+                        return Err(self.err(
+                            *id,
+                            ErrorCode::PineType,
+                            "unknown collection method",
+                        ));
+                    };
+                    if self.semantic_run.skipped && crate::collections::mutates(op) {
+                        self.advance_arguments(args)?;
+                        self.set_register(*id, Value::Na);
+                        return Ok(());
+                    }
+                    let mut values = vec![receiver];
+                    for arg in args {
+                        values.push(self.eval(arg.value)?);
+                    }
+                    let value = crate::collections::execute(
+                        self.state.arena,
+                        self.script.version,
+                        op,
+                        &values,
+                    )
+                    .map_err(|message| self.err(*id, ErrorCode::PineType, message))?;
+                    self.set_register(*id, value);
+                    return Ok(());
+                }
                 if self.semantic_run.skipped {
-                    self.advance_skipped(*object)?;
                     self.advance_arguments(args)?;
                     (*id, Value::Na)
                 } else {
-                    let receiver = self.eval(*object)?;
                     let Value::Obj(kind, raw) = receiver else {
                         return Err(self.type_err(*object, "an object handle", &receiver));
                     };
@@ -304,6 +334,7 @@ impl Eval<'_> {
             | I::Enter(_)
             | I::Return(_)
             | I::Coerce(_)
+            | I::CollectionCoerce(_)
             | I::Initialized(..) => {
                 unreachable!("control instruction")
             }

@@ -15,6 +15,13 @@ impl Checker<'_> {
             MathPow => &["base", "exponent"],
             ColorNew => &["color", "transp"],
             ColorRgb => &["red", "green", "blue", "transp"],
+            Collection(crate::collections::Op::From) => {
+                if args.iter().any(|arg| arg.name.is_some()) {
+                    self.error(id, "array.from accepts positional arguments only");
+                }
+                return args;
+            }
+            Collection(op) => crate::collections::arguments(op),
             Calendar(_) => &["time", "timezone"],
             TaMacd => &["source", "fastlen", "slowlen", "siglen"],
             TaVwma => &["source", "volume", "length"],
@@ -28,6 +35,11 @@ impl Checker<'_> {
             TaSma | TaEma | TaRma | TaWma | TaRsi | TaStdev | TaHighest | TaLowest
             | TaHighestBars | TaLowestBars | TaChange | TaMom | MathSum => &["source", "length"],
             _ => return args,
+        };
+        let args = if let Collection(op) = b {
+            self.collection_defaults(id, op, args, false)
+        } else {
+            args
         };
         let mut slots = vec![None; names.len()];
         let mut position = 0;

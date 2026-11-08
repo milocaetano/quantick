@@ -1,0 +1,7 @@
+//@version=6
+indicator("Negative indexing")
+a = array.from(10, 20)
+array.insert(a, -1, 30)
+array.set(a, -1, 40)
+plot(array.remove(a, -1))
+plot(array.get(a, -1))
