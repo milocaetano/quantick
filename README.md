@@ -31,6 +31,18 @@ quantick exists to change that: **a free, open, programmable implementation of t
 3. **Build.** The same engine that draws your chart feeds your backtests and your bots. The bars your strategy trades live are byte-identical to the bars you researched and backtested — parity by construction, not by discipline.
 4. **Operate.** The desktop app exposes itself to an AI agent over **MCP** — read the chart, watch for the bar you point at, annotate it, attach a script — under a capability contract you grant and can revoke. See [Drive it with an agent](#drive-it-with-an-agent-mcp).
 
+## Built with AI agents
+
+Most of this repository is written by AI agents, Claude Code and Codex, working for one human maintainer. The maintainer decides what gets built, uses every build, and is the only one who merges to `main`. You can check that claim, because the workflow is committed alongside the code. More than 400 pull requests have merged this way since July 2026.
+
+- **Rules the build enforces, not advice.** [`crates/guards`](crates/guards) fails the build on any of these: a reverse crate dependency, a module cycle, UI or wall-clock code below the app, a file over 1,500 lines, or prose that is not in English. A size ratchet stops a file from growing past its signed ceiling. An agent that drifts is stopped by the build, not by a hopeful reviewer.
+- **Determinism is proven by tests.** Engine work is test-first: the fixture trades and the expected bars come before the code. The same trades in always give the same bars out, for the chart, the backtest and the bot alike.
+- **Workflows are skills, not prompts.** Planning a change, implementing it, reviewing it and driving the app for visual QA are each a versioned skill under [`.claude/skills/`](.claude/skills/). Codex shares them through [`.agents/skills/`](.agents/skills/).
+- **The author never grades its own work.** A separate agent reviews every diff. For anything a user sees, another agent with no chat context drives the real app through the same [MCP control plane](#drive-it-with-an-agent-mcp) the product exposes, and its failures block the PR.
+- **The process itself is measured and cut back.** The first workflow ran review rounds until they came back clean. One feature, [#306](https://github.com/milocaetano/quantick/pull/306), took 28 commits and 17 rounds. Measuring the largest sessions showed that 96–99% of the tokens were spent after the PR had opened. The default path is now [`/implement`](.claude/skills/implement/SKILL.md) ([#592](https://github.com/milocaetano/quantick/pull/592)): a plan of about 200 tokens, one independent review whose depth follows the risk, at most two rounds, and green CI.
+
+[docs/agentic-development.md](docs/agentic-development.md) tells the full story: the skills, the gates, the hooks, why each rule reads the way it does, and what the process does not claim. A good place to see the result is [#682](https://github.com/milocaetano/quantick/pull/682), which moved a god object's history logic out of the app into a headless crate.
+
 ## Quick start — build, test, run
 
 You don't need an exchange account, an API key or any credentials. Out of the box the chart connects to Binance's **public** market data and opens on `BTCUSDT`.
