@@ -258,3 +258,7 @@ mod tests {
         assert_eq!(arena.words.len(), size);
     }
 }
+
+#[cfg(test)]
+#[path = "../libraries/graph_tests.rs"]
+mod mixed_graph_tests;
