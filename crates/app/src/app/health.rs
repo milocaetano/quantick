@@ -91,25 +91,22 @@ impl QuantickApp {
         let pane = self.focused_pane();
         let note = self.active_tab().side_note(&self.config);
         let row = (self.runtime.workspace.book).tab_row(self.runtime.tabs.active_id());
+        let feed = &self.active_tab().link;
         statusbar::StatusModel {
             workspace: (!self.chrome.title_bar.surface.is_home()).then_some(row.0),
             modified: row.1,
             autosave: self.runtime.workspace.book.autosave(),
-            venue: if self.active_tab().replay.is_some() {
+            venue: if feed.replay.is_some() {
                 "recording".to_owned()
             } else {
                 self.active_tab().feed_display_name(&self.config).to_owned()
             },
             symbol: self.active_tab().symbol.clone(),
-            replay: self
-                .active_tab()
-                .replay
-                .as_ref()
-                .map(|link| statusbar::ReplayFigures {
-                    speed: link.status.speed(),
-                    progress: link.status.progress(),
-                }),
-            feed_arrival_ms: self.active_tab().trade_arrival_ms(),
+            replay: feed.replay.as_ref().map(|link| statusbar::ReplayFigures {
+                speed: link.status.speed(),
+                progress: link.status.progress(),
+            }),
+            feed_arrival_ms: feed.trade_arrival_ms(),
             feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
             deal_recording: statusbar::DealCell::of(self.active_tab().deal_recording_view()),
@@ -224,7 +221,7 @@ impl<'a> HealthSummary<'a> {
             trades_per_s,
             book_updates_per_s,
             frame_avg_ms: app.health.frames.avg_ms().unwrap_or(0.0),
-            feed_arrival_ms: tab.trade_arrival_ms(),
+            feed_arrival_ms: tab.link.trade_arrival_ms(),
         }
     }
 
@@ -244,7 +241,7 @@ impl<'a> HealthSummary<'a> {
             frame_worst_ms = self.health.frames.worst_ms().unwrap_or(0.0),
             feed_arrival_ms = self.feed_arrival_ms,
             trades_per_s = self.trades_per_s,
-            live_trades = self.tab.live_trades,
+            live_trades = self.tab.link.live_trades,
             worker_backlog = self.envelope.backlog,
             worker_parked = self.envelope.parked,
             worker_deferred = self.envelope.deferred,
@@ -323,8 +320,8 @@ impl<'a> HealthSummary<'a> {
             }),
             book_updates_per_s = self.book_updates_per_s,
             book_updates_total = self.book.depth_updates,
-            book_queue_len = self.tab.book_events.len(),
-            book_channel_closed = self.tab.book_channel_closed_reported,
+            book_queue_len = self.tab.link.book_events.len(),
+            book_channel_closed = self.tab.link.book_channel_closed_reported,
             book_bid_levels = self.book.bid_levels,
             book_ask_levels = self.book.ask_levels,
             heatmap_active_levels = self.book.active_levels,
@@ -357,12 +354,12 @@ impl<'a> HealthSummary<'a> {
             chart_background_enabled = self.style.canvas.background_enabled,
             chart_grid_enabled = self.pane.layer_switched_on(ChartLayer::Grid, self.style),
             chart_time_grid_enabled = self.pane.layer_switched_on(ChartLayer::TimeGrid, self.style),
-            replay_active = self.tab.replay.is_some(),
-            replay_speed = self.tab.replay.as_ref().map(|r| r.status.speed()),
-            replay_playing = self.tab.replay.as_ref().map(|r| r.status.is_playing()),
-            replay_progress = self.tab.replay.as_ref().map(|r| r.status.progress()),
-            replay_played = self.tab.replay.as_ref().map(|r| r.status.played()),
-            replay_total = self.tab.replay.as_ref().map(|r| r.status.total()),
+            replay_active = self.tab.link.replay.is_some(),
+            replay_speed = self.tab.link.replay.as_ref().map(|r| r.status.speed()),
+            replay_playing = self.tab.link.replay.as_ref().map(|r| r.status.is_playing()),
+            replay_progress = self.tab.link.replay.as_ref().map(|r| r.status.progress()),
+            replay_played = self.tab.link.replay.as_ref().map(|r| r.status.played()),
+            replay_total = self.tab.link.replay.as_ref().map(|r| r.status.total()),
             action = "observe",
             "application health summary"
         );

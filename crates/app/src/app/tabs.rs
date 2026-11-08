@@ -133,7 +133,7 @@ impl QuantickApp {
 
 /// A live market a close took goes to Recent with its bar; `+` opens the palette.
 fn settle_strip(palette: &mut MarketPaletteSurface, tz: TzOffset, (open, closed): StripAsk) {
-    if let Some(tab) = closed.filter(|tab| tab.replay.is_none()) {
+    if let Some(tab) = closed.filter(|tab| tab.link.replay.is_none()) {
         let now = crate::metrics::wall_clock_ms();
         let stamp = quantick_civil::fmt_offset_minute(now, tz);
         let closed = list::ClosedMarket {
@@ -165,8 +165,8 @@ pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
             workspace: book.tab_row(tabs.id_at(index)).0,
             bar: tab.flow_pane.state.spec().to_config_string(),
             context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
-            replay: tab.replay.is_some(),
-            streaming: tab.latest_trade_ms.is_some(),
+            replay: tab.link.replay.is_some(),
+            streaming: tab.link.latest_trade_ms.is_some(),
             price: last_price(tab),
             trades_per_s: None,
         })

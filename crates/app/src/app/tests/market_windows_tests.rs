@@ -234,7 +234,7 @@ fn market_windows_native_paint_never_drains_or_reconstructs_runtime_owners() {
         viewport_input(WindowId::ROOT, 1.5, egui::pos2(0.0, 0.0), vec![]),
         |ctx| super::super::frame::process(&mut app, ctx, now),
     );
-    assert!(app.runtime.tabs.iter().all(|tab| tab.live_trades == 1));
+    assert!(app.runtime.tabs.iter().all(|tab| tab.link.live_trades == 1));
     for source in [&first, &second.events] {
         source.try_send(FeedEvent::Live(trade(2))).unwrap();
     }
@@ -246,7 +246,7 @@ fn market_windows_native_paint_never_drains_or_reconstructs_runtime_owners() {
         "view painting cannot become a process tick"
     );
     assert!(
-        app.runtime.tabs.iter().all(|tab| tab.live_trades == 1),
+        app.runtime.tabs.iter().all(|tab| tab.link.live_trades == 1),
         "both view paints leave intake to the one process stage"
     );
     let now = frame_instant(&ctx);
@@ -254,7 +254,7 @@ fn market_windows_native_paint_never_drains_or_reconstructs_runtime_owners() {
         viewport_input(WindowId::ROOT, 1.5, egui::Pos2::ZERO, vec![]),
         |ctx| super::super::frame::process(&mut app, ctx, now),
     );
-    assert!(app.runtime.tabs.iter().all(|tab| tab.live_trades == 2));
+    assert!(app.runtime.tabs.iter().all(|tab| tab.link.live_trades == 2));
     assert_eq!(
         app.runtime
             .tabs
@@ -277,7 +277,7 @@ fn market_windows_native_paint_never_drains_or_reconstructs_runtime_owners() {
         |ctx| super::super::frame::process(&mut app, ctx, now),
     );
     assert_eq!(
-        app.runtime.tabs[0].live_trades, 3,
+        app.runtime.tabs[0].link.live_trades, 3,
         "a hidden native root still services every retained feed"
     );
     let after = identities(&app);

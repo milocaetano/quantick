@@ -681,7 +681,7 @@ impl LayoutAdapter<'_> {
 
     /// The market a tab's panes are showing: see `market_settings::shown_market`.
     fn market_of(tab: &crate::tab::Tab) -> (&str, &str) {
-        let recording = tab.replay.as_ref().map(|_| tab.symbol.as_str());
+        let recording = tab.link.replay.as_ref().map(|_| tab.symbol.as_str());
         let live = (tab.active.0.as_str(), tab.active.1.as_str());
         quantick_workspace::market_settings::shown_market(live, recording)
     }

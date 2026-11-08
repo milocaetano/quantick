@@ -834,7 +834,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     for tab in app.runtime.tabs.iter_mut() {
-        tab.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+        tab.link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     }
     app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
@@ -901,14 +901,14 @@ fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     assert_eq!(
         statusbar::tape_text(
             None,
-            app.active_tab().trade_arrival_ms(),
+            app.active_tab().link.trade_arrival_ms(),
             Some(50),
             app.active_tab().feed_latency(),
         ),
         "MT5 18112 ms"
     );
     assert_eq!(
-        app.active_tab().trade_arrival_ms(),
+        app.active_tab().link.trade_arrival_ms(),
         None,
         "and the chart's own measurement is untouched by the reading"
     );
@@ -3367,7 +3367,7 @@ fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
     run_frame(&mut app, &ctx);
     app.drain_tabs();
 
-    assert!(app.active_tab().replay.is_some());
+    assert!(app.active_tab().link.replay.is_some());
     assert!(
         !app.active_tab()
             .loading
@@ -3683,7 +3683,7 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
             },
         )
     });
-    assert!(app.active_tab().replay.is_some());
+    assert!(app.active_tab().link.replay.is_some());
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         texts.iter().any(|text| text.contains("WINJ26")),
@@ -3694,11 +3694,11 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
     // its own tab, but the transport belongs to whoever is on screen.
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     assert!(
-        app.runtime.tabs[0].replay.is_some(),
+        app.runtime.tabs[0].link.replay.is_some(),
         "the background tab is still the one holding the recording"
     );
     assert!(
-        app.active_tab().replay.is_none(),
+        app.active_tab().link.replay.is_none(),
         "and the active tab is streaming"
     );
     let texts = painted_text(&run_frame(&mut app, &ctx));

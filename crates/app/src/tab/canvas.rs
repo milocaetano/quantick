@@ -394,9 +394,9 @@ impl Tab {
     ) {
         use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
         use quantick_feed::{FeedConnectionState, FeedNotice};
-        let report = crate::feed_notice::report(&self.notice, stall)
+        let report = crate::feed_notice::report(&self.link.notice, stall)
             .filter(crate::feed_notice::Report::is_offline);
-        let verdict = match (&self.notice, report) {
+        let verdict = match (&self.link.notice, report) {
             (_, None) => Verdict::None,
             (FeedNotice::Attention { headline, .. }, Some(_)) => Verdict::Failed {
                 provider_says: Some(headline),
@@ -417,16 +417,16 @@ impl Tab {
         let facts = ConnectionFacts {
             now_ms,
             symbol: &self.symbol,
-            attached_ms: self.feed_attached_ms,
+            attached_ms: self.link.feed_attached_ms,
             timeline_generation: self.session.timeline_generation(),
             has_transport: capabilities.transport,
-            transport: match self.feed_connection {
+            transport: match self.link.feed_connection {
                 FeedConnectionState::Connecting => Transport::Connecting,
                 FeedConnectionState::Reconnecting => Transport::Reconnecting,
                 FeedConnectionState::Connected => Transport::Connected,
             },
             verdict,
-            live_trades: self.live_trades,
+            live_trades: self.link.live_trades,
             empty_pane,
             any_bars,
             flow_bars: self.flow_pane.slots() > 0,
@@ -637,7 +637,7 @@ impl Tab {
             flow_pane,
             time_panes,
             paper,
-            feed_gaps,
+            link,
             paper_drag_pane,
             ..
         } = self;
@@ -700,7 +700,7 @@ impl Tab {
             paper_hud_here: false,
             shared_pick: None,
             shared: SharedInteraction::default(),
-            feed_gaps: &feed_gaps[..],
+            feed_gaps: &link.feed_gaps[..],
             capabilities: chrome.capabilities,
             side_inferred: chrome.side_inferred,
             price_tag: quantick_chart::bar_progress::TagProgress {

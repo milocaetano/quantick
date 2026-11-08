@@ -101,10 +101,10 @@ impl WorkspaceRuntime {
         let active = self.tabs.active_id();
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
-            let before = tab.live_trades;
+            let before = tab.link.live_trades;
             let policy = self.history.policy(self.tz, tab_id == active);
             tab.drain_frame(tab_id, config, policy);
-            trades += tab.live_trades - before;
+            trades += tab.link.live_trades - before;
         }
         trades
     }

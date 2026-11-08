@@ -32,22 +32,19 @@ impl QuantickApp {
     /// overflow rule; this method owns the side effects).
     pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
         let chip = self.config.venue_chip(&self.active_tab().feed_id);
-        let replay = self
-            .active_tab()
-            .replay
-            .as_ref()
-            .map(|link| toolbar::ReplaySource {
-                label: link.label(),
-                hover: format!(
-                    "Replaying {}\nSide source: {}",
-                    link.session.path.display(),
-                    link.session
-                        .header
-                        .side_source
-                        .as_deref()
-                        .unwrap_or("not recorded"),
-                ),
-            });
+        let feed = &self.active_tab().link;
+        let replay = feed.replay.as_ref().map(|link| toolbar::ReplaySource {
+            label: link.label(),
+            hover: format!(
+                "Replaying {}\nSide source: {}",
+                link.session.path.display(),
+                link.session
+                    .header
+                    .side_source
+                    .as_deref()
+                    .unwrap_or("not recorded"),
+            ),
+        });
         let capabilities = toolbar_caps(self.active_tab(), &self.config);
         let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);

@@ -121,7 +121,7 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
 fn apply_feed_switch(app: &mut QuantickApp) {
     let (tab, config) = app.active_with_config();
     let changed =
-        tab.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
+        tab.link.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
     tab.maybe_switch_feed(config);
     app.active_tab_mut().apply_spec_changes();
     if changed {

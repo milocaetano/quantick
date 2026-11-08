@@ -36,17 +36,18 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
     assert_eq!(
-        app.active_tab().feed_gaps.len(),
+        app.active_tab().link.feed_gaps.len(),
         quantick_feed::MAX_REMEMBERED_GAPS
     );
     assert!(
         app.active_tab()
+            .link
             .feed_gaps
             .iter()
             .all(|observed| *observed == gap)
     );
     assert_eq!(
-        app.active_tab().feed_integrity.missing_messages,
+        app.active_tab().link.feed_integrity.missing_messages,
         count as u64 * 3
     );
     let after = registry
@@ -69,7 +70,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     assert_eq!(gaps[0]["duration_ms"], 0);
     app.active_tab_mut().reset_market_state(true);
     assert_eq!(
-        app.active_tab().feed_integrity,
+        app.active_tab().link.feed_integrity,
         quantick_feed::FeedIntegrity::default()
     );
 }
@@ -192,11 +193,14 @@ fn a_reconnect_mid_refill_drops_the_report_nobody_will_finish() {
         .blocking_send(FeedEvent::RefillStatus(filling))
         .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
-    assert_eq!(app.active_tab().feed_integrity.last_refill, Some(filling));
+    assert_eq!(
+        app.active_tab().link.feed_integrity.last_refill,
+        Some(filling)
+    );
 
     let (events, _commands) = reconnect_onto_fresh_feed(&mut app);
     assert_eq!(
-        app.active_tab().feed_integrity.last_refill,
+        app.active_tab().link.feed_integrity.last_refill,
         None,
         "the new feed refills from the chart's seam and reports for itself"
     );
@@ -211,7 +215,10 @@ fn a_reconnect_mid_refill_drops_the_report_nobody_will_finish() {
         .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
     let _still_attached = reconnect_onto_fresh_feed(&mut app);
-    assert_eq!(app.active_tab().feed_integrity.last_refill, Some(filled));
+    assert_eq!(
+        app.active_tab().link.feed_integrity.last_refill,
+        Some(filled)
+    );
 }
 
 /// Finding: the tab's one-event resume floor and the feed's refill both
@@ -241,7 +248,7 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
         app.active_tab_mut().drain_feed(tab_id);
 
         let (events, mut commands) = reconnect_onto_fresh_feed(&mut app);
-        assert_eq!(app.active_tab().resume_floor_ms, Some(5_000));
+        assert_eq!(app.active_tab().link.resume_floor_ms, Some(5_000));
         let seam = loop {
             match commands.try_recv() {
                 Ok(FeedCommand::ResumeAfter(seam)) => break seam,
@@ -295,11 +302,14 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
             [1_000, 5_000, 5_000, 5_000, 30_000, 60_000],
             "empty backfill first: {empty_backfill_first}"
         );
-        assert!(tab.feed_gaps.is_empty(), "a refilled hole is not a gap");
-        assert_eq!(tab.resume_floor_ms, None);
-        assert_eq!((tab.history_trades, tab.live_trades), (2, 4));
+        assert!(
+            tab.link.feed_gaps.is_empty(),
+            "a refilled hole is not a gap"
+        );
+        assert_eq!(tab.link.resume_floor_ms, None);
+        assert_eq!((tab.history_trades, tab.link.live_trades), (2, 4));
         assert_eq!(
-            tab.latest_trade_latency_ms,
+            tab.link.latest_trade_latency_ms,
             Some(250),
             "only the live print is an arrival"
         );
@@ -310,7 +320,7 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
     assert_eq!(
-        app.active_tab().notice,
+        app.active_tab().link.notice,
         FeedNotice::Clear,
         "nothing to report at birth"
     );
@@ -328,33 +338,33 @@ fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
         .unwrap();
     app.active_tab_mut().drain_notices();
     assert!(
-        matches!(app.active_tab().notice, FeedNotice::Attention { .. }),
+        matches!(app.active_tab().link.notice, FeedNotice::Attention { .. }),
         "the newest notice is what the user sees, got {:?}",
-        app.active_tab().notice
+        app.active_tab().link.notice
     );
 
     // And a feed that recovers takes its own instruction back down.
     notices.blocking_send(FeedNotice::Clear).unwrap();
     app.active_tab_mut().drain_notices();
-    assert_eq!(app.active_tab().notice, FeedNotice::Clear);
+    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
 }
 
 #[test]
 fn only_explicit_connection_notices_drive_transport_state() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
-    app.active_tab_mut().latest_trade_latency_ms = Some(42);
+    app.active_tab_mut().link.latest_trade_latency_ms = Some(42);
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Connecting
     );
 
     notices.blocking_send(FeedNotice::Connected).unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Connected
     );
-    assert_eq!(app.active_tab().notice, FeedNotice::Clear);
+    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
 
     // The MetaTrader bridge supervisor and bridge server share this
     // channel. Progress or attention from either can arrive after the
@@ -364,7 +374,7 @@ fn only_explicit_connection_notices_drive_transport_state() {
         .unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Connected
     );
 
@@ -376,7 +386,7 @@ fn only_explicit_connection_notices_drive_transport_state() {
         .unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Connected
     );
 
@@ -387,14 +397,14 @@ fn only_explicit_connection_notices_drive_transport_state() {
         .unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Reconnecting
     );
 
     notices.blocking_send(FeedNotice::Connected).unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
-        app.active_tab().feed_connection,
+        app.active_tab().link.feed_connection,
         FeedConnectionState::Connected
     );
 }
@@ -405,7 +415,7 @@ fn a_feed_with_nothing_to_report_leaves_the_chart_alone() {
     // no-op rather than an error the app has to special-case.
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().drain_notices();
-    assert_eq!(app.active_tab().notice, FeedNotice::Clear);
+    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
 }
 
 #[test]
@@ -636,7 +646,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -650,7 +660,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let stall = app
         .active_tab()
         .stall_at(&app.config, metrics::wall_clock_ms());
-    let report = feed_notice::report(&app.active_tab().notice, stall.as_ref())
+    let report = feed_notice::report(&app.active_tab().link.notice, stall.as_ref())
         .expect("a stalled feed speaks");
     let area = app
         .active_tab()
@@ -693,7 +703,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
 fn a_recovered_feed_puts_the_popup_away() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -702,7 +712,7 @@ fn a_recovered_feed_puts_the_popup_away() {
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open());
 
-    app.active_tab_mut().forced_stall = None;
+    app.active_tab_mut().link.forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(!app.chrome_reads().feed_popup_open());
     assert!(app.chrome_reads().feed_chip_rect().is_none());
@@ -718,8 +728,12 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let floor = app.active_tab().latest_trade_ms.expect("a print landed");
-    app.active_tab_mut().resume_floor_ms = Some(floor);
+    let floor = app
+        .active_tab()
+        .link
+        .latest_trade_ms
+        .expect("a print landed");
+    app.active_tab_mut().link.resume_floor_ms = Some(floor);
 
     // A session that replays a window containing nothing new — a venue
     // that replays nothing at all sends exactly this.
@@ -729,12 +743,12 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
-        app.active_tab().resume_floor_ms,
+        app.active_tab().link.resume_floor_ms,
         None,
         "the window is replayed once, at the start"
     );
     assert!(
-        app.active_tab().feed_gaps.is_empty(),
+        app.active_tab().link.feed_gaps.is_empty(),
         "nothing was missed, so nothing is marked"
     );
 
@@ -775,15 +789,18 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
-    app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
-        from_ms: 1,
-        to_ms: 1_000_000,
-    });
+    app.active_tab_mut().link.resume_floor_ms = app.active_tab().link.latest_trade_ms;
+    app.active_tab_mut()
+        .link
+        .feed_gaps
+        .push(quantick_feed::FeedGap {
+            from_ms: 1,
+            to_ms: 1_000_000,
+        });
 
     app.active_tab_mut().reset_market_state(true);
-    assert_eq!(app.active_tab().resume_floor_ms, None);
-    assert!(app.active_tab().feed_gaps.is_empty());
+    assert_eq!(app.active_tab().link.resume_floor_ms, None);
+    assert!(app.active_tab().link.feed_gaps.is_empty());
 }
 
 /// The budget is measured from the transport's own transition, so a
@@ -796,7 +813,7 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
     notices
         .blocking_send(FeedNotice::reconnecting("bridge lost — reconnecting"))
         .unwrap();
-    app.active_tab_mut().drain_notices_at(0);
+    app.active_tab_mut().link.drain_notices_at(0);
 
     // Two lines, alternating, while the transport stays exactly as broken.
     for step in 1..=8 {
@@ -806,7 +823,7 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
             FeedNotice::working("waiting for the bridge")
         };
         notices.blocking_send(notice).unwrap();
-        app.active_tab_mut().drain_notices_at(step * 3_000);
+        app.active_tab_mut().link.drain_notices_at(step * 3_000);
     }
 
     let config = app.tab_reads().config().clone();
@@ -821,16 +838,16 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
 #[test]
 fn quiet_market_keeps_the_observed_arrival_latency_live() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().feed_connection = FeedConnectionState::Connected;
+    app.active_tab_mut().link.feed_connection = FeedConnectionState::Connected;
     let trade = trade(1);
     let received_at_ms = trade.timestamp_ms + 42;
 
     app.active_tab_mut()
         .ingest_live_trade_at(&trade, received_at_ms);
 
-    assert_eq!(app.active_tab().trade_arrival_ms(), Some(42));
+    assert_eq!(app.active_tab().link.trade_arrival_ms(), Some(42));
     assert_eq!(
-        app.active_tab().trade_arrival_ms(),
+        app.active_tab().link.trade_arrival_ms(),
         Some(42),
         "reading the status again without another print must not age latency"
     );
@@ -846,7 +863,7 @@ fn backfill_does_not_claim_a_live_transport_latency() {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
-    assert_eq!(app.active_tab().trade_arrival_ms(), None);
+    assert_eq!(app.active_tab().link.trade_arrival_ms(), None);
 }
 
 /// Finer, not coarser: the series grows and the same market time moves to

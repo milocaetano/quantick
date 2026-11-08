@@ -636,7 +636,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
 }
 
 fn set_capabilities(app: &mut QuantickApp, capabilities: quantick_feed::config::FeedCapabilities) {
-    app.active_tab_mut().feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
+    app.active_tab_mut().link.feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
 }
 
 /// What the data blocks leaves the capsule and the scene with its sample; the

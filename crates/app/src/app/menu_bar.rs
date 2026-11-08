@@ -325,7 +325,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
     menus::WindowMenu {
         workspace,
         chart_shown: !app.chrome.title_bar.surface.is_home(),
-        replaying: app.active_tab().replay.is_some(),
+        replaying: app.active_tab().link.replay.is_some(),
         layouts: app.layout_state(),
         tab: app.active_tab(),
         dock_visible: app.dock.visible(),

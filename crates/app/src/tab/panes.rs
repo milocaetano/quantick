@@ -123,9 +123,9 @@ impl Tab {
     /// connection and lost it, or one asking the user to fix something.
     #[must_use]
     pub fn needs_attention(&self) -> bool {
-        self.replay.is_none()
-            && (self.feed_connection == FeedConnectionState::Reconnecting
-                || matches!(self.notice, FeedNotice::Attention { .. }))
+        self.link.replay.is_none()
+            && (self.link.feed_connection == FeedConnectionState::Reconnecting
+                || matches!(self.link.notice, FeedNotice::Attention { .. }))
     }
 
     /// The canvas width the last drawn frame used, for callers that have to
@@ -380,6 +380,7 @@ impl Tab {
         let applied = self.flow_pane.state.trades();
         let applied_ms = applied.last().map(|trade| trade.timestamp_ms);
         match self
+            .link
             .replay
             .as_ref()
             .map(|replay| replay.clock_after(applied.len()))
@@ -448,7 +449,7 @@ impl Tab {
     /// Per drain: the recorder's schedule. A start it makes resumes today's
     /// file, so the day's earlier prints cut as trades bars again.
     pub fn tick_deal_recording(&mut self) {
-        let available = self.feed_capabilities.borrow().deal_counter;
+        let available = self.link.feed_capabilities.borrow().deal_counter;
         let resumed = self.deal_recorder.tick(available, metrics::wall_clock_ms());
         self.retain_deal_samples(&resumed);
     }
@@ -528,7 +529,7 @@ impl Tab {
     #[must_use]
     pub fn deal_recording_view(&self) -> Option<RecordingView> {
         self.deal_recorder
-            .live_view(self.replay.is_some(), self.latest_trade_ms)
+            .live_view(self.link.replay.is_some(), self.link.latest_trade_ms)
     }
 
     /// The chart-corner chip for the flow pane, when it has something to say.
@@ -536,7 +537,7 @@ impl Tab {
     pub fn deal_chip(&self) -> Option<DealChip> {
         let view = self
             .deal_recorder
-            .chip_view(self.replay.is_some(), self.latest_trade_ms);
+            .chip_view(self.link.replay.is_some(), self.link.latest_trade_ms);
         let pane = &self.flow_pane;
         deal_recording_ui::chip_for(
             &view,
@@ -636,16 +637,14 @@ impl Tab {
         // The timeline these describe is the one being rebuilt. A gap
         // re-anchors itself by market time, so one left behind would paint
         // itself onto the refilled series as though a reconnect had happened.
-        self.feed_gaps.clear();
-        self.feed_integrity = quantick_feed::FeedIntegrity::default();
-        self.resume_floor_ms = None;
+        self.link.forget_timeline();
         self.history_trades = 0;
         // A run anchored to a tape that no longer exists cannot continue, and
         // `restart` below drops the waits its outstanding request would have
         // resolved. Its verdict goes with it.
         self.run_session(None, quantick_session::Act::AbandonRun);
-        self.latest_trade_latency_ms = None;
-        self.latest_trade_ms = None;
+        self.link.latest_trade_latency_ms = None;
+        self.link.latest_trade_ms = None;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
@@ -928,7 +927,7 @@ impl Tab {
         let Some(pane) = self.pane_at(index) else {
             return Ok(false);
         };
-        let capabilities = *self.feed_capabilities.borrow();
+        let capabilities = *self.link.feed_capabilities.borrow();
         let inputs = quantick_engine::bar_selection::BarInputAvailability {
             traded_volume: capabilities.traded_volume,
             deal_counter: capabilities.deal_counter,

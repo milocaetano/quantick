@@ -272,7 +272,7 @@ impl<'a> StatusLead<'a> {
             word: tab.connection.status_word(now_ms),
             door: tab.connection.has_recovery_door(),
             open,
-            report: crate::feed_notice::report(&tab.notice, stall)
+            report: crate::feed_notice::report(&tab.link.notice, stall)
                 .filter(crate::feed_notice::Report::is_offline),
         }
     }

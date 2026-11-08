@@ -326,8 +326,8 @@ fn the_strip_and_its_tabs_paint_each_themes_tokens() {
         });
         assert!(!floor, "{}: an edge under the active tab", theme.name);
         let tab = app.active_tab();
-        let connected = tab.feed_connection == quantick_feed::FeedConnectionState::Connected;
-        let feed = TabFeed::of(tab.replay.is_some(), connected, tab.needs_attention());
+        let connected = tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected;
+        let feed = TabFeed::of(tab.link.replay.is_some(), connected, tab.needs_attention());
         let ink = palette.color(feed_token(crate::tabstrip::feed_mark(feed)));
         let marked = output.shapes.iter().any(|clipped| match &clipped.shape {
             egui::Shape::Circle(circle) => {
@@ -662,7 +662,7 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     frame(&mut app, &ctx);
     let width = app.active_tab().last_canvas_width();
     let layout = app.active_tab().canvas.layout;
-    let live = app.active_tab().live_trades;
+    let live = app.active_tab().link.live_trades;
 
     app.show_home_tab().unwrap();
     for index in 1..=3 {
@@ -670,7 +670,7 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
         frame(&mut app, &ctx);
     }
     assert_eq!(
-        app.active_tab().live_trades,
+        app.active_tab().link.live_trades,
         live + 3,
         "the feed keeps draining"
     );

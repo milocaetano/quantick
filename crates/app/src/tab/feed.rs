@@ -25,10 +25,10 @@ use crate::paper_home::shelf_dir;
 use quantick_feed as feed;
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::{Cancelled, Press};
-use quantick_feed::stall::{self, Stall, StallInput};
+use quantick_feed::stall::Stall;
 use quantick_feed::{
-    FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
-    MIN_MARKED_GAP_MS, REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
+    FeedCommand, FeedEvent, FeedGap, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS,
+    REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
@@ -146,8 +146,9 @@ impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
     /// the previous UI capture epoch.
     pub fn next_book_generation(&mut self) -> u64 {
-        self.book_capture_epoch = self.book_capture_epoch.saturating_add(1);
-        self.book_capture_epoch
+        self.link.book_capture_epoch = self.link.book_capture_epoch.saturating_add(1);
+        self.link
+            .book_capture_epoch
             .saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
@@ -195,7 +196,7 @@ impl Tab {
             enabled,
             initial_generation: generation,
         };
-        match self.commands.try_send(command) {
+        match self.link.commands.try_send(command) {
             Ok(()) => self.tape_mut().set_enabled(enabled, generation),
             Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
                 target: "quantick::app",
@@ -228,9 +229,12 @@ impl Tab {
             return;
         }
         let generation = self.next_book_generation();
-        match self.commands.try_send(FeedCommand::RestartBookCapture {
-            initial_generation: generation,
-        }) {
+        match self
+            .link
+            .commands
+            .try_send(FeedCommand::RestartBookCapture {
+                initial_generation: generation,
+            }) {
             Ok(()) => self.tape_mut().accept_capture_grouping_restart(generation),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.tape_mut()
@@ -267,7 +271,7 @@ impl Tab {
         // A replay owns the chart until it is closed. The selectors are not
         // drawn while it plays, so nothing can diverge here — but a stale
         // selection must not respawn a live feed underneath the recording.
-        if self.replay.is_some() {
+        if self.link.replay.is_some() {
             return;
         }
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
@@ -336,7 +340,7 @@ impl Tab {
         // opens with exactly one backfill in flight.
         self.run_session(None, Act::OpeningFill(None));
         self.loading.restart(LoadingTask::History);
-        self.latest_trade_latency_ms = None;
+        self.link.latest_trade_latency_ms = None;
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);
         // The simulated position cannot follow this tab onto another market:
@@ -558,14 +562,14 @@ impl Tab {
         // Venue candles landing before the first print meet it at the seam.
         let printless = self.flow_pane.state.trades().is_empty();
         loop {
-            match self.events.try_recv() {
+            match self.link.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
                     self.loading.end(LoadingTask::History);
                     // A session that resumed onto a kept timeline opens by
                     // replaying its recent window, which the chart already
                     // holds. Whatever is genuinely newer is forwarded as live,
                     // in order, exactly as the feed does inside one session.
-                    if self.resume_floor_ms.is_some() {
+                    if self.link.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(&trades);
                         continue;
                     }
@@ -592,7 +596,7 @@ impl Tab {
                     // ordinary path below, judged on what it brought.
                     let oldest = self.flow_pane.state.trades().first();
                     let oldest_ms = oldest.map(|trade| trade.timestamp_ms);
-                    if self.resume_floor_ms.is_some()
+                    if self.link.resume_floor_ms.is_some()
                         && !self.session.answers_run(&trades, oldest_ms)
                     {
                         if !self.session.awaiting_reply() {
@@ -636,7 +640,7 @@ impl Tab {
                     // that belong to a request: the loading indicator a press
                     // raised stays up, and the campaign that press started is
                     // not handed a page it did not fetch.
-                    if self.resume_floor_ms.is_some() {
+                    if self.link.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(&trades);
                         continue;
                     }
@@ -652,7 +656,7 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::Live(trade)) => {
-                    if self.resume_floor_ms.is_some() {
+                    if self.link.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(std::slice::from_ref(&trade));
                         continue;
                     }
@@ -662,7 +666,7 @@ impl Tab {
                 }
                 Ok(FeedEvent::LiveBatch(trades)) => {
                     if !trades.is_empty() {
-                        if self.resume_floor_ms.is_some() {
+                        if self.link.resume_floor_ms.is_some() {
                             live |= self.ingest_resumed(&trades);
                             continue;
                         }
@@ -674,15 +678,17 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::Continuity(event)) => {
-                    self.feed_integrity.observe(event);
+                    self.link.feed_integrity.observe(event);
                     if let Some(gap) = event.gap {
                         self.retain_gap(gap);
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
-                Ok(FeedEvent::RefillStatus(fill)) => self.feed_integrity.last_refill = Some(fill),
+                Ok(FeedEvent::RefillStatus(fill)) => {
+                    self.link.feed_integrity.last_refill = Some(fill)
+                }
                 Ok(FeedEvent::Refilled(trades)) => {
-                    self.resume_floor_ms = None; // the feed owns the seam
+                    self.link.resume_floor_ms = None; // the feed owns the seam
                     live |= self.ingest_unheard(&trades, false);
                     refilled += trades.len();
                     if refilled >= REFILL_PRINTS_PER_DRAIN {
@@ -757,27 +763,7 @@ impl Tab {
     /// a burst of bridge output must not queue up cards to show one by one.
     /// A closed channel (a feed with nothing to report) simply yields nothing.
     pub fn drain_notices(&mut self) {
-        self.drain_notices_at(metrics::wall_clock_ms());
-    }
-
-    /// Clock-injected half, so a test can drive a notice across its stall
-    /// budget without waiting for one.
-    pub fn drain_notices_at(&mut self, now_ms: i64) {
-        while let Ok(notice) = self.notices.try_recv() {
-            let next = match notice {
-                FeedNotice::Connected => {
-                    self.set_connection(FeedConnectionState::Connected, now_ms);
-                    FeedNotice::Clear
-                }
-                FeedNotice::Reconnecting { .. } => {
-                    self.set_connection(FeedConnectionState::Reconnecting, now_ms);
-                    notice
-                }
-                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => notice,
-                FeedNotice::Clear => FeedNotice::Clear,
-            };
-            self.notice = next;
-        }
+        self.link.drain_notices_at(metrics::wall_clock_ms());
     }
 
     /// The one rect the connection overlay covers: the whole canvas while nothing
@@ -803,43 +789,16 @@ impl Tab {
         if crosses_a_chart { largest } else { union }
     }
 
-    /// Move the transport to `state`, stamping when it got there.
-    ///
-    /// Only a real transition stamps: a provider that reports the same state
-    /// twice has not changed anything, and treating it as a change would reset
-    /// the budget measured from it.
-    fn set_connection(&mut self, state: FeedConnectionState, now_ms: i64) {
-        if self.feed_connection != state {
-            self.feed_connection = state;
-            self.connection_since_ms = now_ms;
-        }
-    }
-
     /// This tab's own judgement about a feed that has stopped delivering, or
-    /// `None` while it is merely slow.
-    ///
-    /// Deterministic half: the caller supplies wall clock, exactly as
-    /// [`Self::tape_age_at`] does. The decision itself lives in
-    /// [`quantick_feed::stall`] and touches no clock at all.
+    /// `None` while it is merely slow. The judgement is the link's; the tab
+    /// supplies the provider, its name and the tape's age.
     #[must_use]
     pub fn stall_at(&self, config: &AppConfig, now_ms: i64) -> Option<Stall> {
         let provider = config.provider_of(&self.feed_id)?;
-        if let Some(forced) = self.forced_stall {
-            return Some(forced.stall(provider, self.feed_display_name(config)));
-        }
-        stall::assess(
-            &StallInput {
-                notice: &self.notice,
-                connection_since_ms: self.connection_since_ms,
-                connection: self.feed_connection,
-                tape_age_ms: self.tape_age_at(now_ms),
-                attached_ms: self.feed_attached_ms,
-                provider,
-                provider_name: self.feed_display_name(config),
-                replaying: self.replay.is_some() || !self.capabilities(config).transport,
-            },
-            now_ms,
-        )
+        let name = self.feed_display_name(config);
+        let transport = self.capabilities(config).transport;
+        let age = self.tape_age_at(now_ms);
+        self.link.stall_at(provider, name, transport, age, now_ms)
     }
 
     /// Deterministic half of live ingestion: `received_at_ms` is the UI's epoch
@@ -863,10 +822,10 @@ impl Tab {
         stages: impl IntoIterator<Item = LiveTradeStage>,
         clock: impl FnMut() -> i64,
     ) {
-        self.latest_trade_latency_ms =
+        self.link.latest_trade_latency_ms =
             metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
-        self.latest_trade_ms = Some(trade.timestamp_ms);
-        self.live_trades += 1;
+        self.link.latest_trade_ms = Some(trade.timestamp_ms);
+        self.link.live_trades += 1;
         // The simulator taps the same per-trade point the bar engine does, so
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
@@ -892,14 +851,14 @@ impl Tab {
     pub fn drain_book_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
         let mut received_at_ms = None;
         for _ in 0..BOOK_DRAIN_BUDGET {
-            match self.book_events.try_recv() {
+            match self.link.book_events.try_recv() {
                 Ok(event) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
                     self.tape_mut().handle_depth_event_at(event, received_at_ms);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if self.tape().enabled() && !self.book_channel_closed_reported {
+                    if self.tape().enabled() && !self.link.book_channel_closed_reported {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -908,7 +867,7 @@ impl Tab {
                             action = "retain_last_book_and_wait_for_feed_switch",
                             "depth event channel closed"
                         );
-                        self.book_channel_closed_reported = true;
+                        self.link.book_channel_closed_reported = true;
                     }
                     break;
                 }
@@ -916,42 +875,10 @@ impl Tab {
         }
     }
 
-    /// Delay observed when the newest live trade reached the UI.
-    ///
-    /// `None` while a session is replaying: those prints are as old as the day
-    /// they were recorded, so their original arrival latency is unavailable.
-    ///
-    /// This figure freezes between prints — it is an observation, not a
-    /// measurement of now. [`Self::tape_age_ms`] is the one that ages.
-    pub fn trade_arrival_ms(&self) -> Option<i64> {
-        if self.replay.is_some() {
-            return None;
-        }
-        // Never the forced split's figure. This is a *measurement* — it reaches
-        // the log as APP_HIGH_TRADE_LAG, the control feed scope and the health
-        // view, none of which carry a marker saying a capture run invented it,
-        // and inferred data that is not labelled as such is the one thing this
-        // repo does not ship. The hook drives the readout through the latency
-        // port instead, where every consumer already knows the figure is the
-        // feed's own and not the chart's.
-        self.latest_trade_latency_ms
-    }
-
-    /// How old the newest event on the tape is, right now.
-    ///
-    /// Deterministic half: the caller supplies wall clock. Takes the newer of
-    /// the trade stream and the book, so a symbol with depth but a thin tape
-    /// is not called stale while its book is live. `None` while replaying, and
-    /// before anything has arrived — nothing to be stale about yet.
+    /// How old the newest event on the tape is, right now; see
+    /// [`FeedLink::tape_age_at`](quantick_feed::FeedLink::tape_age_at).
     pub fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
-        if self.replay.is_some() {
-            return None;
-        }
-        let newest = match (self.latest_trade_ms, self.tape().last_event_ms()) {
-            (Some(trade), Some(book)) => Some(trade.max(book)),
-            (trade, book) => trade.or(book),
-        }?;
-        Some(now_ms.saturating_sub(newest).max(0))
+        self.link.tape_age_at(self.tape().last_event_ms(), now_ms)
     }
 
     /// Data-honesty label for how each print is known, or `None` when the venue
@@ -964,14 +891,8 @@ impl Tab {
     /// is the more important disclosure. Without it a chart of one-unit prints
     /// reads as a market where every trade happened to be the same size.
     pub fn side_note(&self, config: &AppConfig) -> Option<(String, Option<String>)> {
-        if let Some(link) = &self.replay {
-            Some((
-                match link.session.header.side_source.as_deref() {
-                    Some(source) => format!("side: {source}"),
-                    None => "side: not recorded".to_owned(),
-                },
-                None,
-            ))
+        if let Some(note) = self.link.replay_side_note() {
+            Some((note, None))
         } else if config.provider_of(&self.active.0).is_some()
             && !self.capabilities(config).traded_volume
         {
@@ -1022,7 +943,7 @@ impl Tab {
         let handle = feed::spawn(source, &config.metatrader, shelf_dir());
         self.attach(handle);
 
-        if let Some(link) = &self.replay {
+        if let Some(link) = &self.link.replay {
             self.symbol = link.symbol().to_string();
         }
         self.refresh_chip_label(config);
@@ -1042,7 +963,7 @@ impl Tab {
 
     /// Leave replay and put the live feed back.
     pub fn close_replay(&mut self, config: &AppConfig) {
-        if self.replay.take().is_none() {
+        if self.link.replay.take().is_none() {
             return;
         }
         for pane in self.panes_mut() {
@@ -1113,7 +1034,7 @@ impl Tab {
         config: &AppConfig,
         spawn: &mut super::LiveFeedSpawn<'_>,
     ) -> bool {
-        if self.replay.is_some() {
+        if self.link.replay.is_some() {
             return false;
         }
         let Some(provider) = config.provider_of(&self.feed_id) else {
@@ -1126,17 +1047,17 @@ impl Tab {
             feed = %self.feed_id,
             symbol = %self.symbol,
             action = "respawn_feed_keeping_timeline",
-            resume_floor_ms = self.latest_trade_ms,
+            resume_floor_ms = self.link.latest_trade_ms,
             "reconnecting the feed and keeping the timeline"
         );
         // Taken before the handle is swapped: it is a fact about the chart, not
         // about the session, and it has to survive the attach.
-        self.resume_floor_ms = self.latest_trade_ms;
+        self.link.resume_floor_ms = self.link.latest_trade_ms;
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // A feed that refills a reconnect hole starts from where the chart ends.
         if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.state.trades()) {
-            let _ = self.commands.try_send(FeedCommand::ResumeAfter(seam));
+            let _ = self.link.commands.try_send(FeedCommand::ResumeAfter(seam));
         }
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
@@ -1169,7 +1090,7 @@ impl Tab {
         config: &AppConfig,
         spawn: &mut super::LiveFeedSpawn<'_>,
     ) -> bool {
-        if self.replay.is_some() {
+        if self.link.replay.is_some() {
             return false;
         }
         let Some(provider) = config.provider_of(&self.feed_id) else {
@@ -1185,7 +1106,7 @@ impl Tab {
             "rebuilding the chart from a new feed session"
         );
         // A rebuild has no timeline to resume onto, so no floor and no seam.
-        self.resume_floor_ms = None;
+        self.link.resume_floor_ms = None;
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(true);
@@ -1218,7 +1139,7 @@ impl Tab {
     /// Returns whether anything was actually ingested, so the caller's live
     /// flag means the same thing on this path as on the ordinary one.
     fn ingest_resumed(&mut self, trades: &[quantick_engine::Trade]) -> bool {
-        let Some(floor) = self.resume_floor_ms.take() else {
+        let Some(floor) = self.link.resume_floor_ms.take() else {
             return false;
         };
         let fresh = past_resume_floor_logged(trades, floor, &self.feed_id, &self.symbol);
@@ -1237,7 +1158,7 @@ impl Tab {
             return false;
         };
         self.history_trades += trades.len();
-        self.latest_trade_ms = Some(last.timestamp_ms);
+        self.link.latest_trade_ms = Some(last.timestamp_ms);
         for pane in self.panes_mut() {
             let queued = pane.strategies.pending.len();
             for trade in trades {
@@ -1259,7 +1180,7 @@ impl Tab {
     /// It goes through [`Self::record_gap`], so a hooked run and a real
     /// reconnect draw the same mark from the same list.
     fn land_demo_gap(&mut self) {
-        let Some(silence_ms) = self.pending_demo_gap_ms else {
+        let Some(silence_ms) = self.link.pending_demo_gap_ms else {
             return;
         };
         let bars = self.flow_pane.state.bars();
@@ -1269,7 +1190,7 @@ impl Tab {
             return;
         }
         let to_ms = bars[bars.len() / 2].open_time;
-        self.pending_demo_gap_ms = None;
+        self.link.pending_demo_gap_ms = None;
         self.record_gap(to_ms - silence_ms, to_ms);
     }
 
@@ -1292,10 +1213,10 @@ impl Tab {
     fn retain_gap(&mut self, gap: FeedGap) {
         // Bounded: the newest gaps are the ones on screen, so the oldest is
         // what falls off.
-        if self.feed_gaps.len() >= MAX_REMEMBERED_GAPS {
-            self.feed_gaps.remove(0);
+        if self.link.feed_gaps.len() >= MAX_REMEMBERED_GAPS {
+            self.link.feed_gaps.remove(0);
         }
-        self.feed_gaps.push(gap);
+        self.link.feed_gaps.push(gap);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1350,7 +1271,7 @@ impl Tab {
         act: Act<'_>,
         now: Instant,
     ) -> SessionRun {
-        let feed = *self.feed_capabilities.borrow();
+        let feed = *self.link.feed_capabilities.borrow();
         let capabilities = config.map_or(feed, |config| self.capabilities(config));
         let mut run = SessionRun::default();
         let judged = Judged {
@@ -1424,11 +1345,11 @@ impl Tab {
         let tab = TabView {
             symbol: &self.symbol,
             capabilities: judged.capabilities,
-            feed_pages: self.feed_capabilities.borrow().history_paging,
+            feed_pages: self.link.feed_capabilities.borrow().history_paging,
             panes: &panes,
             tape: self.flow_pane.state.trades(),
             history_wait: self.loading.is_active(LoadingTask::History),
-            outages: &|| self.feed_gaps.iter().map(|gap| gap.outage()).collect(),
+            outages: &|| self.link.feed_gaps.iter().map(|gap| gap.outage()).collect(),
             provider: judged
                 .config
                 .and_then(|config| config.provider_of(&self.feed_id)),
@@ -1452,7 +1373,7 @@ impl Tab {
             },
             FeedRequest::OlderTrades { count } => FeedCommand::LoadOlder { count },
         };
-        match self.commands.try_send(command) {
+        match self.link.commands.try_send(command) {
             Ok(()) => Delivery::Sent,
             Err(mpsc::error::TrySendError::Full(_)) => Delivery::Busy,
             Err(mpsc::error::TrySendError::Closed(_)) => Delivery::Gone,

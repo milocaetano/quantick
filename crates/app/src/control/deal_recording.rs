@@ -46,7 +46,7 @@ fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(
         .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    if tab.replay.is_some() {
+    if tab.link.replay.is_some() {
         return Err(replaying(tab_id));
     }
     // Resolve every data-dependent refusal before changing the durable

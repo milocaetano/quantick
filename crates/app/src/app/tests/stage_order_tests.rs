@@ -104,7 +104,7 @@ fn the_tail_before_the_canvas_never_publishes_the_offline_corner() {
     let corner = |order: &[FrameStage]| {
         let (mut app, _events, _commands, _book) = test_app();
         let ctx = egui::Context::default();
-        app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+        app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
         staged_frame(&mut app, &ctx, order);
         staged_frame(&mut app, &ctx, order);
         app.chrome_reads().feed_chip_rect()
@@ -309,14 +309,16 @@ fn the_mark_before_the_trace_loads_is_injected_back_as_a_second_mark() {
         let dir = crate::scratch::ScratchDir::new("stage-order-trace-mark");
         // A recording whose sidecar already holds one traced mark.
         let (mut app, _commands) = app_with_history(12);
-        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+        app.active_tab_mut().link.replay =
+            Some(replay_test_support::detached_link(recording_at(&dir)));
         hover_bar(&mut app, &ctx, 6);
         app.take_mark(Some("recorded".to_owned()));
         drop(app);
 
         // Replayed again, with a scenario mark due on its first frame.
         let (mut app, _commands) = app_with_history(12);
-        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+        app.active_tab_mut().link.replay =
+            Some(replay_test_support::detached_link(recording_at(&dir)));
         app.control.scenarios.queue_mark("scenario".to_owned());
         staged_frame(&mut app, &ctx, order);
         app.control

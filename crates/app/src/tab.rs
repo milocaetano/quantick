@@ -16,9 +16,6 @@
 #[cfg(test)]
 use eframe::egui;
 use smallvec::SmallVec;
-use tokio::sync::{mpsc, watch};
-
-use quantick_feed_binance::depth::DepthEvent;
 
 /// Only the tests below allocate pane ids directly; the panes a layout
 /// change adds now take theirs in [`layout`].
@@ -32,11 +29,7 @@ use crate::metrics;
 use crate::pane::{ChartPane, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
-use quantick_feed::stall::{self};
-use quantick_feed::{
-    FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency, FeedNotice,
-    ReplayLink,
-};
+use quantick_feed::{FeedHandle, FeedLatency, FeedLink};
 use std::path::PathBuf;
 
 mod canvas;
@@ -225,90 +218,13 @@ pub struct Tab {
     pub symbol: String,
     pub active: (String, String),
 
-    pub events: mpsc::Receiver<FeedEvent>,
-    pub book_events: mpsc::Receiver<DepthEvent>,
-    /// Connection trouble the feed wants the user to know about.
-    pub notices: mpsc::Receiver<FeedNotice>,
-    /// The newest notice, held until the feed says it is over. A feed that
-    /// blocks once and then goes quiet has to keep saying so — the chart it
-    /// left empty will not.
-    pub notice: FeedNotice,
-    /// Wall clock when the running feed session was attached — the floor for
-    /// judging a first connection that never lands.
-    pub feed_attached_ms: i64,
-    /// Wall clock when [`Self::feed_connection`] last changed.
-    ///
-    /// The reconnect budget is measured from here rather than from the notice,
-    /// because a supervisor that alternates two lines — `Lost`, then `Waiting`,
-    /// then `Lost` — changes the notice every few seconds while the transport
-    /// stays exactly as broken as it was. Anchored on the notice, that pair
-    /// re-stamped the clock forever and the budget never ran out, which is the
-    /// failure this whole module exists to end.
-    pub connection_since_ms: i64,
+    /// The running feed session: its channels, notices, transport state and
+    /// the newest live trade. Replaced wholesale on every attach.
+    pub link: FeedLink,
     /// What every surface says about this feed; read after the frame observed.
     pub connection: quantick_chart::connection_state::ConnectionTracker,
-    /// After a reconnect that kept the timeline, the market time the chart had
-    /// already reached.
-    ///
-    /// Every print at or before it belongs to the window the new session
-    /// replays and is dropped rather than counted twice; the first print past
-    /// it clears the floor and decides whether a gap has to be marked. `None`
-    /// on a session that started from an empty chart, which has nothing to
-    /// overlap with. See [`quantick_feed::past_resume_floor`].
-    pub resume_floor_ms: Option<i64>,
-    /// How many feed sessions this tab has taken over since it opened: one
-    /// more on every attach — a reconnect, a reload, a market switch, a replay
-    /// opened or closed. Read by `feed.status` so a client that lost the
-    /// answer to `feed.reconnect` or `feed.reload` can see whether the tab
-    /// really took a new session, which no other field says.
-    feed_generation: u64,
-    /// A stall forced by `QUANTICK_FEED_STALL`, for a scripted run that has to
-    /// photograph the recovery controls without breaking a real feed.
-    ///
-    /// Overrides the judgement when set, and set only from the hook — a live
-    /// session leaves it `None` and reads the real one, exactly as
-    /// [`Self::forced_latency`] does.
-    pub forced_stall: Option<stall::ForcedStall>,
-    /// A silence asked for by `QUANTICK_FEED_GAP`, still waiting for bars to
-    /// land it between. Taken once the chart has some, and cleared, so the
-    /// hook marks one gap rather than one per frame.
-    pub pending_demo_gap_ms: Option<i64>,
-    /// Silences in this tab's tape that no print covers, in market time,
-    /// oldest first and bounded by [`MAX_REMEMBERED_GAPS`].
-    ///
-    /// Written by reconnects that keep the timeline and source-sequence gaps.
-    /// A reload clears the timeline and its diagnostics together.
-    pub feed_gaps: Vec<FeedGap>,
-    /// Cumulative source-message integrity; gaps alone are a bounded view.
-    pub feed_integrity: quantick_feed::FeedIntegrity,
-    /// State reported by the live trade transport, independent from how often
-    /// that market prints and from the last observed arrival latency.
-    pub feed_connection: FeedConnectionState,
-    /// What the running feed can really do, read fresh every frame. The feed
-    /// narrows it once a session tells it what the symbol actually offers.
-    pub feed_capabilities: watch::Receiver<FeedCapabilities>,
     /// The venue's deal counter and its optional durable recording.
     pub deal_recorder: DealRecorder,
-    /// Where this feed's delay is being spent, read fresh every frame.
-    ///
-    /// A reading rather than an event, so a frame that skipped three samples
-    /// sees the newest one instead of a queue. `None` on a provider that
-    /// cannot cut its own chain, and until the first sample arrives.
-    pub feed_latency: watch::Receiver<Option<FeedLatency>>,
-    /// A latency split forced by `QUANTICK_FAKE_LATENCY_SPLIT`, for a scripted
-    /// run that has to photograph the readout without a slow venue.
-    ///
-    /// Overrides the feed's own reading when set, and set only from the hook —
-    /// a live session leaves it `None` and reads the real one.
-    pub forced_latency: Option<FeedLatency>,
-    pub commands: mpsc::Sender<FeedCommand>,
-
-    // Market Replay. `replay` is `Some` exactly while a recorded session is
-    // this tab's source; it is the one flag the rest of the UI checks, so
-    // replay never grows a second copy of "which mode are we in". Per tab: a
-    // recording plays in the tab that opened it while the others keep
-    // streaming, on their own feed threads and their own clocks.
-    pub replay: Option<ReplayLink>,
 
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
@@ -322,18 +238,6 @@ pub struct Tab {
     // Every wait currently in flight in this tab, drawn by one overlay (see
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
-
-    pub book_capture_epoch: u64,
-    pub book_channel_closed_reported: bool,
-
-    /// Exchange-to-UI delay measured when the newest live trade arrived.
-    /// Stable while the tape is quiet: market inactivity is not transport lag.
-    pub latest_trade_latency_ms: Option<i64>,
-    /// Timestamp of the newest live trade (epoch ms), for the tape-age
-    /// readout. The latency above is an observation frozen at arrival; this
-    /// is what wall clock is compared against every frame.
-    pub latest_trade_ms: Option<i64>,
-    pub live_trades: u64,
 
     /// Alarm sounds this tab's armed instances asked for, oldest first,
     /// drained by the app once per frame.
@@ -430,35 +334,13 @@ impl Tab {
         Self {
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
-            events: feed.events,
-            book_events: feed.book_events,
-            notices: feed.notices,
-            notice: FeedNotice::Clear,
-            feed_attached_ms: metrics::wall_clock_ms(),
-            connection_since_ms: metrics::wall_clock_ms(),
+            link: FeedLink::new(feed, metrics::wall_clock_ms()),
             connection: quantick_chart::connection_state::ConnectionTracker::new(),
-            resume_floor_ms: None,
-            feed_generation: 0,
-            forced_stall: stall::ForcedStall::from_env(),
-            pending_demo_gap_ms: quantick_feed::demo_gap_ms(),
-            feed_gaps: Vec::new(),
-            feed_integrity: quantick_feed::FeedIntegrity::default(),
-            feed_connection: FeedConnectionState::Connecting,
-            feed_capabilities: feed.capabilities,
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
-            feed_latency: feed.latency,
-            forced_latency: quantick_feed::forced_latency_split(),
-            commands: feed.commands,
-            replay: feed.replay,
             history_step: 2000,
             history_trades: 0,
             session: quantick_session::TabSession::new(),
             loading,
-            book_capture_epoch: 0,
-            book_channel_closed_reported: false,
-            latest_trade_latency_ms: None,
-            latest_trade_ms: None,
-            live_trades: 0,
             pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
             paper_drag_pane: None,
@@ -527,40 +409,26 @@ impl Tab {
             // floor filters the *new* market's prints against the old one's
             // clock and writes a fabricated gap on a chart that never
             // reconnected.
-            self.feed_gaps.clear();
-            self.feed_integrity = quantick_feed::FeedIntegrity::default();
-            self.resume_floor_ms = None;
+            self.link.forget_timeline();
         } else {
             // A kept timeline needs no refill, so nothing restarts the history
             // wait — but a request the old session never answered would spin
             // its spinner for the rest of the session. Every outstanding one
             // belonged to the channel about to be dropped.
             self.loading.set_active(LoadingTask::History, false);
-            self.feed_integrity.feed_replaced();
+            self.link.feed_integrity.feed_replaced();
         }
-        self.feed_generation = self.feed_generation.saturating_add(1);
-        self.events = handle.events;
-        self.book_events = handle.book_events;
-        self.notices = handle.notices;
-        self.feed_capabilities = handle.capabilities;
-        self.feed_latency = handle.latency;
-        self.notice = FeedNotice::Clear;
-        self.feed_attached_ms = metrics::wall_clock_ms();
-        self.connection_since_ms = self.feed_attached_ms;
-        self.feed_connection = FeedConnectionState::Connecting;
-        self.commands = handle.commands;
-        self.replay = handle.replay;
+        self.link.attach(handle, metrics::wall_clock_ms());
         // The journal records where a session's trades came from; the
         // attached handle is the single truth for that.
         self.paper.account_mut().set_feed(&self.feed_id);
         self.paper
             .account_mut()
-            .set_session_source(if self.replay.is_some() {
+            .set_session_source(if self.link.replay.is_some() {
                 quantick_sim::history::SessionSource::Replay
             } else {
                 quantick_sim::history::SessionSource::Live
             });
-        self.book_channel_closed_reported = false;
     }
 
     /// Drop the transient pointer state of every pane's overlay, for a change
@@ -621,11 +489,6 @@ impl Tab {
         self.session.forget_candle_generations();
     }
 
-    /// How many feed sessions this tab has taken over; see the field.
-    pub fn feed_generation(&self) -> u64 {
-        self.feed_generation
-    }
-
     /// Swap in a feed the test drives, through the same path a respawn takes.
     #[cfg(test)]
     pub fn attach_for_test(&mut self, handle: FeedHandle) {
@@ -636,8 +499,8 @@ impl Tab {
     /// needs the tab to have read one.
     #[cfg(test)]
     pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
-        let (tx, rx) = watch::channel(split);
-        self.feed_latency = rx;
+        let (tx, rx) = tokio::sync::watch::channel(split);
+        self.link.feed_latency = rx;
         // The sender is dropped on purpose: a `watch` receiver keeps serving
         // the value it was born with, which is what a test wants and what
         // `unsplit_latency` relies on in production.
@@ -682,7 +545,7 @@ impl Tab {
     /// no live feed's menu, and snapping it away would relabel the whole session
     /// — the status bar and the logs must keep naming what is actually playing.
     pub fn settle_source(&mut self, config: &AppConfig) {
-        if self.replay.is_none() {
+        if self.link.replay.is_none() {
             self.ensure_symbol_valid(config);
             self.refresh_chip_label(config);
         }
@@ -696,7 +559,7 @@ impl Tab {
     pub fn capabilities(&self, config: &AppConfig) -> FeedCapabilities {
         // A feed missing from the config resolves to no provider, so nothing is
         // streaming and nothing may be promised.
-        if config.provider_of(&self.feed_id).is_none() && self.replay.is_none() {
+        if config.provider_of(&self.feed_id).is_none() && self.link.replay.is_none() {
             return FeedCapabilities::none();
         }
         // Otherwise the running feed answers for itself. Each source declares
@@ -704,7 +567,7 @@ impl Tab {
         // knows whether its symbol has a book or a tape — and every affordance
         // already asks the capability rather than the provider name, so they
         // enable and disable themselves from this one value.
-        *self.feed_capabilities.borrow()
+        *self.link.feed_capabilities.borrow()
     }
 
     /// Where this feed's delay is being spent, as far as the provider can tell.
@@ -712,13 +575,15 @@ impl Tab {
     /// `None` while replaying: a recording's prints are as old as the day they
     /// were captured and the playback clock decides when they appear, so there
     /// is no delay here for any hop to own — the same reason
-    /// [`trade_arrival_ms`](Self::trade_arrival_ms) reports nothing there.
+    /// [`trade_arrival_ms`](FeedLink::trade_arrival_ms) reports nothing there.
     #[must_use]
     pub fn feed_latency(&self) -> Option<FeedLatency> {
-        if self.replay.is_some() {
+        if self.link.replay.is_some() {
             return None;
         }
-        self.forced_latency.or(*self.feed_latency.borrow())
+        self.link
+            .forced_latency
+            .or(*self.link.feed_latency.borrow())
     }
 }
 

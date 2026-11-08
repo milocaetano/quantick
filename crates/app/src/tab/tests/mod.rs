@@ -5,6 +5,7 @@
 use super::canvas::trading_pane;
 use super::*;
 use crate::pane::SharedInteraction;
+use quantick_feed::FeedEvent;
 
 #[cfg(test)]
 mod shared_routing_tests {
