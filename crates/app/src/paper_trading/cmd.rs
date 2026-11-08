@@ -26,7 +26,7 @@ pub(super) fn draw_cmd_trading_settings(
     let mut changed = false;
     ui.add_space(4.0);
     ui.label(caption(&palette, "CMD TRADING"));
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if pill_toggle(
             ui,
             "Enabled",
@@ -40,11 +40,7 @@ pub(super) fn draw_cmd_trading_settings(
             changed = true;
         }
         for (word, slot) in [("Buy", true), ("Sell", false)] {
-            ui.label(
-                egui::RichText::new(word)
-                    .color(palette.text_muted())
-                    .small(),
-            );
+            ui.label(egui::RichText::new(word).color(palette.text_muted()));
             let current = if slot { settings.buy } else { settings.sell };
             egui::ComboBox::from_id_salt(("cmd_trading_modifier", word))
                 .width(64.0)
@@ -67,12 +63,8 @@ pub(super) fn draw_cmd_trading_settings(
                 });
         }
     });
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Place")
-                .color(palette.text_muted())
-                .small(),
-        );
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Place").color(palette.text_muted()));
         let current = settings.kind;
         egui::ComboBox::from_id_salt("cmd_trading_entry_kind")
             .width(64.0)
@@ -93,11 +85,7 @@ pub(super) fn draw_cmd_trading_settings(
                  the price, limit and stop place only that one and show nothing where \
                  it cannot rest",
             );
-        ui.label(
-            egui::RichText::new("Step")
-                .color(palette.text_muted())
-                .small(),
-        );
+        ui.label(egui::RichText::new("Step").color(palette.text_support()));
         // The empty field shows this instrument's own default as a hint,
         // so blank reads as "follows the instrument" rather than as
         // nothing. A tick is what the ladder speaks, and saying what one
@@ -146,8 +134,7 @@ pub(super) fn draw_cmd_trading_settings(
                     "above it to buy, below it to sell"
                 },
             ))
-            .color(palette.text_support())
-            .small(),
+            .color(palette.text_support()),
         );
     }
     if settings.enabled && settings.buy == settings.sell {
@@ -157,8 +144,7 @@ pub(super) fn draw_cmd_trading_settings(
             egui::RichText::new(
                 "buy and sell share a key - the gesture stays hidden until they differ",
             )
-            .color(palette.amber())
-            .small(),
+            .color(palette.amber()),
         );
     } else if settings.enabled {
         // The gesture is invisible until a key is held; its one line
@@ -173,8 +159,7 @@ pub(super) fn draw_cmd_trading_settings(
                 settings.buy.label(),
                 settings.sell.label(),
             ))
-            .color(palette.text_support())
-            .small(),
+            .color(palette.text_support()),
         );
     }
     changed

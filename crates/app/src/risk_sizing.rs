@@ -82,7 +82,7 @@ impl RiskBlock<'_> {
         use crate::paper_chrome::pill_toggle;
 
         let mut changed = false;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (basis, label, hover) in [
                 (RiskBasis::Off, "off", "type the size yourself, as always"),
                 (
@@ -112,12 +112,8 @@ impl RiskBlock<'_> {
         use eframe::egui;
 
         let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Lose at most")
-                    .color(palette.text_muted())
-                    .small(),
-            );
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Lose at most").color(palette.text_muted()));
             if edit_decimal(ui, self.amount_text, &mut self.settings.amount, 64.0) {
                 changed = true;
             }
@@ -127,8 +123,7 @@ impl RiskBlock<'_> {
                 } else {
                     currency_code
                 })
-                .color(palette.text_faint())
-                .small(),
+                .color(palette.text_support()),
             );
         });
         changed
@@ -141,20 +136,12 @@ impl RiskBlock<'_> {
         use eframe::egui;
 
         let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Lose at most")
-                    .color(palette.text_muted())
-                    .small(),
-            );
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Lose at most").color(palette.text_muted()));
             if edit_decimal(ui, self.percent_text, &mut self.settings.percent, 44.0) {
                 changed = true;
             }
-            ui.label(
-                egui::RichText::new("% of")
-                    .color(palette.text_faint())
-                    .small(),
-            );
+            ui.label(egui::RichText::new("% of").color(palette.text_support()));
             let mut capital_value = currency_code
                 .is_empty()
                 .then_some(Decimal::ZERO)
@@ -176,16 +163,14 @@ impl RiskBlock<'_> {
                 } else {
                     currency_code
                 })
-                .color(palette.text_faint())
-                .small(),
+                .color(palette.text_support()),
             );
         });
         ui.label(
             egui::RichText::new(
                 "a share of the capital you declared, not of your session's result",
             )
-            .color(palette.text_faint())
-            .small(),
+            .color(palette.text_support()),
         );
         changed
     }
@@ -196,10 +181,7 @@ impl RiskBlock<'_> {
 
         let mut lock = self.settings.lock;
         if ui
-            .checkbox(
-                &mut lock,
-                egui::RichText::new("Refuse an entry over it").small(),
-            )
+            .checkbox(&mut lock, egui::RichText::new("Refuse an entry over it"))
             .on_hover_text(
                 "on: an entry whose stop risks more than this does not go out. Turn it off to \
                  take one anyway.",
@@ -235,30 +217,21 @@ impl InstrumentMoneySection<'_> {
         use eframe::egui;
 
         let mut changed = false;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new(if self.symbol.is_empty() {
                     "instrument"
                 } else {
                     self.symbol
                 })
-                .color(palette.text_muted())
-                .small(),
+                .color(palette.text_muted()),
             );
-            ui.label(
-                egui::RichText::new("point value")
-                    .color(palette.text_faint())
-                    .small(),
-            );
+            ui.label(egui::RichText::new("point value").color(palette.text_support()));
             let mut point_value = self
                 .declared
                 .map_or(Decimal::ZERO, |money| money.point_value);
             let point_changed = edit_decimal(ui, self.point_value_text, &mut point_value, 56.0);
-            ui.label(
-                egui::RichText::new("step")
-                    .color(palette.text_faint())
-                    .small(),
-            );
+            ui.label(egui::RichText::new("step").color(palette.text_support()));
             let mut size_step = self.declared.map_or(Decimal::ZERO, |money| money.size_step);
             let step_changed = edit_decimal(ui, self.size_step_text, &mut size_step, 56.0);
             let currency_changed = edit_currency(ui, self.currency_text, self.currency_code);
@@ -278,11 +251,7 @@ impl InstrumentMoneySection<'_> {
                 changed = true;
             }
         });
-        ui.label(
-            egui::RichText::new(money_note(self.declared))
-                .color(palette.text_faint())
-                .small(),
-        );
+        ui.label(egui::RichText::new(money_note(self.declared)).color(palette.text_support()));
         changed
     }
 }

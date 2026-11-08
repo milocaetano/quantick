@@ -17,7 +17,9 @@ use quantick_engine::Side;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_chrome::{PositionSummary, fmt_decimal, points_color, position_word};
+use crate::paper_chrome::{
+    PositionSummary, financial_text, fmt_decimal, points_color, position_word,
+};
 use crate::paper_trading::PaperTrading;
 use crate::theme;
 
@@ -108,7 +110,9 @@ pub fn draw(
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new(format!("SIM {word} {qty}"))
-                                        .color(palette.chip_ink())
+                                        .color(crate::paper_chrome::trade_action_ink(
+                                            &palette, side_color,
+                                        ))
                                         .strong()
                                         .small(),
                                 );
@@ -119,14 +123,12 @@ pub fn draw(
                                 .color(palette.text_primary()),
                         );
                         if let Some(open) = summary.open_points {
-                            ui.label(
-                                egui::RichText::new(
-                                    paper.account().pnl_compact(open, summary.quantity),
-                                )
-                                .monospace()
-                                .strong()
-                                .color(points_color(&palette, open)),
-                            )
+                            ui.label(financial_text(
+                                &palette,
+                                &paper.account().pnl_compact(open, summary.quantity),
+                                palette.mono_font(12.0),
+                                points_color(&palette, open),
+                            ))
                             .on_hover_text(
                                 "open profit at the last print, in the figure the ticket \
                                  leads with",

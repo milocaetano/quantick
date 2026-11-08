@@ -85,11 +85,91 @@ pub(crate) fn fmt_duration_ms(ms: i64) -> String {
 
 /// Green gains, red losses, muted zero — shared with the HUD.
 pub(crate) fn points_color(palette: &crate::theme::Palette, points: Decimal) -> egui::Color32 {
+    if !palette.resolved.dark {
+        let surface =
+            quantick_appearance::PremultipliedRgba::from_premultiplied(palette.inset().to_array());
+        let light = quantick_appearance::contrast::relative_luminance(surface) > 0.5;
+        return match points.cmp(&Decimal::ZERO) {
+            std::cmp::Ordering::Greater if light => egui::Color32::from_rgb(18, 80, 33),
+            std::cmp::Ordering::Less if light => egui::Color32::from_rgb(136, 24, 30),
+            std::cmp::Ordering::Greater => egui::Color32::from_rgb(100, 220, 160),
+            std::cmp::Ordering::Less => egui::Color32::from_rgb(255, 145, 145),
+            std::cmp::Ordering::Equal => palette.text_primary(),
+        };
+    }
     match points.cmp(&Decimal::ZERO) {
         std::cmp::Ordering::Greater => palette.buy(),
         std::cmp::Ordering::Less => palette.sell(),
         std::cmp::Ordering::Equal => palette.text_muted(),
     }
+}
+
+/// Financial text keeps its original words; only signed numbers carry outcome
+/// ink in Light. In particular a quantity, unit or price is not a gain or loss.
+pub(crate) fn financial_text(
+    palette: &theme::Palette,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    for word in text.split_inclusive(char::is_whitespace) {
+        let number = word.trim();
+        let ink = if palette.resolved.dark {
+            color
+        } else if number.starts_with(['+', '-']) {
+            number
+                .parse::<Decimal>()
+                .map_or(palette.text_primary(), |value| points_color(palette, value))
+        } else {
+            palette.text_primary()
+        };
+        job.append(
+            word,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: ink,
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
+/// BUY and SELL resolve their own ink without changing candles or other chips.
+pub(crate) fn trade_action_ink(palette: &theme::Palette, fill: egui::Color32) -> egui::Color32 {
+    if !palette.resolved.dark && fill == palette.buy() {
+        palette.text_primary()
+    } else {
+        palette.chip_ink()
+    }
+}
+
+/// Keep a disabled action legible while its ordinary response still blocks input.
+pub(crate) fn disabled_action_label(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    label: &str,
+    wrap: egui::TextWrapMode,
+) {
+    let palette = theme::get(ui.ctx());
+    let galley = egui::WidgetText::from(
+        egui::RichText::new(label)
+            .color(palette.text_primary())
+            .strong(),
+    )
+    .into_galley(
+        ui,
+        Some(wrap),
+        response.rect.width() - 2.0 * ui.spacing().button_padding.x,
+        egui::TextStyle::Button,
+    );
+    ui.painter().galley(
+        response.rect.center() - galley.size() / 2.0,
+        galley,
+        palette.text_primary(),
+    );
 }
 
 /// The symbol folders under the history dir, for the report's combo box.
@@ -109,6 +189,64 @@ pub(crate) fn list_symbol_folders(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn light_pnl_ink_preserves_dark_palette() {
+        let ctx = egui::Context::default();
+        let dark = theme::get(&ctx);
+        assert_eq!(points_color(&dark, Decimal::ONE), dark.buy());
+        assert_eq!(points_color(&dark, -Decimal::ONE), dark.sell());
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        theme::sync(&ctx, &appearance);
+        let light = theme::get(&ctx);
+        let candles = (light.buy(), light.sell());
+        for light in [light.clone(), theme::bookmap(&ctx)] {
+            for side in [quantick_engine::Side::Buy, quantick_engine::Side::Sell] {
+                for value in [Decimal::ONE, -Decimal::ONE, Decimal::ZERO] {
+                    let ink = points_color(&light, value);
+                    for background in [
+                        light.chrome(),
+                        light.inset(),
+                        light.control(),
+                        light.border(),
+                        light.canvas(),
+                    ] {
+                        let a = theme::relative_luminance(ink);
+                        let b = theme::relative_luminance(background);
+                        assert!(
+                            (a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5,
+                            "{side:?} {value}: {ink:?} on {background:?}"
+                        );
+                    }
+                }
+            }
+        }
+        let text = "+24.77 USDT move × 2 · -49.54 USDT · +0 pts @ 75916.41";
+        let job = financial_text(&light, text, light.mono_font(12.0), light.buy());
+        assert_eq!(
+            job.text, text,
+            "the calculation remains byte-for-byte complete"
+        );
+        for section in job.sections {
+            let word = job.text[section.byte_range].trim();
+            let expected = match word {
+                "+24.77" => points_color(&light, Decimal::ONE),
+                "-49.54" => points_color(&light, -Decimal::ONE),
+                "+0" => light.text_primary(),
+                _ => light.text_primary(),
+            };
+            assert_eq!(section.format.color, expected, "{word}");
+        }
+        assert_eq!((light.buy(), light.sell()), candles);
+        let dark_job = financial_text(&dark, text, dark.mono_font(12.0), dark.sell());
+        assert!(
+            dark_job
+                .sections
+                .iter()
+                .all(|section| section.format.color == dark.sell())
+        );
+    }
 
     #[test]
     fn durations_format_by_magnitude() {
