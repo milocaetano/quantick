@@ -2,6 +2,8 @@
 mod array;
 mod runtime;
 mod sorting;
+mod statistics;
+pub(crate) use statistics::truncate;
 mod storage;
 mod view;
 mod words;
@@ -44,6 +46,17 @@ pub enum Op {
     Fill,
     IndexOf,
     LastIndexOf,
+    Abs,
+    Covariance,
+    Median,
+    Mode,
+    PercentileLinear,
+    PercentileNearest,
+    PercentRank,
+    Range,
+    Standardize,
+    Stdev,
+    Variance,
     Sum,
     Avg,
     Min,
@@ -180,6 +193,20 @@ const REGISTRY: &[(&str, Op)] = &[
     ("array.fill", Op::Fill),
     ("array.indexof", Op::IndexOf),
     ("array.lastindexof", Op::LastIndexOf),
+    ("array.abs", Op::Abs),
+    ("array.covariance", Op::Covariance),
+    ("array.median", Op::Median),
+    ("array.mode", Op::Mode),
+    (
+        "array.percentile_linear_interpolation",
+        Op::PercentileLinear,
+    ),
+    ("array.percentile_nearest_rank", Op::PercentileNearest),
+    ("array.percentrank", Op::PercentRank),
+    ("array.range", Op::Range),
+    ("array.standardize", Op::Standardize),
+    ("array.stdev", Op::Stdev),
+    ("array.variance", Op::Variance),
     ("array.sum", Op::Sum),
     ("array.avg", Op::Avg),
     ("array.min", Op::Min),
@@ -221,6 +248,11 @@ pub(crate) fn arguments(op: Op) -> &'static [&'static str] {
         Concat => &["id1", "id2"],
         Push | Unshift | Contains(false) | IndexOf | LastIndexOf => &["id", "value"],
         Fill => &["id", "value", "index_from", "index_to"],
+        Min | Max => &["id", "nth"],
+        Covariance => &["id1", "id2", "biased"],
+        Stdev | Variance => &["id", "biased"],
+        PercentileLinear | PercentileNearest => &["id", "percentage"],
+        PercentRank => &["id", "index"],
         Slice => &["id", "index_from", "index_to"],
         Sort | SortIndices => &["id", "order"],
         Join => &["id", "separator"],

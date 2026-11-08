@@ -85,6 +85,10 @@ impl Value {
 
     pub(crate) fn coerce(self, kind: u8) -> Self {
         match kind {
+            5 => match self {
+                Value::Num(n) => Value::Num(n.trunc()),
+                other => other,
+            },
             4 => Value::Bool(self.as_cond().unwrap_or(false)),
             1 if self.is_na() => Value::NaBool,
             1 => Value::Bool(self.as_cond().unwrap_or(false)),

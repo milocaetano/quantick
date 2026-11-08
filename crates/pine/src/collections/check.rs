@@ -76,7 +76,24 @@ impl Checker<'_> {
         values: &[Type],
     ) -> Type {
         match self.collection_type(op, values) {
-            Ok(base) => Type::new(base, Qualifier::Series),
+            Ok(base) => {
+                if matches!(
+                    op,
+                    Op::Avg
+                        | Op::Median
+                        | Op::Stdev
+                        | Op::Variance
+                        | Op::PercentileLinear
+                        | Op::PercentRank
+                ) && base == Base::Int
+                {
+                    self.coercions[id.index()] = 5;
+                }
+                if op == Op::Standardize && base == Base::Array(Box::new(Base::Int)) {
+                    self.coercions[id.index()] = 6;
+                }
+                Type::new(base, Qualifier::Series)
+            }
             Err(message) => {
                 self.error(id, message);
                 Type::unknown()
@@ -226,12 +243,46 @@ impl Checker<'_> {
                 }
                 Base::Na
             }
-            Sum | Avg | Min | Max => {
-                arity(1, 1)?;
+            Sum | Avg | Min | Max | Abs | Covariance | Median | Mode | PercentileLinear
+            | PercentileNearest | PercentRank | Range | Standardize | Stdev | Variance => {
                 if !matches!(element, Base::Int | Base::Float) {
                     return Err("numeric array required".into());
                 }
-                if op == Avg { Base::Float } else { element }
+                match op {
+                    Min | Max => {
+                        arity(1, 2)?;
+                        if values.len() == 2 {
+                            require(1, &Base::Int)?;
+                        }
+                    }
+                    Stdev | Variance => {
+                        arity(1, 2)?;
+                        if values.len() == 2 {
+                            require(1, &Base::Bool)?;
+                        }
+                    }
+                    Covariance => {
+                        arity(2, 3)?;
+                        require(1, &first.base)?;
+                        if values.len() == 3 {
+                            require(2, &Base::Bool)?;
+                        }
+                    }
+                    PercentileLinear | PercentileNearest => {
+                        arity(2, 2)?;
+                        require(1, &Base::Float)?;
+                    }
+                    PercentRank => {
+                        arity(2, 2)?;
+                        require(1, &Base::Int)?;
+                    }
+                    _ => arity(1, 1)?,
+                }
+                match op {
+                    Abs | Standardize => first.base.clone(),
+                    Covariance => Base::Float,
+                    _ => element,
+                }
             }
             Slice => {
                 arity(3, 3)?;

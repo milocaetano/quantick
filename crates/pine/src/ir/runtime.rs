@@ -68,9 +68,12 @@ impl Eval<'_> {
                 Instruction::Advance(node) => self.advance_skipped(*node)?,
                 Instruction::Enter(_) => unreachable!("compiler flattens entry operations"),
                 Instruction::Coerce(id) => {
-                    let value = self.register(*id).coerce(
-                        self.script.types.coercions[self.type_context as usize][id.index()],
-                    );
+                    let coercion =
+                        self.script.types.coercions[self.type_context as usize][id.index()];
+                    let value = self.register(*id).coerce(coercion);
+                    if coercion == 6 {
+                        crate::collections::truncate(&mut self.state.arena, &value);
+                    }
                     let value = if self.script.types.integer_divisions[self.type_context as usize]
                         [id.index()]
                     {

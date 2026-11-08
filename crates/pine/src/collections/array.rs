@@ -115,22 +115,9 @@ pub(super) fn execute(
                 Value::Num(found.map_or(-1.0, |i| i as f64))
             })
         }
-        Sum | Avg | Min | Max => {
-            let nums: Vec<_> = (0..size)
-                .filter_map(|i| view::get(arena, record, i).as_num())
-                .filter(|n| !n.is_nan())
-                .collect();
-            let value = if nums.is_empty() {
-                f64::NAN
-            } else {
-                match op {
-                    Sum => nums.iter().sum(),
-                    Avg => nums.iter().sum::<f64>() / nums.len() as f64,
-                    Min => nums.iter().copied().fold(f64::INFINITY, f64::min),
-                    _ => nums.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-                }
-            };
-            Ok(Value::Num(value))
+        Sum | Avg | Min | Max | Abs | Covariance | Median | Mode | PercentileLinear
+        | PercentileNearest | PercentRank | Range | Standardize | Stdev | Variance => {
+            super::statistics::execute(arena, op, args, record)
         }
         Join => {
             let separator = match args.get(1) {
