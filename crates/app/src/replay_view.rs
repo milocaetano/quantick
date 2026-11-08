@@ -1260,6 +1260,118 @@ crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
 mod tests {
     use super::*;
 
+    fn frame(
+        view: &mut ReplayView,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 780.0),
+                )),
+                time: Some(ctx.input(|input| input.time) + 1.0 / 60.0),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                view.draw_browser(
+                    ctx,
+                    &MarketMenu {
+                        current: None,
+                        catalogue: vec![],
+                    },
+                )
+            },
+        )
+    }
+
+    #[test]
+    fn replay_format_paragraphs_and_csv_selection_survive_real_browser_scrolling() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [1000.0, 1280.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                theme::sync(&ctx, &appearance);
+                let mut view = ReplayView::new(
+                    Some("C:/recordings/a-very-long-session-folder/market/session-data"),
+                    None,
+                );
+                view.open_format_help();
+                let paragraphs: Vec<_> = format::FORMAT_HELP.split("\n\n").collect();
+                let mut visible = vec![false; paragraphs.len()];
+                let mut pointer = egui::Pos2::ZERO;
+                let mut copied = false;
+                for index in 0..220 {
+                    let events = if index > 5 && index % 8 == 0 {
+                        vec![
+                            egui::Event::PointerMoved(pointer),
+                            egui::Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                delta: egui::vec2(0.0, -70.0),
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]
+                    } else {
+                        vec![]
+                    };
+                    let output = frame(&mut view, &ctx, width, events);
+                    let mut csv_point = None;
+                    for clipped in output.shapes {
+                        if let egui::Shape::Text(text) = clipped.shape
+                            && let Some(paragraph) = paragraphs
+                                .iter()
+                                .position(|value| *value == text.galley.job.text)
+                        {
+                            pointer = clipped.clip_rect.center();
+                            let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                            if clipped.clip_rect.contains_rect(bounds) {
+                                visible[paragraph] = true;
+                                if text.galley.job.text.contains("# quantick-replay 1") {
+                                    csv_point = Some(text.pos + egui::vec2(30.0, 7.0));
+                                }
+                            }
+                        }
+                    }
+                    if !copied && let Some(pos) = csv_point {
+                        for _ in 0..2 {
+                            for pressed in [true, false] {
+                                frame(
+                                    &mut view,
+                                    &ctx,
+                                    width,
+                                    vec![
+                                        egui::Event::PointerMoved(pos),
+                                        egui::Event::PointerButton {
+                                            pos,
+                                            button: egui::PointerButton::Primary,
+                                            pressed,
+                                            modifiers: egui::Modifiers::NONE,
+                                        },
+                                    ],
+                                );
+                            }
+                        }
+                        let copied_output = frame(&mut view, &ctx, width, vec![egui::Event::Copy]);
+                        let selected = copied_output.platform_output.copied_text;
+                        copied = !selected.is_empty() && format::FORMAT_HELP.contains(&selected);
+                    }
+                }
+                assert!(
+                    visible.iter().all(|seen| *seen),
+                    "every complete format block is reachable: {visible:?}"
+                );
+                assert!(
+                    copied,
+                    "CSV example permits actual pointer selection and copy"
+                );
+            }
+        }
+    }
+
     #[test]
     fn supporting_guidance_fits_narrow_surfaces() {
         for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {

@@ -7,6 +7,187 @@ use quantick_orderflow::{BubbleSizeReference, LaneWindow};
 type PaintedText = Vec<(String, egui::Rect)>;
 
 #[test]
+fn bubble_persistence_is_reachable_in_the_real_panel_after_the_l2_section() {
+    use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+    use tokio::sync::mpsc;
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        for width in [1000.0, 1280.0] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let (_events_tx, events) = mpsc::channel(8);
+            let (_book_tx, book_events) = mpsc::channel(8);
+            let (commands, _commands_rx) = mpsc::channel(8);
+            let mut tab = crate::tab::Tab::new(
+                1,
+                "metatrader-b3".into(),
+                "WINV26".into(),
+                crate::state::BarSpec::Tick(50),
+                quantick_feed::FeedHandle {
+                    events,
+                    book_events,
+                    commands,
+                    notices: quantick_feed::silent_notices(),
+                    capabilities: quantick_feed::fixed_capabilities(
+                        crate::config::ProviderKind::Binance.capabilities(),
+                    ),
+                    latency: quantick_feed::unsplit_latency(),
+                    replay: None,
+                },
+                crate::scratch::thread_dir("bubble-panel-readability"),
+            );
+            let config: crate::config::AppConfig =
+                toml::from_str(include_str!("../../../../config/feeds.toml")).unwrap();
+            let (binding, settings) = AssetBinding::bind(
+                AssetBubblesStore::default().shared(),
+                &config,
+                ("metatrader-b3", "WINV26"),
+                tab.tape().look.presets(),
+                false,
+            );
+            tab.tape_mut().bind_asset(binding, &settings);
+            tab.tape_mut().settings_panel.remember_width(320.0);
+            let mut folds = crate::ui_state::AssetFolds::default();
+            folds.set("WINV26", crate::ui_state::PanelSection::L2, true);
+            crate::orderflow_panel::open_on(&mut tab, crate::ui_state::PanelSection::Bubbles);
+            let mut reached = false;
+            for frame in 0..30 {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 780.0),
+                        )),
+                        time: Some(f64::from(frame) / 60.0),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let chart = ui.max_rect();
+                            crate::orderflow_panel::draw(&mut tab, ui, chart, &mut folds);
+                        });
+                    },
+                );
+                for clipped in output.shapes {
+                    if let egui::Shape::Text(text) = clipped.shape
+                        && text.galley.job.text.starts_with("settings kept for asset")
+                    {
+                        let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                        reached |= clipped.clip_rect.contains_rect(bounds);
+                    }
+                }
+            }
+            assert!(
+                reached,
+                "opening Bubbles exposes its complete persistence note through the actual panel scroll area"
+            );
+        }
+    }
+}
+
+#[test]
+fn bubble_preset_editor_accepts_selection_and_rejects_disabled_typing() {
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        let ctx = egui::Context::default();
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(source).unwrap();
+        crate::theme::sync(&ctx, &appearance);
+        let mut view = view(false);
+        view.set_preset_name_draft_for_test("");
+        let mut draw = |events, enabled| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(520.0, 780.0),
+                    )),
+                    time: Some(ctx.input(|input| input.time) + 1.0 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.add_enabled_ui(enabled, |ui| view.draw_bubble_presets(ui, false));
+                    });
+                },
+            )
+        };
+        let output = draw(vec![], true);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "preset name" => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        for pressed in [true, false] {
+            draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                true,
+            );
+        }
+        let id = ctx
+            .memory(|memory| memory.focused())
+            .expect("bubble preset name takes focus");
+        draw(vec![egui::Event::Text("Readable".into())], true);
+        draw(
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+            }],
+            true,
+        );
+        let range = egui::TextEdit::load_state(&ctx, id)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap()
+            .sorted();
+        assert_eq!((range[0].index, range[1].index), (0, 8));
+        ctx.memory_mut(|memory| memory.surrender_focus(id));
+        for pressed in [true, false] {
+            draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                false,
+            );
+        }
+        let output = draw(vec![egui::Event::Text("Forbidden".into())], false);
+        assert!(ctx.memory(|memory| memory.focused()).is_none());
+        assert!(output.shapes.iter().any(|clipped| matches!(&clipped.shape,
+            egui::Shape::Text(text) if text.galley.job.text == "Readable")));
+        assert!(!output.shapes.iter().any(|clipped| matches!(&clipped.shape,
+            egui::Shape::Text(text) if text.galley.job.text.contains("Forbidden"))));
+    }
+}
+
+#[test]
 fn supporting_guidance_fits_narrow_surfaces() {
     use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
     for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {

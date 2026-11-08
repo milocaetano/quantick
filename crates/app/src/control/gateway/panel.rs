@@ -402,6 +402,75 @@ mod readability_tests {
     use eframe::egui;
 
     #[test]
+    fn permission_guidance_and_locked_endpoint_are_reachable_by_wheel() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [1000.0, 1280.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                crate::theme::sync(&ctx, &appearance);
+                let mut access = ControlAccess::new();
+                access.show_panel = true;
+                access.state = AccessState::Enabling;
+                let original = access.configured_scopes.clone();
+                let expected = [
+                    "Current grants are read-only",
+                    "Still reading only:",
+                    "Objects an assistant",
+                    "Changes which charts",
+                    "Disable access before changing scopes;",
+                    "Cancel and keep access off",
+                ];
+                let mut visible = [false; 6];
+                for frame in 0..120 {
+                    let events = if frame > 5 && frame % 6 == 0 {
+                        vec![
+                            egui::Event::PointerMoved(egui::pos2(200.0, 300.0)),
+                            egui::Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                delta: egui::vec2(0.0, -120.0),
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]
+                    } else {
+                        vec![]
+                    };
+                    let output = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 780.0),
+                            )),
+                            time: Some(f64::from(frame) / 60.0),
+                            events,
+                            ..Default::default()
+                        },
+                        |ctx| access.draw_panel(ctx),
+                    );
+                    for clipped in output.shapes {
+                        if let egui::Shape::Text(text) = clipped.shape {
+                            let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                            for (index, prefix) in expected.iter().enumerate() {
+                                if text.galley.job.text.starts_with(prefix)
+                                    && clipped.clip_rect.contains_rect(bounds)
+                                {
+                                    visible[index] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    visible, [true; 6],
+                    "every full paragraph and endpoint: {expected:?}"
+                );
+                assert_eq!(access.configured_scopes, original);
+                assert!(matches!(access.state, AccessState::Enabling));
+            }
+        }
+    }
+
+    #[test]
     fn supporting_guidance_fits_narrow_surfaces() {
         for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
             for width in [320.0, 520.0] {
