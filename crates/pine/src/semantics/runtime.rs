@@ -1,6 +1,6 @@
 //! Eager advancement uses a temporary variable view; conditional side effects
 //! and history writes remain in the selected execution only.
-use super::{Eval, Kernel, Value};
+use super::{Eval, FLAGS, GLOBALS, LOCALS, Value};
 use crate::{
     ast::{Arg, NodeId},
     builtins::Builtin,
@@ -37,16 +37,16 @@ impl Eval<'_> {
         if !self.has_kernel(node) {
             return Ok(());
         }
-        let globals = self.state.globals.clone();
-        let locals = self.state.locals.clone();
-        let done = self.state.var_done.clone();
+        let globals = self.state.arena.values(GLOBALS);
+        let locals = self.state.arena.values(LOCALS);
+        let done = self.state.arena.values(FLAGS);
         let skipped = self.semantic_run.skipped;
         self.semantic_run.skipped = true;
         let result = self.eval(node);
         self.semantic_run.skipped = skipped;
-        self.state.globals = globals;
-        self.state.locals = locals;
-        self.state.var_done = done;
+        self.state.arena.replace(GLOBALS, globals);
+        self.state.arena.replace(LOCALS, locals);
+        self.state.arena.replace(FLAGS, done);
         result.map(|_| ())
     }
 
@@ -74,18 +74,13 @@ impl Eval<'_> {
             {
                 return Ok(value.clone());
             }
-            match &self.semantic_run.initial[&key] {
-                Some(initial) => {
-                    self.state.kernels.insert(key, initial.clone());
-                }
-                None => {
-                    self.state.kernels.remove(&key);
-                }
-            }
+            self.state
+                .arena
+                .restore_kernel(key, self.semantic_run.initial[&key].as_deref());
         } else {
             self.semantic_run
                 .initial
-                .insert(key, self.state.kernels.get(&key).cloned());
+                .insert(key, self.state.arena.kernel_snapshot(key));
         }
         self.semantic_run.arguments = Some(values.clone());
         let result = self.kernel_call(id, builtin, site, args);
@@ -114,36 +109,15 @@ impl Eval<'_> {
             self.arg_length(call, 2)?,
             self.arg_length(call, 3)?,
         ];
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Macd(crate::semantics::Macd::new(lengths)));
-        let Kernel::Macd(kernel) = kernel else {
-            unreachable!("MACD site owns MACD state");
-        };
-        if kernel.lengths != lengths {
-            return Err(self.err(
-                call.id,
-                ErrorCode::PineSeriesLength,
-                "MACD lengths cannot change between bars",
-            ));
-        }
-        Ok(kernel.push(source))
-    }
-}
-
-impl super::ScriptState {
-    pub(super) fn commit_histories(&mut self, max_bars_back: usize) {
-        for key in self.staged_histories.keys() {
-            self.histories.entry(*key).or_default();
-        }
-        for (key, ring) in &mut self.histories {
-            ring.values
-                .push_back(self.staged_histories.remove(key).unwrap_or(Value::Na));
-            if ring.values.len() > max_bars_back {
-                ring.values.pop_front();
-            }
-        }
+        self.state
+            .arena
+            .push_macd(call.key, lengths, source)
+            .ok_or_else(|| {
+                self.err(
+                    call.id,
+                    ErrorCode::PineSeriesLength,
+                    "MACD lengths cannot change between bars",
+                )
+            })
     }
 }

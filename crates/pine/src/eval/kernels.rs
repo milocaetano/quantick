@@ -10,13 +10,13 @@
 //! Dispatch is a table: [`kernel_handler`] maps each stateful builtin to the
 //! handler of its argument family, and every handler shares one signature.
 
-use quantick_indicators::ta;
+use quantick_indicators::ta::packed::KernelKind;
 
 use crate::ast::NodeId;
 use crate::builtins::Builtin;
 use crate::error::{ErrorCode, PineError};
 
-use super::{Eval, Kernel, Value};
+use super::{Eval, Value};
 
 /// One kernel call as the handlers see it: the node, the builtin, the
 /// `(call site, call path)` identity and the arguments.
@@ -139,35 +139,28 @@ impl<'a> Eval<'a> {
     fn cross_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let a = self.arg_num(call.args, 0)?;
         let b = self.arg_num(call.args, 1)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| match call.builtin {
-                Builtin::TaCrossover => Kernel::CrossOver(ta::CrossOver::new()),
-                Builtin::TaCrossunder => Kernel::CrossUnder(ta::CrossUnder::new()),
-                _ => Kernel::Cross(ta::Cross::new()),
-            });
-        let fired = match kernel {
-            Kernel::CrossOver(k) => k.push(a, b),
-            Kernel::CrossUnder(k) => k.push(a, b),
-            Kernel::Cross(k) => k.push(a, b),
-            _ => unreachable!("cross site holds a cross kernel"),
+        let kind = match call.builtin {
+            Builtin::TaCrossover => KernelKind::CrossOver,
+            Builtin::TaCrossunder => KernelKind::CrossUnder,
+            _ => KernelKind::Cross,
         };
-        Ok(Value::Bool(fired))
+        Ok(Value::Bool(
+            self.state
+                .arena
+                .push_kernel(call.key, kind, 0, 0, [a, b, 0.0])
+                != 0.0,
+        ))
     }
 
     fn bars_since_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let condition = self.first_cond(call.args)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::BarsSince(ta::BarsSince::new()));
-        let Kernel::BarsSince(k) = kernel else {
-            unreachable!("barssince site holds a barssince kernel");
-        };
-        Ok(Value::Num(k.push(condition)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::BarsSince,
+            0,
+            0,
+            [f64::from(condition), 0.0, 0.0],
+        )))
     }
 
     fn value_when_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
@@ -180,110 +173,89 @@ impl<'a> Eval<'a> {
         } else {
             occurrence.max(0.0) as usize
         };
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::ValueWhen(ta::ValueWhen::new(occurrence)));
-        let Kernel::ValueWhen(k) = kernel else {
-            unreachable!("valuewhen site holds a valuewhen kernel");
-        };
-        Ok(Value::Num(k.push(condition, source)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::ValueWhen,
+            occurrence,
+            0,
+            [f64::from(condition), source, 0.0],
+        )))
     }
 
     fn fixnan_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let x = self.arg_num(call.args, 0)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Fixnan(f64::NAN));
-        let Kernel::Fixnan(last) = kernel else {
-            unreachable!("fixnan site holds a fixnan kernel");
-        };
-        if !x.is_nan() {
-            *last = x;
-        }
-        Ok(Value::Num(*last))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Fixnan,
+            0,
+            0,
+            [x, 0.0, 0.0],
+        )))
     }
 
     fn tr_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let handle_na = self.first_cond(call.args)?;
-        let (high, low, close) = (self.bar.high, self.bar.low, self.bar.close);
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Tr(ta::Tr::new(handle_na)));
-        let Kernel::Tr(k) = kernel else {
-            unreachable!("tr site holds a tr kernel");
-        };
-        Ok(Value::Num(k.push(high, low, close)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Tr,
+            usize::from(handle_na),
+            0,
+            [self.bar.high, self.bar.low, self.bar.close],
+        )))
     }
 
     fn atr_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let len = self.arg_length(call, 0)?;
         self.pin_kernel_length(call.key, len, call.id)?;
-        let (high, low, close) = (self.bar.high, self.bar.low, self.bar.close);
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Atr(ta::Atr::new(len)));
-        let Kernel::Atr(k) = kernel else {
-            unreachable!("atr site holds an atr kernel");
-        };
-        Ok(Value::Num(k.push(high, low, close)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Atr,
+            len,
+            0,
+            [self.bar.high, self.bar.low, self.bar.close],
+        )))
     }
 
     fn cum_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let x = self.arg_num(call.args, 0)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Cum(ta::Cum::new()));
-        let Kernel::Cum(k) = kernel else {
-            unreachable!("cum site holds a cum kernel");
-        };
-        Ok(Value::Num(k.push(x)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Cum,
+            0,
+            0,
+            [x, 0.0, 0.0],
+        )))
     }
 
     fn change_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let x = self.arg_num(call.args, 0)?;
-        let n = match call.args.get(1) {
-            Some(_) => {
-                let n = self.arg_num(call.args, 1)?;
-                self.kernel_length(n, call.id)?
-            }
-            None => 1,
+        let n = if call.args.get(1).is_some() {
+            let n = self.arg_num(call.args, 1)?;
+            self.kernel_length(n, call.id)?
+        } else {
+            1
         };
         self.pin_kernel_length(call.key, n, call.id)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Change(ta::Change::new(n)));
-        let Kernel::Change(k) = kernel else {
-            unreachable!("change site holds a change kernel");
-        };
-        Ok(Value::Num(k.push(x)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Change,
+            n,
+            0,
+            [x, 0.0, 0.0],
+        )))
     }
 
     fn vwma_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let src = self.arg_num(call.args, 0)?;
         let len = self.arg_length(call, 1)?;
         self.pin_kernel_length(call.key, len, call.id)?;
-        let volume = self.bar.volume();
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| Kernel::Vwma(ta::Vwma::new(len)));
-        let Kernel::Vwma(k) = kernel else {
-            unreachable!("vwma site holds a vwma kernel");
-        };
-        Ok(Value::Num(k.push(src, volume)))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            KernelKind::Vwma,
+            len,
+            0,
+            [src, self.bar.volume(), 0.0],
+        )))
     }
 
     fn pivot_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
@@ -291,20 +263,18 @@ impl<'a> Eval<'a> {
         let left = self.arg_length(call, 1)?;
         let right = self.arg_length(call, 2)?;
         self.pin_kernel_length(call.key, left + right, call.id)?;
-        let is_high = call.builtin == Builtin::TaPivotHigh;
-        let kernel = self.state.kernels.entry(call.key).or_insert_with(|| {
-            if is_high {
-                Kernel::PivotHigh(ta::PivotHigh::new(left, right))
-            } else {
-                Kernel::PivotLow(ta::PivotLow::new(left, right))
-            }
-        });
-        let value = match kernel {
-            Kernel::PivotHigh(k) => k.push(src),
-            Kernel::PivotLow(k) => k.push(src),
-            _ => unreachable!("pivot site holds a pivot kernel"),
+        let kind = if call.builtin == Builtin::TaPivotHigh {
+            KernelKind::PivotHigh
+        } else {
+            KernelKind::PivotLow
         };
-        Ok(Value::Num(value))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            kind,
+            left,
+            right,
+            [src, 0.0, 0.0],
+        )))
     }
 
     /// The (src, len) family.
@@ -312,39 +282,27 @@ impl<'a> Eval<'a> {
         let src = self.arg_num(call.args, 0)?;
         let len = self.arg_length(call, 1)?;
         self.pin_kernel_length(call.key, len, call.id)?;
-        let kernel = self
-            .state
-            .kernels
-            .entry(call.key)
-            .or_insert_with(|| match call.builtin {
-                Builtin::TaSma => Kernel::Sma(ta::Sma::new(len)),
-                Builtin::TaEma => Kernel::Ema(ta::Ema::new(len)),
-                Builtin::TaRma => Kernel::Rma(ta::Rma::new(len)),
-                Builtin::TaWma => Kernel::Wma(ta::Wma::new(len)),
-                Builtin::TaRsi => Kernel::Rsi(ta::Rsi::new(len)),
-                Builtin::TaStdev => Kernel::Stdev(ta::Stdev::new(len)),
-                Builtin::TaHighest => Kernel::Highest(ta::Highest::new(len)),
-                Builtin::TaLowest => Kernel::Lowest(ta::Lowest::new(len)),
-                Builtin::TaHighestBars => Kernel::HighestBars(ta::HighestBars::new(len)),
-                Builtin::TaLowestBars => Kernel::LowestBars(ta::LowestBars::new(len)),
-                Builtin::MathSum => Kernel::WindowSum(ta::WindowSum::new(len)),
-                other => unreachable!("{other:?} is not a (src, len) kernel"),
-            });
-        let value = match kernel {
-            Kernel::Sma(k) => k.push(src),
-            Kernel::Ema(k) => k.push(src),
-            Kernel::Rma(k) => k.push(src),
-            Kernel::Wma(k) => k.push(src),
-            Kernel::Rsi(k) => k.push(src),
-            Kernel::Stdev(k) => k.push(src),
-            Kernel::Highest(k) => k.push(src),
-            Kernel::Lowest(k) => k.push(src),
-            Kernel::HighestBars(k) => k.push(src),
-            Kernel::LowestBars(k) => k.push(src),
-            Kernel::WindowSum(k) => k.push(src),
-            _ => unreachable!("(src, len) site holds a (src, len) kernel"),
+        let kind = match call.builtin {
+            Builtin::TaSma => KernelKind::Sma,
+            Builtin::TaEma => KernelKind::Ema,
+            Builtin::TaRma => KernelKind::Rma,
+            Builtin::TaWma => KernelKind::Wma,
+            Builtin::TaRsi => KernelKind::Rsi,
+            Builtin::TaStdev => KernelKind::Stdev,
+            Builtin::TaHighest => KernelKind::Highest,
+            Builtin::TaLowest => KernelKind::Lowest,
+            Builtin::TaHighestBars => KernelKind::HighestBars,
+            Builtin::TaLowestBars => KernelKind::LowestBars,
+            Builtin::MathSum => KernelKind::WindowSum,
+            other => unreachable!("{other:?} is not a window kernel"),
         };
-        Ok(Value::Num(value))
+        Ok(Value::Num(self.state.arena.push_kernel(
+            call.key,
+            kind,
+            len,
+            0,
+            [src, 0.0, 0.0],
+        )))
     }
 }
 

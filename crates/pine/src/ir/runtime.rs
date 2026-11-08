@@ -1,5 +1,5 @@
 //! Register machine. Syntax is inspected only by the compiler.
-use super::{Eval, Value, values_equal};
+use super::{Eval, FLAGS, GLOBALS, LOCALS, REGISTERS, RETURNS, Value, values_equal};
 use crate::{
     ast::{BinOp, NodeId, UnOp, VarMode},
     error::{ErrorCode, PineError},
@@ -10,14 +10,14 @@ use std::rc::Rc;
 
 impl Eval<'_> {
     pub(super) fn execute(&mut self, entry: NodeId) -> Result<Value, PineError> {
-        let stack_base = self.state.returns.len();
+        let stack_base = self.state.arena.len(RETURNS);
         let mut pc = self.script.program.entries[entry.index()];
         loop {
             let instruction = &self.script.program.instructions[pc];
             pc += 1;
             match instruction {
                 Instruction::Enter(id) => {
-                    self.state.returns.push(pc);
+                    self.state.arena.push_address(pc);
                     pc = self.script.program.entries[id.index()];
                 }
                 Instruction::Return(id) => {
@@ -35,14 +35,14 @@ impl Eval<'_> {
                         value
                     };
                     self.set_register(*id, value);
-                    if self.state.returns.len() == stack_base {
+                    if self.state.arena.len(RETURNS) == stack_base {
                         return Ok(self.register(entry));
                     }
-                    pc = self.state.returns.pop().expect("return address");
+                    pc = self.state.arena.pop_address();
                 }
                 Instruction::Initialized(id, slot, target) => {
-                    if self.state.var_done[*slot as usize] {
-                        self.set_register(*id, self.state.globals[*slot as usize].clone());
+                    if self.state.arena.get(FLAGS, *slot as usize) == Value::Bool(true) {
+                        self.set_register(*id, self.state.arena.get(GLOBALS, *slot as usize));
                         pc = *target;
                     }
                 }
@@ -52,17 +52,18 @@ impl Eval<'_> {
     }
 
     fn register(&self, id: NodeId) -> Value {
-        self.state.registers[id.index()].clone()
+        self.state.arena.get(REGISTERS, id.index())
     }
     fn set_register(&mut self, id: NodeId, value: Value) {
-        self.state.registers[id.index()] = value;
+        self.state.arena.set(REGISTERS, id.index(), value);
     }
     fn read_slot(&mut self, id: NodeId, resolution: Resolution) -> Result<Value, PineError> {
         match resolution {
-            Resolution::Global(slot) => Ok(self.state.globals[slot as usize].clone()),
-            Resolution::Local(slot) => {
-                Ok(self.state.locals[self.frame_base + slot as usize].clone())
-            }
+            Resolution::Global(slot) => Ok(self.state.arena.get(GLOBALS, slot as usize)),
+            Resolution::Local(slot) => Ok(self
+                .state
+                .arena
+                .get(LOCALS, self.frame_base + slot as usize)),
             Resolution::Builtin(builtin) => self.builtin_variable(id, builtin),
             Resolution::ColorConst(color) => Ok(Value::Color(color)),
             Resolution::EnumConst(tag) => Ok(Value::Str(Rc::new(tag.to_owned()))),
@@ -71,8 +72,12 @@ impl Eval<'_> {
     }
     fn store_slot(&mut self, resolution: Resolution, value: Value) {
         match resolution {
-            Resolution::Global(slot) => self.state.globals[slot as usize] = value,
-            Resolution::Local(slot) => self.state.locals[self.frame_base + slot as usize] = value,
+            Resolution::Global(slot) => self.state.arena.set(GLOBALS, slot as usize, value),
+            Resolution::Local(slot) => {
+                self.state
+                    .arena
+                    .set(LOCALS, self.frame_base + slot as usize, value)
+            }
             _ => {}
         }
     }
@@ -98,7 +103,9 @@ impl Eval<'_> {
                 if *mode != VarMode::Plain
                     && let Resolution::Global(slot) = target
                 {
-                    self.state.var_done[*slot as usize] = true;
+                    self.state
+                        .arena
+                        .set(FLAGS, *slot as usize, Value::Bool(true));
                 }
                 (*id, value)
             }

@@ -14,13 +14,12 @@
 //! across untaken branches reads `na`, a documented divergence.
 //!
 //! `Value` stays ≤ 16 bytes (unit-tested): the per-bar path moves it by
-//! copy, and the environments are flat `Vec<Value>`s.
+//! temporary value. Persistent values, including text and tuples, live in the word arena.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use quantick_indicators::{
-    Ctx, IndicatorBar, InputValue, MarkerLocation, ObjectStore, Rgba8, SourceId, ta,
+    Ctx, IndicatorBar, InputValue, MarkerLocation, ObjectStore, Rgba8, SourceId,
 };
 
 use crate::ast::{BinOp, NodeId, VarMode};
@@ -28,11 +27,18 @@ use crate::builtins::Builtin;
 use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
 
+#[path = "ir/arena.rs"]
+mod arena;
 #[path = "ir/loops.rs"]
 mod ir_loops;
 #[path = "ir/runtime.rs"]
 mod ir_runtime;
+use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS, RETURNS};
+#[path = "ir/kernel_state.rs"]
+mod kernel_state;
 mod kernels;
+#[path = "ir/object_state.rs"]
+mod object_state;
 mod objects;
 mod pure;
 #[path = "semantics/runtime.rs"]
@@ -44,150 +50,63 @@ pub const LOOP_BUDGET: u32 = 10_000;
 
 pub use crate::types::{ObjKind, Value};
 
-/// One kernel instance behind a `(call site, path)` key.
-#[derive(Clone)]
-pub(crate) enum Kernel {
-    Macd(crate::semantics::Macd),
-    Sma(ta::Sma),
-    Ema(ta::Ema),
-    Rma(ta::Rma),
-    Wma(ta::Wma),
-    Vwma(ta::Vwma),
-    Rsi(ta::Rsi),
-    Tr(ta::Tr),
-    Atr(ta::Atr),
-    Stdev(ta::Stdev),
-    Highest(ta::Highest),
-    Lowest(ta::Lowest),
-    HighestBars(ta::HighestBars),
-    LowestBars(ta::LowestBars),
-    Change(ta::Change),
-    Cum(ta::Cum),
-    CrossOver(ta::CrossOver),
-    CrossUnder(ta::CrossUnder),
-    Cross(ta::Cross),
-    BarsSince(ta::BarsSince),
-    ValueWhen(ta::ValueWhen),
-    PivotHigh(ta::PivotHigh),
-    PivotLow(ta::PivotLow),
-    WindowSum(ta::WindowSum),
-    /// `fixnan`: the last non-na value seen.
-    Fixnan(f64),
-}
-
-/// One implicit expression-history ring: committed values, newest last,
-/// bounded by the script's `max_bars_back`.
-///
-/// A `VecDeque` rather than a `Vec`: dropping the oldest value with
-/// `Vec::remove(0)` shifted the whole ring on every commit once it filled —
-/// up to 500 entries per history node per closed bar, and tick bars close
-/// many times a second under a dense tape.
-#[derive(Clone, Default)]
-pub(crate) struct HistRing {
-    values: std::collections::VecDeque<Value>,
-}
-
 /// Everything that persists across bars — the state a preview snapshots.
 #[derive(Default)]
 pub(crate) struct ScriptState {
-    /// Global slot values (current bar's view).
-    pub globals: Vec<Value>,
-    /// Whether a `var`/`varip` slot ran its initialiser.
-    pub var_done: Vec<bool>,
-    /// Kernel instances by (call site, interned path).
-    pub kernels: BTreeMap<(u32, u32), Kernel>,
-    /// The length each kernel was instantiated with, same key. A kernel is
-    /// built once and keeps its window forever, so a length that changes
-    /// between bars — `f(n) => ta.sma(close, n)` called with a moving `n` —
-    /// would silently keep bar zero's window while the plot title claimed
-    /// otherwise. Pine refuses a series length; so do we, honestly.
-    pub kernel_lengths: BTreeMap<(u32, u32), usize>,
-    /// Expression histories by (history id, interned path).
-    pub histories: BTreeMap<(u32, u32), HistRing>,
-    /// Values staged for the forming bar's histories, flushed on commit.
-    pub staged_histories: BTreeMap<(u32, u32), Value>,
+    /// The sole authoritative mutable runtime image.
+    pub arena: Arena,
     /// Retained draw objects (lines/boxes/labels, §2.6 caps).
     pub objects: ObjectStore,
-    /// Path interning: (parent path, call node) → child path.
-    pub path_children: BTreeMap<(u32, u32), u32>,
-    /// Next fresh path id (0 = the root path).
-    pub next_path: u32,
-    /// The reused local-frame stack. It lives here, not in `Eval`, so its
-    /// capacity survives across bars: a fresh `Vec` per bar meant any script
-    /// with a user function paid a malloc/free every bar, in a walk
-    /// documented as allocation-free after the first one.
-    pub locals: Vec<Value>,
-    pub registers: Vec<Value>,
-    pub returns: Vec<usize>,
 }
 
 impl ScriptState {
     pub(crate) fn new(global_slots: usize) -> Self {
+        let mut arena = Arena::default();
+        arena.resize(GLOBALS, global_slots);
+        arena.resize(FLAGS, global_slots);
         Self {
-            locals: Vec::new(),
-            globals: vec![Value::Na; global_slots],
-            var_done: vec![false; global_slots],
-            next_path: 1,
+            arena,
             ..Self::default()
         }
     }
 
-    /// The clone-small-state part of a preview snapshot (§2.3): globals,
-    /// var flags, kernels and path table. Histories are committed-only, so
-    /// rollback for them is just dropping the staged map.
+    /// One contiguous copy captures slots, payloads, kernels, histories and drawings.
     pub(crate) fn snapshot(&self) -> StateSnapshot {
         StateSnapshot {
-            globals: self.globals.clone(),
-            var_done: self.var_done.clone(),
-            kernels: self.kernels.clone(),
-            kernel_lengths: self.kernel_lengths.clone(),
-            objects: self.objects.clone(),
+            arena: self.arena.clone(),
         }
     }
 
     /// Restore after a preview. `varip` slots keep their preview mutations —
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
-        let StateSnapshot {
-            globals,
-            var_done,
-            kernels,
-            kernel_lengths,
-            objects,
-        } = snapshot;
-        for (slot, (value, done)) in globals.into_iter().zip(var_done).enumerate() {
-            if slot_modes.get(slot) != Some(&VarMode::Varip) {
-                self.globals[slot] = value;
-                self.var_done[slot] = done;
+        let StateSnapshot { mut arena } = snapshot;
+        for (slot, mode) in slot_modes.iter().enumerate() {
+            if *mode == VarMode::Varip {
+                arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
+                arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }
-        self.kernels = kernels;
-        self.kernel_lengths = kernel_lengths;
-        // Not a plain assignment: `restore_from` keeps the object id counter
-        // moving forward, so a `varip` handle that survives this rollback
-        // cannot collide with an id the commit run is about to allocate.
-        self.objects.restore_from(objects);
-        self.staged_histories.clear();
+        arena.words[object_state::NEXT_ID] =
+            arena.words[object_state::NEXT_ID].max(self.arena.words[object_state::NEXT_ID]);
+        self.arena = arena;
+        self.project_objects();
     }
 
     /// Commit the forming bar: flush staged history values into their rings.
-    pub(crate) fn commit_bar(&mut self, max_bars_back: usize) {
-        self.commit_histories(max_bars_back);
+    pub(crate) fn commit_bar(&mut self) {
+        self.arena.commit_histories();
     }
 
     pub(crate) fn reset(&mut self) {
-        let slots = self.globals.len();
+        let slots = self.arena.len(GLOBALS);
         *self = Self::new(slots);
     }
 }
 
 /// What [`ScriptState::snapshot`] captures.
 pub(crate) struct StateSnapshot {
-    globals: Vec<Value>,
-    var_done: Vec<bool>,
-    kernels: BTreeMap<(u32, u32), Kernel>,
-    kernel_lengths: BTreeMap<(u32, u32), usize>,
-    objects: ObjectStore,
+    arena: Arena,
 }
 
 /// What one run stages for its caller: this bar's plot cells and the candle
@@ -230,7 +149,7 @@ pub(crate) struct Eval<'a> {
     /// Current frame base in `locals`.
     frame_base: usize,
     type_context: u32,
-    semantic_run: crate::semantics::Run<Kernel>,
+    semantic_run: crate::semantics::Run<Vec<u64>>,
 }
 
 impl<'a> Eval<'a> {
@@ -243,9 +162,7 @@ impl<'a> Eval<'a> {
         staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
-        state
-            .registers
-            .resize(script.program.entries.len(), Value::Na);
+        state.arena.resize(REGISTERS, script.program.entries.len());
         Self {
             script,
             inputs,
@@ -283,19 +200,11 @@ impl<'a> Eval<'a> {
         len: usize,
         id: NodeId,
     ) -> Result<(), PineError> {
-        match self.state.kernel_lengths.get(&key) {
-            Some(&pinned) if pinned != len => Err(self.err(
-                id,
-                ErrorCode::PineSeriesLength,
-                format!(
-                    "this kernel was built with length {pinned} and cannot change to                      {len} mid-stream; a kernel's window is fixed when it is created"
-                ),
-            )),
-            Some(_) => Ok(()),
-            None => {
-                self.state.kernel_lengths.insert(key, len);
-                Ok(())
-            }
+        let pinned = self.state.arena.pin_length(key, len);
+        if pinned != len {
+            Err(self.err(id, ErrorCode::PineSeriesLength, format!("this kernel was built with length {pinned} and cannot change to {len} mid-stream")))
+        } else {
+            Ok(())
         }
     }
 
@@ -330,19 +239,19 @@ impl<'a> Eval<'a> {
     }
 
     fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
-        let base = self.state.returns.len();
+        let base = self.state.arena.len(RETURNS);
         let result = self.execute(id);
-        self.state.returns.truncate(base);
+        self.state.arena.resize(RETURNS, base);
         result
     }
 
     /// Write a value through a node's resolution (the `for` loop variable).
     fn write_resolved(&mut self, id: NodeId, value: Value) {
         match self.script.resolutions[id.index()] {
-            Resolution::Global(slot) => self.state.globals[slot as usize] = value,
+            Resolution::Global(slot) => self.state.arena.set(GLOBALS, slot as usize, value),
             Resolution::Local(slot) => {
                 let index = self.frame_base + slot as usize;
-                self.state.locals[index] = value;
+                self.state.arena.set(LOCALS, index, value);
             }
             _ => {}
         }
@@ -395,23 +304,13 @@ impl<'a> Eval<'a> {
         let back = offset_value as usize;
         let series = self.script.history_series[id.index()].expect("history node has a series");
         let key = (series, self.path);
-        // Stage this bar's value (last write wins within the bar).
-        if !self.semantic_run.skipped {
-            self.state.staged_histories.insert(key, current.clone());
-        }
-        if back == 0 {
-            return Ok(current);
-        }
-        let ring = self.state.histories.get(&key);
-        let value = ring
-            .and_then(|r| {
-                r.values
-                    .len()
-                    .checked_sub(back)
-                    .and_then(|i| r.values.get(i).cloned())
-            })
-            .unwrap_or_else(|| current.missing_like());
-        Ok(value)
+        Ok(self.state.arena.history(
+            key,
+            back,
+            current,
+            self.script.max_bars_back,
+            !self.semantic_run.skipped,
+        ))
     }
 
     fn binary(&mut self, op: BinOp, lhs: NodeId, rhs: NodeId) -> Result<Value, PineError> {
@@ -478,29 +377,23 @@ impl<'a> Eval<'a> {
             self.path,
             u32::try_from(id.index()).expect("arena fits u32"),
         );
-        let path = match self.state.path_children.get(&call_key) {
-            Some(&child) => child,
-            None => {
-                let child = self.state.next_path;
-                self.state.next_path += 1;
-                self.state.path_children.insert(call_key, child);
-                child
-            }
-        };
+        let path = self.state.arena.path(call_key.0, call_key.1);
         let saved_base = self.frame_base;
         let saved_path = self.path;
-        self.frame_base = self.state.locals.len();
+        self.frame_base = self.state.arena.len(LOCALS);
         self.state
-            .locals
-            .resize(self.frame_base + local_slots, Value::Na);
+            .arena
+            .resize(LOCALS, self.frame_base + local_slots);
         for (slot, argument) in order.iter().enumerate() {
-            self.state.locals[self.frame_base + slot] = argv[*argument].clone();
+            self.state
+                .arena
+                .set(LOCALS, self.frame_base + slot, argv[*argument].clone());
         }
         self.path = path;
         let saved_context = std::mem::replace(&mut self.type_context, child_context);
         let result = self.eval(body);
         self.type_context = saved_context;
-        self.state.locals.truncate(self.frame_base);
+        self.state.arena.resize(LOCALS, self.frame_base);
         self.frame_base = saved_base;
         self.path = saved_path;
         result

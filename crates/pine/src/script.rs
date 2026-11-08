@@ -136,7 +136,9 @@ impl ScriptIndicator {
             is_commit,
         );
         eval.timezone = self.timezone;
-        eval.run().map_err(|error| {
+        let result = eval.run();
+        self.state.project_objects();
+        result.map_err(|error| {
             let (line, col) = error.span.line_col(&self.source);
             EvalError {
                 bar_index: ctx.bar_index,
@@ -163,7 +165,7 @@ impl Indicator for ScriptIndicator {
 
     fn on_close(&mut self, bar: &IndicatorBar, ctx: &mut Ctx<'_>) -> Result<(), EvalError> {
         self.run_once(bar, ctx, true)?;
-        self.state.commit_bar(self.compiled.max_bars_back);
+        self.state.commit_bar();
         // The append is the last step: an Err above leaves no half row. The
         // paint rides with it so a row and its colour can never disagree.
         self.plots
