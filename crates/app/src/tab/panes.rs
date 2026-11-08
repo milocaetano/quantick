@@ -4,11 +4,18 @@
 
 use smallvec::SmallVec;
 
+use quantick_engine::DealSample;
+
 use super::Tab;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::canvas_layout::PaneKind;
+use crate::deal_recording::{DealRecordingAction, RecordingView};
+use crate::deal_recording_ui::{self, DealChip};
+use crate::loading::LoadingTask;
+use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{ChartPane, PaneIndex, PaneSide};
+use crate::state::BarKind;
 use quantick_chart_interaction::pane_focus::{DrawnPanes, resolve_focus};
 use quantick_feed::{FeedConnectionState, FeedNotice};
 use quantick_session::{PaneView, SeamTrace};
@@ -400,6 +407,25 @@ impl Tab {
             .expect("the flow pane is built with a tape and never drops it")
     }
 
+    /// Route the source clock through the applied chart tape before painting:
+    /// the replay's playhead ([`quantick_feed::replay::ReplayLink::clock_after`]),
+    /// or the host's monotonic instant on a live feed.
+    pub(crate) fn update_tape_clock_at(&mut self, monotonic_ms: u64) {
+        let applied = self.flow_pane.state.trades();
+        let applied_ms = applied.last().map(|trade| trade.timestamp_ms);
+        match self
+            .replay
+            .as_ref()
+            .map(|replay| replay.clock_after(applied.len()))
+        {
+            Some((position_ms, next_ms)) => {
+                self.tape_mut()
+                    .set_replay_clock_at(position_ms, applied_ms, next_ms);
+            }
+            None => self.tape_mut().set_live_clock_at(applied_ms, monotonic_ms),
+        }
+    }
+
     /// Put a prefix in front of one pane; a seam bar that changed, or says
     /// why it holds no lead, is logged beside the pane.
     pub(super) fn install_prefix(
@@ -434,6 +460,236 @@ impl Tab {
             );
         }
         changed
+    }
+}
+
+/// The deal readings every pane retains: what the feed counts, what the REC
+/// control asks for, and the views the chrome reads. What the recorder
+/// decides alone is [`DealRecorder`](crate::deal_recording::DealRecorder)'s.
+impl Tab {
+    /// One reading from the feed: written down if recording, retained by
+    /// every pane either way, so a later switch to `trades` cuts from it.
+    pub fn observe_deal_counter(&mut self, sample: DealSample) {
+        let resumed = self.deal_recorder.observe(sample, metrics::wall_clock_ms());
+        for pane in self.panes_mut() {
+            pane.state.observe_deals(sample);
+        }
+        // A rotation into a day whose file exists resumes it, as a start
+        // does: what the file holds reaches the panes.
+        self.retain_deal_samples(&resumed);
+    }
+
+    /// Per drain: the recorder's schedule. A start it makes resumes today's
+    /// file, so the day's earlier prints cut as trades bars again.
+    pub fn tick_deal_recording(&mut self) {
+        let available = self.feed_capabilities.borrow().deal_counter;
+        let resumed = self.deal_recorder.tick(available, metrics::wall_clock_ms());
+        self.retain_deal_samples(&resumed);
+    }
+
+    pub(crate) fn retain_deal_samples(&mut self, samples: &[DealSample]) {
+        if samples.is_empty() {
+            return;
+        }
+        for pane in self.panes_mut() {
+            pane.state.observe_deals_batch(samples);
+        }
+        // The retained series changed under the bars. Only a pane cutting
+        // by deals reads it now; the others replay it on their next switch,
+        // and a rebuild over a day of prints is not free. A rewrite of the
+        // series is a rewrite: the view, the marks, the indicators and the
+        // strategies follow it the way they follow a spec switch.
+        for index in 0..self.pane_count() {
+            // The rule the builder cuts under, not the selector: a combo
+            // mid-flick has moved the selector a frame ahead of the bars.
+            let cutting_deals = self
+                .pane_at(index)
+                .is_some_and(|pane| pane.state.spec().kind().needs_deal_counter());
+            if cutting_deals {
+                // The series was rewritten under the bars, not the rule
+                // that cuts them: what a replay seek says when it disarms.
+                self.recut_pane_with(
+                    index,
+                    quantick_strategy::DisarmReason::TimelineReset,
+                    |pane| pane.rebuild_bars(),
+                );
+            }
+        }
+    }
+
+    /// What the REC control asked for.
+    pub fn apply_deal_recording(&mut self, action: DealRecordingAction) {
+        match action {
+            // Starting resumes today's file: the readings it held reach
+            // every pane, so the day's earlier prints cut as trades bars
+            // again after a restart.
+            DealRecordingAction::Start => {
+                let resumed = self.deal_recorder.start(metrics::wall_clock_ms());
+                self.retain_deal_samples(&resumed);
+            }
+            DealRecordingAction::Stop => self.deal_recorder.stop(),
+            // The selector's own path, on the pane the popover described —
+            // the focused one, like every bar control; the change is picked
+            // up a frame later by the same spec sync a toolbar click goes
+            // through.
+            DealRecordingAction::ShowAsTrades => {
+                let index = self.focused_side().index();
+                let spec = self.pane_at(index).map_or_else(
+                    || {
+                        quantick_engine::bar_registry::BUILTIN_BARS
+                            .find("trades")
+                            .expect("registered trades")
+                            .default_config()
+                    },
+                    |pane| *pane.spec.retained(BarKind::Trades),
+                );
+                let _ = self.set_pane_bar_spec(index, spec);
+            }
+            DealRecordingAction::OpenFolder => {
+                crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
+            }
+            DealRecordingAction::LoadDay(index) => {
+                let loaded = self.deal_recorder.load_day(index);
+                self.retain_deal_samples(&loaded);
+            }
+        }
+    }
+
+    /// The recorder as the chrome sees it now ([`DealRecorder::live_view`]),
+    /// judged on the tape's clock: the newest print the tab holds.
+    ///
+    /// [`DealRecorder::live_view`]: crate::deal_recording::DealRecorder::live_view
+    #[must_use]
+    pub fn deal_recording_view(&self) -> Option<RecordingView> {
+        self.deal_recorder
+            .live_view(self.replay.is_some(), self.latest_trade_ms)
+    }
+
+    /// The chart-corner chip for the flow pane, when it has something to say.
+    #[must_use]
+    pub fn deal_chip(&self) -> Option<DealChip> {
+        let view = self
+            .deal_recorder
+            .chip_view(self.replay.is_some(), self.latest_trade_ms);
+        let pane = &self.flow_pane;
+        deal_recording_ui::chip_for(
+            &view,
+            pane.spec.spec().definition(),
+            pane.state.deal_samples().last().is_some(),
+            pane.state.uncounted_trades(),
+        )
+    }
+}
+
+/// The strategies armed on the panes, as the tab settles them against its
+/// paper account, and the market state a rewound source throws away.
+impl Tab {
+    /// Apply the cleanup commands the panes' drawing menus queued this
+    /// frame — a disarm or removal over a resting retest limit cancels the
+    /// order. Runs on the UI frame that clicked, not on the next print: a
+    /// cancel that waits for the market to move may lose the race to it.
+    pub fn apply_strategy_cleanup(&mut self) {
+        let Self {
+            paper,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
+            for command in pane.strategies.take_cleanup() {
+                let _ = paper.account_mut().apply_strategy_command(command);
+            }
+        }
+    }
+
+    /// Arm `form` on the drawing through its pane's strategies
+    /// ([`crate::pane::strategies::PaneStrategies::arm`]), then settle what
+    /// the arm owes the paper account and the alert sink.
+    pub(crate) fn arm_strategy_instance(
+        &mut self,
+        alerts: &mut dyn crate::audio::AlertSink,
+        side: PaneSide,
+        drawing: crate::drawings::DrawingId,
+        form: &crate::strategy_presets::StoredPreset,
+        preset_label: String,
+    ) -> Result<(), String> {
+        let pane = self.pane_mut(side);
+        let series = quantick_drawings::gesture::PaneSeriesRead {
+            history_prefix: &pane.history_prefix,
+            state: &pane.state,
+            spec: &pane.spec,
+        };
+        let (replaced_cleanup, cue) =
+            pane.strategies
+                .arm(&pane.drawings, series, drawing, form, preset_label)?;
+        for command in replaced_cleanup {
+            // Arming over an instance with a pending entry sweeps that
+            // entry — a resting order must never outlive its bot.
+            let _ = self.paper.account_mut().apply_strategy_command(command);
+        }
+        self.paper.account_mut().set_bot_listening(true);
+        // Only now, past every gate: the sink opens its device at arm time
+        // so the first signal does not pay for it on the tape's path, but a
+        // *refused* arm must open nothing. Ctrl+D over a band the copy
+        // cannot be armed on discards the `Err` by design — the absent
+        // badge is the message — and warming above the gates turned that
+        // silence into an audio stack enumerated once per keypress, against
+        // the sink's own promise that a chart which never arms an alarm
+        // never touches a device.
+        if let Some(cue) = cue {
+            alerts.warm_up(cue);
+        }
+        Ok(())
+    }
+
+    /// Throw away everything loaded and wait for the source to refill it.
+    ///
+    /// Sent by a source that rewound — seeking a replay, for instance. The
+    /// chart is rebuilt from the history that follows rather than patched,
+    /// because bars that already closed cannot be reopened.
+    pub fn reset_market_state(&mut self, keep_readings: bool) {
+        self.session.timeline_reset();
+        for pane in self.panes_mut() {
+            pane.reset_series_with(keep_readings);
+            // Indicators follow the chart into the empty state; the refill's
+            // Backfilled event replays them (replay seek funnels through here,
+            // so seeking inherits correct indicator behavior for free).
+            pane.send_indicator_rebuild();
+            pane.frame.lane_divider_x = None;
+            // Judgements armed on the old timeline do not carry into the
+            // rebuilt one — the same honesty rule the simulator's flatten
+            // follows, with the reason on the badge. No cleanup commands
+            // come back under this reason: `paper.on_timeline_reset` below
+            // sweeps every order with the honest `reset` label.
+            let _ = pane
+                .strategies
+                .anchors
+                .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
+        }
+        self.drop_overlay_gestures();
+        // The timeline these describe is the one being rebuilt. A gap
+        // re-anchors itself by market time, so one left behind would paint
+        // itself onto the refilled series as though a reconnect had happened.
+        self.feed_gaps.clear();
+        self.feed_integrity = quantick_feed::FeedIntegrity::default();
+        self.resume_floor_ms = None;
+        self.history_trades = 0;
+        // A run anchored to a tape that no longer exists cannot continue, and
+        // `restart` below drops the waits its outstanding request would have
+        // resolved. Its verdict goes with it.
+        self.run_session(None, quantick_session::Act::AbandonRun);
+        self.latest_trade_latency_ms = None;
+        self.latest_trade_ms = None;
+        // The refill arrives as one backfill batch; keep the loading indicator
+        // up until it lands. Requests sent to the source before the reset will
+        // never be answered, so the count restarts rather than accumulates.
+        self.run_session(None, quantick_session::Act::OpeningFill(None));
+        self.loading.restart(LoadingTask::History);
+        let symbol = self.symbol.clone();
+        self.tape_mut().reset_for_symbol(symbol);
+        // The simulator flattens at its last mark and says so — a position
+        // cannot honestly survive into a rebuilt timeline.
+        self.paper.on_timeline_reset();
     }
 }
 

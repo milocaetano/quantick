@@ -112,7 +112,7 @@ impl QuantickApp {
             feed_arrival_ms: self.active_tab().trade_arrival_ms(),
             feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
-            deal_recording: self.active_tab().deal_status_cell(),
+            deal_recording: statusbar::DealCell::of(self.active_tab().deal_recording_view()),
             deal_chip: self.active_tab().deal_chip(),
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),

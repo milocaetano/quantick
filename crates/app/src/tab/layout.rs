@@ -355,6 +355,42 @@ impl Tab {
         }
     }
 
+    /// Apply one complete rule through the shared selector-and-recut path.
+    /// The toolbar, REC popover, and control plane all land here.
+    pub(crate) fn set_pane_bar_spec(
+        &mut self,
+        index: usize,
+        spec: impl Into<crate::state::BarConfiguration>,
+    ) -> Result<bool, quantick_engine::bar_selection::SelectionError> {
+        let spec = spec.into();
+        let Some(pane) = self.pane_at(index) else {
+            return Ok(false);
+        };
+        let capabilities = *self.feed_capabilities.borrow();
+        let inputs = quantick_engine::bar_selection::BarInputAvailability {
+            traded_volume: capabilities.traded_volume,
+            deal_counter: capabilities.deal_counter,
+            deal_count: !pane.state.deal_samples().is_empty(),
+        };
+        let pane = self.pane_at_mut(index).expect("pane checked above");
+        let effect = pane.spec.update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(spec),
+            inputs,
+        )?;
+        let spec = pane.spec.spec();
+        if effect == quantick_engine::bar_selection::SelectionEffect::Unchanged
+            && pane.state.spec() == &spec
+        {
+            return Ok(false);
+        }
+        self.recut_pane_with(
+            index,
+            quantick_strategy::DisarmReason::BarSpecChanged,
+            |pane| pane.set_spec(spec),
+        );
+        Ok(true)
+    }
+
     /// Re-cut one pane while preserving its view and drawing anchors and
     /// disarming strategies that belonged to the old timeline.
     pub(crate) fn recut_pane_with(

@@ -45,7 +45,6 @@ mod feed;
 mod layout;
 mod panes;
 mod strategies;
-mod tape_clock;
 
 pub use canvas::CanvasChrome;
 pub(crate) use canvas::paint_rail;
@@ -528,6 +527,16 @@ impl Tab {
             #[cfg(test)]
             collapsed_rail: None,
         }
+    }
+
+    /// Everything this tab must settle before it is dropped.
+    ///
+    /// Feeds and workers need nothing: their loops end when the channels go
+    /// with the tab. The simulator does — an open position is state the user
+    /// created, and the honesty contract says it ends in an explicit, labeled,
+    /// journaled flatten, never by silently vanishing with its window.
+    pub fn close(&mut self) {
+        self.paper.on_timeline_reset();
     }
 
     /// Take over a freshly spawned feed: channels, capabilities, commands and

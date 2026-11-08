@@ -144,6 +144,19 @@ pub struct DealCell {
     pub tone: RecState,
 }
 
+impl DealCell {
+    /// The cell for the recorder the chrome sees, or none where the view
+    /// has no cell to show.
+    #[must_use]
+    pub fn of(view: Option<crate::deal_recording::RecordingView>) -> Option<Self> {
+        let view = view?;
+        Some(Self {
+            text: view.status_cell()?,
+            tone: view.state,
+        })
+    }
+}
+
 /// The tape cell: `clock 123 ms` for an unsplit wall-clock difference,
 /// `arrival 123 ms` for provider breakdowns, `stale 12 s` / `stale 14 h` when the
 /// tape has gone
