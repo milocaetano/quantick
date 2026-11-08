@@ -153,14 +153,17 @@ as a panel opening somewhere unrelated to the drawing. The rule:
    neighbourhood, the one with more room wins; a tie takes the right.
 3. Then below and above, centred on the drawing, on the same rule; a tie
    takes below.
-4. Only if no side fits, the chart corners (top first, farthest clear one),
-   then the gutter beside a large object narrowed to fit, then least overlap.
+4. Only if the neighbourhood cannot be kept (whenever a chart corner clears
+   it, a side does too), the fallbacks keep the standard gap from the bare
+   object: the chart corners (top first, farthest clear one), then the gutter
+   beside a large object narrowed to fit, then least overlap.
 5. Manual position still wins forever, and the workspace remembers it. The
    auto-pin rule for narrow charts is unchanged.
 
-A panel taller than the placement assumed (the Fib level editor) is
-re-clamped into the chart every frame from its drawn size, so a side
-placement near the bottom slides up instead of losing its last rows.
+A panel drawn bigger than the placement assumed — its first frame, or a
+taller tab such as the Fib level editor — that reaches into the
+neighbourhood is placed again with its drawn size, unless a hand placed it
+or is resizing it.
 
 > **Duda:** "If it always opens in the same place I learn where to look. It
 > jumping around 'intelligently' is what makes it feel random."

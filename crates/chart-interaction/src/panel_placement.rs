@@ -4,45 +4,35 @@
 //! Pure screen geometry, so the rule is decided and tested without a UI. The
 //! panel opens **beside** the object, so the eye that just clicked it finds
 //! its settings next to it, and never on it: the object's box is inflated by
-//! [`NEIGHBOURHOOD_PX`] first, which keeps the price action right next to the
-//! object readable as well.
+//! the neighbourhood margin first, which keeps the price action right next to
+//! the object readable as well.
 
-/// How far the panel keeps from the object when it opens beside it.
+pub use crate::scripted_hand::Area;
+
+/// The neighbourhood margin the drawing inspector keeps from its object.
 pub const NEIGHBOURHOOD_PX: f32 = 32.0;
-
-/// An axis-aligned screen rectangle, in pixels, `left <= right`,
-/// `top <= bottom`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Area {
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-}
 
 impl Area {
     /// The rectangle whose top-left is `(left, top)`, of the given size.
     #[must_use]
     pub fn from_min_size(left: f32, top: f32, width: f32, height: f32) -> Self {
-        Self {
-            left,
-            top,
-            right: left + width,
-            bottom: top + height,
-        }
+        Self::new(left, top, left + width, top + height)
     }
 
-    fn expand(self, by: f32) -> Self {
-        Self {
-            left: self.left - by,
-            top: self.top - by,
-            right: self.right + by,
-            bottom: self.bottom + by,
-        }
+    /// This rectangle grown by `by` on every side.
+    #[must_use]
+    pub fn expand(self, by: f32) -> Self {
+        Self::new(
+            self.left - by,
+            self.top - by,
+            self.right + by,
+            self.bottom + by,
+        )
     }
 
     /// Area shared with `other`; zero when they only touch or are apart.
-    fn overlap(self, other: Self) -> f32 {
+    #[must_use]
+    pub fn overlap(self, other: Self) -> f32 {
         let width = self.right.min(other.right) - self.left.max(other.left);
         let height = self.bottom.min(other.bottom) - self.top.max(other.top);
         if width > 0.0 && height > 0.0 {
@@ -69,6 +59,8 @@ impl Area {
 /// The spacing the caller's chrome uses.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PanelSpacing {
+    /// Margin kept clear around the object by a placement beside it.
+    pub neighbourhood: f32,
     /// Gap from the chart edges, and from the object in the fallbacks.
     pub gap: f32,
     /// The narrowest the panel may be squeezed into a gutter.
@@ -100,16 +92,24 @@ pub fn clamp_into(left: f32, top: f32, width: f32, height: f32, area: Area) -> (
 /// The placement rule:
 ///
 /// 1. the two **horizontal** sides first — right, then left — top-aligned with
-///    the object; of those that hold the whole panel clear of the
-///    neighbourhood, the one with more room wins, a tie taking the right, so
-///    the panel appears in the same place every time;
+///    the object; of those that hold the whole panel inside the chart and
+///    clear of the neighbourhood, the one with more room wins, a tie taking
+///    the right, so the panel appears in the same place every time;
 /// 2. then below and above, centred on the object, on the same rule, a tie
-///    taking below, where a panel has room to grow;
-/// 3. only if no side fits, the two top chart corners, then the two bottom
-///    ones — the clear one farthest from the object;
-/// 4. if every corner is fouled — a large object covering the chart — the
-///    gutter the object leaves beside it, narrowed to fit;
+///    taking below.
+///
+/// Whenever any chart corner is clear of the neighbourhood, one of those four
+/// sides is too, so the fallbacks only run when the neighbourhood cannot be
+/// kept. They keep the standard `gap` from the bare object instead:
+///
+/// 3. the two top chart corners, then the two bottom ones — the clear one
+///    farthest from the object;
+/// 4. the wider gutter beside an object too big for any corner, the panel
+///    narrowed to fit;
 /// 5. and as a last resort the candidate that covers the object least.
+///
+/// A caller whose panel turns out a different size than `width` x `height`
+/// asks again with the drawn size.
 #[must_use]
 pub fn place_beside(
     chart: Area,
@@ -127,22 +127,22 @@ pub fn place_beside(
         let (left, top) = clamp_into(left, top, width, height, chart);
         (left, top, Area::from_min_size(left, top, width, height))
     };
-    let keep_out = object.expand(NEIGHBOURHOOD_PX);
-    // Of two (room, left, top) candidates, the clear one with more room;
-    // the first on a tie.
-    let roomiest = |sides: [(f32, f32, f32); 2], clear_of: Area| {
+    // Of two unclamped (score, left, top) candidates, the clear one with the
+    // higher score; the first on a tie.
+    let best_clear = |candidates: [(f32, f32, f32); 2], clear_of: Area| {
         let mut best: Option<((f32, f32), f32)> = None;
-        for (room, left, top) in sides {
+        for (score, left, top) in candidates {
             let (left, top, rect) = fit(left, top);
             if !chart.contains(rect) || rect.overlap(clear_of) > 0.0 {
                 continue;
             }
-            if best.is_none_or(|(_, best)| room > best) {
-                best = Some(((left, top), room));
+            if best.is_none_or(|(_, best)| score > best) {
+                best = Some(((left, top), score));
             }
         }
         best.map(|(at, _)| at)
     };
+    let keep_out = object.expand(spacing.neighbourhood);
     let centred_left = (object.left + object.right - width) / 2.0;
     let horizontal = [
         (chart.right - keep_out.right, keep_out.right, object.top),
@@ -164,13 +164,14 @@ pub fn place_beside(
             keep_out.top - height,
         ),
     ];
-    if let Some(at) = roomiest(horizontal, keep_out).or_else(|| roomiest(vertical, keep_out)) {
+    if let Some(at) = best_clear(horizontal, keep_out).or_else(|| best_clear(vertical, keep_out)) {
         return whole(at);
     }
 
     let gap = spacing.gap;
+    // Scored by distance from the object: the farthest clear corner wins.
     let corner = |left: f32, top: f32| {
-        let (left, top, rect) = fit(left, top);
+        let (_, _, rect) = fit(left, top);
         (rect.centre_distance(object), left, top)
     };
     let top_corners = [
@@ -181,8 +182,8 @@ pub fn place_beside(
         corner(chart.left + gap, chart.bottom - gap - height),
         corner(chart.right - gap - width, chart.bottom - gap - height),
     ];
-    // Distance is the "room" here: the farthest clear corner wins.
-    if let Some(at) = roomiest(top_corners, object).or_else(|| roomiest(bottom_corners, object)) {
+    if let Some(at) = best_clear(top_corners, object).or_else(|| best_clear(bottom_corners, object))
+    {
         return whole(at);
     }
 

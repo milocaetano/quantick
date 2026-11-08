@@ -23,7 +23,7 @@ use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use egui_phosphor::regular as icons;
 use quantick_chart_interaction::panel_placement::{
-    Area, PanelPlacement, PanelSpacing, place_beside,
+    Area, NEIGHBOURHOOD_PX, PanelPlacement, PanelSpacing, place_beside,
 };
 
 mod sections;
@@ -54,11 +54,10 @@ pub(crate) struct Inspector {
     pub(super) max_width: Option<f32>,
     /// The size it was last drawn at, which beats every guess about it.
     pub(super) size: Option<egui::Vec2>,
-    /// The size the last automatic placement assumed, until the first drawn
-    /// size confirms or corrects it. A panel that turns out wider than
-    /// assumed would otherwise grow from a left-side placement into the
-    /// drawing it was placed beside.
-    pub(super) placed_size: Option<egui::Vec2>,
+    /// The panel as drawn last frame reached into its drawing's
+    /// neighbourhood — drawn wider than the placement assumed, or grown by a
+    /// taller tab — so automatic placement runs again with the drawn size.
+    pub(super) crowding: bool,
     /// Whether the pin button has been pressed either way. The auto-pin width
     /// rule stops firing once the user has expressed a preference.
     pub(super) pin_touched: bool,
@@ -145,13 +144,9 @@ impl Inspector {
 /// A dragged panel never comes here: a hand's position wins from then on
 /// (see [`Inspector::place_by_hand`]).
 pub(crate) fn placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) -> PanelPlacement {
-    let area = |rect: egui::Rect| Area {
-        left: rect.left(),
-        top: rect.top(),
-        right: rect.right(),
-        bottom: rect.bottom(),
-    };
+    let area = |rect: egui::Rect| Area::new(rect.left(), rect.top(), rect.right(), rect.bottom());
     let spacing = PanelSpacing {
+        neighbourhood: NEIGHBOURHOOD_PX,
         gap: INSPECTOR_OBJECT_GAP_PX,
         min_width: INSPECTOR_MIN_WIDTH_PX,
     };
@@ -261,24 +256,13 @@ pub(crate) fn draw_floating(
         return ask;
     }
     chrome.shared.last_selection = Some(index);
-    // The first drawn size differs from the one the placement assumed: place
-    // once more with the real one. egui's first frame of a window is an
-    // invisible sizing pass, so the corrected spot is the first one seen.
-    let size_corrected = chrome
-        .inspector
-        .placed_size
-        .take()
-        .is_some_and(|assumed| chrome.inspector.size.is_some_and(|drawn| drawn != assumed));
     // Automatic placement only while the window is untouched.
-    if (selection_changed || size_corrected)
+    if (selection_changed || std::mem::take(&mut chrome.inspector.crowding))
         && !chrome.inspector.moved
         && let Some(placed) = target_placement(&chrome.inspector, ctx, env)
     {
         chrome.inspector.pos = Some(egui::pos2(placed.left, placed.top));
         chrome.inspector.max_width = placed.max_width;
-        if selection_changed {
-            chrome.inspector.placed_size = Some(chrome.inspector.size(ctx));
-        }
     }
     // Repair for drawing, never overwrite: a position that does not fit the
     // chart pane is clamped into it *for this frame*, and the point the
@@ -346,9 +330,19 @@ pub(crate) fn draw_floating(
             });
         actions
     });
-    chrome.inspector.size = response
-        .as_ref()
-        .map(|response| response.response.rect.size());
+    let drawn = response.as_ref().map(|response| response.response.rect);
+    chrome.inspector.size = drawn.map(|rect| rect.size());
+    // Placed again next frame if it reaches into the drawing's neighbourhood.
+    // egui's first frame of a window is an invisible sizing pass, so a panel
+    // drawn wider than assumed is corrected before it is seen. Not while a
+    // hand holds the pointer (a resize), nor for a gutter-narrowed panel.
+    chrome.inspector.crowding = !chrome.inspector.moved
+        && chrome.inspector.max_width.is_none()
+        && !ctx.input(|input| input.pointer.any_down())
+        && drawn.zip(env.selected_bbox).is_some_and(|(rect, bbox)| {
+            rect.intersect(bbox.expand(NEIGHBOURHOOD_PX - 1.0))
+                .is_positive()
+        });
     let actions = response
         .and_then(|response| response.inner)
         .unwrap_or_default();
@@ -587,10 +581,13 @@ mod tests {
                 egui::pos2(chart.left(), 280.0),
                 egui::pos2(chart.right(), 320.0),
             );
-            placement(chart, bbox, size)
+            (placement(chart, bbox, size), bbox)
         };
         let rail = whole.right() - quantick_orderflow::LANE_FOLD_RAIL_PX;
-        assert_eq!(at(Some(rail)).top, at(None).top);
+        let ((closed, bbox), (open, _)) = (at(Some(rail)), at(None));
+        assert_eq!(closed.top, open.top, "the same side either way");
+        assert!(closed.top >= bbox.bottom(), "below the band: {closed:?}");
+        assert_eq!(closed.max_width, open.max_width);
     }
 
     /// Automatic placement is not a preference, so it is not written down.

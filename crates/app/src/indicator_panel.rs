@@ -140,9 +140,8 @@ pub(crate) fn draw(
     if dialog.tab == SettingsTab::Style && !has_style {
         dialog.tab = SettingsTab::Inputs;
     }
-    let window = egui::Window::new(format!("Settings — {}", dialog.title))
-        .id(egui::Id::new(("indicator-settings", slot_id)));
-    crate::popup::centred(window, ctx)
+    let window = egui::Window::new(format!("Settings — {}", dialog.title));
+    crate::popup::centred(window, egui::Id::new(("indicator-settings", slot_id)), ctx)
         .open(&mut open)
         .collapsible(false)
         .resizable(false)

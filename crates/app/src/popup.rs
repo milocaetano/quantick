@@ -8,15 +8,20 @@
 //! The previous rule sent them to the bottom-left corner so they would not
 //! cover the chart. In use that read as a window appearing somewhere
 //! unrelated to the click, far from where the eye was, and the trader asked
-//! for the centre instead. A settings window is a short, deliberate visit, not
-//! a live overlay; the centre is where a dialog is looked for. A trader who
-//! wants it elsewhere drags it once: the window is placed with `default_pos`,
-//! which egui applies only while it remembers no position for that window id,
-//! so a dragged window reopens where the hand left it.
+//! for the centre instead (2026-11-08). A settings window is a short,
+//! deliberate visit, not a live overlay; the centre is where a dialog is
+//! looked for. A trader who wants it elsewhere drags it once and it reopens
+//! there.
+//!
+//! The window is centred **once**, from its drawn size, and then held by its
+//! top-left corner like any window. Pivoting on its centre instead would make
+//! it grow up and down at once whenever its content changes height — a tab
+//! switch would move the tab strip out from under the pointer. egui's first
+//! frame of a window is an invisible sizing pass, so the centred spot is the
+//! first one seen.
 //!
 //! Drawing settings are the exception and keep their own rule: they open
-//! beside the drawing they configure (see the drawing inspector's
-//! `placement`).
+//! beside the drawing they configure (`quantick_chart_interaction::panel_placement`).
 //!
 //! Measured from [`egui::Context::available_rect`] rather than from the window,
 //! so the toolbar and the status bar — both panels — are excluded by
@@ -24,29 +29,23 @@
 
 use eframe::egui;
 
-/// Where a settings window should first appear, to be used with
-/// [`anchor`] as the window's pivot.
-///
-/// The pivot matters: anchored by its top-left a window placed at the centre
-/// would hang into the bottom-right quarter and, if tall, off the screen.
-#[must_use]
-pub(crate) fn position(ctx: &egui::Context) -> egui::Pos2 {
-    ctx.available_rect().center()
-}
-
-/// The pivot [`position`] is expressed in. Always paired with it, so no caller
-/// can place a window by the wrong corner and push its controls off screen.
-pub(crate) const fn anchor() -> egui::Align2 {
-    egui::Align2::CENTER_CENTER
-}
-
-/// Give `window` the settings placement: centred on first open, draggable,
-/// and reopened wherever it was dragged to.
+/// Give `window` the settings placement under `id`: centred on first open,
+/// draggable, and reopened wherever it was left.
 pub(crate) fn centred<'open>(
     window: egui::Window<'open>,
+    id: egui::Id,
     ctx: &egui::Context,
 ) -> egui::Window<'open> {
-    window.default_pos(position(ctx)).pivot(anchor())
+    let window = window.id(id).pivot(egui::Align2::LEFT_TOP);
+    let centred_flag = id.with("centred");
+    let done = ctx.data(|data| data.get_temp::<bool>(centred_flag).unwrap_or(false));
+    match ctx.memory(|memory| memory.area_rect(id)) {
+        Some(drawn) if !done => {
+            ctx.data_mut(|data| data.insert_temp(centred_flag, true));
+            window.current_pos(ctx.available_rect().center() - drawn.size() / 2.0)
+        }
+        _ => window,
+    }
 }
 
 #[cfg(test)]
@@ -61,27 +60,49 @@ mod tests {
         let _ = ctx.run(input, run);
     }
 
-    /// The rule, at every window size the app allows: the centre of the
-    /// available area, pivoted on the window's own centre. A fixed point would
-    /// be the centre of exactly one window.
+    const ID: &str = "settings-under-test";
+
+    /// A settings window `height` tall, centred, with an optional top panel
+    /// and an optional position a drag left behind.
+    fn show(ctx: &egui::Context, height: f32, toolbar: bool, dragged: Option<egui::Pos2>) {
+        if toolbar {
+            egui::TopBottomPanel::top("toolbar")
+                .exact_height(100.0)
+                .show(ctx, |_| {});
+        }
+        let mut window = centred(egui::Window::new("Settings"), egui::Id::new(ID), ctx);
+        if let Some(at) = dragged {
+            window = window.current_pos(at);
+        }
+        window.show(ctx, |ui| {
+            ui.set_min_size(egui::vec2(320.0, height));
+        });
+    }
+
+    fn rect(ctx: &egui::Context) -> egui::Rect {
+        ctx.memory(|memory| memory.area_rect(egui::Id::new(ID)))
+            .expect("the window was laid out")
+    }
+
+    /// The rule, at every window size the app allows: centred and fully on
+    /// screen. A fixed point would be the centre of exactly one window.
     #[test]
-    fn settings_windows_open_in_the_centre_of_whatever_room_there_is() {
+    fn settings_windows_open_centred_and_on_screen() {
         for size in [
             egui::vec2(1920.0, 1080.0),
             egui::vec2(1500.0, 900.0),
             egui::vec2(900.0, 560.0),
         ] {
             let ctx = egui::Context::default();
-            let mut at = egui::Pos2::ZERO;
-            frame(&ctx, size, |ctx| at = position(ctx));
+            for _ in 0..3 {
+                frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+            }
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let opened = rect(&ctx);
+            assert!(screen.contains_rect(opened), "{size:?}: {opened:?}");
             assert!(
-                (at.x - size.x / 2.0).abs() < 0.5 && (at.y - size.y / 2.0).abs() < 0.5,
-                "{size:?}: centred, not cornered ({at:?})"
-            );
-            assert_eq!(
-                anchor(),
-                egui::Align2::CENTER_CENTER,
-                "pivots on its centre"
+                opened.center().distance(screen.center()) < 2.0,
+                "{size:?}: centred, not cornered {opened:?}"
             );
         }
     }
@@ -92,65 +113,57 @@ mod tests {
     fn the_centre_is_measured_in_the_room_the_panels_leave() {
         let ctx = egui::Context::default();
         let size = egui::vec2(1200.0, 800.0);
-        let mut at = egui::Pos2::ZERO;
-        frame(&ctx, size, |ctx| {
-            egui::TopBottomPanel::top("toolbar")
-                .exact_height(100.0)
-                .show(ctx, |_| {});
-            at = position(ctx);
-        });
-        assert!(at.y > size.y / 2.0, "below the screen centre: {at:?}");
-        assert!((at.x - size.x / 2.0).abs() < 0.5, "{at:?}");
+        for _ in 0..3 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, true, None));
+        }
+        let room = egui::Rect::from_min_max(egui::pos2(0.0, 100.0), size.to_pos2());
+        assert!(
+            rect(&ctx).center().distance(room.center()) < 2.0,
+            "{:?}",
+            rect(&ctx)
+        );
     }
 
-    /// Opened centred, fully on screen, and — once dragged — reopened at the
-    /// dragged spot rather than snapped back to the centre.
+    /// Content that grows — a taller tab — extends the window downward: the
+    /// title bar and tab strip stay under the pointer.
     #[test]
-    fn a_centred_window_is_fully_visible_and_remembers_a_drag() {
-        for size in [egui::vec2(1920.0, 1080.0), egui::vec2(900.0, 560.0)] {
-            let ctx = egui::Context::default();
-            let id = egui::Id::new("settings-under-test");
-            // `moved_to` is what a drag leaves behind: a position egui
-            // remembers for this window id.
-            let show = |ctx: &egui::Context, moved_to: Option<egui::Pos2>| {
-                let mut window = centred(egui::Window::new("Settings").id(id), ctx);
-                if let Some(at) = moved_to {
-                    window = window.current_pos(at);
-                }
-                window.show(ctx, |ui| {
-                    ui.set_min_size(egui::vec2(320.0, 240.0));
-                });
-            };
-            let rect = |ctx: &egui::Context| {
-                ctx.memory(|memory| memory.area_rect(id))
-                    .expect("the window was laid out")
-            };
-            for _ in 0..3 {
-                frame(&ctx, size, |ctx| show(ctx, None));
-            }
-            let opened = rect(&ctx);
-            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-            assert!(
-                screen.contains_rect(opened),
-                "{size:?}: on screen {opened:?}"
-            );
-            assert!(
-                opened.center().distance(screen.center()) < 2.0,
-                "{size:?}: centred {opened:?}"
-            );
-
-            let dragged = egui::pos2(260.0, 200.0);
-            frame(&ctx, size, |ctx| show(ctx, Some(dragged)));
-            // Closed for a frame, then opened again.
-            frame(&ctx, size, |_| {});
-            for _ in 0..2 {
-                frame(&ctx, size, |ctx| show(ctx, None));
-            }
-            let reopened = rect(&ctx);
-            assert!(
-                reopened.center().distance(dragged) < 2.0,
-                "{size:?}: reopened where dragged, not re-centred {reopened:?}"
-            );
+    fn a_taller_tab_grows_the_window_downward_without_moving_its_top() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(1500.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, size, |ctx| show(ctx, 200.0, false, None));
         }
+        let before = rect(&ctx);
+        for _ in 0..2 {
+            frame(&ctx, size, |ctx| show(ctx, 400.0, false, None));
+        }
+        let after = rect(&ctx);
+        assert!(
+            after.height() > before.height() + 150.0,
+            "{before:?} {after:?}"
+        );
+        assert!(
+            (after.top() - before.top()).abs() < 0.5,
+            "{before:?} {after:?}"
+        );
+    }
+
+    /// Once dragged, closed and opened again, it is where the hand left it,
+    /// not snapped back to the centre.
+    #[test]
+    fn a_dragged_window_reopens_where_it_was_left() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(1500.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+        }
+        let dragged = egui::pos2(40.0, 60.0);
+        frame(&ctx, size, |ctx| show(ctx, 240.0, false, Some(dragged)));
+        // Closed for a frame, then opened again.
+        frame(&ctx, size, |_| {});
+        for _ in 0..2 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+        }
+        assert!(rect(&ctx).min.distance(dragged) < 0.5, "{:?}", rect(&ctx));
     }
 }

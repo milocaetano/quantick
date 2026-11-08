@@ -1,6 +1,7 @@
 use super::*;
 
 const SPACING: PanelSpacing = PanelSpacing {
+    neighbourhood: NEIGHBOURHOOD_PX,
     gap: 12.0,
     min_width: 300.0,
 };

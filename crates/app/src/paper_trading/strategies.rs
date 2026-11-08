@@ -116,7 +116,8 @@ pub(super) fn draw_strategy_editor(
     );
     let mut changed = false;
     let mut open = true;
-    crate::popup::centred(egui::Window::new("Exit strategies"), ctx)
+    let id = egui::Id::new("Exit strategies");
+    crate::popup::centred(egui::Window::new("Exit strategies"), id, ctx)
         .open(&mut open)
         .resizable(true)
         .default_width(520.0)
