@@ -71,6 +71,14 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
     compiler.collect_reassigned_names();
     compiler.collect_declarations();
     compiler.resolve_and_scan();
+    compiler.checked_types = crate::types::validate(
+        &mut compiler.ast,
+        compiler.root,
+        &mut compiler.resolutions,
+        &compiler.functions,
+        compiler.global_slots as usize,
+        &mut compiler.errors,
+    );
     compiler.register_pending_plots();
     compiler.resolve_fills();
     if compiler.errors.is_empty() {
@@ -108,6 +116,7 @@ struct Compiler {
     plots: Vec<PlotSpec>,
     candle_plots: Vec<quantick_indicators::CandlePlotSpec>,
     resolutions: Vec<Resolution>,
+    checked_types: crate::types::Checked,
     call_sites: Vec<Option<CallSiteId>>,
     plot_of_call: Vec<Option<usize>>,
     input_of_call: Vec<Option<usize>>,
@@ -154,6 +163,7 @@ impl Compiler {
             candle_plots: Vec::new(),
             pending_plots: Vec::new(),
             resolutions: vec![Resolution::None; n],
+            checked_types: crate::types::Checked::default(),
             call_sites: vec![None; n],
             plot_of_call: vec![None; n],
             input_of_call: vec![None; n],
@@ -186,6 +196,7 @@ impl Compiler {
             fills: self.fills,
             warnings: self.warnings,
             resolutions: self.resolutions,
+            types: self.checked_types,
             call_sites: self.call_sites,
             plot_of_call: self.plot_of_call,
             input_of_call: self.input_of_call,

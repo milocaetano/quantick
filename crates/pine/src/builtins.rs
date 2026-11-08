@@ -135,6 +135,17 @@ pub enum Builtin {
     /// `math.log10`
     MathLog10,
 
+    /// `int(x)` conversion.
+    IntCast,
+    /// `float(x)` conversion.
+    FloatCast,
+    /// `bool(x)` conversion.
+    BoolCast,
+    /// `string(na)` typed missing string.
+    StringCast,
+    /// `color(na)` typed missing color.
+    ColorCast,
+
     // ---- value helpers ----
     /// `na(x)` as a predicate call; the bare `na` literal is lexed apart.
     NaCall,
@@ -311,6 +322,11 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("input.color", Builtin::InputColor),
     ("input.string", Builtin::InputString),
     ("input.source", Builtin::InputSource),
+    ("int", Builtin::IntCast),
+    ("float", Builtin::FloatCast),
+    ("bool", Builtin::BoolCast),
+    ("string", Builtin::StringCast),
+    ("color", Builtin::ColorCast),
 ];
 
 impl Builtin {

@@ -51,64 +51,55 @@ impl Eval<'_> {
     }
 
     fn has_kernel(&self, node: NodeId) -> bool {
+        self.has_kernel_in(node, self.type_context)
+    }
+    fn has_kernel_in(&self, node: NodeId, context: u32) -> bool {
+        let visit = |node| self.has_kernel_in(node, context);
         if self.script.call_sites[node.index()].is_some() {
             return true;
         }
         match self.kind(node) {
             NodeKind::Script { statements } | NodeKind::Block { statements } => {
-                statements.iter().any(|n| self.has_kernel(*n))
+                statements.iter().any(|n| visit(*n))
             }
             NodeKind::Declare { value, .. }
             | NodeKind::TupleDeclare { value, .. }
-            | NodeKind::Reassign { value, .. } => self.has_kernel(*value),
-            NodeKind::ExprStmt { expr } => self.has_kernel(*expr),
-            NodeKind::Unary { operand, .. } => self.has_kernel(*operand),
-            NodeKind::Binary { lhs, rhs, .. } => self.has_kernel(*lhs) || self.has_kernel(*rhs),
-            NodeKind::History { subject, offset } => {
-                self.has_kernel(*subject) || self.has_kernel(*offset)
-            }
+            | NodeKind::Reassign { value, .. } => visit(*value),
+            NodeKind::ExprStmt { expr } => visit(*expr),
+            NodeKind::Unary { operand, .. } => visit(*operand),
+            NodeKind::Binary { lhs, rhs, .. } => visit(*lhs) || visit(*rhs),
+            NodeKind::History { subject, offset } => visit(*subject) || visit(*offset),
             NodeKind::Ternary {
                 condition,
                 if_true,
                 if_false,
-            } => {
-                self.has_kernel(*condition)
-                    || self.has_kernel(*if_true)
-                    || self.has_kernel(*if_false)
-            }
+            } => visit(*condition) || visit(*if_true) || visit(*if_false),
             NodeKind::If {
                 condition,
                 then_block,
                 otherwise,
-            } => {
-                self.has_kernel(*condition)
-                    || self.has_kernel(*then_block)
-                    || otherwise.is_some_and(|n| self.has_kernel(n))
-            }
+            } => visit(*condition) || visit(*then_block) || otherwise.is_some_and(visit),
             NodeKind::For {
                 from, to, by, body, ..
-            } => {
-                self.has_kernel(*from)
-                    || self.has_kernel(*to)
-                    || by.is_some_and(|n| self.has_kernel(n))
-                    || self.has_kernel(*body)
-            }
-            NodeKind::While { condition, body } => {
-                self.has_kernel(*condition) || self.has_kernel(*body)
-            }
+            } => visit(*from) || visit(*to) || by.is_some_and(visit) || visit(*body),
+            NodeKind::While { condition, body } => visit(*condition) || visit(*body),
             NodeKind::Switch { subject, arms } => {
-                subject.is_some_and(|n| self.has_kernel(n))
-                    || arms
-                        .iter()
-                        .any(|(a, b)| a.is_some_and(|n| self.has_kernel(n)) || self.has_kernel(*b))
+                subject.is_some_and(visit)
+                    || arms.iter().any(|(a, b)| a.is_some_and(visit) || visit(*b))
             }
-            NodeKind::Member { object, .. } => self.has_kernel(*object),
-            NodeKind::Tuple { items } => items.iter().any(|n| self.has_kernel(*n)),
+            NodeKind::Member { object, .. } => visit(*object),
+            NodeKind::Tuple { items } => items.iter().any(|n| visit(*n)),
             NodeKind::Call { callee, args } => {
-                args.iter().any(|a| self.has_kernel(a.value))
+                args.iter().any(|a| visit(a.value))
                     || match self.script.resolutions[callee.index()] {
                         crate::compile::Resolution::Function(i) => {
-                            self.has_kernel(self.script.functions[i as usize].body)
+                            let (child, target) = self
+                                .script
+                                .types
+                                .dispatch
+                                .get(&(context, node.index()))
+                                .map_or((context, i), |(child, target, _)| (*child, *target));
+                            self.has_kernel_in(self.script.functions[target as usize].body, child)
                         }
                         _ => false,
                     }

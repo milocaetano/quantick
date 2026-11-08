@@ -208,12 +208,7 @@ impl Parser<'_> {
                     self.advance();
                     VarMode::Varip
                 };
-                // `var float x = …` and `var series float x = …`: the type
-                // annotation is accepted and recorded nowhere — the dialect
-                // is dynamically typed with compile-time checks on builtins
-                // (documented divergence). Pine allows a qualifier before the
-                // type, so skip every leading word that is followed by
-                // another word; the last one is the variable's own name.
+                // Preserve leading annotations on the declaration node.
                 while matches!(self.peek(), Tok::Ident(_))
                     && matches!(self.peek_at(1), Tok::Ident(_))
                 {
@@ -247,9 +242,7 @@ impl Parser<'_> {
                 }
             }
             Tok::Ident(name) => {
-                // `float x = …`, `simple int len = 9`, `series float x = na`:
-                // skip the annotation words (see the var arm). The name is
-                // the last identifier of the run, the one before `=`.
+                // The final identifier before `=` names the variable.
                 let mut annotation_words = 0usize;
                 while matches!(self.peek_at(annotation_words), Tok::Ident(_))
                     && matches!(self.peek_at(annotation_words + 1), Tok::Ident(_))
@@ -309,7 +302,24 @@ impl Parser<'_> {
 
     fn declare(&mut self, mode: VarMode, name: String, value: NodeId, start: Span) -> NodeId {
         let span = self.spanned_from(start);
-        self.ast.push(NodeKind::Declare { mode, name, value }, span)
+        let mut words: Vec<String> = self
+            .tokens
+            .iter()
+            .filter(|t| {
+                t.span.start >= start.start && t.span.start < self.ast.node(value).span.start
+            })
+            .filter_map(|t| {
+                if let Tok::Ident(word) = &t.tok {
+                    Some(word.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        words.pop(); // variable name
+        let id = self.ast.push(NodeKind::Declare { mode, name, value }, span);
+        self.ast.annotate(id, vec![words]);
+        id
     }
 
     /// Whether the upcoming `[ … ]` is `[name, name] =` — a destructuring —
@@ -369,6 +379,7 @@ impl Parser<'_> {
         self.advance(); // name
         self.advance(); // `(`
         let mut params = Vec::new();
+        let mut annotations = Vec::new();
         if *self.peek() != Tok::RParen {
             loop {
                 let Tok::Ident(param) = self.peek().clone() else {
@@ -376,7 +387,13 @@ impl Parser<'_> {
                     return None;
                 };
                 self.advance();
-                params.push(param);
+                let mut words = vec![param];
+                while let Tok::Ident(word) = self.peek().clone() {
+                    self.advance();
+                    words.push(word);
+                }
+                params.push(words.pop().expect("parameter name"));
+                annotations.push(words);
                 if !self.eat(&Tok::Comma) {
                     break;
                 }
@@ -395,14 +412,16 @@ impl Parser<'_> {
             body
         };
         let span = self.spanned_from(start);
-        Some(self.ast.push(
+        let id = self.ast.push(
             NodeKind::FunctionDef {
                 name: name.to_owned(),
                 params,
                 body,
             },
             span,
-        ))
+        );
+        self.ast.annotate(id, annotations);
+        Some(id)
     }
 
     fn expression_statement(&mut self, start: Span) -> Option<NodeId> {
@@ -1189,7 +1208,7 @@ double(x) => x * 2\ntriple(x) =>\n    y = x * 3\n    y\n";
     }
 
     #[test]
-    fn a_qualified_type_annotation_is_accepted_and_ignored() {
+    fn a_qualified_type_annotation_is_preserved() {
         // Pine v5 lets a qualifier precede the type. Both forms declare the
         // variable; the annotation itself is recorded nowhere.
         for source in [

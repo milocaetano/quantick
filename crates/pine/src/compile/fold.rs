@@ -105,6 +105,41 @@ pub(super) fn member_constant(namespace: &str, field: &str) -> Option<Const> {
 }
 
 impl Compiler {
+    fn slot_annotation(&self, slot: u32) -> &[String] {
+        (0..self.ast.len())
+            .filter_map(|i| self.ast.id_at(i))
+            .find(|id| {
+                self.resolutions[id.index()] == Resolution::Global(slot)
+                    && matches!(self.kind(*id), NodeKind::Declare { .. })
+            })
+            .and_then(|id| self.ast.annotations(id).first())
+            .map_or(&[], Vec::as_slice)
+    }
+    fn const_integer(&self, id: NodeId) -> bool {
+        match self.kind(id) {
+            NodeKind::Int(_) => true,
+            NodeKind::Unary { operand, .. } => self.const_integer(*operand),
+            NodeKind::Binary { lhs, rhs, .. } => {
+                self.const_integer(*lhs) && self.const_integer(*rhs)
+            }
+            NodeKind::Name(_) => {
+                if let Resolution::Global(slot) = self.resolutions[id.index()] {
+                    let annotation = self.slot_annotation(slot);
+                    !annotation.iter().any(|word| {
+                        matches!(word.as_str(), "float" | "input" | "simple" | "series")
+                    }) && self
+                        .global_init
+                        .get(slot as usize)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|init| self.const_integer(init))
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
     pub(super) fn fold(&self, id: NodeId) -> Option<Const> {
         match self.kind(id) {
             NodeKind::Int(v) => Some(Const::Int(*v)),
@@ -133,7 +168,11 @@ impl Compiler {
                         BinOp::Add => Const::Int(a.checked_add(*b)?),
                         BinOp::Sub => Const::Int(a.checked_sub(*b)?),
                         BinOp::Mul => Const::Int(a.checked_mul(*b)?),
-                        BinOp::Div if *b != 0 && a % b == 0 => Const::Int(a / b),
+                        BinOp::Div
+                            if *b != 0 && self.const_integer(*lhs) && self.const_integer(*rhs) =>
+                        {
+                            Const::Int(a.checked_div(*b)?)
+                        }
                         BinOp::Div if *b != 0 => Const::Float(*a as f64 / *b as f64),
                         _ => return None,
                     });
@@ -162,7 +201,17 @@ impl Compiler {
                         return None;
                     }
                     let init = self.global_init.get(slot as usize).copied().flatten()?;
-                    self.fold(init)
+                    let folded = self.fold(init)?;
+                    match self.slot_annotation(slot).last().map(String::as_str) {
+                        Some("float") => folded.as_f64().map(Const::Float),
+                        Some("bool") => match folded {
+                            Const::Bool(_) | Const::Na => Some(folded),
+                            _ => folded
+                                .as_f64()
+                                .map(|n| Const::Bool(n != 0.0 && !n.is_nan())),
+                        },
+                        _ => Some(folded),
+                    }
                 }
                 Resolution::EnumConst(tag) => Some(Const::Enum(tag)),
                 _ => None,
@@ -172,6 +221,20 @@ impl Compiler {
             NodeKind::Call { callee, args } => {
                 let name = self.callee_name(*callee)?;
                 match Builtin::lookup(&name) {
+                    Some(Builtin::IntCast) => {
+                        let n = self.fold(args.first()?.value)?.as_f64()?;
+                        if !n.is_finite() || n < i64::MIN as f64 || n >= i64::MAX as f64 {
+                            return None;
+                        }
+                        Some(Const::Int(n.trunc() as i64))
+                    }
+                    Some(Builtin::FloatCast) => {
+                        self.fold(args.first()?.value)?.as_f64().map(Const::Float)
+                    }
+                    Some(Builtin::BoolCast) => match self.fold(args.first()?.value)? {
+                        v @ (Const::Bool(_) | Const::Na) => Some(v),
+                        v => v.as_f64().map(|n| Const::Bool(n != 0.0 && !n.is_nan())),
+                    },
                     Some(
                         Builtin::InputInt
                         | Builtin::InputFloat

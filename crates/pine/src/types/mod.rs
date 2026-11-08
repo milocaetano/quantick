@@ -1,5 +1,13 @@
-//! Runtime value and slot vocabulary. Owned by child 3 after skeleton integration.
+//! Scalar types, qualifier inference, overloads and runtime value vocabulary.
 use std::rc::Rc;
+
+mod arguments;
+mod calls;
+mod check;
+mod model;
+pub(crate) use check::validate;
+
+pub(crate) use crate::ir::TypeProgram as Checked;
 
 /// A runtime value. `na` for numbers is NaN inside `Num`; the distinct `Na`
 /// covers non-numeric contexts.
@@ -20,6 +28,12 @@ pub enum Value {
     Obj(ObjKind, u32),
     /// `na` outside numeric context.
     Na,
+    /// Missing boolean.
+    NaBool,
+    /// Missing color.
+    NaColor,
+    /// Missing string.
+    NaString,
 }
 
 /// Which store a [`Value::Obj`] handle points into.
@@ -48,13 +62,35 @@ impl Value {
     pub(crate) fn as_cond(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
-            Value::Na => Some(false),
-            Value::Num(v) if v.is_nan() => Some(false),
+            Value::Na | Value::NaBool => Some(false),
+            Value::Num(v) => Some(!v.is_nan() && *v != 0.0),
             _ => None,
         }
     }
 
+    pub(crate) fn missing_like(&self) -> Self {
+        match self {
+            Value::Bool(_) | Value::NaBool => Value::NaBool,
+            Value::Color(_) | Value::NaColor => Value::NaColor,
+            Value::Str(_) | Value::NaString => Value::NaString,
+            _ => Value::Na,
+        }
+    }
+
+    pub(crate) fn coerce(self, kind: u8) -> Self {
+        match kind {
+            1 if self.is_na() => Value::NaBool,
+            1 => Value::Bool(self.as_cond().unwrap_or(false)),
+            2 if self.is_na() => Value::NaColor,
+            3 if self.is_na() => Value::NaString,
+            _ => self,
+        }
+    }
+
     pub(crate) fn is_na(&self) -> bool {
-        matches!(self, Value::Na) || matches!(self, Value::Num(v) if v.is_nan())
+        matches!(
+            self,
+            Value::Na | Value::NaBool | Value::NaColor | Value::NaString
+        ) || matches!(self, Value::Num(v) if v.is_nan())
     }
 }

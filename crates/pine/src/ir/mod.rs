@@ -45,6 +45,20 @@ pub struct FunctionInfo {
     pub body: NodeId,
 }
 
+/// Specialization lookup: (parent context, call node) to child context, overload and argument order.
+pub type FunctionDispatch = std::collections::BTreeMap<(u32, usize), (u32, u32, Vec<usize>)>;
+
+/// Type-directed lowering without runtime source-name lookups.
+#[derive(Clone, Default)]
+pub struct TypeProgram {
+    /// Per-context, per-node scalar conversions, checked at load.
+    pub coercions: Vec<Vec<u8>>,
+    /// Per-context v5 const int division nodes, truncated after evaluation.
+    pub integer_divisions: Vec<Vec<bool>>,
+    /// (Parent type context, call node) to (child context, resolved overload).
+    pub dispatch: FunctionDispatch,
+}
+
 /// A compiled script: the AST plus every dense eval-time table.
 ///
 /// `Clone` so that rebinding inputs (the settings dialog's Apply) can build a
@@ -76,6 +90,8 @@ pub struct CompiledScript {
     pub warnings: Vec<PineError>,
     /// Per-node resolution (dense, indexed by `NodeId`).
     pub resolutions: Vec<Resolution>,
+    /// Checked scalar lowering and call-context dispatch.
+    pub types: TypeProgram,
     /// Per-node call-site id for stateful kernel calls.
     pub call_sites: Vec<Option<CallSiteId>>,
     /// Per-node plot index for top-level `plot`/`plotshape`/`plotchar`

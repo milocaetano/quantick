@@ -223,6 +223,7 @@ pub(crate) struct Eval<'a> {
     pub path: u32,
     /// Current frame base in `locals`.
     frame_base: usize,
+    type_context: u32,
     semantic_run: crate::semantics::Run<Kernel>,
 }
 
@@ -249,6 +250,7 @@ impl<'a> Eval<'a> {
             timezone: crate::calendar::CalendarTimezone::default(),
             path: 0,
             frame_base: 0,
+            type_context: 0,
             semantic_run: crate::semantics::Run::default(),
         }
     }
@@ -407,8 +409,20 @@ impl<'a> Eval<'a> {
 
     // ---- expressions -----------------------------------------------------
 
-    #[allow(clippy::too_many_lines)]
     fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
+        let value = self
+            .eval_value(id)?
+            .coerce(self.script.types.coercions[self.type_context as usize][id.index()]);
+        if self.script.types.integer_divisions[self.type_context as usize][id.index()]
+            && let Value::Num(number) = value
+        {
+            return Ok(Value::Num(number.trunc()));
+        }
+        Ok(value)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn eval_value(&mut self, id: NodeId) -> Result<Value, PineError> {
         match self.kind(id) {
             NodeKind::Int(v) => Ok(Value::Num(*v as f64)),
             NodeKind::Float(v) => Ok(Value::Num(*v)),
@@ -659,7 +673,7 @@ impl<'a> Eval<'a> {
                     .checked_sub(back)
                     .and_then(|i| r.values.get(i).cloned())
             })
-            .unwrap_or(Value::Na);
+            .unwrap_or_else(|| current.missing_like());
         Ok(value)
     }
 
@@ -700,8 +714,28 @@ impl<'a> Eval<'a> {
                 Ok(Value::Bool(result))
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                let l = self.num(lhs)?;
-                let r = self.num(rhs)?;
+                let left = self.eval(lhs)?;
+                let right = self.eval(rhs)?;
+                if op == BinOp::Add
+                    && let (Value::Str(a), Value::Str(b)) = (&left, &right)
+                {
+                    return Ok(Value::Str(Rc::new(format!("{a}{b}"))));
+                }
+                if op == BinOp::Add
+                    && (left.is_na() || right.is_na())
+                    && matches!(
+                        (&left, &right),
+                        (Value::Str(_) | Value::NaString, _) | (_, Value::Str(_) | Value::NaString)
+                    )
+                {
+                    return Ok(Value::NaString);
+                }
+                let l = left
+                    .as_num()
+                    .ok_or_else(|| self.type_err(lhs, "a number", &left))?;
+                let r = right
+                    .as_num()
+                    .ok_or_else(|| self.type_err(rhs, "a number", &right))?;
                 let result = match op {
                     BinOp::Add => l + r,
                     BinOp::Sub => l - r,
@@ -739,6 +773,13 @@ impl<'a> Eval<'a> {
         // included, which its own doc calls diagnostics-only — happened on
         // every user-function call on every bar. The name is taken by
         // reference on the error path alone.
+        let (child_context, index, order) = self
+            .script
+            .types
+            .dispatch
+            .get(&(self.type_context, id.index()))
+            .map(|(context, index, order)| (*context, *index, order.as_slice()))
+            .unwrap_or((self.type_context, index, &[]));
         let function = &self.script.functions[index as usize];
         let (param_count, local_slots, body) =
             (function.param_count, function.local_slots, function.body);
@@ -776,11 +817,13 @@ impl<'a> Eval<'a> {
         self.state
             .locals
             .resize(self.frame_base + local_slots, Value::Na);
-        for (slot, value) in argv.into_iter().enumerate() {
-            self.state.locals[self.frame_base + slot] = value;
+        for (slot, argument) in order.iter().enumerate() {
+            self.state.locals[self.frame_base + slot] = argv[*argument].clone();
         }
         self.path = path;
+        let saved_context = std::mem::replace(&mut self.type_context, child_context);
         let result = self.eval(body);
+        self.type_context = saved_context;
         self.state.locals.truncate(self.frame_base);
         self.frame_base = saved_base;
         self.path = saved_path;
@@ -852,7 +895,7 @@ impl<'a> Eval<'a> {
                 };
                 *self.paint = match value {
                     Value::Color(rgba) => Some(Rgba8::from_u32(rgba)),
-                    Value::Na => None,
+                    value if value.is_na() => None,
                     other => return Err(self.type_err(id, "a color", &other)),
                 };
                 return Ok(Value::Na);
@@ -939,7 +982,7 @@ fn describe(value: &Value) -> &'static str {
         Value::Color(_) => "a color",
         Value::Str(_) => "a string",
         Value::Tuple(_) => "a tuple",
-        Value::Na => "na",
+        Value::Na | Value::NaBool | Value::NaColor | Value::NaString => "na",
     }
 }
 

@@ -146,7 +146,16 @@ fn candle_normalization_missing_prices_and_failed_runs() {
     assert_eq!(c.color, None);
     assert_eq!(&frame.candles[1..], &[None, None, None]);
     assert_eq!(frame.values, &[1.0]);
-    let mut bad = load("//@version=5\nplotcandle(open, high, low, close, color=close)\n");
+    let invalid = "//@version=5\nplotcandle(open, high, low, close, color=close)\n";
+    let errors = compile(invalid, "invalid")
+        .err()
+        .expect("color type must fail at load");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineType)
+    );
+    let mut bad = load("//@version=5\nplotcandle(open, high, low, close)\nwhile true\n    1\n");
     assert!(bad.on_close(&b, &mut ctx).is_err());
     assert!(bad.plots().is_empty());
     assert!(bad.preview(&b, &mut ctx).is_err());
