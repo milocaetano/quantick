@@ -357,6 +357,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fixed_offsets_survive_growth_and_word_copy_restore() {
+        let mut arena = Arena::default();
+        arena.resize(GLOBALS, 2);
+        arena.resize(REGISTERS, 4);
+        let global = arena.offset(GLOBALS);
+        let register = arena.offset(REGISTERS) + 2;
+        arena.set_at(global, Value::Num(42.0));
+        arena.copy_at(global, register);
+        let committed = arena.words.clone();
+        arena.resize(LOCALS, 4096);
+        arena.set(LOCALS, 4095, Value::Str(Rc::new("payload".repeat(4096))));
+        assert_eq!(arena.get_at(register), Value::Num(42.0));
+        arena.set_at(global, Value::Num(99.0));
+        arena.words = committed;
+        assert_eq!(arena.get_at(global), Value::Num(42.0));
+        assert_eq!(arena.number_at(register), Some(42.0));
+    }
+
+    #[test]
     fn copied_words_own_nested_values_and_bounded_history() {
         let mut arena = Arena::default();
         arena.resize(GLOBALS, 2);

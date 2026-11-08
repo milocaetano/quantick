@@ -15,16 +15,14 @@ impl Eval<'_> {
             let instruction = &self.script.program.instructions[pc];
             pc += 1;
             match instruction {
-                Instruction::Copy(id, source) => {
-                    self.state
-                        .arena
-                        .copy_value(REGISTERS, source.index(), REGISTERS, id.index())
-                }
-                Instruction::Read(id, Resolution::Global(slot)) => {
-                    self.state
-                        .arena
-                        .copy_value(GLOBALS, *slot as usize, REGISTERS, id.index())
-                }
+                Instruction::Copy(id, source) => self.state.arena.copy_at(
+                    self.register_base + source.index() * 2,
+                    self.register_base + id.index() * 2,
+                ),
+                Instruction::Read(id, Resolution::Global(slot)) => self.state.arena.copy_at(
+                    self.global_base + *slot as usize * 2,
+                    self.register_base + id.index() * 2,
+                ),
                 Instruction::Read(id, Resolution::Local(slot)) => self.state.arena.copy_value(
                     LOCALS,
                     self.frame_base + *slot as usize,
@@ -34,11 +32,9 @@ impl Eval<'_> {
                 Instruction::Store(id, target, source, mode) => {
                     match target {
                         Resolution::Global(slot) => {
-                            self.state.arena.copy_value(
-                                REGISTERS,
-                                source.index(),
-                                GLOBALS,
-                                *slot as usize,
+                            self.state.arena.copy_at(
+                                self.register_base + source.index() * 2,
+                                self.global_base + *slot as usize * 2,
                             );
                             if *mode != VarMode::Plain {
                                 self.state
@@ -54,9 +50,10 @@ impl Eval<'_> {
                         ),
                         _ => {}
                     }
-                    self.state
-                        .arena
-                        .copy_value(REGISTERS, source.index(), REGISTERS, id.index());
+                    self.state.arena.copy_at(
+                        self.register_base + source.index() * 2,
+                        self.register_base + id.index() * 2,
+                    );
                 }
                 Instruction::Jump(target) => pc = *target,
                 Instruction::JumpUnless(condition, expected, target) => {
