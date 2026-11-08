@@ -4041,6 +4041,70 @@ fn the_pencil_draws_a_path_from_one_held_drag() {
     );
 }
 
+/// The stroke the release just selected offers its own pencil back, so the
+/// next stroke starts from the bar under the eye instead of from the rail.
+#[test]
+fn the_bar_pencil_rearms_the_pencil_for_the_next_stroke() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(620.0, 300.0),
+        egui::pos2(760.0, 380.0),
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+
+    let pencil = app
+        .drawings
+        .chrome
+        .context_bar()
+        .draw_again_rect()
+        .expect("a finished stroke's bar offers the pencil");
+    // A hand reaches the bar before it presses it.
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(pencil.center())],
+    );
+    click_chart(&mut app, &ctx, pencil.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.toolrail.tool(), Tool::Drawing(drawing_tool("brush")));
+
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(640.0, 420.0),
+        egui::pos2(780.0, 460.0),
+    );
+    let items = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(items.len(), 2, "the second drag draws a second stroke");
+    assert!(items.iter().all(|item| item.tool.id() == "brush"));
+}
+
+/// Any other object's bar has no pencil: a level is not drawn twice by hand.
+#[test]
+fn a_level_bar_has_no_pencil() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+    assert!(app.drawings.chrome.context_bar_rect().is_some());
+    assert!(
+        app.drawings
+            .chrome
+            .context_bar()
+            .draw_again_rect()
+            .is_none()
+    );
+}
+
 /// A press that never moved is a click that missed, not a drawing. An
 /// invisible one-point object the trader can neither see nor select is
 /// worse than nothing happening.

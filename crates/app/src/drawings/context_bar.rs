@@ -94,6 +94,9 @@ pub enum Slot {
     /// Present only for an object an operator other than the trader placed:
     /// the chart says whose hand it was before the trader acts on it.
     Author,
+    /// Arm the tool that drew this object again, so the next stroke starts
+    /// from the bar the release just opened instead of from the rail.
+    DrawAgain,
     Color,
     Width,
     /// Type/glyph size, for the tools drawn as glyphs rather than strokes.
@@ -140,6 +143,9 @@ pub struct Capabilities {
     /// Whether the OHLC magnet moves this object's anchors: a tool that
     /// snaps by its own rule has no magnet to switch.
     pub magnet: bool,
+    /// Whether this object's tool is one the trader keeps drawing with —
+    /// a freehand stroke — so the bar offers to arm it again.
+    pub draw_again: bool,
 }
 
 /// The cells of a bar for an object with these capabilities.
@@ -151,6 +157,10 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
     let mut slots = SmallVec::from_slice(&[Slot::Grip]);
     if caps.authored {
         slots.push(Slot::Author);
+        slots.push(Slot::Separator);
+    }
+    if caps.draw_again {
+        slots.push(Slot::DrawAgain);
         slots.push(Slot::Separator);
     }
     slots.push(Slot::Color);
@@ -365,6 +375,8 @@ pub struct ContextBar {
     #[cfg(test)]
     gear_rect: Option<egui::Rect>,
     #[cfg(test)]
+    draw_again_rect: Option<egui::Rect>,
+    #[cfg(test)]
     sharing_rect: Option<egui::Rect>,
     #[cfg(test)]
     magnet_rect: Option<egui::Rect>,
@@ -504,6 +516,12 @@ impl ContextBar {
 
     #[cfg(test)]
     #[must_use]
+    pub fn draw_again_rect(&self) -> Option<egui::Rect> {
+        self.draw_again_rect
+    }
+
+    #[cfg(test)]
+    #[must_use]
     pub fn sharing_rect(&self) -> Option<egui::Rect> {
         self.sharing_rect
     }
@@ -550,6 +568,8 @@ pub struct ContextBarIntent {
     pub toggle_shared: bool,
     pub toggle_magnet: bool,
     pub duplicate: bool,
+    /// Arm this object's tool again: the pencil after a finished stroke.
+    pub draw_again: bool,
     pub open_settings: bool,
     /// The second step of a protected delete was taken.
     pub force_delete: bool,
@@ -593,6 +613,17 @@ pub struct BarObject<'a> {
     /// the registry's names are, which is what lets the tooltip be cached
     /// instead of formatted every frame.
     pub tool_name: &'static str,
+    /// The tool that drew this object, offered again on the bar as its own
+    /// rail glyph and hover text; `None` for a tool drawn once at a time.
+    pub draw_again: Option<DrawAgain>,
+}
+
+/// The rail's own face for the tool the bar offers again, so the bar and
+/// the rail cannot name one tool two ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawAgain {
+    pub glyph: &'static str,
+    pub hover: &'static str,
 }
 
 /// Which controls this object earns a slot for.
@@ -613,6 +644,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         settings: object.settings_available,
         sharing: object.shareable,
         magnet: object.magnet.is_some(),
+        draw_again: object.draw_again.is_some(),
     }
 }
 
@@ -633,6 +665,10 @@ pub fn show(
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
     bar.rect = Some(rect);
+    #[cfg(test)]
+    {
+        bar.draw_again_rect = None;
+    }
     if bar.delete_hover_for != object.tool_name {
         bar.delete_hover_for = object.tool_name;
         bar.delete_hover = format!("Delete {} (Del)", object.tool_name.to_lowercase());
@@ -692,6 +728,20 @@ fn draw_slot(
                 .show(ui);
         }
         Slot::Separator => draw_separator(ui),
+        Slot::DrawAgain => {
+            // `slots` offers this cell only when the object names its tool.
+            let Some(face) = object.draw_again else {
+                return;
+            };
+            let pencil = IconButton::new(face.glyph, TOOLRAIL_ICON)
+                .hover_text(face.hover)
+                .show(ui);
+            #[cfg(test)]
+            {
+                bar.draw_again_rect = Some(pencil.rect);
+            }
+            intent.draw_again |= pencil.clicked();
+        }
         Slot::Color => draw_color_slot(ui, bar, object),
         Slot::Width => draw_width_slot(ui, bar, object),
         Slot::GlyphSize => draw_glyph_size_slot(ui, bar),
@@ -1293,6 +1343,7 @@ mod tests {
         settings: true,
         sharing: true,
         magnet: true,
+        draw_again: false,
     };
 
     #[test]
@@ -1320,7 +1371,7 @@ mod tests {
         // Every bar `capabilities` can ask for: width and glyph size are one
         // or the other, everything else may come or go. The fullest is an
         // assistant's pointer-anchored object, author chip and all.
-        let functional = (0..32_u8)
+        let functional = (0..64_u8)
             .map(|bits| {
                 let caps = Capabilities {
                     stroke_width: bits & 1 != 0,
@@ -1329,6 +1380,7 @@ mod tests {
                     settings: bits & 4 != 0,
                     sharing: bits & 8 != 0,
                     magnet: bits & 16 != 0,
+                    draw_again: bits & 32 != 0,
                 };
                 slots(caps)
                     .into_iter()
@@ -1339,14 +1391,26 @@ mod tests {
             .unwrap_or_default();
         // Ten: the object's own magnet joined Lock, both switches a trader
         // flips on the object under their eye mid-session, on a bar that
-        // already carried an assistant's author chip. The ceiling is the
-        // fullest bar today; a new slot has to argue past it here.
-        const CEILING: usize = 10;
+        // already carried an assistant's author chip. Eleven: the pencil's
+        // own draw-again, so a trader sketching stroke after stroke never
+        // goes back to the rail between them. The ceiling is the fullest
+        // bar today; a new slot has to argue past it here.
+        const CEILING: usize = 11;
         assert!(
             functional <= CEILING,
             "the bar holds at most {CEILING} functional slots; found {functional}"
         );
         assert_eq!(functional, CEILING, "the ceiling is the fullest real bar");
+    }
+
+    #[test]
+    fn only_a_stroke_the_trader_keeps_drawing_offers_the_pencil_first() {
+        assert!(!slots(PLAIN).contains(&Slot::DrawAgain));
+        let cells = slots(Capabilities {
+            draw_again: true,
+            ..PLAIN
+        });
+        assert_eq!(&cells[..3], &[Slot::Grip, Slot::DrawAgain, Slot::Separator]);
     }
 
     #[test]
@@ -1363,6 +1427,7 @@ mod tests {
             settings: true,
             sharing: true,
             magnet: true,
+            draw_again: false,
         });
         assert!(!glyph_tool.contains(&Slot::Width));
         assert!(glyph_tool.contains(&Slot::GlyphSize));
@@ -1412,6 +1477,7 @@ mod tests {
                 settings: false,
                 sharing: true,
                 magnet: true,
+                draw_again: true,
             },
         ] {
             let cells = slots(caps);
