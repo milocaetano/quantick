@@ -518,10 +518,12 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
             let fresh = new_drawing_from_defaults(&store, tool);
-            let expected = if tool.id() == "fixed-range-profile" {
-                [122, 142, 194, 255]
-            } else {
-                [181, 131, 43, 255]
+            // Marks keep the market's green and red, like TradingView's.
+            let expected = match tool.id() {
+                "fixed-range-profile" => [122, 142, 194, 255],
+                "arrow-mark-up" => [8, 153, 129, 255],
+                "arrow-mark-down" => [242, 54, 69, 255],
+                _ => [181, 131, 43, 255],
             };
             assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
             assert_eq!(fresh.style.width_px, existing.style.width_px);

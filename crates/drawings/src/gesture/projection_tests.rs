@@ -636,3 +636,41 @@ fn a_canvas_double_click_names_the_candle_or_the_open_canvas() {
         assert_eq!(hit(50.0, &unscaled), Some(CanvasHit::Empty));
     });
 }
+
+/// A mark lands wherever the trader puts it; its magnet hangs it from the
+/// pointer bar's own extreme (the low for a buy, the high for a sell), not
+/// from the nearest of its four prices.
+#[test]
+fn a_mark_lands_free_and_its_magnet_hangs_it_from_the_bar() {
+    with_visible_tape(|projection, band| {
+        let scale = band.scale.as_ref().unwrap();
+        let x = projection
+            .viewport
+            .x_at_bar_position(POINTER_BAR, HISTORY_RIGHT, TAPE);
+        let at = |tool: &str, magnet: bool| {
+            projection
+                .drawing_point_at(
+                    crate::pos2(x, scale.y(20.0)),
+                    HISTORY_RIGHT,
+                    TAPE,
+                    magnet,
+                    tool_snap(tool),
+                    band,
+                )
+                .expect("a point on the price band")
+                .price
+        };
+        for tool in ["arrow-mark-up", "arrow-mark-down"] {
+            assert!(
+                (at(tool, false) - 20.0).abs() < 0.01,
+                "{tool} without the magnet stays at the pointer"
+            );
+            assert_eq!(
+                at(tool, true),
+                50.0,
+                "{tool} with the magnet hangs from the bar"
+            );
+            assert!(tool_snap(tool).takes_magnet() && tool_snap(tool).is_bar_extreme());
+        }
+    });
+}

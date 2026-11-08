@@ -1,14 +1,14 @@
 //! The buy mark: one click, one filled arrow under the bar's low.
 
-use crate::{MarkScene, Px, PxRect};
+use crate::icons;
 #[cfg(test)]
 use crate::pos2;
+use crate::{MarkScene, Px, PxRect};
 use quantick_chart::style::PremultipliedRgba;
-use crate::icons;
 
 use super::mark_core::{Direction, MARKS_FAMILY, MarkPayload};
 use super::{
-    AnchorSnap, DrawContext, DrawingPayload, DrawingStyle, MarkTool, GlyphSize, ToolFamily,
+    AnchorSnap, DrawContext, DrawingPayload, DrawingStyle, GlyphSize, MarkTool, ToolFamily,
     ToolShortcut, mark_core,
 };
 use crate::palette as theme;
@@ -34,7 +34,7 @@ impl MarkTool for ArrowMarkUp {
         icons::ARROW_FAT_UP
     }
     fn hover_text(&self) -> &'static str {
-        "Arrow mark up - one click marks a buy under the bar's low (B)"
+        "Arrow mark up - one click marks a buy; the magnet hangs it under the bar's low (B)"
     }
     fn required_points(&self) -> usize {
         1
@@ -48,8 +48,8 @@ impl MarkTool for ArrowMarkUp {
     fn family(&self) -> Option<ToolFamily> {
         Some(MARKS_FAMILY)
     }
-    /// The rule that makes it a mark: it hangs off the bar's low whether or
-    /// not the OHLC magnet is on.
+    /// Free by default; the magnet (the rail's, or the object's own) hangs
+    /// it off the bar's low.
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::BarLow
     }
@@ -68,7 +68,9 @@ impl MarkTool for ArrowMarkUp {
     }
     /// Born in the buy colour, not the shared drawing blue: a buy mark that
     /// arrives blue makes the trader repaint it every single time.
-    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::DrawingBuy }
+    fn default_color_token(&self) -> quantick_appearance::Token {
+        quantick_appearance::Token::DrawingBuy
+    }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         Some(theme::BUY)
     }

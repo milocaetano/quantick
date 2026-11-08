@@ -10,10 +10,12 @@
 //!
 //! Two rules make it read as a mark rather than as a shape:
 //!
-//! * **It sits outside the candle.** The anchor snaps to the bar's low (up)
-//!   or high (down) through [`super::AnchorSnap`], and the glyph is offset
-//!   from there in *pixels*. An offset in price would drift off the candle
-//!   the moment the vertical zoom changed.
+//! * **It lands where the trader puts it.** The anchor follows the pointer
+//!   to any price. With the magnet on (the rail's, or the object's own) it
+//!   snaps to the bar's low (up) or high (down) through
+//!   [`super::AnchorSnap`]. Either way the glyph is offset from the anchor
+//!   in *pixels*: an offset in price would drift off the candle the moment
+//!   the vertical zoom changed.
 //! * **It does not grow with the zoom.** Its size is screen pixels, chosen
 //!   by the trader. A note about the chart that inflates with the chart has
 //!   quietly become a second series.
@@ -36,15 +38,17 @@ pub(super) const MARKS_FAMILY: ToolFamily = ToolFamily {
 /// Gap between the candle's extreme and the tip of the mark, in pixels, so
 /// the mark never touches the bar it is about.
 const MARK_GAP_PX: f32 = 6.0;
-pub(super) const DEFAULT_MARK_PX: f32 = 16.0;
+/// TradingView's arrow mark, measured on the trader's own reference
+/// capture: a mark the size of a candle body is missed mid-session.
+pub(super) const DEFAULT_MARK_PX: f32 = 28.0;
 pub(super) const MIN_MARK_PX: f32 = 10.0;
-pub(super) const MAX_MARK_PX: f32 = 32.0;
-/// Ratio of the arrowhead's half-width to its height.
-const HEAD_HALF_WIDTH: f32 = 0.42;
-/// Ratio of the shaft's half-width to the head's height.
-const SHAFT_HALF_WIDTH: f32 = 0.16;
+pub(super) const MAX_MARK_PX: f32 = 64.0;
+/// Ratio of the arrowhead's half-width to the mark's height.
+const HEAD_HALF_WIDTH: f32 = 0.5;
+/// Ratio of the shaft's half-width to the mark's height.
+const SHAFT_HALF_WIDTH: f32 = 0.2;
 /// How much of the total height the head takes.
-const HEAD_SHARE: f32 = 0.55;
+const HEAD_SHARE: f32 = 0.5;
 
 /// Which way the mark points, which is also which extreme it hangs from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,12 +190,43 @@ pub(super) fn paint(
         return;
     }
     // Solid, not outlined: a filled silhouette reads as a mark placed on the
-    // chart, where a thin outline reads as something drawn by hand.
-    painter.add(MarkShape::convex_polygon(
-        outline,
-        style.color,
-        Stroke::NONE,
-    ));
+    // chart, where a thin outline reads as something drawn by hand. The
+    // arrow is not convex, and a convex fill of it notches the shoulders;
+    // it is painted as the two convex parts it is made of.
+    for part in convex_parts(&outline) {
+        painter.add(MarkShape::convex_polygon(part, style.color, Stroke::NONE));
+    }
+}
+
+/// The arrow [`outline`] split into its convex parts: the head's triangle
+/// and the shaft's rectangle. The shaft starts inside the head, so the
+/// anti-aliased seam between them is covered and never shows as a line.
+pub(super) fn convex_parts(outline: &[Px]) -> [Vec<Px>; 2] {
+    let [
+        tip,
+        head_left,
+        waist_left,
+        foot_left,
+        foot_right,
+        waist_right,
+        head_right,
+    ] = outline
+    else {
+        return [outline.to_vec(), Vec::new()];
+    };
+    let overlap = (waist_left.y - tip.y) * 0.5;
+    let inner = |waist: &Px| pos2(waist.x, waist.y - overlap);
+    [
+        vec![*tip, *head_left, *head_right],
+        vec![
+            inner(waist_left),
+            *waist_left,
+            *foot_left,
+            *foot_right,
+            *waist_right,
+            inner(waist_right),
+        ],
+    ]
 }
 
 pub(super) fn hit_test(
@@ -285,6 +320,42 @@ mod tests {
         };
         assert!(height(&large) > height(&small));
         assert!((height(&small) - (MIN_MARK_PX + MARK_GAP_PX)).abs() < f32::EPSILON);
+    }
+
+    /// The convex parts cover the whole silhouette: every outline point is
+    /// a corner of one of them, and each part is convex (one turn sense).
+    #[test]
+    fn the_painted_parts_are_convex_and_cover_the_outline() {
+        for (direction, inverted) in [
+            (Direction::Up, false),
+            (Direction::Down, false),
+            (Direction::Up, true),
+        ] {
+            let outline = outline(pos2(40.0, 80.0), direction, DEFAULT_MARK_PX, inverted);
+            let parts = convex_parts(&outline);
+            for point in &outline {
+                assert!(
+                    parts.iter().any(|part| part.contains(point)),
+                    "{point:?} is painted by no part"
+                );
+            }
+            for part in &parts {
+                let turns: Vec<f32> = (0..part.len())
+                    .map(|i| {
+                        let (a, b, c) = (
+                            part[i],
+                            part[(i + 1) % part.len()],
+                            part[(i + 2) % part.len()],
+                        );
+                        (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+                    })
+                    .collect();
+                assert!(
+                    turns.iter().all(|turn| *turn >= 0.0) || turns.iter().all(|turn| *turn <= 0.0),
+                    "{direction:?} part {part:?} is not convex"
+                );
+            }
+        }
     }
 
     #[test]

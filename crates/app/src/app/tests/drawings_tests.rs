@@ -3576,7 +3576,7 @@ fn the_object_manager_opens_beside_the_rail() {
 /// failure the whole tool exists to avoid, in the only moment it is used
 /// under pressure.
 #[test]
-fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
+fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // tick(2) with an odd trade count: the last print leaves a bar open,
     // which `app_with_history`'s tick(1) never does.
     let (mut app, evt_tx, _commands, _book) = test_app();
@@ -3607,6 +3607,18 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     let right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
+    // Free by default: without the magnet the mark keeps the cursor's price.
+    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+    click_chart(&mut app, &ctx, egui::pos2(x, 200.0));
+    let free = app
+        .active_tab()
+        .flow_pane
+        .drawings
+        .items()
+        .last()
+        .map(|mark| mark.points[0].price);
+
+    app.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
     let placed = app.active_tab().flow_pane.drawings.items().last();
@@ -3630,6 +3642,11 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
         (anchor.price - low).abs() < 1e-9,
         "the mark must hang from the forming bar's low ({low}), not the cursor ({})",
         anchor.price
+    );
+    let free = free.expect("the free mark was placed");
+    assert!(
+        (free - low).abs() > 1e-6,
+        "without the magnet the mark stays at the cursor ({free}), off the low ({low})"
     );
 }
 
