@@ -267,3 +267,25 @@ pub(crate) fn arguments(op: Op) -> &'static [&'static str] {
         _ => &["id"],
     }
 }
+
+/// Persistent collection mutations stay conditional during eager kernel advancement.
+pub(crate) fn mutates(op: Op) -> bool {
+    use Op::*;
+    matches!(
+        op,
+        Clear(_)
+            | Remove(_)
+            | Set
+            | Push
+            | Pop
+            | Shift
+            | Unshift
+            | Insert
+            | Reverse
+            | Concat
+            | Fill
+            | Sort
+            | Put
+            | PutAll
+    )
+}

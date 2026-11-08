@@ -486,12 +486,22 @@ fn collections_named_optional_defaults() {
 fn collections_eager_reads_preserve_conditional_mutations() {
     let source = include_str!("fixtures/collections/eager.pine");
     let mut script = ScriptIndicator::new(compile(source, "eager").unwrap(), source);
-    for (i, line) in include_str!("golden/collections/eager.csv").lines().enumerate() {
+    for (i, line) in include_str!("golden/collections/eager.csv")
+        .lines()
+        .enumerate()
+    {
         let expected: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
-        let mut ctx = Ctx {bar_index: i, cvd: &[]};
-        for _ in 0..2 { assert_eq!(script.preview(&bar(), &mut ctx).unwrap().values, expected); }
+        let mut ctx = Ctx {
+            bar_index: i,
+            cvd: &[],
+        };
+        for _ in 0..2 {
+            assert_eq!(script.preview(&bar(), &mut ctx).unwrap().values, expected);
+        }
         script.on_close(&bar(), &mut ctx).unwrap();
-        let actual: Vec<_> = (0..expected.len()).map(|j| script.plots().column(PlotId::new(j))[i]).collect();
+        let actual: Vec<_> = (0..expected.len())
+            .map(|j| script.plots().column(PlotId::new(j))[i])
+            .collect();
         assert_eq!(actual, expected);
     }
 }

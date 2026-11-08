@@ -273,36 +273,39 @@ impl Eval<'_> {
             I::Builtin(id, builtin, args) => (*id, self.builtin_call(*id, *builtin, args)?),
             I::User(id, index, args) => (*id, self.user_call(*id, *index, args)?),
             I::Method(id, object, field, args) => {
+                let receiver = self.eval(*object)?;
+                if let Value::Collection(map, _) = receiver {
+                    let family = if map { "map" } else { "array" };
+                    let Some(op) = crate::collections::lookup(&format!("{family}.{field}")) else {
+                        return Err(self.err(
+                            *id,
+                            ErrorCode::PineType,
+                            "unknown collection method",
+                        ));
+                    };
+                    if self.semantic_run.skipped && crate::collections::mutates(op) {
+                        self.advance_arguments(args)?;
+                        self.set_register(*id, Value::Na);
+                        return Ok(());
+                    }
+                    let mut values = vec![receiver];
+                    for arg in args {
+                        values.push(self.eval(arg.value)?);
+                    }
+                    let value = crate::collections::execute(
+                        self.state.arena,
+                        self.script.version,
+                        op,
+                        &values,
+                    )
+                    .map_err(|message| self.err(*id, ErrorCode::PineType, message))?;
+                    self.set_register(*id, value);
+                    return Ok(());
+                }
                 if self.semantic_run.skipped {
-                    self.advance_skipped(*object)?;
                     self.advance_arguments(args)?;
                     (*id, Value::Na)
                 } else {
-                    let receiver = self.eval(*object)?;
-                    if let Value::Collection(map, _) = receiver {
-                        let family = if map { "map" } else { "array" };
-                        let Some(op) = crate::collections::lookup(&format!("{family}.{field}"))
-                        else {
-                            return Err(self.err(
-                                *id,
-                                ErrorCode::PineType,
-                                "unknown collection method",
-                            ));
-                        };
-                        let mut values = vec![receiver];
-                        for arg in args {
-                            values.push(self.eval(arg.value)?);
-                        }
-                        let value = crate::collections::execute(
-                            self.state.arena,
-                            self.script.version,
-                            op,
-                            &values,
-                        )
-                        .map_err(|message| self.err(*id, ErrorCode::PineType, message))?;
-                        self.set_register(*id, value);
-                        return Ok(());
-                    }
                     let Value::Obj(kind, raw) = receiver else {
                         return Err(self.type_err(*object, "an object handle", &receiver));
                     };

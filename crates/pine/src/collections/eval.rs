@@ -12,7 +12,7 @@ impl Eval<'_> {
         op: Op,
         args: &[Arg],
     ) -> Result<Value, PineError> {
-        if self.semantic_run.skipped {
+        if self.semantic_run.skipped && crate::collections::mutates(op) {
             self.advance_arguments(args)?;
             return Ok(Value::Na);
         }
