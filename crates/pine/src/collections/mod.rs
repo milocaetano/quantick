@@ -1,6 +1,7 @@
 //! Typed collections backed solely by the interpreter word arena.
 mod array;
 mod runtime;
+mod search;
 mod sorting;
 mod statistics;
 pub(crate) use statistics::truncate;
@@ -44,6 +45,9 @@ pub enum Op {
     Reverse,
     Concat,
     Fill,
+    BinarySearch,
+    BinaryLeft,
+    BinaryRight,
     IndexOf,
     LastIndexOf,
     Abs,
@@ -191,6 +195,9 @@ const REGISTRY: &[(&str, Op)] = &[
     ("array.reverse", Op::Reverse),
     ("array.concat", Op::Concat),
     ("array.fill", Op::Fill),
+    ("array.binary_search", Op::BinarySearch),
+    ("array.binary_search_leftmost", Op::BinaryLeft),
+    ("array.binary_search_rightmost", Op::BinaryRight),
     ("array.indexof", Op::IndexOf),
     ("array.lastindexof", Op::LastIndexOf),
     ("array.abs", Op::Abs),
@@ -246,7 +253,8 @@ pub(crate) fn arguments(op: Op) -> &'static [&'static str] {
         Put => &["id", "key", "value"],
         PutAll => &["id", "id2"],
         Concat => &["id1", "id2"],
-        Push | Unshift | Contains(false) | IndexOf | LastIndexOf => &["id", "value"],
+        BinarySearch | BinaryLeft | BinaryRight | Push | Unshift | Contains(false) | IndexOf
+        | LastIndexOf => &["id", "value"],
         Fill => &["id", "value", "index_from", "index_to"],
         Min | Max => &["id", "nth"],
         Covariance => &["id1", "id2", "biased"],

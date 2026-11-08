@@ -16,6 +16,7 @@ pub(super) fn execute(
 ) -> Result<Value, String> {
     use Op::*;
     match op {
+        BinarySearch | BinaryLeft | BinaryRight => super::search::execute(arena, op, args, record),
         Sort | SortIndices => super::sorting::execute(arena, op, args, record),
         Get(false) | Set | Remove(false) | Insert | First | Last | Pop | Shift => {
             let slot = match op {

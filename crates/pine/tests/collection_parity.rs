@@ -413,10 +413,21 @@ fn collections_statistics_golden() {
 #[test]
 fn collections_binary_search_golden() {
     let expected: Vec<f64> = include_str!("golden/collections/search.csv")
-        .trim().split(',').map(|s| s.parse().unwrap()).collect();
-    assert_eq!(run(include_str!("fixtures/collections/search.pine")), expected);
+        .trim()
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(
+        run(include_str!("fixtures/collections/search.pine")),
+        expected
+    );
 }
 #[test]
 fn collections_statistic_integer_overloads() {
-    assert_eq!(run("//@version=6\nindicator(\"int stats\")\na = array.from(1, 2)\nint mean = a.avg()\nint median = a.median()\nint deviation = a.stdev()\nint[] z = a.standardize()\nplot(mean)\nplot(median)\nplot(deviation)\nplot(z.get(0))"), vec![1.0,1.0,0.0,-1.0]);
+    assert_eq!(
+        run(
+            "//@version=6\nindicator(\"int stats\")\na = array.from(1, 2)\nint mean = a.avg()\nint median = a.median()\nint deviation = a.stdev()\nint[] z = a.standardize()\nplot(mean)\nplot(median)\nplot(deviation)\nplot(z.get(0))"
+        ),
+        vec![1.0, 1.0, 0.0, -1.0]
+    );
 }

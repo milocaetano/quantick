@@ -226,6 +226,14 @@ impl Checker<'_> {
                     Base::Na
                 }
             }
+            BinarySearch | BinaryLeft | BinaryRight => {
+                arity(2, 2)?;
+                if !matches!(element, Base::Int | Base::Float) {
+                    return Err("binary search requires a numeric array".into());
+                }
+                require(1, &element)?;
+                Base::Int
+            }
             Contains(_) | IndexOf | LastIndexOf => {
                 arity(2, 2)?;
                 require(1, if map { &key } else { &element })?;
