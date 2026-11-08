@@ -15,6 +15,7 @@ pub(super) fn execute(
 ) -> Result<Value, String> {
     use Op::*;
     match op {
+        Sort | SortIndices => super::sorting::execute(arena, op, args, record),
         Get(false) | Set | Remove(false) | Insert | First | Last | Pop | Shift => {
             let slot = match op {
                 First | Shift => index(&Value::Num(0.0), size, false, version)?,

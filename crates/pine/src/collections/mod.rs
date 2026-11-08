@@ -1,6 +1,7 @@
 //! Typed collections backed solely by the interpreter word arena.
 mod array;
 mod runtime;
+mod sorting;
 mod storage;
 mod words;
 use crate::error::ErrorCode;
@@ -47,6 +48,8 @@ pub enum Op {
     Min,
     Max,
     Join,
+    Sort,
+    SortIndices,
     Put,
     PutAll,
     Keys,
@@ -180,6 +183,8 @@ const REGISTRY: &[(&str, Op)] = &[
     ("array.min", Op::Min),
     ("array.max", Op::Max),
     ("array.join", Op::Join),
+    ("array.sort", Op::Sort),
+    ("array.sort_indices", Op::SortIndices),
     ("map.put", Op::Put),
     ("map.put_all", Op::PutAll),
     ("map.keys", Op::Keys),
@@ -213,6 +218,7 @@ pub(crate) fn arguments(op: Op) -> &'static [&'static str] {
         Concat => &["id1", "id2"],
         Push | Unshift | Contains(false) | IndexOf | LastIndexOf => &["id", "value"],
         Fill => &["id", "value", "index_from", "index_to"],
+        Sort | SortIndices => &["id", "order"],
         Join => &["id", "separator"],
         _ => &["id"],
     }

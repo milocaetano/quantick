@@ -302,8 +302,14 @@ plot(m.get("missing") ? 1 : 0)
 #[test]
 fn collections_sorting_golden() {
     let expected: Vec<f64> = include_str!("golden/collections/sorting.csv")
-        .trim().split(',').map(|s| s.parse().unwrap()).collect();
-    assert_eq!(run(include_str!("fixtures/collections/sorting.pine")), expected);
+        .trim()
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(
+        run(include_str!("fixtures/collections/sorting.pine")),
+        expected
+    );
 }
 #[test]
 fn collections_reject_invalid_scalar_methods() {

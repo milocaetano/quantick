@@ -30,6 +30,10 @@ impl Checker<'_> {
         args: &[Arg],
         values: &[Type],
     ) -> Type {
+        if matches!(op, Op::NewArray(_) | Op::NewMap(..) | Op::From) {
+            self.error(id, "collection constructors are namespace functions");
+            return Type::unknown();
+        }
         let names = crate::collections::arguments(op);
         let names = names.get(1..).unwrap_or(&[]);
         let mut order = vec![None; names.len()];
@@ -89,10 +93,12 @@ impl Checker<'_> {
             }
         };
         let require = |index: usize, expected: &Base| {
-            if values
-                .get(index)
-                .is_some_and(|v| accepts(expected, &v.base))
-            {
+            if values.get(index).is_some_and(|v| {
+                accepts(expected, &v.base)
+                    && !(self.version.two_state_bool()
+                        && *expected == Base::Bool
+                        && v.base == Base::Na)
+            }) {
                 Ok(())
             } else {
                 Err(format!(
@@ -227,7 +233,24 @@ impl Checker<'_> {
                 }
                 if op == Avg { Base::Float } else { element }
             }
+            Sort | SortIndices => {
+                arity(1, 2)?;
+                if !matches!(element, Base::Int | Base::Float | Base::String) {
+                    return Err("sorting requires a numeric or string array".into());
+                }
+                if values.len() == 2 {
+                    require(1, &Base::Handle("enum"))?;
+                }
+                if op == Sort {
+                    Base::Na
+                } else {
+                    Base::Array(Box::new(Base::Int))
+                }
+            }
             Join => {
+                if !matches!(element, Base::Int | Base::Float | Base::String) {
+                    return Err("joining requires a numeric or string array".into());
+                }
                 arity(1, 2)?;
                 if values.len() == 2 {
                     require(1, &Base::String)?;

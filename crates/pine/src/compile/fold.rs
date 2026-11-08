@@ -80,6 +80,8 @@ pub(super) fn member_constant(
     let tag = match (namespace, field) {
         // format.* is accepted so `indicator(format=...)` resolves; the
         // header then warns that it is ignored.
+        ("order", "ascending") => "ascending",
+        ("order", "descending") => "descending",
         ("format", "price") => "format_price",
         ("format", "volume") => "format_volume",
         ("format", "percent") => "format_percent",
