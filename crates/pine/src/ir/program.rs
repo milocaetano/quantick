@@ -280,7 +280,9 @@ impl Program {
                 let done = code.len();
                 code.push(I::Jump(0));
                 let fallback = code.len();
-                Self::advance(script, code, *rhs);
+                if !script.version.lazy_boolean() {
+                    Self::advance(script, code, *rhs);
+                }
                 code.push(I::Constant(id, Literal::Bool(*op == BinOp::Or)));
                 let end = code.len();
                 code[branch] = I::JumpUnless(*lhs, *op == BinOp::And, fallback);

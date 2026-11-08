@@ -14,7 +14,8 @@ impl Eval<'_> {
         body: NodeId,
     ) -> Result<Value, PineError> {
         let from = self.num(from)?;
-        let to = self.num(to)?;
+        let bound_node = to;
+        let mut to = self.num(bound_node)?;
         let step = match by {
             Some(by) => self.num(by)?,
             None => 1.0,
@@ -40,6 +41,9 @@ impl Eval<'_> {
             self.write_resolved(id, Value::Num(i));
             last = self.eval(body)?;
             i += step;
+            if self.script.version.dynamic_for_bound() {
+                to = self.num(bound_node)?;
+            }
         }
         Ok(last)
     }
