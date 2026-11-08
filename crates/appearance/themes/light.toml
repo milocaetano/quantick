@@ -5,8 +5,8 @@ candle_fill_opacity = 1.0
 
 [colors]
 drawing_default = "#B5832B"
-drawing_buy = "#B5832B"
-drawing_sell = "#B5832B"
+drawing_buy = "#089981"
+drawing_sell = "#F23645"
 drawing_vwap = "#B5832B"
 # The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
 drawing_profile = "#7A8EC2"
@@ -140,8 +140,8 @@ candle_fill_opacity = 0.20
 
 [bookmap.colors]
 drawing_default = "#B5832B"
-drawing_buy = "#B5832B"
-drawing_sell = "#B5832B"
+drawing_buy = "#089981"
+drawing_sell = "#F23645"
 drawing_vwap = "#B5832B"
 drawing_profile = "#7A8EC2"
 flow_surface = "#1e2433"

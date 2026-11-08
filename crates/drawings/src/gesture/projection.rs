@@ -189,11 +189,11 @@ impl DrawingProjection<'_> {
             bar
         };
         let value = match snap {
-            // A mark's own rule beats the magnet toggle in both directions:
-            // it snaps with the magnet off, and it snaps to *its* extreme
-            // rather than to whichever of the four OHLC prices is nearest.
-            AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
-            AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            // A mark lands where the pointer is. Its magnet snaps it to
+            // *its* extreme rather than to whichever of the four OHLC
+            // prices is nearest.
+            AnchorSnap::BarLow => magnet.then(|| self.bar_extreme(band, bar, false)).flatten(),
+            AnchorSnap::BarHigh => magnet.then(|| self.bar_extreme(band, bar, true)).flatten(),
             AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
             AnchorSnap::Pointer => magnet
                 .then(|| self.magnet_value(band, bar, pos.y, scale))
