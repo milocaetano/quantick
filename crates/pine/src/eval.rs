@@ -37,6 +37,8 @@ use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
 #[path = "ir/kernel_state.rs"]
 mod kernel_state;
 mod kernels;
+#[path = "libraries/runtime.rs"]
+mod library_runtime;
 #[path = "ir/object_state.rs"]
 mod object_state;
 mod objects;
@@ -553,6 +555,7 @@ fn source_value(source: SourceId, bar: &IndicatorBar, ctx: &Ctx<'_>) -> f64 {
 /// else false.
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        (Value::UserObject(a), Value::UserObject(b)) => a == b,
         (Value::Num(a), Value::Num(b)) => a == b,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Color(a), Value::Color(b)) => a == b,
@@ -563,6 +566,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 
 fn describe(value: &Value) -> &'static str {
     match value {
+        Value::UserObject(_) => "user object",
         Value::Obj(..) => "an object handle",
         Value::Collection(..) => "a collection handle",
         Value::Num(_) => "a number",

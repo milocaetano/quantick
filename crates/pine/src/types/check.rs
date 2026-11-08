@@ -1,5 +1,5 @@
 //! Load-time inference, independent of runtime values and commit/preview state.
-use super::model::{Base, Qualifier, Type, accepts, annotation, common};
+use super::model::{Base, Qualifier, Type, accepts, common};
 use std::collections::BTreeMap;
 
 use crate::ast::{Ast, BinOp, NodeId, NodeKind, UnOp};
@@ -31,6 +31,7 @@ pub(crate) fn validate(
         context: 0,
         contexts: vec![(vec![0; node_count], vec![false; node_count])],
         dispatch: BTreeMap::new(),
+        object_ops: BTreeMap::new(),
     };
     // Qualifiers only rise. Revisit earlier reads after later assignments until
     // stable, including assignments guarded by a series condition.
@@ -50,6 +51,7 @@ pub(crate) fn validate(
         coercions,
         integer_divisions,
         dispatch: checker.dispatch,
+        object_ops: checker.object_ops,
     }
 }
 pub(crate) struct Checker<'a> {
@@ -64,7 +66,8 @@ pub(crate) struct Checker<'a> {
     integer_divisions: Vec<bool>,
     control: Qualifier,
     stack: Vec<u32>,
-    context: u32,
+    pub context: u32,
+    pub object_ops: BTreeMap<(u32, usize), crate::libraries::ObjectOp>,
     contexts: Vec<(Vec<u8>, Vec<bool>)>,
     dispatch: crate::ir::FunctionDispatch,
 }
@@ -108,7 +111,7 @@ impl Checker<'_> {
         }
     }
     fn annotated(&mut self, id: NodeId, value: NodeId, actual: Type, words: &[String]) -> Type {
-        match annotation(words) {
+        match self.annotation(words) {
             Ok(Some((base, qualifier))) => {
                 if !self.accepts(&base, &actual.base) {
                     self.error(id, format!("expected {base:?}, found {:?}", actual.base));
@@ -175,6 +178,14 @@ impl Checker<'_> {
             NodeKind::Str(_) => Type::new(Base::String, Qualifier::Const),
             NodeKind::Color(_) => Type::new(Base::Color, Qualifier::Const),
             NodeKind::Na => Type::new(Base::Na, Qualifier::Const),
+            NodeKind::Member { object, field }
+                if !matches!(
+                    self.resolutions[id.index()],
+                    Resolution::Builtin(_) | Resolution::ColorConst(_) | Resolution::EnumConst(_)
+                ) =>
+            {
+                self.user_field(id, object, &field)
+            }
             NodeKind::Name(_) | NodeKind::Member { .. } => {
                 let ty = self.read(self.resolutions[id.index()]);
                 if ty.base == Base::Unknown
@@ -223,7 +234,7 @@ impl Checker<'_> {
                 ty.qualifier = ty
                     .qualifier
                     .max(self.read(self.resolutions[id.index()]).qualifier);
-                if let Ok(Some((_, Some(limit)))) = annotation(&words)
+                if let Ok(Some((_, Some(limit)))) = self.annotation(&words)
                     && ty.qualifier > limit
                 {
                     self.error(id, "reassignment exceeds the declared qualifier");
@@ -279,7 +290,7 @@ impl Checker<'_> {
             }
             NodeKind::FunctionDef { params, .. } => {
                 for words in self.ast.annotations(id).to_vec() {
-                    if let Err(message) = annotation(&words) {
+                    if let Err(message) = self.annotation(&words) {
                         self.error(id, message);
                     }
                 }
@@ -321,9 +332,12 @@ impl Checker<'_> {
                 };
                 let values = args.iter().map(|a| self.infer(a.value)).collect::<Vec<_>>();
                 match self.resolutions[callee.index()] {
+                    Resolution::Object(crate::libraries::ObjectOp::New(index)) => {
+                        self.user_constructor(id, index, &args, &values)
+                    }
                     Resolution::Builtin(builtin) => self.builtin(id, builtin, &args, &values),
                     Resolution::Function(index) => self.overload(id, callee, index, &args, values),
-                    _ => self.method(id, callee, &args, &values),
+                    _ => self.user_operation(id, callee, &args, &values),
                 }
             }
             other => self.infer_operator(id, other),
@@ -536,7 +550,7 @@ impl Checker<'_> {
                     .annotations(def)
                     .get(target)
                     .map_or(&[][..], Vec::as_slice);
-                match annotation(words) {
+                match self.annotation(words) {
                     Ok(Some((base, qualifier))) => {
                         if !self.accepts(&base, &value.base)
                             || qualifier.is_some_and(|q| value.qualifier > q)

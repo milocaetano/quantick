@@ -147,6 +147,7 @@ impl Eval<'_> {
     fn execute_operation(&mut self, instruction: &Instruction) -> Result<(), PineError> {
         use Instruction as I;
         let (id, value) = match instruction {
+            I::Object(id, op, object, args) => (*id, self.user_object(*id, *op, *object, args)?),
             I::Constant(id, literal) => (
                 *id,
                 match literal {

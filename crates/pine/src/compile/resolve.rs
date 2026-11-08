@@ -414,6 +414,17 @@ impl Compiler {
             self.walk_expr(callee, scope, ctx);
             return;
         };
+        if let Some(type_name) = name.strip_suffix(".new")
+            && let Some(index) = self
+                .ast
+                .user_types
+                .iter()
+                .position(|ty| ty.name == type_name)
+        {
+            self.resolutions[callee.index()] =
+                Resolution::Object(crate::libraries::ObjectOp::New(index as u32));
+            return;
+        }
         if let Some(builtin) = Builtin::lookup(&name) {
             self.resolutions[callee.index()] = Resolution::Builtin(builtin);
             self.builtin_call(id, builtin, args, ctx);

@@ -15,6 +15,8 @@ pub struct CallSiteId(pub u32);
 /// What a resolved name/member/callee means at eval time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Resolution {
+    /// A statically checked user-object operation.
+    Object(crate::libraries::ObjectOp),
     /// Not a reference (literals, operators, …).
     #[default]
     None,
@@ -53,6 +55,8 @@ pub type FunctionDispatch = std::collections::BTreeMap<(u32, usize), (u32, u32, 
 /// Type-directed lowering without runtime source-name lookups.
 #[derive(Clone, Default)]
 pub struct TypeProgram {
+    /// Per-call-context user-field slots for polymorphic functions.
+    pub object_ops: std::collections::BTreeMap<(u32, usize), crate::libraries::ObjectOp>,
     pub(crate) version: crate::version::Version,
     /// Per-context, per-node scalar conversions, checked at load.
     pub coercions: Vec<Vec<u8>>,

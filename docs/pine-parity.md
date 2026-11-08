@@ -246,3 +246,21 @@ All nine app-script snapshots remain byte-identical after the two semantic fixes
 the list of changed app-script outputs is empty. App oracle verification remains
 0/9. The original corpus and oracle baseline measurements above describe child 0,
 not the current native MACD support.
+
+## Final retained-child acceptance
+
+C90-C93 are the offline combined acceptance entry points. Final acceptance is
+pending collection integration and the final benchmark; intermediate passing
+checks do not establish completed parity. The baseline remains 1,344/1,920
+matching proxy cells; the current numerical oracle expects 1,920/1,920. The
+positive compiler corpus remains 13/13, invalid rejection 7/7, and its oracle
+coverage remains 0/21 plot columns. App snapshot coverage remains 9/9 and direct
+app oracle coverage remains 0/9. The child-1 semantic corrections are recorded
+separately below and in the accepted snapshot changes; these denominators are
+not a general real-world script success rate.
+
+Library fixtures are independently authored hand-calculated acceptance data,
+not PineTS verification. C61 covers exact local resolution, references, methods,
+preview rollback, missing/cyclic/remote diagnostics and v5/v6 field history.
+The mixed collection fixture was committed before its implementation and will
+join final acceptance after the collections child integrates.

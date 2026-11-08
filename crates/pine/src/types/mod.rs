@@ -6,6 +6,8 @@ mod calls;
 pub(crate) mod check;
 #[path = "../collections/check.rs"]
 mod collection_check;
+#[path = "../libraries/check.rs"]
+mod library_check;
 pub(crate) mod model;
 #[path = "../version/types.rs"]
 mod version_policy;
@@ -17,6 +19,8 @@ pub(crate) use crate::ir::TypeProgram as Checked;
 /// covers non-numeric contexts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// A user-object reference into the authoritative word arena.
+    UserObject(u32),
     /// A number (NaN = na).
     Num(f64),
     /// A boolean.

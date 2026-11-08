@@ -446,3 +446,24 @@ they never silently return a substitute. `array.from` requires positional argume
 The independent original fixtures follow the primary
 [array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
 [map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.
+## Local libraries and user objects
+
+`libraries::compile_with_libraries(source, title, resolver)` accepts a pure
+caller-supplied `Fn(&str) -> Option<String>` source resolver. Imports use exact
+`local/name/version` keys and explicit aliases. No filesystem or network lookup
+occurs in Pine. Missing keys, import cycles, remote keys and depth beyond 32 fail
+with deterministic diagnostics. The original two-argument `compile` remains
+available for scripts without imports.
+
+`type`, typed fields, literal field defaults, `Type.new(...)`, field reads and
+`:=` writes, `method` definitions and receiver calls use checked object references.
+Assignment aliases references; `object.copy()` creates a shallow copy. Object
+history preserves references. In v6 `object.field[1]` is rejected: use
+`previous = object[1]` followed by `previous.field`, or a temporary field series.
+The v5 field-history form remains supported. User-object mutable fields live in
+the runtime word arena and participate in preview rollback. `varip` fields,
+enums, remote libraries and nonliteral field defaults are not implemented.
+
+Local library sources currently use the importing script's Pine version;
+version mismatches are rejected explicitly. Linking is bounded to 128 sources,
+32 nested imports and four million bytes of expanded source.
