@@ -357,6 +357,12 @@ fn the_tape_book_reaches_both_lane_edges() {
     let older = rect.left() + geometry.x(-0.05);
     assert!(older > rect.left() && lead.right() > lead.left());
     assert!((lead.right() - older).abs() < 0.001, "on the dots' clock");
+    let cut = layout.heat_cell_rect(&cell(0.5, Some((-1.0, -0.9)), false), 1.0, true);
+    assert_eq!(
+        cut,
+        egui::Rect::NOTHING,
+        "a lead cut at the edge is no sliver"
+    );
     let current = cell(0.75, None, true);
     let live = layout.heat_cell_rect(&current, 1.0, true);
     assert!((live.right() - rect.right()).abs() < 0.001, "{live:?}");

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use quantick_orderbook::OrderBook;
 
 use super::heat_cells::{DraftCell, PriceRows, book_gaps, finish_with_priority};
-use super::model::{BookSource, GapPrimitive, HeatmapCell, PriceWindow};
+use super::model::{BEFORE_CAPTURE, BookSource, GapPrimitive, HeatmapCell, PriceWindow};
 use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep_grouped_runs};
 use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
@@ -204,33 +204,54 @@ pub(super) fn project_lane_heat(
 /// bands are ([`GapPrimitive::lead_span`]). The settled half draws them in
 /// the candles' slots, older than the lane's window; without them the
 /// tape's inset would read a hole in the record as an empty book. A gap
-/// still open at the opening is left to the settled half, whose band already
-/// runs across the divider and the inset.
+/// still open past the opening is left to the settled half, whose band
+/// already runs across the divider and the inset. Where the lead reaches
+/// before the retained book, that stretch is marked as before capture, as
+/// the settled half marks its own oldest edge.
 pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<GapPrimitive> {
     let config = history.config();
     let lead_ms = timeline.lane_lead_ms();
-    let (Some((lane_start_ms, lane_end_ms)), Some(opening)) = (
+    let (Some((lane_start_ms, lane_end_ms)), Some(opening), Some(first)) = (
         timeline.lane_bounds_ms(),
         timeline
             .lane_start_ms()
             .and_then(|start| timeline.locate_in_lane_clamped(start)),
+        // With nothing captured the settled half marks the whole chart.
+        history.coverage_segments().next(),
     ) else {
         return Vec::new();
     };
-    // With nothing captured the settled half marks the whole chart already.
+    // Gated as the lead's bands are: only a tape that draws its book.
     if lead_ms <= 0
-        || !(config.live_lane.depth_time_averaging && config.depth_visible_anywhere())
+        || !(config.live_lane.depth_time_averaging && config.lane_depth_drawn())
         || !config.show_gaps
-        || history.coverage_segments().next().is_none()
     {
         return Vec::new();
     }
     let window_ms = (lane_end_ms - lane_start_ms).max(1) as f64;
-    let fraction = |time_ms: i64| Some((time_ms - lane_start_ms) as f64 / window_ms);
+    let fraction = |time_ms: i64| (time_ms - lane_start_ms) as f64 / window_ms;
     let from_ms = lane_start_ms.saturating_sub(lead_ms);
-    book_gaps(history, from_ms, lane_start_ms, fraction)
-        .into_iter()
-        .filter(|gap| gap.x1 < 0.0)
+    let captured_ms = history
+        .retention_start_ms()
+        .map_or(first.start_ms, |retained| retained.max(first.start_ms))
+        .max(from_ms);
+    // Read a millisecond past the opening: a gap that ends at it stays here,
+    // one still open past it reads beyond zero and is the settled half's.
+    let mut gaps = book_gaps(history, captured_ms, lane_start_ms + 1, |time_ms| {
+        Some(fraction(time_ms))
+    });
+    gaps.retain(|gap| gap.x1 <= 0.0);
+    if captured_ms > from_ms && captured_ms <= lane_start_ms {
+        gaps.push(GapPrimitive {
+            from_generation: None,
+            to_generation: Some(first.generation),
+            x0: fraction(from_ms),
+            x1: fraction(captured_ms),
+            reason: BEFORE_CAPTURE.to_owned(),
+            lead_span: None,
+        });
+    }
+    gaps.into_iter()
         .map(|gap| GapPrimitive {
             x0: opening.normalized,
             x1: opening.normalized,

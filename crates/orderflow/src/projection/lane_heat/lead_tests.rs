@@ -374,3 +374,69 @@ fn a_lead_band_reports_on_the_lane() {
     assert!(hit.live_lane, "the tape's band, never a candle's");
     assert_eq!((hit.start_slot, hit.end_slot_exclusive), (8, 8));
 }
+
+/// A book that drops at 1,450 and resyncs at `resync_ms`.
+fn gapped(resync_ms: i64, config: HeatmapConfig) -> LiquidityHistory {
+    let mut history = LiquidityHistory::new(config);
+    let snapshot = || {
+        BookSnapshot::new(
+            10,
+            vec![level(95, 100)],
+            vec![level(101, 1)],
+            BookCoverage::Full,
+        )
+    };
+    history.install_snapshot(0, 1, snapshot()).unwrap();
+    history.mark_gap(1_450, "transport_closed").unwrap();
+    history.install_snapshot(resync_ms, 2, snapshot()).unwrap();
+    history
+}
+
+#[test]
+fn a_gap_ending_at_the_opening_is_still_the_leads() {
+    let config = config(40.0, 1_000);
+    let timeline = timeline(lead_ms(&config));
+    let at_opening = lead_gaps(&gapped(LANE_START_MS, config.clone()), &timeline);
+    assert_eq!(at_opening.len(), 1, "{at_opening:?}");
+    assert_eq!(at_opening[0].lead_span, Some((-0.1, 0.0)));
+    let past_it = lead_gaps(&gapped(LANE_START_MS + 1, config), &timeline);
+    assert!(
+        past_it.is_empty(),
+        "the settled band already crosses the inset"
+    );
+}
+
+#[test]
+fn lead_gaps_follow_the_tapes_own_book_switch() {
+    let mut config = config(40.0, 1_000);
+    let timeline = timeline(lead_ms(&config));
+    config.live_lane.show_depth = false;
+    assert!(!config.lane_depth_drawn());
+    assert!(lead_gaps(&gapped(1_470, config), &timeline).is_empty());
+}
+
+#[test]
+fn the_lead_before_the_retained_book_is_marked() {
+    let mut config = config(40.0, 1_000);
+    config.retention_ms = 1_000;
+    let timeline = timeline(lead_ms(&config));
+    let mut history = history_from(0, config);
+    history
+        .apply_delta(2_450, &BookDelta::new(13, 13, vec![level(99, 50)], vec![]))
+        .unwrap();
+    let retained_ms = history.retention_start_ms().unwrap();
+    assert_eq!(retained_ms, 1_450);
+    let lead_start = -(timeline.lane_lead_ms() as f64) / WINDOW_MS as f64;
+    assert!(
+        lead_start < -0.1,
+        "the lead reaches before the retained book"
+    );
+    let gaps = lead_gaps(&history, &timeline);
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    assert!(gaps[0].precedes_capture());
+    assert_eq!(gaps[0].lead_span, Some((lead_start, -0.1)));
+    let cells = project(&history, &timeline);
+    for cell in cells.iter().filter_map(|cell| cell.lead_span) {
+        assert!(cell.0 >= -0.1, "no band before the retained book: {cell:?}");
+    }
+}

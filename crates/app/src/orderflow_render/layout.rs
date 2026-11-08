@@ -290,6 +290,8 @@ impl<'a> ProjectedLayout<'a> {
     pub(crate) fn heat_cell_rect(self, cell: &HeatmapCell, min: f32, live: bool) -> egui::Rect {
         let (top, bottom) = (self.y(cell.y0), self.y(cell.y1));
         match self.tape_x(|tape| tape.book_span_px(cell, self.slot_count, live)) {
+            // A lead cut away at the pane edge paints and hits nothing.
+            Some((x0, x1)) if x1 <= x0 => egui::Rect::NOTHING,
             Some((x0, x1)) => {
                 let rect = egui::Rect::from_two_pos(egui::pos2(x0, top), egui::pos2(x1, bottom));
                 readable_band(rect, min, self.lane_rect())
