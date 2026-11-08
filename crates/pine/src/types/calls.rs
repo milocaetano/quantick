@@ -225,9 +225,15 @@ impl Checker<'_> {
                 }
                 Base::Handle("plot")
             }
-            PlotShape | PlotChar | AlertCondition => {
+            PlotShape | PlotChar => {
+                if !first.condition() {
+                    self.error(id, "marker requires a numeric or bool series");
+                }
+                Base::Na
+            }
+            AlertCondition => {
                 if !self.valid_condition(&first) {
-                    self.error(id, "marker or alert requires a condition");
+                    self.error(id, "alert requires a condition");
                 }
                 Base::Na
             }

@@ -114,3 +114,41 @@ fn version_dynamic_loop_budget() {
     };
     assert!(script.preview(&bar, &mut ctx).is_err());
 }
+
+#[test]
+fn version_numeric_markers_preserve_absolute_values() {
+    for version in [5, 6] {
+        let source = format!(
+            "//@version={version}\nindicator(\"markers\")\nplotshape(close, location=location.absolute)\nplotchar(close, location=location.absolute)\nplotshape(close)\nplotchar(close)\n"
+        );
+        let compiled = compile(&source, "markers").unwrap_or_else(|e| panic!("{e:?}"));
+        let mut script = ScriptIndicator::new(compiled, &source);
+        for (index, close) in [12.5, -3.0].into_iter().enumerate() {
+            let bar = IndicatorBar {
+                open_time: 0,
+                close_time: 1,
+                open: close,
+                high: close,
+                low: close,
+                close,
+                buy_volume: 0.0,
+                sell_volume: 0.0,
+                trade_count: 0.0,
+            };
+            let mut ctx = Ctx {
+                bar_index: index,
+                cvd: &[0.0; 2],
+            };
+            let expected = [close, close, 1.0, 1.0];
+            for _ in 0..2 {
+                assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, expected);
+            }
+            script.on_close(&bar, &mut ctx).unwrap();
+            for (column, expected) in expected.into_iter().enumerate() {
+                assert_eq!(script.plots().column(PlotId::new(column))[index], expected);
+            }
+        }
+        let alert = format!("//@version={version}\nindicator(\"alert\")\nalertcondition(close)\n");
+        assert_eq!(compile(&alert, "alert").is_ok(), version == 5);
+    }
+}

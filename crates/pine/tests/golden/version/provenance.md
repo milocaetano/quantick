@@ -13,3 +13,8 @@ bool-returning expressions normalize unavailable values to false:
 https://www.tradingview.com/pine-script-docs/language/type-system/#bool
 This is a primary-document interpretation, not a verified TradingView compiler
 result. The existing v5 missing-bool result is retained in the paired fixture.
+
+The paired numeric marker regression follows the v6 visuals overview:
+https://www.tradingview.com/pine-script-docs/visuals/overview/#plotshape-and-plotchar
+Both marker functions accept numeric series; absolute positions retain their
+numeric y value, while relative markers use a nonzero value as their condition.
