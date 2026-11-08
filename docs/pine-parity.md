@@ -338,6 +338,9 @@ pre/post checks for each sample. All eight samples are retained:
 Baseline mean: 15,625.175 ns/trade; final mean: 15,586.775 ns/trade
 (1,558.678 ns per indicator/update), 0.246% below baseline. This is practically
 flat within the observed variation, with no observed mean regression; it is
-not evidence of a material speedup. The historical larger improvements above
+not evidence of a statistically established speedup. Baseline median is
+15,587.5 ns/trade (range 15,416.7-15,909.0); final median is 15,397.85
+(range 15,267.7-16,283.7). Individual final samples are not uniformly faster.
+The historical larger improvements above
 are not substituted for this final measurement. Compilation and setup are
 outside the timed region; preview rollback and retained state are included.
