@@ -1,0 +1,7 @@
+# pinets=0.13.1; plot(bar_index % 2 == 0 ? ta.cum(close) : 0); close=1,2,3,4,5
+conditional_cum
+1
+0
+4
+0
+9

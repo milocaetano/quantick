@@ -14,6 +14,9 @@ use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer::{Tok, Token};
 
+#[path = "libraries/parse.rs"]
+mod library_parse;
+
 /// How deeply expressions may nest.
 ///
 /// Descent costs about five stack frames per `(`, and a stack overflow
@@ -30,6 +33,9 @@ const MAX_NEST_DEPTH: usize = 64;
 ///
 /// Every syntax error found, each with its span; the AST is only returned
 /// when the whole script parsed.
+#[path = "collections/parser.rs"]
+mod collection_parser;
+
 pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
     debug_assert!(
         !tokens.is_empty(),
@@ -199,7 +205,13 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> Option<NodeId> {
+        if self.collection_declaration_ahead() {
+            return self.collection_declaration();
+        }
         let start = self.span();
+        if let Some(result) = self.library_statement(start) {
+            return result;
+        }
         match self.peek().clone() {
             Tok::KwVar | Tok::KwVarip => {
                 let mode = if self.eat(&Tok::KwVar) {
@@ -208,12 +220,7 @@ impl Parser<'_> {
                     self.advance();
                     VarMode::Varip
                 };
-                // `var float x = …` and `var series float x = …`: the type
-                // annotation is accepted and recorded nowhere — the dialect
-                // is dynamically typed with compile-time checks on builtins
-                // (documented divergence). Pine allows a qualifier before the
-                // type, so skip every leading word that is followed by
-                // another word; the last one is the variable's own name.
+                // Preserve leading annotations on the declaration node.
                 while matches!(self.peek(), Tok::Ident(_))
                     && matches!(self.peek_at(1), Tok::Ident(_))
                 {
@@ -247,9 +254,7 @@ impl Parser<'_> {
                 }
             }
             Tok::Ident(name) => {
-                // `float x = …`, `simple int len = 9`, `series float x = na`:
-                // skip the annotation words (see the var arm). The name is
-                // the last identifier of the run, the one before `=`.
+                // The final identifier before `=` names the variable.
                 let mut annotation_words = 0usize;
                 while matches!(self.peek_at(annotation_words), Tok::Ident(_))
                     && matches!(self.peek_at(annotation_words + 1), Tok::Ident(_))
@@ -309,7 +314,31 @@ impl Parser<'_> {
 
     fn declare(&mut self, mode: VarMode, name: String, value: NodeId, start: Span) -> NodeId {
         let span = self.spanned_from(start);
-        self.ast.push(NodeKind::Declare { mode, name, value }, span)
+        let mut words: Vec<String> = self
+            .tokens
+            .iter()
+            .filter(|t| {
+                t.span.start >= start.start && t.span.start < self.ast.node(value).span.start
+            })
+            .filter_map(|t| {
+                if let Tok::Ident(word) = &t.tok {
+                    Some(word.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        words.pop(); // variable name
+        if self.tokens.iter().any(|t| {
+            t.span.start >= start.start
+                && t.span.start < self.ast.node(value).span.start
+                && t.tok == Tok::LBracket
+        }) {
+            words.insert(0, "array".into());
+        }
+        let id = self.ast.push(NodeKind::Declare { mode, name, value }, span);
+        self.ast.annotate(id, vec![words]);
+        id
     }
 
     /// Whether the upcoming `[ … ]` is `[name, name] =` — a destructuring —
@@ -369,14 +398,15 @@ impl Parser<'_> {
         self.advance(); // name
         self.advance(); // `(`
         let mut params = Vec::new();
+        let mut annotations = Vec::new();
         if *self.peek() != Tok::RParen {
             loop {
-                let Tok::Ident(param) = self.peek().clone() else {
+                let Some(mut words) = self.parameter_words() else {
                     self.pos = saved;
                     return None;
                 };
-                self.advance();
-                params.push(param);
+                params.push(words.pop().expect("parameter name"));
+                annotations.push(words);
                 if !self.eat(&Tok::Comma) {
                     break;
                 }
@@ -395,18 +425,23 @@ impl Parser<'_> {
             body
         };
         let span = self.spanned_from(start);
-        Some(self.ast.push(
+        let id = self.ast.push(
             NodeKind::FunctionDef {
                 name: name.to_owned(),
                 params,
                 body,
             },
             span,
-        ))
+        );
+        self.ast.annotate(id, annotations);
+        Some(id)
     }
 
     fn expression_statement(&mut self, start: Span) -> Option<NodeId> {
         let (expr, block_form) = self.statement_value()?;
+        if !block_form && self.eat(&Tok::ColonEq) {
+            return self.field_assignment(expr, start);
+        }
         if !block_form {
             self.end_of_statement();
         }
@@ -745,7 +780,7 @@ impl Parser<'_> {
                 }
                 Tok::Dot => {
                     self.advance();
-                    let Tok::Ident(field) = self.peek().clone() else {
+                    let Tok::Ident(mut field) = self.peek().clone() else {
                         let span = self.span();
                         self.errors.push(PineError::new(
                             ErrorCode::PineSyntax,
@@ -755,6 +790,20 @@ impl Parser<'_> {
                         return None;
                     };
                     self.advance();
+                    if field == "new" && self.eat(&Tok::Lt) {
+                        loop {
+                            let Tok::Ident(ty) = self.peek().clone() else {
+                                return None;
+                            };
+                            self.advance();
+                            field.push('_');
+                            field.push_str(&ty);
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(&Tok::Gt, "`>` after collection types");
+                    }
                     let span = self.spanned_from(start);
                     expr = self.ast.push(
                         NodeKind::Member {
@@ -788,6 +837,9 @@ impl Parser<'_> {
             };
             let value = self.expression()?;
             let span = self.spanned_from(arg_start);
+            if matches!(name.as_deref(), Some("index_to" | "initial_value")) {
+                self.ast.reserve_default_zero(span);
+            }
             args.push(Arg { name, value, span });
             if !self.eat(&Tok::Comma) {
                 break;
@@ -1189,7 +1241,7 @@ double(x) => x * 2\ntriple(x) =>\n    y = x * 3\n    y\n";
     }
 
     #[test]
-    fn a_qualified_type_annotation_is_accepted_and_ignored() {
+    fn a_qualified_type_annotation_is_preserved() {
         // Pine v5 lets a qualifier precede the type. Both forms declare the
         // variable; the annotation itself is recorded nowhere.
         for source in [

@@ -1,0 +1,28 @@
+proxy=PineTS-0.13.1; not verified TradingView equivalence
+tolerance=1e-8 absolute + 1e-8 relative; na matches only na
+time/sma: cells=64 divergent=0 locations=
+time/ema: cells=64 divergent=0 locations=
+time/rsi: cells=64 divergent=0 locations=
+time/atr: cells=64 divergent=0 locations=
+time/macd: rejected cells=192 codes=PINE_UNKNOWN_NAME
+time/stdev: cells=64 divergent=0 locations=
+time/crossover: cells=64 divergent=0 locations=
+time/pivothigh: cells=64 divergent=0 locations=
+tick/sma: cells=64 divergent=0 locations=
+tick/ema: cells=64 divergent=0 locations=
+tick/rsi: cells=64 divergent=0 locations=
+tick/atr: cells=64 divergent=0 locations=
+tick/macd: rejected cells=192 codes=PINE_UNKNOWN_NAME
+tick/stdev: cells=64 divergent=0 locations=
+tick/crossover: cells=64 divergent=0 locations=
+tick/pivothigh: cells=64 divergent=0 locations=
+volume/sma: cells=64 divergent=0 locations=
+volume/ema: cells=64 divergent=0 locations=
+volume/rsi: cells=64 divergent=0 locations=
+volume/atr: cells=64 divergent=0 locations=
+volume/macd: rejected cells=192 codes=PINE_UNKNOWN_NAME
+volume/stdev: cells=64 divergent=0 locations=
+volume/crossover: cells=64 divergent=0 locations=
+volume/pivothigh: cells=64 divergent=0 locations=
+matching_cells=1344/1920
+rejected_cells=576/1920

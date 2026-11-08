@@ -1,0 +1,64 @@
+paint 0 None
+paint 1 None
+paint 2 None
+paint 3 None
+paint 4 None
+paint 5 None
+paint 6 None
+paint 7 None
+paint 8 None
+paint 9 None
+paint 10 None
+paint 11 None
+paint 12 None
+paint 13 None
+paint 14 None
+paint 15 None
+paint 16 None
+paint 17 None
+paint 18 None
+paint 19 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 20 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 21 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 22 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 23 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 24 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 25 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 26 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 27 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 28 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 29 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 30 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 31 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 32 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 33 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 34 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 35 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 36 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 37 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 38 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 39 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 40 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 41 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 42 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 43 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 44 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 45 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 46 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 47 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 48 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 49 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 50 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 51 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 52 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 53 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 54 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 55 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 56 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 57 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 58 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 59 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 60 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 61 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 62 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })
+paint 63 Some(Rgba8 { r: 178, g: 181, b: 190, a: 255 })

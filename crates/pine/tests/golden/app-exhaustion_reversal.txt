@@ -1,0 +1,194 @@
+plot 0 PlotSpec { id: PlotId(0), title: "Exhaustion reversal: sell", style: Circles, base_color: Rgba8 { r: 242, g: 54, b: 69, a: 255 }, width: 1.5, offset: 0, marker: Some(MarkerSpec { shape: TriangleDown, location: AboveBar, text: None }) }
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+plot 1 PlotSpec { id: PlotId(1), title: "Exhaustion reversal: buy", style: Circles, base_color: Rgba8 { r: 0, g: 137, b: 123, a: 255 }, width: 1.5, offset: 0, marker: Some(MarkerSpec { shape: TriangleUp, location: BelowBar, text: None }) }
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+na
+paint 0 None
+paint 1 None
+paint 2 None
+paint 3 None
+paint 4 None
+paint 5 None
+paint 6 None
+paint 7 None
+paint 8 None
+paint 9 None
+paint 10 None
+paint 11 None
+paint 12 None
+paint 13 None
+paint 14 None
+paint 15 None
+paint 16 None
+paint 17 None
+paint 18 None
+paint 19 None
+paint 20 None
+paint 21 None
+paint 22 None
+paint 23 None
+paint 24 None
+paint 25 None
+paint 26 None
+paint 27 None
+paint 28 None
+paint 29 None
+paint 30 None
+paint 31 None
+paint 32 None
+paint 33 None
+paint 34 None
+paint 35 None
+paint 36 None
+paint 37 None
+paint 38 None
+paint 39 None
+paint 40 None
+paint 41 None
+paint 42 None
+paint 43 None
+paint 44 None
+paint 45 None
+paint 46 None
+paint 47 None
+paint 48 None
+paint 49 None
+paint 50 None
+paint 51 None
+paint 52 None
+paint 53 None
+paint 54 None
+paint 55 None
+paint 56 None
+paint 57 None
+paint 58 None
+paint 59 None
+paint 60 None
+paint 61 None
+paint 62 None
+paint 63 None

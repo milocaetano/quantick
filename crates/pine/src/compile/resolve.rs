@@ -362,7 +362,7 @@ impl Compiler {
             self.resolutions[id.index()] = Resolution::Builtin(builtin);
             return true;
         }
-        if let Some(constant) = member_constant(&namespace, field) {
+        if let Some(constant) = member_constant(self.checked_types.version, &namespace, field) {
             self.resolutions[id.index()] = match constant {
                 Const::Enum(tag) => Resolution::EnumConst(tag),
                 Const::Color(rgba) => Resolution::ColorConst(rgba),
@@ -414,6 +414,23 @@ impl Compiler {
             self.walk_expr(callee, scope, ctx);
             return;
         };
+        if let Some(type_name) = name.strip_suffix(".new")
+            && let Some(index) = self
+                .ast
+                .user_types
+                .iter()
+                .position(|ty| ty.name == type_name)
+        {
+            self.resolutions[callee.index()] =
+                Resolution::Object(crate::libraries::ObjectOp::New(index as u32));
+            return;
+        }
+        if let Some(op) = crate::libraries::collection_constructor(&name, &self.ast) {
+            let builtin = Builtin::Collection(op);
+            self.resolutions[callee.index()] = Resolution::Builtin(builtin);
+            self.builtin_call(id, builtin, args, ctx);
+            return;
+        }
         if let Some(builtin) = Builtin::lookup(&name) {
             self.resolutions[callee.index()] = Resolution::Builtin(builtin);
             self.builtin_call(id, builtin, args, ctx);
@@ -482,16 +499,6 @@ impl Compiler {
     /// input extraction, kernel-length folding.
     fn builtin_call(&mut self, call: NodeId, builtin: Builtin, args: &[Arg], ctx: &mut WalkCtx) {
         if builtin.is_stateful_call() {
-            if ctx.in_loop {
-                let span = self.span(call);
-                self.errors.push(PineError::new(
-                    ErrorCode::PineStatefulInLoop,
-                    span,
-                    "stateful ta/math kernels cannot be called inside a loop body \
-                     (per-iteration call sites would silently diverge); \
-                     hoist the call out of the loop",
-                ));
-            }
             let site = CallSiteId(self.call_site_count);
             self.call_site_count += 1;
             self.call_sites[call.index()] = Some(site);
@@ -511,6 +518,7 @@ impl Compiler {
             ));
         }
         match builtin {
+            Builtin::PlotCandle | Builtin::PlotBar => self.validate_candle_scope(call),
             Builtin::InputInt
             | Builtin::InputFloat
             | Builtin::InputBool
@@ -537,7 +545,7 @@ impl Compiler {
             | Builtin::TaLowestBars
             | Builtin::TaMom
             | Builtin::MathSum => (1, "length"),
-            Builtin::TaVwma => (2, "length"),
+            Builtin::TaVwma => (1, "length"),
             Builtin::TaAtr => (0, "length"),
             // Both sides of a pivot size the same window; checking the left
             // one reaches the same allocation the right one feeds.
@@ -547,6 +555,10 @@ impl Compiler {
     }
 
     fn check_kernel_length(&mut self, call: NodeId, builtin: Builtin, args: &[Arg]) {
+        if builtin == Builtin::TaMacd {
+            self.check_macd_lengths(call, args);
+            return;
+        }
         let Some((position, name)) = Self::kernel_length_arg(builtin) else {
             return;
         };

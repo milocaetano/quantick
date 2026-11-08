@@ -47,6 +47,7 @@
 //!   for `crossover`/`crossunder`.
 
 mod flow;
+pub mod packed;
 mod pivot;
 mod smooth;
 mod window;

@@ -1,0 +1,15 @@
+//@version=5
+indicator("Eager object reads")
+type Point
+    float value = 3.0
+var point = Point.new()
+f() =>
+    point.value := point.value + 8.0
+    ta.cum(point.value)
+x = bar_index == 1 ? ta.cum(point.value) : 0.0
+y = bar_index == 1 ? ta.cum(Point.new().value) : 0.0
+z = bar_index == 1 ? f() : 0.0
+plot(x)
+plot(y)
+plot(z)
+plot(point.value)

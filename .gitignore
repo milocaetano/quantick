@@ -41,3 +41,7 @@ docs/workflow/evidence/
 
 # Session scratch: the investigation record before it becomes an archive.
 .claude/laudo-scratch.md
+
+# Isolated development oracle and unlicensed local corpus.
+/tools/pine-oracle/node_modules/
+/tools/pine-oracle/local-corpus/

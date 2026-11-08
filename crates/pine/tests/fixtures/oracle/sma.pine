@@ -1,0 +1,5 @@
+//@version=5
+// SPDX-License-Identifier: MIT
+// Authored for Quantick oracle measurements.
+indicator("sma")
+plot(ta.sma(close, 5), "value")

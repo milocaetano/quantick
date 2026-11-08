@@ -22,6 +22,35 @@ impl<'a> Eval<'a> {
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
         let value = match builtin {
+            Builtin::IntCast
+            | Builtin::FloatCast
+            | Builtin::BoolCast
+            | Builtin::StringCast
+            | Builtin::ColorCast => {
+                let v = self.eval(args[0].value)?;
+                if v.is_na() {
+                    return Ok(match builtin {
+                        Builtin::BoolCast => Value::NaBool,
+                        Builtin::ColorCast => Value::NaColor,
+                        Builtin::StringCast => Value::NaString,
+                        _ => Value::Na,
+                    });
+                }
+                return Ok(match builtin {
+                    Builtin::IntCast => Value::Num(v.as_num().expect("checked cast").trunc()),
+                    Builtin::FloatCast => v,
+                    Builtin::BoolCast => Value::Bool(v.as_cond().expect("checked cast")),
+                    _ => v,
+                });
+            }
+            Builtin::Calendar(field) => {
+                crate::calendar::validate_arguments(args)
+                    .map_err(|message| self.err(id, ErrorCode::PineType, message))?;
+                let timestamp = self.eval(args[0].value)?;
+                let zone = args.get(1).map(|arg| self.eval(arg.value)).transpose()?;
+                return crate::calendar::call(field, timestamp, zone, self.timezone)
+                    .map_err(|message| self.err(id, ErrorCode::PineType, message));
+            }
             Builtin::NaCall => {
                 let v = match args.first() {
                     Some(arg) => self.eval(arg.value)?,
@@ -37,7 +66,11 @@ impl<'a> Eval<'a> {
                 if v.is_na() {
                     return match args.get(1) {
                         Some(replacement) => self.eval(replacement.value),
-                        None => Ok(Value::Num(0.0)),
+                        None => Ok(match v {
+                            Value::NaBool => Value::Bool(false),
+                            Value::NaColor => Value::Color(0),
+                            _ => Value::Num(0.0),
+                        }),
                     };
                 }
                 return Ok(v);
@@ -47,6 +80,9 @@ impl<'a> Eval<'a> {
                     Some(arg) => self.eval(arg.value)?,
                     None => Value::Na,
                 };
+                if base.is_na() {
+                    return Ok(Value::NaColor);
+                }
                 let Value::Color(rgba) = base else {
                     return Err(self.type_err(id, "a color", &base));
                 };

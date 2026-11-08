@@ -1,0 +1,18 @@
+//@version=6
+indicator("Mixed object collections")
+type Bucket
+    array<float> values
+    float label = 0.0
+var bucket = Bucket.new(array.new<float>(), 1.0)
+var objects = array.new<Bucket>()
+var lookup = map.new<string, Bucket>()
+array.push(bucket.values, close)
+array.push(objects, bucket)
+map.put(lookup, "current", bucket)
+copy = bucket.copy()
+array.push(copy.values, 1.0)
+found = map.get(lookup, "current")
+first = array.get(objects, 0)
+plot(array.sum(found.values))
+plot(array.sum(first.values))
+plot(array.size(copy.values))

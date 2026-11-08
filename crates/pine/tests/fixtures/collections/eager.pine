@@ -1,0 +1,19 @@
+//@version=5
+indicator("Eager collection reads")
+var a = array.from(3.0)
+var m = map.new<string, float>()
+map.put(m, "x", 3.0)
+x = bar_index == 1 ? ta.cum(a.sum()) : 0.0
+y = bar_index == 1 ? ta.cum(array.sum(a)) : 0.0
+z = bar_index == 1 ? ta.cum(m.get("x")) : 0.0
+q = bar_index == 1 ? ta.cum(array.from(3.0).sum()) : 0.0
+f() =>
+    a.push(8.0)
+    ta.cum(a.sum())
+r = bar_index == 1 ? f() : 0.0
+plot(x)
+plot(y)
+plot(z)
+plot(q)
+plot(r)
+plot(a.size())
