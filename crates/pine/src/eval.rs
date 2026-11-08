@@ -54,7 +54,7 @@ pub use crate::types::{ObjKind, Value};
 #[derive(Default)]
 pub(crate) struct ScriptState {
     /// The sole authoritative mutable runtime image.
-    pub arena: Arena,
+    pub arena: Rc<Arena>,
     /// Retained draw objects (lines/boxes/labels, §2.6 caps).
     pub objects: ObjectStore,
 }
@@ -65,7 +65,7 @@ impl ScriptState {
         arena.resize(GLOBALS, global_slots);
         arena.resize(FLAGS, global_slots);
         Self {
-            arena,
+            arena: Rc::new(arena),
             ..Self::default()
         }
     }
@@ -80,8 +80,9 @@ impl ScriptState {
     /// Restore after a preview. `varip` slots keep their preview mutations —
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
-        let StateSnapshot { mut arena } = snapshot;
-        crate::collections::restore_varip(&self.arena, &mut arena, slot_modes);
+        let StateSnapshot { arena: mut image } = snapshot;
+        let arena = Rc::make_mut(&mut image);
+        crate::collections::restore_varip(&self.arena, arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
                 if !matches!(self.arena.get(GLOBALS, slot), Value::Collection(..)) {
@@ -92,14 +93,15 @@ impl ScriptState {
         }
         arena.words[object_state::NEXT_ID] =
             arena.words[object_state::NEXT_ID].max(self.arena.words[object_state::NEXT_ID]);
-        self.arena = arena;
+        self.arena = image;
         self.project_objects();
     }
 
     /// Commit the forming bar: flush staged history values into their rings.
     pub(crate) fn commit_bar(&mut self) {
-        self.arena.commit_histories();
-        crate::collections::collect(&mut self.arena);
+        let arena = Rc::make_mut(&mut self.arena);
+        arena.commit_histories();
+        crate::collections::collect(arena);
     }
 
     pub(crate) fn reset(&mut self) {
@@ -110,7 +112,7 @@ impl ScriptState {
 
 /// What [`ScriptState::snapshot`] captures.
 pub(crate) struct StateSnapshot {
-    arena: Arena,
+    arena: Rc<Arena>,
 }
 
 /// What one run stages for its caller: this bar's plot cells and the candle
@@ -134,12 +136,16 @@ pub(crate) struct Staged<'a> {
 }
 
 /// One run of the script over one bar (commit or preview).
+pub(crate) struct RunState<'a> {
+    pub arena: &'a mut Arena,
+}
+
 pub(crate) struct Eval<'a> {
     pub script: &'a CompiledScript,
     pub inputs: &'a [InputValue],
     pub bar: &'a IndicatorBar,
     pub ctx: &'a Ctx<'a>,
-    pub state: &'a mut ScriptState,
+    pub state: RunState<'a>,
     /// One staged cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
     pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
@@ -171,6 +177,9 @@ impl<'a> Eval<'a> {
         staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
+        let state = RunState {
+            arena: Rc::make_mut(&mut state.arena),
+        };
         if state.arena.len(REGISTERS) != script.program.entries.len() {
             state.arena.resize(REGISTERS, script.program.entries.len());
             for (id, literal) in &script.program.constants {

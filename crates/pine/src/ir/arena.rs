@@ -12,7 +12,7 @@ pub(crate) const HISTORIES: usize = 18;
 
 #[derive(Clone)]
 pub(crate) struct Arena {
-    pub words: crate::collections::Words,
+    pub words: Vec<u64>,
 }
 
 #[inline(always)]
@@ -23,7 +23,7 @@ fn index(word: u64) -> usize {
 impl Default for Arena {
     fn default() -> Self {
         Self {
-            words: vec![0; HEADER].into(),
+            words: vec![0; HEADER],
         }
     }
 }

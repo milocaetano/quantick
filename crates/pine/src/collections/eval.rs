@@ -20,7 +20,7 @@ impl Eval<'_> {
             .iter()
             .map(|arg| self.eval(arg.value))
             .collect::<Result<Vec<_>, _>>()?;
-        crate::collections::execute(&mut self.state.arena, self.script.version, op, &values)
+        crate::collections::execute(self.state.arena, self.script.version, op, &values)
             .map_err(|message| self.err(id, ErrorCode::PineType, message))
     }
 }

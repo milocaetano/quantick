@@ -7,7 +7,6 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 const COLLECTIONS: usize = 30;
 pub(super) fn allocate(arena: &mut Arena) -> usize {
-    arena.words.share();
     let record = arena.allocate(9);
     arena.words[record] = arena.words[COLLECTIONS];
     arena.words[COLLECTIONS] = record as u64;
@@ -133,6 +132,37 @@ mod tests {
     use super::*;
     use crate::collections::{Element, Op, execute};
     use crate::version::Version;
+    #[test]
+    fn collection_snapshot_shares_until_execution_write() {
+        use std::rc::Rc;
+        let mut state = crate::eval::ScriptState::new(1);
+        let root = execute(
+            Rc::make_mut(&mut state.arena),
+            Version::V6,
+            Op::From,
+            &[Value::Num(1.0)],
+        )
+        .unwrap();
+        Rc::make_mut(&mut state.arena).set(GLOBALS, 0, root.clone());
+        let committed = state.arena.clone();
+        let snapshot = state.snapshot();
+        assert_eq!(Rc::strong_count(&state.arena), 3);
+        execute(
+            Rc::make_mut(&mut state.arena),
+            Version::V6,
+            Op::Push,
+            &[root.clone(), Value::Num(2.0)],
+        )
+        .unwrap();
+        assert!(!Rc::ptr_eq(&committed, &state.arena));
+        let Value::Collection(_, handle) = root else {
+            panic!("array handle");
+        };
+        assert_eq!(committed.len(handle as usize), 1);
+        assert_eq!(state.arena.len(handle as usize), 2);
+        state.restore(snapshot, &[VarMode::Var]);
+        assert_eq!(state.arena.len(handle as usize), 1);
+    }
     #[test]
     fn collection_image_growth_reclamation_and_cow() {
         let mut arena = Arena::default();

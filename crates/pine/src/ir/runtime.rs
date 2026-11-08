@@ -72,7 +72,7 @@ impl Eval<'_> {
                         self.script.types.coercions[self.type_context as usize][id.index()];
                     let value = self.register(*id).coerce(coercion);
                     if coercion == 6 {
-                        crate::collections::truncate(&mut self.state.arena, &value);
+                        crate::collections::truncate(self.state.arena, &value);
                     }
                     let value = if self.script.types.integer_divisions[self.type_context as usize]
                         [id.index()]
@@ -294,7 +294,7 @@ impl Eval<'_> {
                             values.push(self.eval(arg.value)?);
                         }
                         let value = crate::collections::execute(
-                            &mut self.state.arena,
+                            self.state.arena,
                             self.script.version,
                             op,
                             &values,

@@ -7,11 +7,9 @@ mod statistics;
 pub(crate) use statistics::truncate;
 mod storage;
 mod view;
-mod words;
 use crate::error::ErrorCode;
 pub(crate) use runtime::execute;
 pub(crate) use storage::{collect, restore_varip};
-pub(crate) use words::Words;
 
 /// Element types admitted by the scalar collection constructors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
