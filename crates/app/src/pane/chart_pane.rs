@@ -159,8 +159,7 @@ impl ChartPane {
         view
     }
 
-    /// The `[start, end)` slots the last frame showed; `None` before it laid
-    /// the pane out.
+    /// The `[start, end)` slots the last frame showed; `None` before it laid the pane out.
     pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
         let chart = self.frame.chart_area?;
         let width = self.frame.candles_right.unwrap_or_else(|| chart.right()) - chart.left();
