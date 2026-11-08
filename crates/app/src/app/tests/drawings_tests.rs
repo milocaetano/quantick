@@ -4676,7 +4676,8 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
         *len = 21;
     }
     let change = app.runtime.indicators.apply_settings();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     assert!(
         app.runtime.indicators.indicator_settings.is_some(),
         "Apply keeps the dialog open for the next nudge"

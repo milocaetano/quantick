@@ -21,7 +21,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) dock: &'a mut crate::dock::Dock,
     pub(super) show_perf: &'a mut bool,
     pub(super) record_deals: &'a mut Option<bool>,
-    pub(super) history: &'a mut super::tabs::HistorySettings,
+    pub(super) history: &'a mut quantick_session::HistorySettings,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
     pub(super) surface: &'a mut quantick_workspace::arrangement::strip::StripSurface,
@@ -39,7 +39,7 @@ pub(crate) struct ArrangementRead<'a> {
     pub(super) dock: &'a crate::dock::Dock,
     pub(super) show_perf: bool,
     pub(super) record_deals: Option<bool>,
-    pub(super) history: &'a super::tabs::HistorySettings,
+    pub(super) history: &'a quantick_session::HistorySettings,
     pub(super) drawing_chrome: &'a crate::surfaces::DrawingChromeSurface,
     pub(super) workspace_book: &'a quantick_stores::workspaces::WorkspaceBook,
 }

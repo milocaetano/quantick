@@ -108,7 +108,8 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     let replay = app.active_tab().replay.clone().unwrap();
     let paper = app.active_tab().paper.position_summary();
     let drawings = app.active_tab().flow_pane.drawings.items().len();
-    app.open_indicator_picker_on(app.active_tab().focused_side());
+    let side = app.active_tab().focused_side();
+    app.indicator_wiring().open_indicator_picker_on(side);
     app.surfaces.indicator_picker.state.query = "owned".into();
     let picker = app.surfaces.indicator_picker.state.clone();
     let destination = egui::ViewportId::from_hash_of("rebound-workspace");
@@ -460,7 +461,7 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
         .map(|(target, _)| target)
         .find(|target| target.side == PaneSide::Time(0))
         .unwrap();
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
@@ -475,13 +476,13 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
     assert_eq!(moved.side, PaneSide::Time(1));
     assert_eq!(app.runtime.validate_target(moved), Ok(()));
     let before = app.runtime.indicators.registry.slot_kinds().len();
-    app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
-        target,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        super::super::indicator_manager::IndicatorEdit::Remove(target),
+    );
     assert_eq!(app.runtime.indicators.registry.slot_kinds().len(), before);
-    app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
-        moved,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        super::super::indicator_manager::IndicatorEdit::Remove(moved),
+    );
     assert!(app.runtime.validate_target(moved).is_err());
 }
 

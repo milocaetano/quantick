@@ -16,7 +16,9 @@
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
+use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::stall::Stall;
+use quantick_workspace::market_list::PaletteIntent;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -118,6 +120,19 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
 /// Respawn the shown tab's feed if its feed/symbol selection changed
 /// (resets the chart) and apply its spec; a changed market moves its
 /// layouts along.
+/// Do what the palette asked. A refusal stays under its field.
+pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent) {
+    let port = app as &mut dyn super::control_host::ControlPort;
+    match quantick_control_handlers::market_palette::settle(port, intent) {
+        Ok(None) => {}
+        Ok(Some(note)) => {
+            app.surfaces.market_palette.close();
+            app.surfaces.toast.note(note, std::time::Instant::now());
+        }
+        Err(reason) => app.surfaces.market_palette.refuse(reason),
+    }
+}
+
 fn apply_feed_switch(app: &mut QuantickApp) {
     let (tab, config) = app.active_with_config();
     let changed =
@@ -197,6 +212,32 @@ impl QuantickApp {
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
         super::native_windows::draw(self, ctx, now);
+    }
+
+    /// Every tab takes in what its feed sent this frame, on screen or not.
+    ///
+    /// §11: switching tabs never tears a feed down, so a background tab has to
+    /// keep draining — its channels are bounded, and one left full backs its
+    /// feed thread up until the market it is showing is hours behind. The
+    /// indicator workers are fed on the same pass, so a tab brought forward is
+    /// already current rather than rebuilding on the frame it appears.
+    pub(super) fn drain_tabs(&mut self) {
+        // Before the drain: a reading that arrives this frame lands on a
+        // recorder built for the market it belongs to.
+        super::deal_recording_wiring::ensure(self);
+        let trades = self.runtime.drain_tabs(&self.config);
+        // What the window ingested, across every market it is holding.
+        self.health.trades_since_summary += trades;
+    }
+
+    /// The indicator requests of this frame; a guide switch goes through the
+    /// gateway, as the pane menu's own does.
+    pub(super) fn service_indicator_requests(&mut self) {
+        let guides = self.indicator_wiring().service_indicator_requests();
+        let id = crate::control::INDICATOR_GUIDE_CAPABILITY_ID;
+        for input in guides {
+            let _ = self.control_action(id, 1, crate::control::ActionOrigin::Human, input);
+        }
     }
 
     #[cfg(test)]
@@ -305,7 +346,9 @@ impl QuantickApp {
             #[cfg(any(feature = "scenario-harness", test))]
             FrameStage::WindowStartupHook => self.chrome.window_startup.apply(ctx),
             FrameStage::WindowHousekeeping => {
-                self.maybe_emit_summary(now, ctx);
+                let surface = self.chrome.surface.as_ref();
+                let runtime = self.runtime.bound_mut(&self.presentation.binding);
+                (self.health).maybe_emit_summary(now, ctx, runtime, surface);
                 self.workspace_save_adapter().maintain_workspace(ctx);
             }
             FrameStage::TabKeys => {
@@ -325,7 +368,7 @@ impl QuantickApp {
             FrameStage::HomeToolbar => super::home_wiring::stand_in_for_toolbar(self),
             FrameStage::Toolbar => self.draw_toolbar(ctx),
             FrameStage::IndicatorSurfaces => self.service_indicator_requests(),
-            FrameStage::IndicatorDialogs => self.draw_indicator_surfaces(ctx),
+            FrameStage::IndicatorDialogs => self.indicator_wiring().draw_indicator_surfaces(ctx),
             FrameStage::StrategyPopupRequests => surfaces::open_requested_strategy_popups(
                 &mut self.runtime.tabs,
                 &mut self.surfaces.strategy_popup,
@@ -467,7 +510,7 @@ impl QuantickApp {
     /// this repo's own bug class.
     fn draw_surface_stage(&mut self, ctx: &egui::Context, now: Instant) {
         let markets = (self.surfaces.hooks_pending() || self.surfaces.market_palette.is_open())
-            .then(|| super::tabs::market_snapshot(self));
+            .then(|| MarketPaletteHost::market_snapshot(self));
         let asks = surfaces::draw_surfaces(
             ctx,
             now,
@@ -515,7 +558,7 @@ impl QuantickApp {
             self.surfaces.strategy_popup.settle_arm(outcome);
         }
         if let Some(request) = asks.market {
-            super::tabs::apply_palette_intent(self, request);
+            apply_palette_intent(self, request);
         }
         if let Some(change) = asks.footprint {
             self.layer_wiring().apply_footprint_change(change);
@@ -538,7 +581,10 @@ impl QuantickApp {
         let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
-        scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
+        let home = self.chrome.title_bar.surface.is_home();
+        let runtime = self.runtime.bound(&self.presentation.binding);
+        let model = self.health.status_model(runtime, &self.config, home);
+        scratch.status = statusbar::draw(ctx, &model, self.runtime.tz, &lead);
         super::menu_bar::workspace_cell(self, ctx, &scratch.status);
         if scratch.status.open_display_settings {
             super::desk_wiring::open_settings_on(&mut self.chrome.window_menu, ctx);
@@ -667,7 +713,7 @@ impl QuantickApp {
                 };
                 tab.draw_canvas(tab_id, ui, area, &mut chrome);
                 if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
-                    self.open_indicator_picker_on(side);
+                    self.indicator_wiring().open_indicator_picker_on(side);
                 }
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one

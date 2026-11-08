@@ -416,7 +416,7 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
         let side = PaneSide::Time(0);
         let slot = app.active_tab().pane(side).indicators.all()[0].slot;
         let tab = app.runtime.tabs.active_id();
-        app.apply_indicator_legend_action(
+        app.indicator_wiring().apply_indicator_legend_action(
             tab,
             side,
             crate::indicator_legend::LegendAction::OpenSettings(slot),
@@ -428,7 +428,8 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
             .unwrap()
             .draft[0] = InputValue::Int(37);
         let change = app.runtime.indicators.preview_settings();
-        app.apply_indicator_settings_change(change);
+        app.indicator_wiring()
+            .apply_indicator_settings_change(change);
         settle_indicators(&mut app);
         assert!(
             painted_preview_watermark(&staged_frame_at(

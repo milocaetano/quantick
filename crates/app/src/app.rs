@@ -57,16 +57,16 @@ pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tab_workspaces;
-mod tabs;
 pub(crate) mod title_bar;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
 mod workspace_save_adapter;
 
-// The tab lifecycle took `saved_context_intervals` with it; `workspace_restore`
-// still reaches it through `super::`.
-use tabs::saved_context_intervals;
+fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
+    let default = crate::time_header::DEFAULT_INTERVAL_MS;
+    quantick_stores::ui_state::saved_context_intervals(bars, time_bars, default)
+}
 // Named by the paper-trading and drawing tests through `use super::*`, and by
 // nothing in production outside the module that owns them, so the imports are
 // gated the way the block at the end of this list is.
@@ -107,7 +107,7 @@ use quantick_stores::bubble_asset_store::open_asset_bubbles;
 // through `use super::*`, so they stay here as gated imports rather than
 // becoming an edit to `app/tests/` — the same treatment `ChartLayer` already
 // had when `maintain_chart_layers` left for `app::chart_layers_wiring`, and
-// `heatmap_lamp_on` has now taken the last read of that one to `app::tabs`.
+// `heatmap_lamp_on` has now taken the last read of that one to `app::tests`.
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 #[cfg(test)]
@@ -280,28 +280,19 @@ impl QuantickApp {
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter!(self)
     }
-    #[cfg(test)]
-    pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
-        arrangement_adapter::ArrangementRead {
-            tabs: &self.runtime.tabs,
-            config: &self.config,
-            toolrail: &self.toolrail,
-            tz: &self.runtime.tz,
-            dock: &self.dock,
-            show_perf: self.health.show_perf,
-            record_deals: self.chrome.record_deals,
-            history: &self.runtime.history,
-            drawing_chrome: &self.drawings.chrome,
-            workspace_book: self.runtime.workspace.book.book(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
-        workspace_save_adapter::WorkspaceRead {
-            arrangement: self.arrangement_state(),
-            session: self.runtime.workspace.session(),
-            replay_view: &self.replay_view,
+    fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
+        self.runtime
+            .resolve(&self.presentation.binding)
+            .expect("bound workspace");
+        indicator_wiring::IndicatorWiring {
+            runtime: &mut self.runtime,
+            picker: &mut self.surfaces.indicator_picker,
+            drawing_chrome: &mut self.drawings.chrome,
+            toast: &mut self.surfaces.toast,
+            rename: &mut self.chrome.layout_rename,
+            delete_confirm: &mut self.chrome.layout_delete_confirm,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &mut self.chrome.harness,
         }
     }
     pub(crate) fn workspace_save_adapter(
@@ -323,28 +314,19 @@ impl QuantickApp {
     /// Split here, once, because almost every tab operation needs both and
     /// `self.runtime.tabs[i].f(&self.config)` is a borrow error at every call site.
     pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
-        let tabs = &mut self.runtime.tabs;
-        (tabs.runtime_mut(tabs.active_index()), &self.config)
+        (self.runtime.active_tab_mut(), &self.config)
     }
 
     /// The tab on screen.
     pub(super) fn active_tab(&self) -> &Tab {
-        let tabs = &self
-            .runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace")
-            .tabs;
-        &tabs[tabs.active_index()]
+        self.runtime.bound(&self.presentation.binding).active_tab()
     }
 
     /// See [`Self::active_tab`].
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
-        let tabs = &mut self
-            .runtime
-            .resolve_mut(&self.presentation.binding)
-            .expect("bound workspace")
-            .tabs;
-        tabs.runtime_mut(tabs.active_index())
+        self.runtime
+            .bound_mut(&self.presentation.binding)
+            .active_tab_mut()
     }
 
     /// The pane the chrome speaks for: the active tab's focused pane (§11).
@@ -399,33 +381,6 @@ impl QuantickApp {
             ),
             None => {}
         }
-    }
-
-    /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
-    /// (already streaming through `feed`) and bar `spec`, with no saved
-    /// workspace to restore.
-    ///
-    /// The window itself always has one (`main` reads the file before it
-    /// spawns a feed), so this is the tests' entry point: a case about the
-    /// chart is not a case about what the last session left on disk.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new(
-        config: AppConfig,
-        feed_id: impl Into<String>,
-        symbol: impl Into<String>,
-        spec: impl Into<crate::state::BarConfiguration>,
-        feed: FeedHandle,
-    ) -> Self {
-        Self::new_with_workspace(
-            config,
-            feed_id,
-            symbol,
-            spec,
-            feed,
-            ui_state::Workspace::default(),
-            AppLaunch::default(),
-        )
     }
 
     /// The same, restoring `workspace` over the configured defaults.
