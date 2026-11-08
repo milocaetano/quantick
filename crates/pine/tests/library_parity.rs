@@ -541,8 +541,7 @@ fn missing_object_fields_fail_deterministically() {
     for _ in 0..2 {
         let error = script
             .preview(&bar, &mut ctx)
-            .err()
-            .expect("missing object error");
+            .expect_err("missing object error");
         assert!(error.to_string().contains("missing user object"));
     }
 }
