@@ -137,3 +137,43 @@ fn empty_loops_advance_and_later_visits_use_their_bar_position() {
         &[1.0, 0.0, 6.0, 0.0, 15.0]
     );
 }
+
+#[test]
+fn skipped_drawing_arguments_advance_without_creating_or_mutating_objects() {
+    let source = "//@version=5\nindicator(\"draw args\")\nvar l = line.new(0, 0, 1, 0)\nif bar_index % 2 == 0\n    line.new(0, ta.cum(close), 1, 0)\n    l.set_y1(ta.cum(close * 10))\n";
+    let mut script = ScriptIndicator::new(compile(source, "draw args").unwrap(), source);
+    for index in 0..5 {
+        let bar = IndicatorBar {
+            close: (index + 1) as f64,
+            ..bar()
+        };
+        let mut ctx = Ctx {
+            bar_index: index,
+            cvd: &[],
+        };
+        let before = format!("{:?}", script.objects().map(|objects| objects.snapshot()));
+        script
+            .preview(
+                &IndicatorBar {
+                    close: 999.0,
+                    ..bar
+                },
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(
+            before,
+            format!("{:?}", script.objects().map(|objects| objects.snapshot()))
+        );
+        script.on_close(&bar, &mut ctx).unwrap();
+    }
+    let snapshot = script.objects().unwrap().snapshot();
+    assert_eq!(
+        snapshot
+            .lines
+            .iter()
+            .map(|line| line.y1)
+            .collect::<Vec<_>>(),
+        vec![150.0, 1.0, 6.0, 15.0]
+    );
+}

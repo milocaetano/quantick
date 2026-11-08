@@ -539,6 +539,8 @@ impl<'a> Eval<'a> {
                     // receiver evaluates to an object handle.
                     if let NodeKind::Member { object, field } = self.kind(*callee) {
                         if self.semantic_run.skipped {
+                            self.advance_skipped(*object)?;
+                            self.advance_arguments(args)?;
                             return Ok(Value::Na);
                         }
                         let receiver = self.eval(*object)?;
@@ -792,6 +794,7 @@ impl<'a> Eval<'a> {
                 Builtin::LineNew | Builtin::BoxNew | Builtin::LabelNew | Builtin::Barcolor
             )
         {
+            self.advance_arguments(args)?;
             return Ok(Value::Na);
         }
         // Output calls first: they stage into the plot row.

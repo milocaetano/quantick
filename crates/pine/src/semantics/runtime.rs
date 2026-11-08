@@ -8,6 +8,13 @@ use crate::{
 };
 
 impl Eval<'_> {
+    pub(super) fn advance_arguments(&mut self, args: &[Arg]) -> Result<(), PineError> {
+        for arg in args {
+            self.advance_skipped(arg.value)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn conditional(
         &mut self,
         condition: NodeId,
@@ -95,6 +102,7 @@ impl Eval<'_> {
                         .iter()
                         .any(|(a, b)| a.is_some_and(|n| self.has_kernel(n)) || self.has_kernel(*b))
             }
+            NodeKind::Member { object, .. } => self.has_kernel(*object),
             NodeKind::Tuple { items } => items.iter().any(|n| self.has_kernel(*n)),
             NodeKind::Call { callee, args } => {
                 args.iter().any(|a| self.has_kernel(a.value))
