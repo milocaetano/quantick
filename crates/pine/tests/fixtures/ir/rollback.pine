@@ -1,0 +1,16 @@
+//@version=5
+indicator("IR rollback")
+twice(x) => x * 2
+var normal = 0
+varip pulses = 0
+normal := normal + 1
+pulses := pulses + 1
+sum = 0
+for i = 0 to 2
+    sum := sum + i
+plot(normal)
+plot(pulses)
+plot(ta.sma(close, 2))
+plot(close[1])
+plot(twice(close))
+plot(sum)
