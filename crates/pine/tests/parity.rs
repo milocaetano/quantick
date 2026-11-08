@@ -5,7 +5,8 @@ use quantick_indicators::Indicator;
 
 #[test]
 fn oracle_baseline_and_determinism() {
-    golden("oracle-report.txt", &parity_support::oracle_report());
+    let report = parity_support::oracle_report();
+    assert!(report.contains("matching_cells=1920/1920"), "{report}");
     let app = root().join("../../app/scripts");
     let mut paths: Vec<_> = std::fs::read_dir(app)
         .unwrap()
@@ -65,4 +66,11 @@ fn activity_fixture_flow_has_independent_expected_values() {
             }
         }
     }
+}
+
+#[test]
+fn macd_oracle_parity() {
+    let report = parity_support::oracle_report();
+    assert!(report.contains("matching_cells=1920/1920"), "{report}");
+    assert!(report.contains("rejected_cells=0/1920"), "{report}");
 }

@@ -60,6 +60,8 @@ pub enum Builtin {
     TaSma,
     /// `ta.ema`
     TaEma,
+    /// `ta.macd`
+    TaMacd,
     /// `ta.rma`
     TaRma,
     /// `ta.wma`
@@ -244,6 +246,7 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("barstate.islast", Builtin::BarstateIsLast),
     ("ta.sma", Builtin::TaSma),
     ("ta.ema", Builtin::TaEma),
+    ("ta.macd", Builtin::TaMacd),
     ("ta.rma", Builtin::TaRma),
     ("ta.wma", Builtin::TaWma),
     ("ta.vwma", Builtin::TaVwma),
@@ -306,14 +309,14 @@ const BUILTINS: &[(&str, Builtin)] = &[
 
 impl Builtin {
     /// Whether a *call* of this builtin owns per-call-site kernel state —
-    /// the calls that get a `CallSiteId` and are illegal inside loop bodies
-    /// (`PINE_STATEFUL_IN_LOOP`).
+    /// the calls that get a `CallSiteId` and advance from pre-bar state.
     #[must_use]
     pub fn is_stateful_call(self) -> bool {
         matches!(
             self,
             Builtin::TaSma
                 | Builtin::TaEma
+                | Builtin::TaMacd
                 | Builtin::TaRma
                 | Builtin::TaWma
                 | Builtin::TaVwma

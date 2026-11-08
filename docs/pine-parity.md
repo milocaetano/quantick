@@ -96,15 +96,11 @@ this extraction does not claim typed-slot checking,
 library resolution, or candle output is implemented. All output remains the
 existing deterministic headless `PlotBuffer` contract.
 
-**Unresolved docking constraint:** `NodeKind`, `Builtin`, parser productions,
-evaluator dispatch and plot lowering are closed enums/matches in shared hubs.
-A no-op module registration cannot make new grammar or builtin variants usable.
-An exhaustive contract for all future features would prematurely implement their
-semantics. Therefore this skeleton cannot satisfy a complete shared-hub freeze.
-The minimal alternative is sequential coordinator-approved hub edits for the
-child introducing a variant, followed by ownership transfer of its handler;
-otherwise a separately designed hub refactor must precede children 1-8. No later
-child is authorized to edit a hub by this document.
+**Approved docking policy (2026-11-08):** children implement behavior in their
+owned directories. Necessary narrow shared-hub registrations are authorized in
+each issue's Touch and integrated serially by the coordinator. This replaces the
+skeleton's freeze blocker: closed enums and dispatch matches may connect the
+owned handler without moving unrelated behavior or broadening the feature scope.
 
 ## Performance scenario
 
@@ -122,3 +118,33 @@ Calendar acceptance uses independently calculated civil-date goldens in
 checks six fields and repeated preview/commit equality for negative epochs,
 leap dates, and fixed-offset year/day transitions. This does not increase the
 PineTS comparison denominator and does not claim IANA/DST timezone parity.
+
+## Semantic policy measurement
+
+Child 1 preserves the original `golden/oracle-report.txt` as baseline evidence.
+The current `macd_oracle_parity` assertion runs all eight cases on all three tapes:
+1,920/1,920 cells match, including all 576 MACD cells. MACD independently composes
+existing EMA kernels; no oracle implementation was read or translated.
+
+The approved eager policy advances stateful calls through skipped `and`/`or`,
+ternary and `if` arms with temporary variable values. Side effects remain
+conditional and expression histories record `na` at skipped bar positions.
+`conditional_state_and_history_parity` has an independent hand-calculated fixture
+and repeated previews. This is deliberately different from the PineTS 0.13.1
+black-box conditional probe: on closes 1..5, alternating `ta.cum(close)` produces
+1,0,4,0,9 in the proxy, versus 1,0,6,0,15 under the approved eager policy.
+Neither result is represented as verified TradingView behavior.
+
+Independent loop probes are committed under `tests/fixtures/semantics/` and
+`tests/golden/semantics/`. For `i = 0..2`, summing `ta.cum(close+i)` over closes
+1..5 produces 6,18,33,51,72; summing SMA length 2 produces na,9,12,15,18.
+Changing the upper bound to `bar_index % 3` produces na,3.5,10.5,4.5,9.5.
+These proxy results establish one textual site's per-bar replacement semantics:
+each visit starts from pre-bar state; the last visit commits, without growing
+per-iteration state. Fixed kernel lengths are still enforced. An unexecuted loop
+is advanced once with its entry variable view, an explicit eager-policy choice.
+
+All nine app-script snapshots remain byte-identical after the two semantic fixes;
+the list of changed app-script outputs is empty. App oracle verification remains
+0/9. The original corpus and oracle baseline measurements above describe child 0,
+not the current native MACD support.

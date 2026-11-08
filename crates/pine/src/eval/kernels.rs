@@ -21,11 +21,11 @@ use super::{Eval, Kernel, Value};
 /// One kernel call as the handlers see it: the node, the builtin, the
 /// `(call site, call path)` identity and the arguments.
 #[derive(Clone, Copy)]
-struct KernelCall<'c> {
-    id: NodeId,
+pub(super) struct KernelCall<'c> {
+    pub(super) id: NodeId,
     builtin: Builtin,
-    key: (u32, u32),
-    args: &'c [crate::ast::Arg],
+    pub(super) key: (u32, u32),
+    pub(super) args: &'c [crate::ast::Arg],
 }
 
 /// The uniform handler signature every kernel family implements.
@@ -36,6 +36,7 @@ type KernelHandler<'a> = fn(&mut Eval<'a>, KernelCall<'_>) -> Result<Value, Pine
 fn kernel_handler<'a>(builtin: Builtin) -> Option<KernelHandler<'a>> {
     Some(match builtin {
         Builtin::TaCrossover | Builtin::TaCrossunder | Builtin::TaCross => Eval::cross_kernel,
+        Builtin::TaMacd => Eval::macd_kernel,
         Builtin::TaBarsSince => Eval::bars_since_kernel,
         Builtin::TaValueWhen => Eval::value_when_kernel,
         Builtin::Fixnan => Eval::fixnan_kernel,
@@ -111,13 +112,24 @@ impl<'a> Eval<'a> {
     }
 
     /// The argument at `position` as a kernel length.
-    fn arg_length(&mut self, call: KernelCall<'_>, position: usize) -> Result<usize, PineError> {
+    pub(super) fn arg_length(
+        &mut self,
+        call: KernelCall<'_>,
+        position: usize,
+    ) -> Result<usize, PineError> {
         let v = self.arg_num(call.args, position)?;
         self.kernel_length(v, call.id)
     }
 
     /// The first argument as a condition, `false` when absent.
     fn first_cond(&mut self, args: &[crate::ast::Arg]) -> Result<bool, PineError> {
+        if let Some(values) = &self.semantic_run.arguments {
+            return values.first().map_or(Ok(false), |value| {
+                value
+                    .as_cond()
+                    .ok_or_else(|| self.type_err(args[0].value, "a bool condition", value))
+            });
+        }
         match args.first() {
             Some(arg) => self.cond(arg.value),
             None => Ok(false),
@@ -240,8 +252,8 @@ impl<'a> Eval<'a> {
     fn change_kernel(&mut self, call: KernelCall<'_>) -> Result<Value, PineError> {
         let x = self.arg_num(call.args, 0)?;
         let n = match call.args.get(1) {
-            Some(arg) => {
-                let n = self.num(arg.value)?;
+            Some(_) => {
+                let n = self.arg_num(call.args, 1)?;
                 self.kernel_length(n, call.id)?
             }
             None => 1,

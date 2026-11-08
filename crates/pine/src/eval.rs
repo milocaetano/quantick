@@ -31,6 +31,8 @@ use crate::error::{ErrorCode, PineError, Span};
 mod kernels;
 mod objects;
 mod pure;
+#[path = "semantics/runtime.rs"]
+mod semantic_runtime;
 
 /// Iteration budget per `for`/`while` per bar — a runaway loop errors the
 /// indicator instead of freezing the worker (§3.5).
@@ -41,6 +43,7 @@ pub use crate::types::{ObjKind, Value};
 /// One kernel instance behind a `(call site, path)` key.
 #[derive(Clone)]
 pub(crate) enum Kernel {
+    Macd(crate::semantics::Macd),
     Sma(ta::Sma),
     Ema(ta::Ema),
     Rma(ta::Rma),
@@ -131,6 +134,7 @@ impl ScriptState {
             globals: self.globals.clone(),
             var_done: self.var_done.clone(),
             kernels: self.kernels.clone(),
+            kernel_lengths: self.kernel_lengths.clone(),
             objects: self.objects.clone(),
         }
     }
@@ -142,6 +146,7 @@ impl ScriptState {
             globals,
             var_done,
             kernels,
+            kernel_lengths,
             objects,
         } = snapshot;
         for (slot, (value, done)) in globals.into_iter().zip(var_done).enumerate() {
@@ -151,6 +156,7 @@ impl ScriptState {
             }
         }
         self.kernels = kernels;
+        self.kernel_lengths = kernel_lengths;
         // Not a plain assignment: `restore_from` keeps the object id counter
         // moving forward, so a `varip` handle that survives this rollback
         // cannot collide with an id the commit run is about to allocate.
@@ -160,13 +166,7 @@ impl ScriptState {
 
     /// Commit the forming bar: flush staged history values into their rings.
     pub(crate) fn commit_bar(&mut self, max_bars_back: usize) {
-        for ((series, path), value) in std::mem::take(&mut self.staged_histories) {
-            let ring = self.histories.entry((series, path)).or_default();
-            ring.values.push_back(value);
-            if ring.values.len() > max_bars_back {
-                ring.values.pop_front();
-            }
-        }
+        self.commit_histories(max_bars_back);
     }
 
     pub(crate) fn reset(&mut self) {
@@ -180,6 +180,7 @@ pub(crate) struct StateSnapshot {
     globals: Vec<Value>,
     var_done: Vec<bool>,
     kernels: BTreeMap<(u32, u32), Kernel>,
+    kernel_lengths: BTreeMap<(u32, u32), usize>,
     objects: ObjectStore,
 }
 
@@ -217,6 +218,7 @@ pub(crate) struct Eval<'a> {
     pub path: u32,
     /// Current frame base in `locals`.
     frame_base: usize,
+    semantic_run: crate::semantics::Run<Kernel>,
 }
 
 impl<'a> Eval<'a> {
@@ -241,6 +243,7 @@ impl<'a> Eval<'a> {
             timezone: crate::calendar::CalendarTimezone::default(),
             path: 0,
             frame_base: 0,
+            semantic_run: crate::semantics::Run::default(),
         }
     }
 
@@ -464,26 +467,12 @@ impl<'a> Eval<'a> {
                 condition,
                 if_true,
                 if_false,
-            } => {
-                if self.cond(*condition)? {
-                    self.eval(*if_true)
-                } else {
-                    self.eval(*if_false)
-                }
-            }
+            } => self.conditional(*condition, *if_true, Some(*if_false)),
             NodeKind::If {
                 condition,
                 then_block,
                 otherwise,
-            } => {
-                if self.cond(*condition)? {
-                    self.eval(*then_block)
-                } else if let Some(otherwise) = otherwise {
-                    self.eval(*otherwise)
-                } else {
-                    Ok(Value::Na)
-                }
-            }
+            } => self.conditional(*condition, *then_block, *otherwise),
             NodeKind::Block { statements } => {
                 let mut last = Value::Na;
                 for statement in statements {
@@ -503,6 +492,8 @@ impl<'a> Eval<'a> {
                 if !from.is_finite() || !to.is_finite() || step == 0.0 || !step.is_finite() {
                     return Ok(Value::Na);
                 }
+                self.write_resolved(id, Value::Num(from));
+                self.advance_skipped(*body)?;
                 let mut i = from;
                 let mut last = Value::Na;
                 let mut budget = LOOP_BUDGET;
@@ -523,6 +514,7 @@ impl<'a> Eval<'a> {
                 Ok(last)
             }
             NodeKind::While { condition, body } => {
+                self.advance_skipped(*body)?;
                 let mut last = Value::Na;
                 let mut budget = LOOP_BUDGET;
                 while self.cond(*condition)? {
@@ -546,6 +538,9 @@ impl<'a> Eval<'a> {
                     // A method call: the callee is a member expression whose
                     // receiver evaluates to an object handle.
                     if let NodeKind::Member { object, field } = self.kind(*callee) {
+                        if self.semantic_run.skipped {
+                            return Ok(Value::Na);
+                        }
                         let receiver = self.eval(*object)?;
                         let Value::Obj(kind, raw) = receiver else {
                             return Err(self.type_err(*callee, "an object handle", &receiver));
@@ -642,7 +637,9 @@ impl<'a> Eval<'a> {
         let series = self.script.history_series[id.index()].expect("history node has a series");
         let key = (series, self.path);
         // Stage this bar's value (last write wins within the bar).
-        self.state.staged_histories.insert(key, current.clone());
+        if !self.semantic_run.skipped {
+            self.state.staged_histories.insert(key, current.clone());
+        }
         if back == 0 {
             return Ok(current);
         }
@@ -663,12 +660,14 @@ impl<'a> Eval<'a> {
             BinOp::And => {
                 // Short-circuit; na counts false (Pine).
                 if !self.cond(lhs)? {
+                    self.advance_skipped(rhs)?;
                     return Ok(Value::Bool(false));
                 }
                 Ok(Value::Bool(self.cond(rhs)?))
             }
             BinOp::Or => {
                 if self.cond(lhs)? {
+                    self.advance_skipped(rhs)?;
                     return Ok(Value::Bool(true));
                 }
                 Ok(Value::Bool(self.cond(rhs)?))
@@ -787,6 +786,14 @@ impl<'a> Eval<'a> {
         builtin: Builtin,
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
+        if self.semantic_run.skipped
+            && matches!(
+                builtin,
+                Builtin::LineNew | Builtin::BoxNew | Builtin::LabelNew | Builtin::Barcolor
+            )
+        {
+            return Ok(Value::Na);
+        }
         // Output calls first: they stage into the plot row.
         match builtin {
             Builtin::Plot | Builtin::Hline => {
@@ -861,12 +868,19 @@ impl<'a> Eval<'a> {
             return Ok(input_value(&self.inputs[input_index], self.bar, self.ctx));
         }
         if let Some(site) = self.script.call_sites[id.index()] {
-            return self.kernel_call(id, builtin, site.0, args);
+            return self.cached_kernel(id, builtin, site.0, args);
         }
         self.pure_call(id, builtin, args)
     }
 
     fn arg_num(&mut self, args: &[crate::ast::Arg], position: usize) -> Result<f64, PineError> {
+        if let Some(values) = &self.semantic_run.arguments {
+            return values.get(position).map_or(Ok(f64::NAN), |value| {
+                value
+                    .as_num()
+                    .ok_or_else(|| self.type_err(args[position].value, "a number", value))
+            });
+        }
         match args.get(position) {
             Some(arg) => self.num(arg.value),
             None => Ok(f64::NAN),

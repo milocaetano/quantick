@@ -35,6 +35,8 @@ use crate::parser;
 mod declarations;
 mod fold;
 mod resolve;
+#[path = "semantics/compile.rs"]
+mod semantic_compile;
 
 /// Reads deeper than this many bars yield `na` when the offset is dynamic
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).

@@ -38,11 +38,11 @@ by golden tests.
   builtins.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
-  **Divergence:** because `and`/`or` short-circuit and `ta.*` kernels have
-  call-site identity, a stateful call on the right side only advances on
-  bars where the left side lets it evaluate — it warms up late and reads a
-  gapped series. Hoist stateful calls to top-level assignments and combine
-  the resulting values instead.
+  Stateful calls in skipped `and`/`or`, ternary and `if` arms advance on
+  every bar, using a temporary variable view; assignments and drawing effects
+  remain conditional. This eager policy is intentional, not a claim of
+  TradingView equivalence. The PineTS proxy differs on conditional cumulative
+  sums; see [the measured policy](pine-parity.md#semantic-policy-measurement).
 - `if` / `for … to … by` / `while` / `switch` are **expressions**; an
   indented block's value is its last statement's value. Loops are capped at
   10 000 iterations per bar (`PINE_LOOP_BUDGET`). `switch` takes both forms:
@@ -73,18 +73,21 @@ by every indicator), `trade_count`.
 `x[n]` reads the value `x` had `n` bars ago; out of range reads `na`.
 History works on any expression (`ta.ema(close, 9)[1]`). Constant offsets
 size storage exactly; dynamic offsets are capped at 500 bars — deeper reads
-yield `na`. **Divergence:** an expression's history only records on bars
-where the expression actually evaluates; history across untaken `if`
-branches reads `na`. A dynamic offset that evaluates to `na` also skips the
-site's recording for that bar — a site whose offset only becomes real after
-a warmup wakes up with an empty ring. Guard dynamic offsets with
-`nz(offset, 0)`: offset 0 reads the current value *and* records.
+yield `na`. Every known expression-history ring records one entry per committed
+bar, including `na` for skipped branches or an invalid dynamic offset. Skipped
+bars therefore remain gaps at their actual bar distance rather than compressing
+the ring. Preview runs do not commit these entries.
 
 ## `ta.*` — stateful kernels
 
 Each *textual call* owns its own state; a user function called from two
-places owns two instances (call-path identity). Stateful calls inside loop
-bodies are a compile error (`PINE_STATEFUL_IN_LOOP`). Warmup returns `na`
+places owns two instances (call-path identity). Stateful calls in loops share
+one textual site: each visit starts from the committed pre-bar kernel state,
+and the final visit becomes this bar's state. Identical arguments reuse the
+current result; varying sources replace it without advancing time again.
+An unexecuted loop body advances once using its entry variable view (`for`
+uses its initial index). Loop-dependent lengths remain subject to the fixed
+kernel-length rule. Warmup returns `na`
 until `length` inputs have been seen unless noted. NaN policy: windowed
 kernels return `na` while a NaN sits in the window and recover exactly when
 it leaves; recursive kernels (`ta.ema`, `ta.rma`, `ta.rsi`, `ta.atr`) skip
@@ -92,6 +95,7 @@ NaN inputs and hold their state; `ta.cum` is poisoned permanently by NaN.
 
 | Builtin | Semantics |
 |---|---|
+| `ta.macd(src, fast, slow, signal)` | tuple of fast EMA minus slow EMA, its signal EMA, and their difference |
 | `ta.sma(src, len)` | arithmetic mean of the last `len` |
 | `ta.ema(src, len)` | α = 2/(len+1), **seed = SMA of the first `len` values** |
 | `ta.rma(src, len)` | α = 1/len, seed = SMA |
@@ -210,10 +214,10 @@ Errors render as `file.pine:line:col: message (CODE)`; loading reports
 The isolated oracle described in [pine-parity.md](pine-parity.md) pins PineTS
 0.13.1 and compares fixed authored fixtures, not a verified TradingView run.
 SMA, EMA, RSI, ATR, standard deviation, crossover and pivot-high match all 1,344
-compared cells at `1e-8` absolute plus `1e-8` relative tolerance. `ta.macd` is an
-explicit unimplemented baseline case: it fails with `PINE_UNKNOWN_NAME`, leaving
-576 of 1,920 requested cells unverified. This is not an accepted numerical
-substitution or a passing parity case. App snapshots prove reproducibility only;
+compared cells at `1e-8` absolute plus `1e-8` relative tolerance. All eight cases
+now match 1,920/1,920 requested cells; the original baseline
+report remains immutable and the current assertion includes native `ta.macd`.
+App snapshots prove reproducibility only;
 they are not oracle equivalence. Current timezone, typing, collection, library,
 candle-output and version restrictions remain in force.
 
