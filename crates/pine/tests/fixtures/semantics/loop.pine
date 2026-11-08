@@ -1,0 +1,15 @@
+//@version=5
+// SPDX-License-Identifier: MIT
+// Independently authored black-box proxy probe; no oracle source used.
+indicator("loop")
+s = 0.0
+c = 0.0
+v = 0.0
+for i = 0 to 2
+    s := s + ta.sma(close + i, 2)
+    c := c + ta.cum(close + i)
+for i = 0 to bar_index % 3
+    v := v + ta.sma(close + i, 2)
+plot(s)
+plot(c)
+plot(v)
