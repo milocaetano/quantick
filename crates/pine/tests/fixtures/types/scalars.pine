@@ -1,0 +1,17 @@
+//@version=5
+indicator("Types")
+const int count = 2
+input int length = input.int(3)
+simple float fixed = count + length
+series float price = close
+float missing = na
+int rounded = int(2.9)
+bool flag = bool(1)
+string label = "typed"
+color ink = color.red
+identity(simple int x) => x + 1
+plot(fixed + identity(count))
+plot(nz(missing, price))
+plot(rounded)
+plot(flag ? 1 : 0)
+plot(math.max(1, 2.5))
