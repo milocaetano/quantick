@@ -854,7 +854,9 @@ mod tests {
             let plots = [plot("ema")];
             let mut style = StyleOverride::default();
             let id = egui::Id::new(("indicator-settings", dialog.slot.0));
-            for _ in 0..3 {
+            // Enough frames for the window's size, and so its centring, to
+            // settle.
+            for _ in 0..6 {
                 let input = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), size)),
                     ..egui::RawInput::default()

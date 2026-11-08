@@ -13,7 +13,7 @@
 //! looked for. A trader who wants it elsewhere drags it once and it reopens
 //! there.
 //!
-//! The window is centred **once**, from its drawn size, and then held by its
+//! The window is centred from its drawn size while that settles, then held by its
 //! top-left corner like any window. Pivoting on its centre instead would make
 //! it grow up and down at once whenever its content changes height — a tab
 //! switch would move the tab strip out from under the pointer. egui's first
@@ -37,16 +37,28 @@ pub(crate) fn centred<'open>(
     ctx: &egui::Context,
 ) -> egui::Window<'open> {
     let window = window.id(id).pivot(egui::Align2::LEFT_TOP);
-    let centred_flag = id.with("centred");
-    let done = ctx.data(|data| data.get_temp::<bool>(centred_flag).unwrap_or(false));
-    match ctx.memory(|memory| memory.area_rect(id)) {
-        Some(drawn) if !done => {
-            ctx.data_mut(|data| data.insert_temp(centred_flag, true));
-            window.current_pos(ctx.available_rect().center() - drawn.size() / 2.0)
-        }
-        _ => window,
+    let Some(drawn) = ctx.memory(|memory| memory.area_rect(id)) else {
+        return window;
+    };
+    // (frames of settling left, where it was last put). A window's size can
+    // take a few frames to settle, so it is re-centred while it does — and
+    // left alone the moment a hand has moved it.
+    let state = id.with("centring");
+    let (left, placed) = ctx
+        .data(|data| data.get_temp(state))
+        .unwrap_or((SETTLE_FRAMES, drawn.min));
+    if left == 0 || drawn.min.distance(placed) > 0.5 {
+        ctx.data_mut(|data| data.insert_temp(state, (0_u8, placed)));
+        return window;
     }
+    let at = ctx.available_rect().center() - drawn.size() / 2.0;
+    ctx.data_mut(|data| data.insert_temp(state, (left - 1, at)));
+    window.current_pos(at)
 }
+
+/// How many frames a settings window is re-centred for while its size
+/// settles after it first appears.
+const SETTLE_FRAMES: u8 = 4;
 
 #[cfg(test)]
 mod tests {
@@ -130,7 +142,8 @@ mod tests {
     fn a_taller_tab_grows_the_window_downward_without_moving_its_top() {
         let ctx = egui::Context::default();
         let size = egui::vec2(1500.0, 900.0);
-        for _ in 0..3 {
+        // Past the frames in which a new window is still being centred.
+        for _ in 0..=SETTLE_FRAMES + 1 {
             frame(&ctx, size, |ctx| show(ctx, 200.0, false, None));
         }
         let before = rect(&ctx);
