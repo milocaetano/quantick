@@ -42,7 +42,7 @@ impl Eval<'_> {
             } else if matches!(name, "color" | "wickcolor" | "bordercolor") {
                 let value = match value {
                     Value::Color(c) => Some(Rgba8::from_u32(c)),
-                    Value::Na => None,
+                    value if value.is_na() => None,
                     other => return Err(self.type_err(id, "a color", &other)),
                 };
                 match name {

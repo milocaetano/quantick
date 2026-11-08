@@ -32,7 +32,7 @@ pub enum VarMode {
 /// Binary operators, in Pine semantics (comparisons with NaN are false).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    /// `+` (numbers; string concatenation is not in v1).
+    /// `+` (numbers or string concatenation).
     Add,
     /// `-`
     Sub,
@@ -259,6 +259,7 @@ pub struct Node {
 #[derive(Debug, Default, Clone)]
 pub struct Ast {
     nodes: Vec<Node>,
+    annotations: Vec<(NodeId, Vec<Vec<String>>)>,
 }
 
 impl Ast {
@@ -279,6 +280,27 @@ impl Ast {
         let id = NodeId(u32::try_from(self.nodes.len()).expect("scripts fit in u32 nodes"));
         self.nodes.push(Node { kind, span });
         id
+    }
+
+    pub(crate) fn order_args(&mut self, id: NodeId, order: &[usize]) {
+        if let NodeKind::Call { args, .. } = &mut self.nodes[id.index()].kind {
+            *args = order.iter().map(|i| args[*i].clone()).collect();
+        }
+    }
+
+    pub(crate) fn id_at(&self, index: usize) -> Option<NodeId> {
+        (index < self.nodes.len()).then(|| NodeId(u32::try_from(index).expect("bounded AST")))
+    }
+
+    pub(crate) fn annotate(&mut self, id: NodeId, words: Vec<Vec<String>>) {
+        self.annotations.push((id, words));
+    }
+
+    pub(crate) fn annotations(&self, id: NodeId) -> &[Vec<String>] {
+        self.annotations
+            .iter()
+            .find(|(node, _)| *node == id)
+            .map_or(&[], |(_, words)| words.as_slice())
     }
 
     /// Read one node.

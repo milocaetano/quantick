@@ -83,7 +83,7 @@ impl<'a> Eval<'a> {
                 let v = self.eval(arg.value)?;
                 match v {
                     Value::Color(rgba) => Ok(Rgba8::from_u32(rgba)),
-                    Value::Na => Ok(default),
+                    value if value.is_na() => Ok(default),
                     other => Err(self.type_err(arg.value, "a color", &other)),
                 }
             }
@@ -102,7 +102,7 @@ impl<'a> Eval<'a> {
                 let v = self.eval(arg.value)?;
                 match v {
                     Value::Str(s) => Ok(s.as_ref().clone()),
-                    Value::Na => Ok(String::new()),
+                    value if value.is_na() => Ok(String::new()),
                     other => Err(self.type_err(arg.value, "a string", &other)),
                 }
             }

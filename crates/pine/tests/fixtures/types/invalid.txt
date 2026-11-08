@@ -1,0 +1,17 @@
+# Each body must fail at load with PINE_TYPE.
+int x = 1.5
+float x = "bad"
+const float x = close
+input float x = close
+simple float x = close
+bool x = "bad"
+string x = color.red
+color x = "red"
+x = na
+float x = close\nx := "bad"
+plot(math.max(1, "bad"))
+plot(close[1.5])
+f(simple int x) => x\nplot(f(close))
+f(int x) => x\nplot(f(1.5))
+simple float x = bar_index > 0 ? 1 : 2
+simple float x = if close > 0\n    1.0\nelse\n    2.0

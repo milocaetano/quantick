@@ -100,6 +100,20 @@ fn calendar_rejects_unsupported_zones_and_bad_timestamps() {
         "year(0, \"UTC\", 1)",
     ] {
         let source = format!("//@version=5\nindicator(\"t\")\nplot({expression})\n");
+        if matches!(
+            expression,
+            "year(0.5)" | "year(true)" | "year(0, 1)" | "year()" | "year(0, \"UTC\", 1)"
+        ) {
+            let Err(errors) = compile(&source, "calendar.pine") else {
+                panic!("{expression} must fail at load");
+            };
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e.code == quantick_pine::ErrorCode::PineType)
+            );
+            continue;
+        }
         let mut script = load(&source);
         let result = script.on_close(
             &bar(0),

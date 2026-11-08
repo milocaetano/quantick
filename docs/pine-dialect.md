@@ -25,7 +25,7 @@ by golden tests.
   partial bar from a snapshot of committed state and is rolled back
   afterwards. An EMA never advances twice inside one bar. `varip` variables
   are the deliberate exception: they persist across preview runs.
-- A runtime error (type mismatch, loop budget) disables that indicator —
+- A runtime error (invalid data-dependent value, loop budget) disables that indicator —
   shown with bar index, line and code — and never touches its neighbours.
 
 ## Language
@@ -33,9 +33,26 @@ by golden tests.
 - `//@version=5` (missing → assumed 5 with a warning; other versions are
   errors).
 - Declarations `=`, reassignment `:=`, `var`, `varip`, tuple destructuring
-  `[a, b] = f()`. Type annotations (`var float x = na`) are accepted and
-  ignored — the dialect is dynamically typed with compile-time checks on
-  builtins.
+  `[a, b] = f()`. Scalar types are `int`, `float`, `bool`, `string`, and
+  `color`. Annotations (`var float x = na`) are enforced at load, including
+  `const < input < simple < series` qualifiers. Expressions take the strongest
+  input/control-flow qualifier; assignments cannot narrow it. Incompatible
+  types, annotations, argument counts and overloads report `PINE_TYPE`.
+  Numeric storage remains f64; scalar identity is checked before execution.
+  Integer-to-float and v5 numeric-to-bool conversions are supported, as are
+  explicit `int()`, `float()`, `bool()`, `string()` and `color()` casts (the
+  latter two accept their own type or `na`, not formatting conversions).
+  Strings support `+`. Typed missing values retain bool/color defaults in
+  `nz()`, and missing booleans are false in conditions.
+- **Compatibility divergence:** an unannotated `x = na` may infer one
+  unambiguous scalar/handle type from later assignments, including branches.
+  Conflicting or unresolved types fail at load. This deterministic inference
+  preserves the shipped indicators; strict Pine requires an explicit type.
+- User functions infer each call separately, resolve typed overloads by exact
+  match before numeric promotion, and lower named arguments to parameter
+  order. Function parameters are at least `simple`; series arguments and
+  control flow propagate through their returns. Drawing and plot handles
+  remain distinct from scalar types.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
   Stateful calls in skipped `and`/`or`, ternary and `if` arms advance on
@@ -51,7 +68,12 @@ by golden tests.
   is the default.
 - User functions: `f(x) => expr` or an indented block; tuples for multi-
   returns; no recursion (`PINE_RECURSION`); no nested definitions.
-- Division (and `%`) by zero yields `na`, never ±infinity.
+- Division (and `%`) by zero yields `na`, never infinity. In v5,
+  `const int / const int` truncates toward zero; division with a float or
+  non-const integer produces a float. This intentionally distinguishes
+  `5 / 2` (2), `5.0 / 2` (2.5), and `input.int(5) / 2` (2.5).
+  See TradingView's [v5-to-v6 division and boolean migration rules](https://www.tradingview.com/pine-script-docs/migration-guides/to-pine-version-6/)
+  and [v5 type system](https://www.tradingview.com/pine-script-docs/v5/language/type-system/).
 - Line continuation: a line ending in a binary operator or comma, or with
   unclosed brackets, continues. **Divergence:** a line ending in `=>` does
   *not* continue — it opens a multi-line function body. Tabs indent 4

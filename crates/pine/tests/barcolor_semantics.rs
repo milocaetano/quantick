@@ -173,15 +173,16 @@ fn the_forming_bar_is_painted_by_its_preview_and_commits_nothing() {
 
 #[test]
 fn a_non_colour_argument_is_a_type_error() {
-    let mut h = Harness::load(
-        "//@version=5\n\
-         indicator(\"paint\")\n\
-         barcolor(close)\n\
-         plot(close)\n",
+    let source = "//@version=5\nindicator(\"paint\")\nbarcolor(close)\nplot(close)\n";
+    let Err(errors) = compile(source, "test.pine") else {
+        panic!("a number is not a color");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineType && e.message.contains("Color")),
+        "{errors:?}"
     );
-    let error = h.close_all(&[100.0]).expect_err("a number is not a colour");
-    assert!(error.message.contains("PINE_TYPE"), "{error}");
-    assert!(error.message.contains("a color"), "{error}");
 }
 
 #[test]
