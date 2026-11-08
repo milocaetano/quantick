@@ -12,7 +12,9 @@ use egui_phosphor::regular as icons;
 use quantick_sim::{Command, Position};
 use rust_decimal::Decimal;
 
-use crate::paper_chrome::{fmt_decimal, fmt_points, points_color, position_word};
+use crate::paper_chrome::{
+    financial_text, fmt_decimal, fmt_points, points_color, position_word, trade_action_ink,
+};
 use crate::theme;
 use quantick_paper::desk::ticket::offset_price;
 
@@ -75,22 +77,18 @@ impl PositionCard<'_> {
 
     fn flat_row(&self, ui: &mut egui::Ui) -> Option<CardCommand> {
         let palette = theme::get(ui.ctx());
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("FLAT")
-                    .monospace()
-                    .color(palette.text_muted()),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(&self.realized_text)
-                        .monospace()
-                        .strong()
-                        .color(points_color(&palette, self.realized)),
-                )
-                .on_hover_text("this session's realized result");
-            });
-        });
+        ui.label(
+            egui::RichText::new("FLAT")
+                .monospace()
+                .color(palette.text_muted()),
+        );
+        ui.label(financial_text(
+            &palette,
+            &self.realized_text,
+            palette.mono_font(12.0),
+            points_color(&palette, self.realized),
+        ))
+        .on_hover_text("this session's realized result");
         let cancel = self.has_working_orders
             && ui
                 .button("Cancel all orders")
@@ -102,37 +100,30 @@ impl PositionCard<'_> {
     /// Brackets: the level, what it pays, ✕ to clear — or the way to set
     /// the missing leg right here, from the ticket's offset.
     fn brackets(&self, ui: &mut egui::Ui, position: &Position) -> Option<Command> {
-        let palette = theme::get(ui.ctx());
         let mut bracket_change = None;
-        egui::Grid::new("paper_position_brackets")
-            .num_columns(3)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                let legs = [
-                    BracketLeg {
-                        stop: true,
-                        word: "SL",
-                        level: self.brackets[0].clone(),
-                        color: palette.sell(),
-                        offset: self.stop_offset,
-                        clear_hover: "remove the protective stop",
-                    },
-                    BracketLeg {
-                        stop: false,
-                        word: "TP",
-                        level: self.brackets[1].clone(),
-                        color: palette.buy(),
-                        offset: self.profit_offset,
-                        clear_hover: "remove the profit target",
-                    },
-                ];
-                for leg in legs {
-                    if let Some(change) = leg.show(ui, position) {
-                        bracket_change = Some(change);
-                    }
-                    ui.end_row();
+        ui.vertical(|ui| {
+            let legs = [
+                BracketLeg {
+                    stop: true,
+                    word: "SL",
+                    level: self.brackets[0].clone(),
+                    offset: self.stop_offset,
+                    clear_hover: "remove the protective stop",
+                },
+                BracketLeg {
+                    stop: false,
+                    word: "TP",
+                    level: self.brackets[1].clone(),
+                    offset: self.profit_offset,
+                    clear_hover: "remove the profit target",
+                },
+            ];
+            for leg in legs {
+                if let Some(change) = leg.show(ui, position) {
+                    bracket_change = Some(change);
                 }
-            });
+            }
+        });
         bracket_change
     }
 }
@@ -143,7 +134,6 @@ struct BracketLeg {
     stop: bool,
     word: &'static str,
     level: Option<(Decimal, String)>,
-    color: egui::Color32,
     offset: Option<Decimal>,
     clear_hover: &'static str,
 }
@@ -151,52 +141,67 @@ struct BracketLeg {
 impl BracketLeg {
     fn show(&self, ui: &mut egui::Ui, position: &Position) -> Option<Command> {
         let palette = theme::get(ui.ctx());
-        ui.label(
-            egui::RichText::new(self.word)
-                .color(palette.text_muted())
-                .small(),
-        );
-        match (&self.level, self.offset) {
-            (Some((level, pnl)), _) => {
-                ui.label(
-                    egui::RichText::new(format!("{} {}", fmt_decimal(*level), pnl,))
-                        .monospace()
-                        .color(self.color),
-                );
-                let cleared = ui
-                    .small_button("×")
-                    .on_hover_text(self.clear_hover)
-                    .clicked();
-                cleared.then(|| self.with_level(position, None))
+        let mut change = None;
+        let leg_ink = if self.stop {
+            palette.sell()
+        } else {
+            palette.buy()
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(self.word).color(palette.text_muted()));
+            match (&self.level, self.offset) {
+                (Some((level, _)), _) => {
+                    ui.label(egui::RichText::new(fmt_decimal(*level)).monospace().color(
+                        if palette.resolved.dark {
+                            leg_ink
+                        } else {
+                            palette.text_primary()
+                        },
+                    ));
+                    if ui
+                        .small_button("×")
+                        .on_hover_text(self.clear_hover)
+                        .clicked()
+                    {
+                        change = Some(self.with_level(position, None));
+                    }
+                }
+                (None, Some(offset)) => {
+                    if ui
+                        .small_button(format!("Set {} pts", fmt_decimal(offset)))
+                        .on_hover_text(
+                            "place this leg the ticket's offset away from the average entry",
+                        )
+                        .clicked()
+                    {
+                        change =
+                            Some(self.with_level(
+                                position,
+                                Some(offset_price(position, offset, self.stop)),
+                            ));
+                    }
+                }
+                (None, None) => {
+                    ui.label(
+                        egui::RichText::new("drag from the entry line, or type an offset below")
+                            .color(palette.text_support()),
+                    );
+                }
             }
-            (None, Some(offset)) => {
-                ui.label(
-                    egui::RichText::new("—")
-                        .monospace()
-                        .color(palette.text_faint()),
-                );
-                let set = ui
-                    .small_button(format!("Set {} pts", fmt_decimal(offset)))
-                    .on_hover_text(
-                        "place this leg the ticket's offset away from the \
-                         average entry",
-                    )
-                    .clicked();
-                set.then(|| {
-                    let level = offset_price(position, offset, self.stop);
-                    self.with_level(position, Some(level))
-                })
-            }
-            (None, None) => {
-                ui.label(
-                    egui::RichText::new("drag from the entry line, or type an offset below")
-                        .color(palette.text_support())
-                        .small(),
-                );
-                ui.label("");
-                None
-            }
+        });
+        if let Some((level, text)) = &self.level {
+            ui.label(financial_text(
+                &palette,
+                text,
+                palette.mono_font(12.0),
+                if palette.resolved.dark {
+                    leg_ink
+                } else {
+                    points_color(&palette, position.open_points(*level))
+                },
+            ));
         }
+        change
     }
 
     /// The bracket with this leg at `level` and the other leg untouched.
@@ -219,7 +224,7 @@ impl BracketLeg {
 fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
     let palette = theme::get(ui.ctx());
     let color = palette.side_color(position.side);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         egui::Frame::none()
             .fill(color)
             .rounding(egui::Rounding::same(2.0))
@@ -231,7 +236,7 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
                         position_word(position.side),
                         fmt_decimal(position.quantity)
                     ))
-                    .color(palette.chip_ink())
+                    .color(trade_action_ink(&palette, color))
                     .strong()
                     .small(),
                 );
@@ -241,18 +246,16 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
                 .monospace()
                 .color(palette.text_primary()),
         );
-        if let (Some(open), Some(text)) = (open, text) {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(text)
-                        .monospace()
-                        .strong()
-                        .color(points_color(&palette, open)),
-                )
-                .on_hover_text("open profit at the last print");
-            });
-        }
     });
+    if let (Some(open), Some(text)) = (open, text) {
+        ui.label(financial_text(
+            &palette,
+            text,
+            palette.mono_font(12.0),
+            points_color(&palette, open),
+        ))
+        .on_hover_text("open profit at the last print");
+    }
 }
 
 /// The R:R read, while both legs are set and the stop is not at entry.
@@ -364,4 +367,61 @@ fn quiet_action<'a>(
     .stroke(egui::Stroke::new(1.0_f32, palette.border()))
     .rounding(egui::Rounding::same(3.0))
     .min_size(egui::vec2(width, 22.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn light_pnl_ink_preserves_dark_palette_on_profitable_stop() {
+        let ctx = egui::Context::default();
+        let position = Position {
+            side: quantick_engine::Side::Buy,
+            quantity: Decimal::ONE,
+            avg_price: Decimal::from(100),
+            opened_ms: 0,
+            opened_agg_id: 0,
+            low_price: Decimal::from(100),
+            high_price: Decimal::from(120),
+            stop_loss: Some(Decimal::from(110)),
+            take_profit: None,
+        };
+        for light in [false, true] {
+            let mut appearance = quantick_appearance::Appearance::default();
+            if light {
+                appearance.apply(quantick_appearance::LIGHT).unwrap();
+            }
+            theme::sync(&ctx, &appearance);
+            let palette = theme::get(&ctx);
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    BracketLeg {
+                        stop: true,
+                        word: "SL",
+                        level: Some((Decimal::from(110), "+10 pts".to_owned())),
+                        offset: None,
+                        clear_hover: "clear",
+                    }
+                    .show(ui, &position);
+                });
+            });
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "+10 pts" => Some(text),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(
+                text.galley.job.sections[0].format.color,
+                if light {
+                    points_color(&palette, Decimal::TEN)
+                } else {
+                    palette.sell()
+                }
+            );
+        }
+    }
 }

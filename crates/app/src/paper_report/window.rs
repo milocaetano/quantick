@@ -151,6 +151,7 @@ impl ReportState {
         if fresh {
             return;
         }
+        self.report_table_layout = None;
         let Some(history) = &self.report else {
             self.report_view = None;
             self.report_days = DayIndex::default();
@@ -308,7 +309,12 @@ impl ReportState {
                             .show(ui, |ui| {
                                 // The trades come first: the curve above is
                                 // a shape, and this is the story behind it.
-                                toggle_list = draw_trade_list(ui, view, list_open);
+                                toggle_list = draw_trade_list(
+                                    ui,
+                                    view,
+                                    list_open,
+                                    &mut self.report_table_layout,
+                                );
                                 draw_report_grid(ui, &view.report);
                                 draw_side_grid(ui, &view.report);
                                 draw_exit_reason_grid(ui, &view.report);
@@ -353,11 +359,7 @@ impl ReportState {
                                 self.report_period.phrase(),
                             )
                         };
-                        ui.label(
-                            egui::RichText::new(text)
-                                .color(palette.text_support())
-                                .small(),
-                        );
+                        ui.label(egui::RichText::new(text).color(palette.text_support()));
                         let default_symbol =
                             (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
                         if (self.report_period != ReportPeriod::All
@@ -399,11 +401,8 @@ impl ReportState {
                         .small(),
                     );
                 }
-                let _footer = ui.label(
-                    egui::RichText::new(env.pnl.footnote())
-                        .color(palette.text_muted())
-                        .small(),
-                );
+                let _footer =
+                    ui.label(egui::RichText::new(env.pnl.footnote()).color(palette.text_support()));
                 #[cfg(any(feature = "scenario-harness", test))]
                 self.scroll_probe.footer(ui, _footer.rect);
             });
@@ -430,7 +429,7 @@ impl ReportState {
     fn draw_report_filters(&mut self, ui: &mut egui::Ui, asked: &mut ReportResponse) -> bool {
         let palette = theme::get(ui.ctx());
         let mut reload = false;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new("Symbol")
                     .color(palette.text_muted())
@@ -597,11 +596,7 @@ impl ReportState {
                 ),
                 (None, None) => "no saved trades in this scope".to_owned(),
             };
-            ui.label(
-                egui::RichText::new(text)
-                    .color(palette.text_support())
-                    .small(),
-            );
+            ui.label(egui::RichText::new(text).color(palette.text_support()));
         }
         reload
     }
@@ -612,7 +607,7 @@ impl ReportState {
     /// and what happened on the 12th" without a text field.
     fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
         let palette = theme::get(ui.ctx());
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let picked = self.calendar.selection.range();
             let label = match picked {
                 Some(range) => format!("{} {}", icons::CALENDAR_BLANK, range.label()),
