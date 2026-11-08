@@ -14,3 +14,5 @@ for i = 0 to limit
     count := count + 1
     limit := 0
 plot(count)
+bool explicit_missing = close > 100 ? true : na
+plot(explicit_missing == false ? 1 : 0)

@@ -504,7 +504,8 @@ impl<'a> Eval<'a> {
                 from, to, by, body, ..
             } => {
                 let from = self.num(*from)?;
-                let to = self.num(*to)?;
+                let bound_node = *to;
+                let mut to = self.num(bound_node)?;
                 let step = match by {
                     Some(by) => self.num(*by)?,
                     None => 1.0,
@@ -530,6 +531,9 @@ impl<'a> Eval<'a> {
                     self.write_resolved(id, Value::Num(i));
                     last = self.eval(*body)?;
                     i += step;
+                    if self.script.version.dynamic_for_bound() {
+                        to = self.num(bound_node)?;
+                    }
                 }
                 Ok(last)
             }
@@ -682,14 +686,18 @@ impl<'a> Eval<'a> {
             BinOp::And => {
                 // Short-circuit; na counts false (Pine).
                 if !self.cond(lhs)? {
-                    self.advance_skipped(rhs)?;
+                    if !self.script.version.lazy_boolean() {
+                        self.advance_skipped(rhs)?;
+                    }
                     return Ok(Value::Bool(false));
                 }
                 Ok(Value::Bool(self.cond(rhs)?))
             }
             BinOp::Or => {
                 if self.cond(lhs)? {
-                    self.advance_skipped(rhs)?;
+                    if !self.script.version.lazy_boolean() {
+                        self.advance_skipped(rhs)?;
+                    }
                     return Ok(Value::Bool(true));
                 }
                 Ok(Value::Bool(self.cond(rhs)?))

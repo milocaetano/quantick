@@ -49,7 +49,11 @@ impl Const {
 
 /// Member constants of the `color`/`plot`/`shape`/`location` namespaces.
 /// Colors fold to values; the rest fold to enum tags the interpreter maps.
-pub(super) fn member_constant(namespace: &str, field: &str) -> Option<Const> {
+pub(super) fn member_constant(
+    version: crate::version::Version,
+    namespace: &str,
+    field: &str,
+) -> Option<Const> {
     if namespace == "color" {
         let rgb = match field {
             "red" => 0xF236_45FF_u32,
@@ -71,7 +75,7 @@ pub(super) fn member_constant(namespace: &str, field: &str) -> Option<Const> {
             "fuchsia" => 0xE040_FBFF,
             _ => return None,
         };
-        return Some(Const::Color(rgb));
+        return Some(Const::Color(version.color(field, rgb)));
     }
     let tag = match (namespace, field) {
         // format.* is accepted so `indicator(format=...)` resolves; the
@@ -155,7 +159,9 @@ impl Compiler {
             NodeKind::Color(v) => Some(Const::Color(*v)),
             NodeKind::Na => Some(Const::Na),
             NodeKind::Member { object, field } => match self.kind(*object) {
-                NodeKind::Name(namespace) => member_constant(namespace, field),
+                NodeKind::Name(namespace) => {
+                    member_constant(self.checked_types.version, namespace, field)
+                }
                 _ => None,
             },
             NodeKind::Unary {
@@ -176,6 +182,7 @@ impl Compiler {
                         BinOp::Mul => Const::Int(a.checked_mul(*b)?),
                         BinOp::Div
                             if *b != 0
+                                && self.checked_types.version.truncate_const_division()
                                 && self.const_qualified(*lhs)
                                 && self.const_qualified(*rhs) =>
                         {

@@ -56,3 +56,61 @@ fn version_six_semantic_parity() {
         assert!(compile(&source, "version").is_err(), "accepted {source}");
     }
 }
+
+#[test]
+fn version_palette_and_supported_arguments() {
+    for (version, teal) in [(5, 0x0089_7BFF), (6, 0x0899_81FF)] {
+        let source = format!(
+            "//@version={version}\nindicator(\"palette\")\nplot(close, color=color.red)\nplot(close, color=color.teal)\nplot(close, color=color.yellow)\n"
+        );
+        let compiled = compile(&source, "palette").unwrap_or_else(|e| panic!("{e:?}"));
+        let expected = [0xF236_45FF, teal, 0xFDD8_35FF];
+        for (plot, expected) in compiled.plots.iter().zip(expected) {
+            assert_eq!(
+                plot.base_color,
+                quantick_indicators::Rgba8::from_u32(expected)
+            );
+        }
+    }
+    for version in [5, 6] {
+        let source = format!(
+            "//@version={version}\nindicator(\"casts\")\nplot(bool(close) ? 1 : 0)\nplot(5 / input.int(2))\nplot(close, color=color.new(color.red, 50), linewidth=1)\n"
+        );
+        assert!(compile(&source, "casts").is_ok());
+    }
+    for body in [
+        "plot(close, style=na)",
+        "plot(close, linewidth=0)",
+        "plot(close, title=\"a\", title=\"b\")",
+        "plot(1[1])",
+        "bool x = na",
+    ] {
+        let source = format!("//@version=5\nindicator(\"legacy\")\n{body}\n");
+        assert!(compile(&source, "legacy").is_ok(), "{source}");
+    }
+}
+
+#[test]
+fn version_dynamic_loop_budget() {
+    let source = "//@version=6\nindicator(\"budget\")\nlimit = 1\nfor i = 0 to limit\n    limit := limit + 1\nplot(close)\n";
+    let mut script = ScriptIndicator::new(
+        compile(source, "budget").unwrap_or_else(|e| panic!("{e:?}")),
+        source,
+    );
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[0.0],
+    };
+    assert!(script.preview(&bar, &mut ctx).is_err());
+}

@@ -7,3 +7,9 @@ The v5 lazy-call column deliberately preserves Quantick's eager stateful advance
 Integer payloads remain f64; no exact i64 parity is claimed. PineTS 0.13.1 simple-int
 numeric results differ from the primary reference; these primary-reference expectations
 do not rewrite or replace the existing oracle artifacts.
+
+The explicit bool/na join column follows the v6 type-system statement that
+bool-returning expressions normalize unavailable values to false:
+https://www.tradingview.com/pine-script-docs/language/type-system/#bool
+This is a primary-document interpretation, not a verified TradingView compiler
+result. The existing v5 missing-bool result is retained in the paired fixture.

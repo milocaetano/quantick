@@ -7,6 +7,7 @@ use crate::error::{ErrorCode, PineError};
 use crate::ir::{FunctionInfo, Resolution};
 
 pub(crate) fn validate(
+    version: crate::version::Version,
     ast: &mut Ast,
     root: NodeId,
     resolutions: &mut [Resolution],
@@ -16,6 +17,7 @@ pub(crate) fn validate(
 ) -> super::Checked {
     let node_count = ast.len();
     let mut checker = Checker {
+        version,
         ast,
         resolutions,
         functions,
@@ -44,12 +46,14 @@ pub(crate) fn validate(
     checker.contexts[0] = (checker.coercions, checker.integer_divisions);
     let (coercions, integer_divisions) = checker.contexts.into_iter().unzip();
     super::Checked {
+        version,
         coercions,
         integer_divisions,
         dispatch: checker.dispatch,
     }
 }
 pub(super) struct Checker<'a> {
+    pub version: crate::version::Version,
     pub ast: &'a mut Ast,
     pub resolutions: &'a mut [Resolution],
     pub functions: &'a [FunctionInfo],
@@ -106,14 +110,14 @@ impl Checker<'_> {
     fn annotated(&mut self, id: NodeId, value: NodeId, actual: Type, words: &[String]) -> Type {
         match annotation(words) {
             Ok(Some((base, qualifier))) => {
-                if !accepts(&base, &actual.base) {
+                if !self.accepts(&base, &actual.base) {
                     self.error(id, format!("expected {base:?}, found {:?}", actual.base));
                 }
                 if qualifier.is_some_and(|q| actual.qualifier > q) {
                     self.error(id, "value is stronger than its declared qualifier");
                 }
                 self.coercions[value.index()] = match base {
-                    Base::Bool => 1,
+                    Base::Bool => self.version.bool_coercion(),
                     Base::Color => 2,
                     Base::String => 3,
                     _ => 0,
@@ -129,7 +133,7 @@ impl Checker<'_> {
     }
     fn condition(&mut self, id: NodeId) -> Type {
         let ty = self.infer(id);
-        if !ty.condition() {
+        if !self.valid_condition(&ty) {
             self.error(id, "expected a boolean or numeric condition");
         }
         ty
@@ -155,7 +159,7 @@ impl Checker<'_> {
         // Preserve scalar identity when a branch, empty loop or history gap
         // returns a generic missing value. Context tables keep calls separate.
         match ty.base {
-            Base::Bool => self.coercions[id.index()] = 1,
+            Base::Bool => self.coercions[id.index()] = self.version.bool_coercion(),
             Base::Color => self.coercions[id.index()] = 2,
             Base::String => self.coercions[id.index()] = 3,
             _ => {}
@@ -199,7 +203,11 @@ impl Checker<'_> {
             NodeKind::Declare { value, .. } => {
                 let mut actual = self.infer(value);
                 let previous = self.read(self.resolutions[id.index()]);
-                if actual.base == Base::Na && previous.base != Base::Unknown {
+                if actual.base == Base::Na
+                    && previous.base != Base::Unknown
+                    && !(self.version.two_state_bool()
+                        && matches!(previous.base, Base::Bool | Base::Handle("enum")))
+                {
                     actual.base = previous.base;
                 }
                 let words = self
@@ -229,11 +237,11 @@ impl Checker<'_> {
                 if matches!(old.base, Base::Na | Base::Unknown) {
                     old.base = actual.base.clone();
                 }
-                if !accepts(&old.base, &actual.base) {
+                if !self.accepts(&old.base, &actual.base) {
                     self.error(id, "reassignment changes the variable's type");
                 }
                 self.coercions[value.index()] = match old.base {
-                    Base::Bool => 1,
+                    Base::Bool => self.version.bool_coercion(),
                     Base::Color => 2,
                     Base::String => 3,
                     _ => 0,
@@ -295,6 +303,17 @@ impl Checker<'_> {
                 Type::unknown()
             }
             NodeKind::Call { callee, args } => {
+                self.version_arguments(callee, &args);
+                if self.version.two_state_bool() {
+                    let mut names = std::collections::BTreeSet::new();
+                    for arg in &args {
+                        if let Some(name) = &arg.name
+                            && !names.insert(name)
+                        {
+                            self.error(arg.value, "v6 prohibits duplicate named arguments");
+                        }
+                    }
+                }
                 let args = if let Resolution::Builtin(b) = self.resolutions[callee.index()] {
                     self.ordered(id, b, args)
                 } else {
@@ -313,6 +332,24 @@ impl Checker<'_> {
     fn infer_operator(&mut self, id: NodeId, node: NodeKind) -> Type {
         match node {
             NodeKind::History { subject, offset } => {
+                if self.version.two_state_bool()
+                    && matches!(
+                        self.ast.node(subject).kind,
+                        NodeKind::Int(_)
+                            | NodeKind::Float(_)
+                            | NodeKind::Bool(_)
+                            | NodeKind::Str(_)
+                            | NodeKind::Color(_)
+                            | NodeKind::Na
+                            | NodeKind::Member { .. }
+                    )
+                    && !matches!(self.resolutions[subject.index()], Resolution::Builtin(_))
+                {
+                    self.error(
+                        subject,
+                        "v6 cannot reference literal or built-in constant history directly",
+                    );
+                }
                 let ty = self.infer(subject);
                 let index = self.infer(offset);
                 if !accepts(&Base::Int, &index.base) {
@@ -324,7 +361,7 @@ impl Checker<'_> {
                 let ty = self.infer(operand);
                 match op {
                     UnOp::Not => {
-                        if !ty.condition() {
+                        if !self.valid_condition(&ty) {
                             self.error(id, "not requires a condition");
                         }
                         Type::new(Base::Bool, ty.qualifier)
@@ -343,7 +380,7 @@ impl Checker<'_> {
                 let q = a.qualifier.max(b.qualifier);
                 match op {
                     BinOp::And | BinOp::Or => {
-                        if !a.condition() || !b.condition() {
+                        if !self.valid_condition(&a) || !self.valid_condition(&b) {
                             self.error(id, "logical operators require conditions");
                         }
                         Type::new(Base::Bool, q)
@@ -364,7 +401,8 @@ impl Checker<'_> {
                         }
                         let mut ty = self.join(id, a, b);
                         if op == BinOp::Div && ty.base == Base::Int {
-                            let truncate = q == Qualifier::Const;
+                            let truncate =
+                                self.version.truncate_const_division() && q == Qualifier::Const;
                             self.integer_divisions[id.index()] = truncate;
                             if !truncate {
                                 ty.base = Base::Float;
@@ -387,6 +425,7 @@ impl Checker<'_> {
                 let q = self.condition(condition).qualifier;
                 let a = self.under(then_block, q);
                 let b = otherwise.map_or_else(|| Type::new(Base::Na, q), |n| self.under(n, q));
+                self.unique_branches(id, &a, &b);
                 self.join(id, a, b)
             }
             NodeKind::Ternary {
@@ -397,6 +436,7 @@ impl Checker<'_> {
                 let q = self.condition(condition).qualifier;
                 let a = self.under(if_true, q);
                 let b = self.under(if_false, q);
+                self.unique_branches(id, &a, &b);
                 self.join(id, a, b)
             }
             NodeKind::Switch { subject, arms } => {
@@ -408,15 +448,20 @@ impl Checker<'_> {
                         q = q.max(ty.qualifier);
                         if let Some(subject) = &subject {
                             self.join(*test, subject.clone(), ty);
-                        } else if !ty.condition() {
+                        } else if !self.valid_condition(&ty) {
                             self.error(*test, "switch arm requires a condition");
                         }
                     }
                 }
+                let mut missing_arm = !arms.iter().any(|(test, _)| test.is_none());
                 let mut ty = Type::new(Base::Na, q);
                 for (_, body) in arms {
                     let arm = self.under(body, q);
+                    missing_arm |= arm.base == Base::Na;
                     ty = self.join(id, ty, arm);
+                }
+                if missing_arm {
+                    self.unique_branches(id, &ty, &Type::new(Base::Na, q));
                 }
                 ty
             }
@@ -493,7 +538,7 @@ impl Checker<'_> {
                     .map_or(&[][..], Vec::as_slice);
                 match annotation(words) {
                     Ok(Some((base, qualifier))) => {
-                        if !accepts(&base, &value.base)
+                        if !self.accepts(&base, &value.base)
                             || qualifier.is_some_and(|q| value.qualifier > q)
                         {
                             valid = false;

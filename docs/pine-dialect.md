@@ -1,8 +1,8 @@
 # Quantick Pine — dialect reference
 
-Quantick Pine is a **Pine v5 subset** for scripting indicators on quantick's
+Quantick Pine is a **Pine v5/v6 subset** for scripting indicators on quantick's
 activity-sampled charts (tick / volume / dollar / imbalance bars). A
-well-formed Pine v5 indicator script inside this subset runs unmodified:
+well-formed Pine v5 or v6 indicator script inside this subset runs unmodified:
 drop a `*.pine` file in the indicators folder (default `./indicators`,
 override with `QUANTICK_INDICATORS_DIR`) and add it from the INDICATORS
 toolbar menu.
@@ -55,7 +55,7 @@ by golden tests.
   remain distinct from scalar types.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
-  Stateful calls in skipped `and`/`or`, ternary and `if` arms advance on
+  In v5, stateful calls in skipped `and`/`or`, ternary and `if` arms advance on
   every bar, using a temporary variable view; assignments and drawing effects
   remain conditional. This eager policy is intentional, not a claim of
   TradingView equivalence. The PineTS proxy differs on conditional cumulative
@@ -92,7 +92,8 @@ by every indicator), `trade_count`.
 
 ## History `[n]`
 
-`x[n]` reads the value `x` had `n` bars ago; out of range reads `na`.
+`x[n]` reads the value `x` had `n` bars ago; out of range reads `na`
+(or false for a v6 bool).
 History works on any expression (`ta.ema(close, 9)[1]`). Constant offsets
 size storage exactly; dynamic offsets are capped at 500 bars — deeper reads
 yield `na`. Every known expression-history ring records one entry per committed
@@ -277,3 +278,37 @@ samples through `PreviewFrame::candles`. Reset clears rows while preserving
 declarations. These columns do not enter scalar plot rendering or fill handles;
 this release adds no app renderer. Calls must be at top level. `editable`,
 `show_last`, and `display` are rejected explicitly in this headless subset.
+
+## Version 6 policy
+
+The [primary migration guide](https://www.tradingview.com/pine-script-docs/migration-guides/to-pine-version-6/)
+defines the supported differences; paired original fixtures live in
+`crates/pine/tests/fixtures/version`, with manually calculated goldens.
+
+- Numeric conditions require an explicit `bool()` cast, including typed bool
+  arguments and assignments. Bool values have two states: missing history,
+  omitted conditional branches and `bool(na)` produce false. A bool declaration
+  or assignment cannot take `na`; `na`, `nz` and `fixnan` reject bool arguments.
+- Integer division always produces a fractional float. V5 const integer
+  division retains truncation; nonconst integer division is fractional in both.
+  The existing f64 integer precision/range limitation remains. PineTS 0.13.1
+  simple-int division differs from the primary reference; existing proxy
+  artifacts are unchanged and do not redefine these expectations.
+- `and` and `or` skip the unselected operand, including stateful calls.
+  Other conditional/loop eager advancement retains Quantick's documented
+  dialect policy. This is scoped v6 support, not full execution-model parity.
+- `for` reevaluates its upper bound after each iteration; the per-loop 10,000
+  iteration budget still applies, including a continually growing bound.
+- Direct history on literals and builtin constants is rejected; history on
+  variables and calls remains supported. Duplicate named arguments are errors.
+- Supported plot styles cannot take `na` or incomplete conditional values;
+  constant `linewidth` must be at least 1. Plot `transp` and plot `offset` were
+  never implemented; neither is added by this version work. `color.new` and
+  `color.rgb` retain their separate transparency arguments.
+- V6 red/teal/yellow are #F23645/#089981/#FDD835. Legacy v5 red and yellow
+  already use those v6 colors and retain them to preserve shipped snapshots;
+  this differs from upstream v5 #FF5252/#FFEB3B. Legacy v5 teal stays #00897B.
+
+Calendar support is unchanged. Request, timeframe and strategy namespaces
+remain rejected; version selection does not expand drawing or table support.
+Collections and UDT field history are handled by their respective feature owners.

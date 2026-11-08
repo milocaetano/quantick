@@ -362,7 +362,7 @@ impl Compiler {
             self.resolutions[id.index()] = Resolution::Builtin(builtin);
             return true;
         }
-        if let Some(constant) = member_constant(&namespace, field) {
+        if let Some(constant) = member_constant(self.checked_types.version, &namespace, field) {
             self.resolutions[id.index()] = match constant {
                 Const::Enum(tag) => Resolution::EnumConst(tag),
                 Const::Color(rgba) => Resolution::ColorConst(rgba),

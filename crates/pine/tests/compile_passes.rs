@@ -207,7 +207,7 @@ fn history_offsets_size_max_bars_back() {
 }
 
 #[test]
-fn version_other_than_5_is_refused_and_missing_is_a_warning() {
+fn unsupported_version_is_refused_and_missing_is_a_warning() {
     let errors = compile_err("//@version=4\nindicator(\"t\")\nplot(close)\n");
     assert!(errors.iter().any(|e| e.code == ErrorCode::PineVersion));
 

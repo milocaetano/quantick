@@ -51,6 +51,7 @@ pub type FunctionDispatch = std::collections::BTreeMap<(u32, usize), (u32, u32, 
 /// Type-directed lowering without runtime source-name lookups.
 #[derive(Clone, Default)]
 pub struct TypeProgram {
+    pub(crate) version: crate::version::Version,
     /// Per-context, per-node scalar conversions, checked at load.
     pub coercions: Vec<Vec<u8>>,
     /// Per-context v5 const int division nodes, truncated after evaluation.
@@ -67,6 +68,7 @@ pub struct TypeProgram {
 /// edited on disk since load would silently change under Apply.
 #[derive(Clone)]
 pub struct CompiledScript {
+    pub(crate) version: crate::version::Version,
     /// The arena.
     pub ast: Ast,
     /// The `Script` root.
