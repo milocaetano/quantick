@@ -468,3 +468,9 @@ fn collections_documented_boundary_policy() {
     let source = "//@version=6\nindicator(\"bool na\")\na = array.from(true, na)\nplot(a.size())";
     assert!(compile(source, "bool na").is_err());
 }
+
+#[test]
+fn collections_named_optional_defaults() {
+    let expected = include_str!("golden/collections/defaults.csv").trim().split(',').map(|s| s.parse::<f64>().unwrap()).collect::<Vec<_>>();
+    assert_eq!(run(include_str!("fixtures/collections/defaults.pine")), expected);
+}
