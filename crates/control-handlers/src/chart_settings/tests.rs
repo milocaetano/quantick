@@ -335,6 +335,7 @@ fn update_candles_refuses_a_changed_theme_owned_value_and_names_the_marker() {
             panic!("{field}: a changed theme-owned value must be refused");
         };
         assert!(message.contains(field), "{message}");
+        assert!(!message.contains("  "), "no double spaces: {message}");
         assert!(
             message.contains(&format!("ownership.{marker} to \"explicit\"")),
             "{message}"

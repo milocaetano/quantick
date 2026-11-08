@@ -70,7 +70,8 @@ impl ChartStyle {
                 {
                     return Some(concat!(
                         stringify!($($path).+),
-                        " is owned by the theme and the new value would be ignored;                          set ownership.",
+                        " is owned by the theme and the new value would be ignored; ",
+                        "set ownership.",
                         stringify!($marker),
                         " to \"explicit\" to make it yours"
                     ));
