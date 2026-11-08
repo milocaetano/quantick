@@ -104,7 +104,7 @@ fn object_alias_copy_and_version_history() {
     for body in [
         "type Point\n    float x\n    int x\np = Point.new()",
         "type Point\n    unknown x",
-        "type Point\n    float x = close",
+        "type Point\n    float x = close + 1",
         "type Point\n    float x\np = Point.new(1,2)",
         "type Point\n    float x\np = Point.new(\"bad\")",
         "type Point\n    float x\np = Point.new()\np.x := \"bad\"",
@@ -355,17 +355,57 @@ fn mixed_graph_history_and_first_preview_varip() {
 #[test]
 fn object_varip_fields_are_independent_of_reference_mode() {
     for mode in ["var", "varip"] {
-        let source = format!("//@version=6\nindicator(\"fields\")\ntype Counter\n    int bars = 0\n    varip int ticks = 0\n{mode} counter = Counter.new()\nalias = counter\ncounter.bars := counter.bars + 1\ncounter.ticks := counter.ticks + 1\nplot(alias.bars)\nplot(alias.ticks)\n");
-        let compiled = quantick_pine::compile(&source, "fields").unwrap_or_else(|e| panic!("{e:?}"));
+        let source = format!(
+            "//@version=6\nindicator(\"fields\")\ntype Counter\n    int bars = 0\n    varip int ticks = 0\n{mode} counter = Counter.new()\nalias = counter\ncounter.bars := counter.bars + 1\ncounter.ticks := counter.ticks + 1\nplot(alias.bars)\nplot(alias.ticks)\n"
+        );
+        let compiled =
+            quantick_pine::compile(&source, "fields").unwrap_or_else(|e| panic!("{e:?}"));
         let mut script = ScriptIndicator::new(compiled, &source);
-        let bar = IndicatorBar { open_time: 0, close_time: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, buy_volume: 0.0, sell_volume: 0.0, trade_count: 0.0 };
-        let mut ctx = Ctx { bar_index: 0, cvd: &[] };
+        let bar = IndicatorBar {
+            open_time: 0,
+            close_time: 1,
+            open: 1.0,
+            high: 1.0,
+            low: 1.0,
+            close: 1.0,
+            buy_volume: 0.0,
+            sell_volume: 0.0,
+            trade_count: 0.0,
+        };
+        let mut ctx = Ctx {
+            bar_index: 0,
+            cvd: &[],
+        };
         script.on_close(&bar, &mut ctx).unwrap();
         ctx.bar_index = 1;
-        assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, vec![2.0, 2.0]);
-        assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, vec![2.0, 3.0]);
+        assert_eq!(
+            script.preview(&bar, &mut ctx).unwrap().values,
+            vec![2.0, 2.0]
+        );
+        assert_eq!(
+            script.preview(&bar, &mut ctx).unwrap().values,
+            vec![2.0, 3.0]
+        );
         script.on_close(&bar, &mut ctx).unwrap();
         assert_eq!(script.plots().column(PlotId::new(0))[1], 2.0);
         assert_eq!(script.plots().column(PlotId::new(1))[1], 4.0);
+    }
+}
+
+#[test]
+fn builtin_field_defaults_evaluate_at_construction() {
+    let source = include_str!("fixtures/libraries/defaults.pine");
+    let compiled = quantick_pine::compile(source, "defaults").unwrap_or_else(|e| panic!("{e:?}"));
+    let mut script = ScriptIndicator::new(compiled, source);
+    for (index, line) in include_str!("golden/libraries/defaults.csv").lines().enumerate() {
+        let expected: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
+        let bar = IndicatorBar { open_time: 0, close_time: 1, open: expected[0], high: expected[0], low: expected[0], close: expected[0], buy_volume: 3.0, sell_volume: 4.0, trade_count: 0.0 };
+        let mut ctx = Ctx { bar_index: index, cvd: &[] };
+        for _ in 0..2 { assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, &expected[1..]); }
+        script.on_close(&bar, &mut ctx).unwrap();
+    }
+    for field in ["int value = close", "bool value = volume", "float value = math.abs(close)", "float value = unknown"] {
+        let source = format!("//@version=6\nindicator(\"invalid defaults\")\ntype Unused\n    {field}\nplot(close)\n");
+        assert!(quantick_pine::compile(&source, "invalid").is_err(), "{field}");
     }
 }
