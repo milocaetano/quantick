@@ -19,7 +19,7 @@ pub(super) fn scopes(source: &str) -> Vec<(usize, usize, Vec<String>)> {
                     break;
                 }
                 let declaration = field.split('=').next().unwrap_or(field);
-                if let Some(name) = declaration.split_whitespace().nth(1) {
+                if let Some(name) = declaration.split_whitespace().last() {
                     // Only protect the field label, not identifiers in its default.
                     let start = field_offset + declaration.rfind(name).expect("field label");
                     result.push((start, start + name.len(), vec![name.to_owned()]));

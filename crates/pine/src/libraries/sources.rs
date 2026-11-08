@@ -191,50 +191,7 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                 "local source requires exactly one library declaration",
             ));
         }
-        let tokens = lexer::lex(&body)
-            .map_err(|mut errors| errors.remove(0))?
-            .tokens;
-        let scopes = super::source_scopes::scopes(&body);
-        let mut edits = Vec::new();
-        let mut index = 0;
-        while index < tokens.len() {
-            let token = &tokens[index];
-            if let Tok::Ident(name) = &token.tok {
-                let protected = scopes.iter().any(|(start, end, locals)| {
-                    (*start..*end).contains(&token.span.start) && locals.contains(name)
-                });
-                if let Some(public) = aliases.get(name)
-                    && !protected
-                    && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Dot))
-                    && let Some(member) = tokens.get(index + 2)
-                    && let Tok::Ident(field) = &member.tok
-                {
-                    let renamed = public.get(field).ok_or_else(|| {
-                        error(format!("library `{name}` does not export `{field}`"))
-                    })?;
-                    edits.push((token.span.start, member.span.end, renamed.clone()));
-                    index += 3;
-                    continue;
-                }
-                let member = index > 0 && tokens[index - 1].tok == Tok::Dot;
-                let named_argument = matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Eq))
-                    && index > 0
-                    && matches!(tokens[index - 1].tok, Tok::LParen | Tok::Comma);
-                if let Some(renamed) = names.get(name)
-                    && (!member
-                        || private_methods.contains(name)
-                            && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::LParen)))
-                    && !protected
-                    && !named_argument
-                {
-                    edits.push((token.span.start, token.span.end, renamed.clone()));
-                }
-            }
-            index += 1;
-        }
-        for (start, end, text) in edits.into_iter().rev() {
-            body.replace_range(start..end, &text);
-        }
+        rewrite(&mut body, &aliases, &names, &private_methods)?;
         // Keep the root's version directive first, before dependency definitions.
         let version = source
             .lines()
@@ -250,4 +207,57 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
         linked.push_str(&body);
         Ok((linked, exports))
     }
+}
+
+fn rewrite(
+    body: &mut String,
+    aliases: &BTreeMap<String, BTreeMap<String, String>>,
+    names: &BTreeMap<String, String>,
+    private_methods: &[String],
+) -> Result<(), PineError> {
+    let tokens = lexer::lex(body)
+        .map_err(|mut errors| errors.remove(0))?
+        .tokens;
+    let scopes = super::source_scopes::scopes(body);
+    let mut edits = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if let Tok::Ident(name) = &token.tok {
+            let protected = scopes.iter().any(|(start, end, locals)| {
+                (*start..*end).contains(&token.span.start) && locals.contains(name)
+            });
+            if let Some(public) = aliases.get(name)
+                && !protected
+                && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Dot))
+                && let Some(member) = tokens.get(index + 2)
+                && let Tok::Ident(field) = &member.tok
+            {
+                let renamed = public
+                    .get(field)
+                    .ok_or_else(|| error(format!("library `{name}` does not export `{field}`")))?;
+                edits.push((token.span.start, member.span.end, renamed.clone()));
+                index += 3;
+                continue;
+            }
+            let member = index > 0 && tokens[index - 1].tok == Tok::Dot;
+            let named_argument = matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::Eq))
+                && index > 0
+                && matches!(tokens[index - 1].tok, Tok::LParen | Tok::Comma);
+            if let Some(renamed) = names.get(name)
+                && (!member
+                    || private_methods.contains(name)
+                        && matches!(tokens.get(index + 1).map(|t| &t.tok), Some(Tok::LParen)))
+                && !protected
+                && !named_argument
+            {
+                edits.push((token.span.start, token.span.end, renamed.clone()));
+            }
+        }
+        index += 1;
+    }
+    for (start, end, text) in edits.into_iter().rev() {
+        body.replace_range(start..end, &text);
+    }
+    Ok(())
 }

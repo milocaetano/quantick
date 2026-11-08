@@ -476,5 +476,10 @@ fn varip_collection_types_reject_recursive_drawing_fields() {
 #[test]
 fn library_generic_and_varip_field_labels_keep_their_names() {
     let source = "//@version=6\nindicator(\"scopes\")\nimport local/Scopes/1 as lib\nitem = lib.make()\nplot(lib.read(item))\nplot(item.ticks)\n";
-    assert!(compile_with_libraries(source, "scopes", |_| Some(include_str!("fixtures/libraries/scopes.pine").into())).is_ok());
+    assert!(
+        compile_with_libraries(source, "scopes", |_| Some(
+            include_str!("fixtures/libraries/scopes.pine").into()
+        ))
+        .is_ok()
+    );
 }
