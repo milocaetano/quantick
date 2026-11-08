@@ -431,3 +431,22 @@ fn collections_statistic_integer_overloads() {
         vec![1.0, 1.0, 0.0, -1.0]
     );
 }
+
+#[test]
+fn collections_documented_boundary_policy() {
+    assert_eq!(run(include_str!("fixtures/collections/boundaries.pine")), vec![1.0; 5]);
+    for body in [
+        "a = array.from(1, 2)\ns = a.slice(1, 2)\na.clear()\ns.push(3)",
+        "a = array.new_int(100000)\ns = a.slice(0, 1)\ns.push(3)",
+        "a = array.from(1, 2)\na.slice(1, 1)",
+        "a = array.from(1.0)\na.percentile_linear_interpolation(101)",
+        "a = array.from(1.0)\na.percentrank(1)",
+        "a = array.from(1.0)\na.covariance(array.from(1.0, 2.0))",
+    ] {
+        let source = format!("//@version=6\nindicator(\"boundary\")\n{body}\nplot(1)");
+        let mut script = ScriptIndicator::new(compile(&source, "boundary").unwrap(), &source);
+        assert!(script.on_close(&bar(), &mut Ctx {bar_index:0, cvd:&[]}).is_err(), "{source}");
+    }
+    let source = "//@version=6\nindicator(\"bool na\")\na = array.from(true, na)\nplot(a.size())";
+    assert!(compile(source, "bool na").is_err());
+}
