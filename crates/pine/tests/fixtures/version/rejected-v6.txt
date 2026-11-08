@@ -1,0 +1,18 @@
+# Each line is a script body; escaped newlines delimit statements.
+bool x = 1
+bool x = na
+bool x = true\nx := na
+plot(close ? 1 : 0)
+plot(not 1 ? 1 : 0)
+plot(true and 1 ? 1 : 0)
+plot(na(true) ? 1 : 0)
+plot(nz(true) ? 1 : 0)
+plot(fixnan(true) ? 1 : 0)
+plot(1[1])
+plot(color.red[1] == color.red ? 1 : 0)
+plot(close, title="a", title="b")
+plot(close, style=na)
+plot(close, linewidth=0)
+plot(request.security("X", "D", close))
+plot(timeframe.multiplier)
+strategy.entry("x")
