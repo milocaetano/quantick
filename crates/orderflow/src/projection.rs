@@ -255,6 +255,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         };
 
         let mut drawn = false;
@@ -319,6 +320,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         });
     }
 

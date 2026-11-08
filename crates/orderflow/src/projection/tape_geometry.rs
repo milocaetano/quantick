@@ -2,6 +2,7 @@
 
 use crate::HeatmapConfig;
 use crate::config::{BubbleScaleTarget, BubbleStyle, bubble_halo_padding};
+use crate::projection::HeatmapCell;
 
 use super::constants::{MAX_DECORATED_INSET_SHARE, MAX_VERTICAL_RADIUS_SHARE};
 
@@ -105,6 +106,60 @@ impl TapeHorizontalGeometry {
     #[must_use]
     pub fn x(self, fraction: f64) -> f32 {
         self.inset_px + fraction as f32 * self.span_px
+    }
+
+    /// The market time, of a lane showing `window_ms`, the inset left of the
+    /// oldest dot holds on the dots' own clock: the book's lead
+    /// ([`crate::BarTimeline::with_lane_lead_ms`]). Rounded up, so the lead
+    /// reaches the pane's edge; zero on a pane with no time span.
+    #[must_use]
+    pub fn lead_ms(self, window_ms: i64) -> i64 {
+        share_of_window_ms(self.lead_share(), window_ms)
+    }
+
+    /// The share of the window [`Self::lead_ms`] is, for a request that
+    /// meets its window only in the engine.
+    #[must_use]
+    pub fn lead_share(self) -> f64 {
+        if self.span_px > 0.0 {
+            f64::from(self.inset_px / self.span_px)
+        } else {
+            0.0
+        }
+    }
+
+    /// Pixels from the lane's left edge a book cell of a frame with
+    /// `regions` slots is painted over, where the lane's own opening-to-NOW
+    /// mapping would cut it short: older depth in the lead left of the
+    /// oldest dot ([`HeatmapCell::lead_span`]), and a current row, which
+    /// ends at NOW, carried on to the lane's right edge while the frame's
+    /// current book is live. `None` leaves the cell where `x0..x1` puts it.
+    #[must_use]
+    pub fn book_span_px(
+        self,
+        cell: &HeatmapCell,
+        regions: usize,
+        current_book_live: bool,
+    ) -> Option<(f32, f32)> {
+        if let Some((from, to)) = cell.lead_span {
+            return Some((self.x(from).max(0.0), self.x(to)));
+        }
+        (cell.current_book && current_book_live).then(|| {
+            let regions = regions.max(1) as f64;
+            let from = (finite_unit_f64(cell.x0) * regions - (regions - 1.0)).max(0.0);
+            (self.x(from), self.x(1.0) + self.inset_px)
+        })
+    }
+}
+
+/// `share` of `window_ms`, rounded up; zero for a share that is not a
+/// positive finite number.
+#[must_use]
+pub(super) fn share_of_window_ms(share: f64, window_ms: i64) -> i64 {
+    if share.is_finite() && share > 0.0 {
+        (share * window_ms.max(0) as f64).ceil() as i64
+    } else {
+        0
     }
 }
 

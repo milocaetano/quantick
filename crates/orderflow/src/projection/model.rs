@@ -176,6 +176,14 @@ pub struct HeatmapCell {
     /// zero-width at the confirmation instant, and at the live edge when the
     /// lane's own runs carry the book there (depth averaging off).
     pub current_book: bool,
+    /// Where a lane cell that reaches before the lane's opening runs on the
+    /// tape's own clock, as lane fractions `(from, to)`: zero is the opening
+    /// (the oldest dot), one is NOW, and below zero is the older depth the
+    /// native tape paints in its inset left of the oldest dot
+    /// ([`TapeHorizontalGeometry::book_span_px`](super::TapeHorizontalGeometry::book_span_px)).
+    /// `x0` and `x1` stay clamped to the opening, so every other reader sees
+    /// a lane cell there and never a candle's. `None` for every other cell.
+    pub lead_span: Option<(f64, f64)>,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.

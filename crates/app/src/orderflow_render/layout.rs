@@ -8,7 +8,7 @@
 
 use eframe::egui;
 use quantick_orderflow::projection::{PastTape, PastTapeMemory};
-use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
+use quantick_orderflow::{AggressionPrimitive, HeatmapCell, HeatmapProjection, PriceWindow};
 use std::sync::Arc;
 
 use crate::viewport::Viewport;
@@ -280,22 +280,34 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
-    /// Screen rectangle occupied by one semantic heatmap cell.
+    /// Screen rectangle one heat cell paints over, nothing for a current
+    /// row that only previews the book. The native tape's book spans its
+    /// whole lane on the dots' clock (`TapeHorizontalGeometry::book_span_px`).
     ///
     /// Kept on the renderer's projection object so the on-demand pointer
-    /// resolver and the paint path cannot grow two pixel mappings. This does
-    /// no work unless a control snapshot explicitly asks what is under the
-    /// cursor.
+    /// resolver and the paint path cannot grow two pixel mappings.
     #[must_use]
     pub(crate) fn heat_cell_rect(
         self,
-        x0: f64,
-        x1: f64,
-        y0: f64,
-        y1: f64,
+        cell: &HeatmapCell,
         min_height: f32,
+        live: bool,
     ) -> egui::Rect {
-        self.band(x0, x1, y0, y1, min_height)
+        let tape = self
+            .lane_left_x()
+            .zip(self.tape_geometry)
+            .and_then(|(left, tape)| {
+                let (x0, x1) = tape.book_span_px(cell, self.slot_count, live)?;
+                Some(egui::Rect::from_two_pos(
+                    egui::pos2(left + x0, self.y(cell.y0)),
+                    egui::pos2(left + x1, self.y(cell.y1)),
+                ))
+            });
+        match tape {
+            Some(rect) => readable_band(rect, min_height, self.lane_rect()),
+            None if cell.current_book && cell.x1 <= cell.x0 => egui::Rect::NOTHING,
+            None => self.band(cell.x0, cell.x1, cell.y0, cell.y1, min_height),
+        }
     }
 
     /// Snapshot preview in the blank forward space, without stretching any

@@ -203,7 +203,7 @@ fn native_book_without_averaging_keeps_the_linear_lane() {
             let held = RenderContext::new(&frame, layout.with_lane_only(), &style);
             assert!((held.layout.x(fraction) - linear).abs() < 0.001);
             let front = context.layout.event_band(fraction, 0.4, 0.6, 1.0);
-            let hit = context.layout.heat_cell_rect(fraction, 1.0, 0.4, 0.6, 1.0);
+            let hit = context.layout.band(fraction, 1.0, 0.4, 0.6, 1.0);
             assert!((front.x - linear).abs() < 0.001, "the front stays linear");
             assert!((hit.left() - linear).abs() < 0.001, "the book stays linear");
             let inset = rect.left()
@@ -274,7 +274,7 @@ fn native_book_and_reductions_share_the_bubble_time_axis() {
                 "a held book keeps the same native inset without aggression primitives"
             );
             let front = context.layout.event_band(fraction, 0.4, 0.6, 1.0);
-            let hit = context.layout.heat_cell_rect(fraction, 1.0, 0.4, 0.6, 1.0);
+            let hit = context.layout.band(fraction, 1.0, 0.4, 0.6, 1.0);
             assert!((front.x - expected).abs() < 0.001);
             assert!((hit.left() - expected).abs() < 0.001);
             let ctx = egui::Context::default();

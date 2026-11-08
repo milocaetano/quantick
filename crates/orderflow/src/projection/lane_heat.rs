@@ -32,6 +32,9 @@ pub use lane_fold::LaneFold;
 #[cfg(test)]
 #[path = "lane_heat/tests.rs"]
 mod cap_tests;
+#[cfg(test)]
+#[path = "lane_heat/lead_tests.rs"]
+mod lead_tests;
 
 /// The longest stretch the live book is carried past its last confirmation.
 ///
@@ -215,9 +218,17 @@ pub(super) fn project_lane_heat_folded(
         return (Vec::new(), 0, None);
     }
     let averaging = config.live_lane.depth_time_averaging;
+    // Only the averaged native book is drawn on the dots' inset clock, so
+    // only it reads the older depth under the inset left of the oldest dot.
+    let lead_ms = if averaging {
+        timeline.lane_lead_ms()
+    } else {
+        0
+    };
+    let lead_start_ms = lane_start_ms.saturating_sub(lead_ms);
     let start_ms = history
         .retention_start_ms()
-        .map_or(lane_start_ms, |retained| retained.max(lane_start_ms));
+        .map_or(lead_start_ms, |retained| retained.max(lead_start_ms));
     let carry = book_carry(history, lane_end_ms);
     let open_run_end_ms = carry.map_or_else(
         || history.latest_book_ms().unwrap_or(lane_end_ms),
@@ -266,6 +277,15 @@ pub(super) fn project_lane_heat_folded(
             .locate_in_lane_clamped(time_ms)
             .map(|position| position.normalized)
     };
+    // A stretch reaching before the opening keeps its x clamped there and
+    // carries its span on the lane's own clock, which runs on below zero.
+    let window_ms = (lane_end_ms - lane_start_ms).max(1) as f64;
+    let lead_span = |from_ms: i64, to_ms: i64| {
+        let from_ms = from_ms.max(lead_start_ms);
+        let fraction = |time_ms: i64| (time_ms.min(lane_end_ms) - lane_start_ms) as f64 / window_ms;
+        (lead_ms > 0 && from_ms < lane_start_ms && to_ms > from_ms)
+            .then(|| (fraction(from_ms), fraction(to_ms)))
+    };
     let mut drafts = Vec::with_capacity(runs.len());
     let mut rows = PriceRows::new(grouping, prices);
     for depth in &runs {
@@ -283,8 +303,9 @@ pub(super) fn project_lane_heat_folded(
             if to_ms <= from_ms || (carried && averaging) {
                 continue;
             }
+            let lead_span = lead_span(from_ms, to_ms);
             if let (Some(x0), Some(x1)) = (x(from_ms), x(to_ms))
-                && x1 > x0
+                && (x1 > x0 || lead_span.is_some())
             {
                 drafts.push(DraftCell {
                     generation: run.generation,
@@ -298,6 +319,7 @@ pub(super) fn project_lane_heat_folded(
                     carried,
                     time_averaged: depth.time_averaged,
                     current_book: false,
+                    lead_span,
                 });
             }
         }
@@ -338,6 +360,7 @@ pub(super) fn project_lane_heat_folded(
                     carried: false,
                     time_averaged: false,
                     current_book: true,
+                    lead_span: None,
                 });
             }
         }

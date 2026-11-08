@@ -27,6 +27,8 @@ pub(super) struct DraftCell {
     pub(super) time_averaged: bool,
     /// Read from the current book ([`super::lane_heat::book_is_current`]).
     pub(super) current_book: bool,
+    /// [`HeatmapCell::lead_span`].
+    pub(super) lead_span: Option<(f64, f64)>,
 }
 
 /// The `(y0, y1)` rows of the bucket at `price_bucket`, clipped to `prices`;
@@ -167,6 +169,7 @@ pub(super) fn finish_with_priority(
                 carried: draft.carried,
                 time_averaged: draft.time_averaged,
                 current_book: draft.current_book,
+                lead_span: draft.lead_span,
             }
         })
         .collect();

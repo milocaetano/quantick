@@ -49,11 +49,11 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         .reserve(context.projection.cells.len().saturating_mul(12));
 
     for cell in context.projection.cells.iter() {
-        let rect = context
-            .layout
-            .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
-        // A current row with no time span only previews the book.
-        let in_lane = rect.is_positive() && (cell.x1 > cell.x0 || !cell.current_book);
+        let rect =
+            context
+                .layout
+                .heat_cell_rect(cell, style.min_cell_height, context.current_book_live);
+        let in_lane = rect.is_positive();
         if !in_lane && !cell.current_book {
             continue;
         }
@@ -70,7 +70,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.span_pane(cell.x0, cell.x1));
+            .intersect(context.layout.span_pane(cell.x0, cell.x1).union(rect));
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }

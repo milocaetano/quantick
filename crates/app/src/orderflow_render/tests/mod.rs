@@ -1519,6 +1519,7 @@ fn paint_one_current_row(style: &OrderflowRenderStyle, live: bool) -> (bool, boo
         carried: false,
         time_averaged: false,
         current_book: true,
+        lead_span: None,
     }]);
     projection.current_book = Some(quantick_orderflow::projection::BookSource {
         update_id: Some(1),

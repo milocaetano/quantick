@@ -86,6 +86,7 @@ fn request(trades: &[Trade]) -> ProjectionRequest {
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: vec![(1_000, now)],
+            tape_lead_share: 0.0,
         }),
     }
 }

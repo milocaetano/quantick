@@ -326,7 +326,7 @@ impl OrderflowView {
         };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
-                .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+                .heat_cell_rect(cell, style.min_cell_height, frame.current_book_live)
                 .contains(position)
                 || preview(cell)
         })?;
@@ -1871,7 +1871,7 @@ mod tests {
         let style =
             OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
         let position = layout
-            .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+            .heat_cell_rect(cell, style.min_cell_height, true)
             .center();
 
         let hit = view

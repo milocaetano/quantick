@@ -114,6 +114,7 @@ mod caption_tests {
             carried: false,
             time_averaged: true,
             current_book: false,
+            lead_span: None,
         };
         let caption = depth_caption(std::slice::from_ref(&averaged), false).unwrap();
         assert!(caption.contains("reduction holes not drawn"), "{caption}");
