@@ -253,3 +253,46 @@ fn types_missing_branch_history_and_string_results_keep_identity() {
         [1.0, 1.0, 1.0]
     );
 }
+
+#[test]
+fn types_reordered_input_defaults_bind_by_parameter_name() {
+    assert_eq!(
+        execute(
+            r#"i = input.int(title="I", defval=5)
+b = input.bool(title="B", defval=true)
+f = input.float(title="F", defval=2.5)
+s = input.string(title="S", defval="x")
+c = input.color(title="C", defval=color.red)
+src = input.source(title="Source", defval=close)
+plot(i)
+plot(b ? 1 : 0)
+plot(f)
+plot(s == "x" ? 1 : 0)
+plot(c == color.red ? 1 : 0)
+plot(src)"#
+        ),
+        [5.0, 1.0, 2.5, 1.0, 1.0, 10.0]
+    );
+    rejects(r#"i = input.int(title="I", defval="bad")"#);
+}
+#[test]
+fn types_cast_division_folding_matches_runtime_and_aliases() {
+    assert_eq!(
+        execute(
+            r#"plot(int(5) / 2)
+n = input.float(int(5) / 2)
+plot(n)
+int m = input.int(int(5) / 2)
+plot(m)
+const float value = 5.9
+const int alias = int(value)
+plot(alias / 2)
+p = input.float(alias / 2)
+plot(p)
+input int live = input.int(5)
+hline(int(live) / 2)
+plot(int(live) / 2)"#
+        ),
+        [2.0, 2.0, 2.0, 2.0, 2.0, 2.5, 2.5]
+    );
+}

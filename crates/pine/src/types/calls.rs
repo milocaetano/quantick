@@ -146,10 +146,15 @@ impl Checker<'_> {
                     InputColor => Base::Color,
                     _ => Base::Float,
                 };
-                if let Some(arg) = args.first() {
+                let default = args
+                    .iter()
+                    .position(|arg| arg.name.as_deref() == Some("defval"))
+                    .or_else(|| args.iter().position(|arg| arg.name.is_none()));
+                if let Some(index) = default {
+                    let arg = &args[index];
                     self.require(
                         arg.value,
-                        &first,
+                        &values[index],
                         base.clone(),
                         if b == InputSource {
                             Qualifier::Series

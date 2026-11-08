@@ -115,27 +115,33 @@ impl Compiler {
             .and_then(|id| self.ast.annotations(id).first())
             .map_or(&[], Vec::as_slice)
     }
-    fn const_integer(&self, id: NodeId) -> bool {
+    fn const_qualified(&self, id: NodeId) -> bool {
         match self.kind(id) {
-            NodeKind::Int(_) => true,
-            NodeKind::Unary { operand, .. } => self.const_integer(*operand),
+            NodeKind::Int(_) | NodeKind::Float(_) => true,
+            NodeKind::Unary { operand, .. } => self.const_qualified(*operand),
             NodeKind::Binary { lhs, rhs, .. } => {
-                self.const_integer(*lhs) && self.const_integer(*rhs)
+                self.const_qualified(*lhs) && self.const_qualified(*rhs)
             }
             NodeKind::Name(_) => {
                 if let Resolution::Global(slot) = self.resolutions[id.index()] {
-                    let annotation = self.slot_annotation(slot);
-                    !annotation.iter().any(|word| {
-                        matches!(word.as_str(), "float" | "input" | "simple" | "series")
-                    }) && self
-                        .global_init
-                        .get(slot as usize)
-                        .copied()
-                        .flatten()
-                        .is_some_and(|init| self.const_integer(init))
+                    !self
+                        .slot_annotation(slot)
+                        .iter()
+                        .any(|word| matches!(word.as_str(), "input" | "simple" | "series"))
+                        && self
+                            .global_init
+                            .get(slot as usize)
+                            .copied()
+                            .flatten()
+                            .is_some_and(|init| self.const_qualified(init))
                 } else {
                     false
                 }
+            }
+            NodeKind::Call { callee, args }
+                if matches!(self.callee_name(*callee).as_deref(), Some("int" | "float")) =>
+            {
+                args.len() == 1 && self.const_qualified(args[0].value)
             }
             _ => false,
         }
@@ -169,7 +175,9 @@ impl Compiler {
                         BinOp::Sub => Const::Int(a.checked_sub(*b)?),
                         BinOp::Mul => Const::Int(a.checked_mul(*b)?),
                         BinOp::Div
-                            if *b != 0 && self.const_integer(*lhs) && self.const_integer(*rhs) =>
+                            if *b != 0
+                                && self.const_qualified(*lhs)
+                                && self.const_qualified(*rhs) =>
                         {
                             Const::Int(a.checked_div(*b)?)
                         }
