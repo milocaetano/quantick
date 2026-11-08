@@ -126,9 +126,7 @@ use crate::viewport::Viewport;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
 
-/// The window's test doors: its entry point, its read views, and the status
-/// bar and health line read the way the frame reads them, so a case names the
-/// reading rather than the owner's argument list.
+/// The window's test doors: its entry point and its read views.
 impl QuantickApp {
     pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
         arrangement_adapter::ArrangementRead {
@@ -177,18 +175,6 @@ impl QuantickApp {
             ui_state::Workspace::default(),
             AppLaunch::default(),
         )
-    }
-
-    fn status_model(&self) -> statusbar::StatusModel {
-        let home = self.chrome.title_bar.surface.is_home();
-        let runtime = self.runtime.bound(&self.presentation.binding);
-        self.health.status_model(runtime, &self.config, home)
-    }
-
-    fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
-        let surface = self.chrome.surface.as_ref();
-        let runtime = self.runtime.bound_mut(&self.presentation.binding);
-        (self.health).maybe_emit_summary(now, ctx, runtime, surface);
     }
 
     /// Whether the toolbar's heatmap lamp is lit.

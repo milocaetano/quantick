@@ -281,11 +281,8 @@ impl QuantickApp {
         arrangement_adapter!(self)
     }
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
-        self.runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace");
         indicator_wiring::IndicatorWiring {
-            runtime: &mut self.runtime,
+            runtime: self.runtime.bound_mut(&self.presentation.binding),
             picker: &mut self.surfaces.indicator_picker,
             drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,

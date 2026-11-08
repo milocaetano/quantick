@@ -932,19 +932,7 @@ impl LayoutPort for QuantickApp {
     }
 
     fn layout_adapter(&mut self) -> LayoutAdapter<'_> {
-        self.runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace");
-        LayoutAdapter {
-            active: self.runtime.tabs.active_index(),
-            tabs: &mut self.runtime.tabs,
-            indicators: &mut self.runtime.indicators,
-            store: self.runtime.workspace.layouts_mut(),
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
-        }
+        self.indicator_wiring().into_layout()
     }
 }
 

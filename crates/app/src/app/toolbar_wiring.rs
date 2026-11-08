@@ -177,14 +177,9 @@ impl QuantickApp {
                     self.runtime.tabs.active_id(),
                     self.active_tab().focused_side(),
                 );
-                let attached = self.runtime.indicators.attach_native(
-                    self.runtime
-                        .tabs
-                        .runtime_mut(self.runtime.tabs.active_index())
-                        .pane_mut(target.1),
-                    target,
-                    id,
-                );
+                let tabs = &mut self.runtime.tabs;
+                let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
+                let attached = self.runtime.indicators.attach_native(pane, target, id);
                 self.indicator_wiring()
                     .apply_indicator_edit(IndicatorEdit::Attached(attached));
             }
@@ -211,14 +206,9 @@ impl QuantickApp {
                     self.runtime.tabs.active_id(),
                     self.active_tab().focused_side(),
                 );
-                if let Some((_, added)) = self.runtime.indicators.add_library(
-                    self.runtime
-                        .tabs
-                        .runtime_mut(self.runtime.tabs.active_index())
-                        .pane_mut(target.1),
-                    target,
-                    index,
-                ) {
+                let tabs = &mut self.runtime.tabs;
+                let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
+                if let Some((_, added)) = self.runtime.indicators.add_library(pane, target, index) {
                     if let Some(attached) = added.attachment {
                         self.indicator_wiring()
                             .apply_indicator_edit(IndicatorEdit::Attached(attached));

@@ -21,8 +21,10 @@ pub(super) struct IndicatorWiring<'a> {
     pub(super) harness: &'a mut crate::harness::Harness,
 }
 
-impl IndicatorWiring<'_> {
-    fn layout(&mut self) -> LayoutAdapter<'_> {
+impl<'a> IndicatorWiring<'a> {
+    /// The layout ports these fields hold: the one place a [`LayoutAdapter`]
+    /// is built, for the edits below and for [`super::LayoutPort`].
+    pub(super) fn into_layout(self) -> LayoutAdapter<'a> {
         LayoutAdapter {
             active: self.runtime.tabs.active_index(),
             tabs: &mut self.runtime.tabs,
@@ -33,6 +35,22 @@ impl IndicatorWiring<'_> {
             rename: self.rename,
             delete_confirm: self.delete_confirm,
         }
+    }
+}
+
+impl IndicatorWiring<'_> {
+    fn layout(&mut self) -> LayoutAdapter<'_> {
+        IndicatorWiring {
+            runtime: self.runtime,
+            picker: self.picker,
+            drawing_chrome: self.drawing_chrome,
+            toast: self.toast,
+            rename: self.rename,
+            delete_confirm: self.delete_confirm,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: self.harness,
+        }
+        .into_layout()
     }
 
     /// Open the indicator library on the pane at `side`. Focus moves there first:
@@ -122,6 +140,9 @@ impl IndicatorWiring<'_> {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
         }
         let guide = |pane_id: u64, slot: SlotId, enabled: bool| serde_json::json!({"tab_id":tab_id.to_string(),"pane_id":pane_id.to_string(),"slot_id":slot.0.to_string(),"enabled":enabled});
+        // The hook's guide goes first. Taking the pane requests before it is
+        // sent changes nothing: the guide action writes the slot's guide and
+        // the journal, never a pane's pending request.
         let mut guides = Vec::new();
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(index) = self.harness.indicator_mouse_line() {
@@ -171,11 +192,8 @@ impl IndicatorWiring<'_> {
                 && pane.frame.chart_area.is_some()
                 && pane.paper_hud_anchor().is_some()
                 && tab.paper.position_summary().is_some();
-            let pane = self
-                .runtime
-                .tabs
-                .runtime_mut(self.runtime.tabs.active_index())
-                .pane_mut(side);
+            let tabs = &mut self.runtime.tabs;
+            let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(side);
             for action in self.runtime.indicators.draw_legend(
                 ctx,
                 pane,
