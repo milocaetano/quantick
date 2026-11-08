@@ -1,0 +1,15 @@
+//@version=6
+indicator("Collection annotations")
+first(array<int> values) =>
+    values.get(0)
+legacy(float[] values) =>
+    values.get(0)
+lookup(map<string, int> values) =>
+    values.get("key")
+int[] a = array.from(3, 4)
+var float[] b = array.from(2.5)
+m = map.new<string, int>()
+m.put("key", 7)
+plot(first(a))
+plot(legacy(b))
+plot(lookup(m))

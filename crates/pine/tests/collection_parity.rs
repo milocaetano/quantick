@@ -377,3 +377,12 @@ fn collections_varip_slice_transplants_parent_aliases() {
         );
     }
 }
+
+#[test]
+fn collections_parameter_and_legacy_annotations() {
+    let expected: Vec<f64> = include_str!("golden/collections/annotations.csv")
+        .trim().split(',').map(|s| s.parse().unwrap()).collect();
+    assert_eq!(run(include_str!("fixtures/collections/annotations.pine")), expected);
+    let source = "//@version=6\nindicator(\"types\")\nf(array<int> a) => a.first()\nplot(f(array.from(1.5)))";
+    assert!(compile(source, "types").is_err());
+}
