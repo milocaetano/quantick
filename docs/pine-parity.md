@@ -82,7 +82,7 @@ No local-corpus aggregate collector is installed in this skeleton yet.
 | Child | Directory | Concrete boundary in this skeleton |
 | --- | --- | --- |
 | 1 | `semantics/` | Reserved; evaluator statement/expression dispatch remains in the shared hub |
-| 2 | `calendar/` | `open_time(&IndicatorBar)` and `close_time(&IndicatorBar)` read caller timestamps |
+| 2 | `calendar/` | Supplied timestamps, six Gregorian fields, validated `CalendarTimezone` fixed offsets |
 | 3 | `types/` | Owns `Value`, `ObjKind` and existing numeric/condition conversions |
 | 4 | `ir/` | Owns compiled tables, `Resolution`, function and call-site identity |
 | 5 | `collections/` | Existing namespace rejection delegated here |
@@ -92,7 +92,7 @@ No local-corpus aggregate collector is installed in this skeleton yet.
 
 After integration, these directories transfer to their named child. The current
 compiled slot identifiers are numeric indices with existing `Value` payloads;
-this extraction does not claim typed-slot checking, explicit timezone inputs,
+this extraction does not claim typed-slot checking,
 library resolution, or candle output is implemented. All output remains the
 existing deterministic headless `PlotBuffer` contract.
 
@@ -116,3 +116,9 @@ the timer. The same full partial bar is repeated to measure rollback work;
 this is a fixed synthetic throughput scenario, not exchange latency. No timing
 assertion is placed in correctness tests. Results belong to the exact measured
 commit and machine, and must be compared using the same command and workload.
+
+Calendar acceptance uses independently calculated civil-date goldens in
+`tests/golden/calendar`, not PineTS oracle output. `calendar_from_bar_time`
+checks six fields and repeated preview/commit equality for negative epochs,
+leap dates, and fixed-offset year/day transitions. This does not increase the
+PineTS comparison denominator and does not claim IANA/DST timezone parity.

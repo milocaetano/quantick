@@ -9,7 +9,7 @@ toolbar menu.
 
 The enabling insight: Pine's x-axis is `bar_index`, not time, which maps
 1:1 onto alternative bars. What is meaningless off a clock —
-`request.security`, `timeframe.*`, sessions, calendar math — is exactly
+`request.security`, `timeframe.*`, sessions — is exactly
 what the dialect cuts, and every cut is a **load-time error with a stable
 code and a line number**, never a silently wrong plot.
 
@@ -199,7 +199,7 @@ Every rejection is a load-time error naming its reason:
 `PINE_UNKNOWN_NAME` (with a did-you-mean hint), `PINE_ARITY`,
 `PINE_INPUT_NOT_CONST`, `PINE_SERIES_LENGTH`, `PINE_STATEFUL_IN_LOOP`,
 `PINE_RECURSION`, `PINE_NO_SECURITY`, `PINE_NO_TIMEFRAME`,
-`PINE_NO_STRATEGY`, `PINE_NO_COLLECTIONS`, `PINE_NO_CALENDAR`,
+`PINE_NO_STRATEGY`, `PINE_NO_COLLECTIONS`,
 `PINE_UNSUPPORTED`, `PINE_TYPE` (runtime), `PINE_LOOP_BUDGET` (runtime).
 
 Errors render as `file.pine:line:col: message (CODE)`; loading reports
@@ -216,3 +216,20 @@ explicit unimplemented baseline case: it fails with `PINE_UNKNOWN_NAME`, leaving
 substitution or a passing parity case. App snapshots prove reproducibility only;
 they are not oracle equivalence. Current timezone, typing, collection, library,
 candle-output and version restrictions remain in force.
+
+### Calendar fields
+
+`year`, `month`, `dayofmonth`, `dayofweek`, `hour`, and `minute` read the supplied
+bar open timestamp in epoch milliseconds. Sunday is 1 and Saturday is 7.
+The same names accept `(timestamp)` or `(timestamp, timezone)` positional calls;
+`na` timestamps yield `na`. Function timestamps must be exact integer milliseconds
+within +/-9007199254740991; invalid values report `PINE_TYPE`.
+
+`ScriptIndicator` constructors default to UTC. Hosts can use `with_timezone` with
+`calendar::CalendarTimezone` parsed from `UTC` or `UTC+HH:MM` / `UTC-HH:MM`.
+Hours range 00-23 and minutes 00-59. Rebinding preserves this configuration.
+Function timezone arguments use the same grammar and override that configuration.
+Malformed offsets and IANA names are rejected explicitly (API `TimezoneError`,
+script `PINE_TYPE`). Fixed offsets have no DST transitions. No machine timezone
+or clock is consulted. Dates use the proleptic Gregorian calendar, including
+negative epoch timestamps. This is fixed-offset calendar support, not IANA parity.

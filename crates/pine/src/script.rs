@@ -32,6 +32,7 @@ pub struct ScriptIndicator {
     /// calling `barcolor` stops being painted instead of inheriting the
     /// previous bar's colour.
     paint: Option<Rgba8>,
+    timezone: crate::calendar::CalendarTimezone,
 }
 
 impl ScriptIndicator {
@@ -84,7 +85,15 @@ impl ScriptIndicator {
             state,
             row,
             paint: None,
+            timezone: crate::calendar::CalendarTimezone::default(),
         }
+    }
+
+    /// Configure a validated fixed timezone. Constructors default to UTC.
+    #[must_use]
+    pub fn with_timezone(mut self, timezone: crate::calendar::CalendarTimezone) -> Self {
+        self.timezone = timezone;
+        self
     }
 
     /// Whether this script ever created a draw object — scripts that never
@@ -120,6 +129,7 @@ impl ScriptIndicator {
             },
             is_commit,
         );
+        eval.timezone = self.timezone;
         eval.run().map_err(|error| {
             let (line, col) = error.span.line_col(&self.source);
             EvalError {
@@ -186,11 +196,10 @@ impl Indicator for ScriptIndicator {
         if values.len() != self.compiled.inputs.len() {
             return None;
         }
-        Some(Box::new(Self::with_inputs(
-            self.compiled.clone(),
-            self.source.clone(),
-            values.to_vec(),
-        )))
+        Some(Box::new(
+            Self::with_inputs(self.compiled.clone(), self.source.clone(), values.to_vec())
+                .with_timezone(self.timezone),
+        ))
     }
 
     fn reset(&mut self) {

@@ -211,6 +211,7 @@ pub(crate) struct Eval<'a> {
     pub paint: &'a mut Option<Rgba8>,
     /// True on commit runs (`barstate.isconfirmed`).
     pub is_commit: bool,
+    pub timezone: crate::calendar::CalendarTimezone,
 
     /// Current interned call path (0 = top level).
     pub path: u32,
@@ -237,6 +238,7 @@ impl<'a> Eval<'a> {
             row: staged.row,
             paint: staged.paint,
             is_commit,
+            timezone: crate::calendar::CalendarTimezone::default(),
             path: 0,
             frame_base: 0,
         }
@@ -615,6 +617,7 @@ impl<'a> Eval<'a> {
             Builtin::LastBarIndex => self.ctx.bar_index as f64,
             Builtin::Time => crate::calendar::open_time(bar),
             Builtin::TimeClose => crate::calendar::close_time(bar),
+            Builtin::Calendar(field) => field.at(bar.open_time, self.timezone),
             Builtin::BarstateIsConfirmed => return Ok(Value::Bool(self.is_commit)),
             Builtin::BarstateIsLast => return Ok(Value::Bool(!self.is_commit)),
             other => {

@@ -22,6 +22,14 @@ impl<'a> Eval<'a> {
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
         let value = match builtin {
+            Builtin::Calendar(field) => {
+                crate::calendar::validate_arguments(args)
+                    .map_err(|message| self.err(id, ErrorCode::PineType, message))?;
+                let timestamp = self.eval(args[0].value)?;
+                let zone = args.get(1).map(|arg| self.eval(arg.value)).transpose()?;
+                return crate::calendar::call(field, timestamp, zone, self.timezone)
+                    .map_err(|message| self.err(id, ErrorCode::PineType, message));
+            }
             Builtin::NaCall => {
                 let v = match args.first() {
                     Some(arg) => self.eval(arg.value)?,
