@@ -662,9 +662,9 @@ impl PaneGestures {
 }
 
 /// The market instant and price the pointer is on, the magnet read as the
-/// held object's own pane reads it: a level's over every visible candle,
-/// anything else's over the candle under the pointer — a mark's own rule
-/// stays on its own pane.
+/// held object's own pane reads it: a level's over every visible candle, a
+/// mark's at the bar's low or high, anything else's over the candle under
+/// the pointer.
 fn shared_mark_at(
     projection: &DrawingProjection<'_>,
     cached_bands: &[Band],
@@ -674,7 +674,7 @@ fn shared_mark_at(
 ) -> Option<(i64, f64)> {
     let band = band::band_at(cached_bands, position)?;
     let snap = match snap {
-        AnchorSnap::VisibleLevels => snap,
+        AnchorSnap::VisibleLevels | AnchorSnap::BarLow | AnchorSnap::BarHigh => snap,
         _ => AnchorSnap::Pointer,
     };
     projection

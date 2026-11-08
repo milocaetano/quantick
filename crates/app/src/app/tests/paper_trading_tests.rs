@@ -1956,8 +1956,14 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     );
 
     let place = |app: &mut QuantickApp, y: f32| {
+        let before = app.active_tab().flow_pane.drawings.items().len();
         arm_drawing_from_toolbox(app, &ctx, "arrow-mark-up");
         click_chart(app, &ctx, egui::pos2(700.0, y));
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            before + 1,
+            "the click at {y} placed a new mark"
+        );
         *app.active_tab()
             .flow_pane
             .drawings

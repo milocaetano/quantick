@@ -622,6 +622,8 @@ fn translate_body(
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
+            // A free mark keeps the hand's travel, like any unsnapped body.
+            snap if snap.is_bar_extreme() && !magnet => {}
             snap if snap.takes_magnet() && !snap.is_bar_extreme() => {
                 if magnet {
                     projection.snap_body(

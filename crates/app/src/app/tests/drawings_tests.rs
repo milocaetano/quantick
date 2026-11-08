@@ -3608,8 +3608,14 @@ fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
     let x = right - width * 0.5;
 
     // Free by default: without the magnet the mark keeps the cursor's price.
+    let before = app.active_tab().flow_pane.drawings.items().len();
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 200.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 1,
+        "the free click placed a new mark"
+    );
     let free = app
         .active_tab()
         .flow_pane
@@ -3621,6 +3627,11 @@ fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
     app.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 2,
+        "the magnetic click placed a new mark"
+    );
     let placed = app.active_tab().flow_pane.drawings.items().last();
     let Some(placed) = placed else {
         panic!("the mark was not placed on the forming bar");

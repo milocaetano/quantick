@@ -1,4 +1,5 @@
-//! The sell mark: one click, one filled arrow above the bar's high.
+//! The sell mark: one click, one filled arrow; the magnet hangs it above the
+//! bar's high.
 
 use crate::icons;
 #[cfg(test)]

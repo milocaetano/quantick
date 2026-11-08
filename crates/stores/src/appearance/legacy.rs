@@ -8,13 +8,14 @@
 //! Dark's fixture is also the unmodified 66aa9abc source, before drawing_profile.
 //! 7ec67e50: exact Light/Dark sources before the independent chart grid color.
 
-const LIGHT_SOURCES: [&str; 6] = [
+const LIGHT_SOURCES: [&str; 7] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
     include_str!("legacy-light-66aa9abc.toml"),
     include_str!("legacy-light-90d18edf.toml"),
     include_str!("legacy-light-7ec67e50.toml"),
+    include_str!("legacy-light-f7dc7644.toml"),
 ];
 const DARK_SOURCES: [&str; 2] = [
     include_str!("legacy-dark-66aa9abc.toml"),

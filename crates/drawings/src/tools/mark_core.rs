@@ -1,5 +1,5 @@
-//! The shared body of the trade marks: a filled arrowhead stamped on one
-//! bar, clear of the candle it belongs to.
+//! The shared body of the trade marks: a filled arrow stamped on one bar,
+//! at the pointer's price or, with the magnet, clear of the candle.
 //!
 //! A mark is not the [`super::arrow`] tool with fewer clicks. That one is a
 //! *vector* — tail here, point there, "look at this" — and it takes two
@@ -144,11 +144,12 @@ fn size_of(ctxt: &DrawContext<'_>) -> f32 {
 
 /// The seven points of the arrow, tip first, in screen space.
 ///
-/// `anchor` is the bar's extreme; the whole shape hangs off it in pixels, so
-/// this is also the function that decides "outside the candle" and the one a
-/// test can ask about without a chart. `inverted` mirrors the hang: the
-/// anchor is a *price* extreme, and upside down the outside of the candle is
-/// the other screen direction.
+/// `anchor` is the pointer's price, or the bar's extreme with the magnet on;
+/// the whole shape hangs off it in pixels, so with the magnet this is the
+/// function that keeps the mark outside the candle, and the one a test can
+/// ask about without a chart. `inverted` mirrors the hang: the anchor is a
+/// *price*, and upside down the outside of the candle is the other screen
+/// direction.
 pub(super) fn outline(anchor: Px, direction: Direction, size_px: f32, inverted: bool) -> Vec<Px> {
     let sign = direction.sign() * if inverted { -1.0 } else { 1.0 };
     let head = size_px * HEAD_SHARE;
@@ -193,15 +194,18 @@ pub(super) fn paint(
     // chart, where a thin outline reads as something drawn by hand. The
     // arrow is not convex, and a convex fill of it notches the shoulders;
     // it is painted as the two convex parts it is made of.
-    for part in convex_parts(&outline) {
+    let opaque = style.color.to_array()[3] == u8::MAX;
+    for part in convex_parts(&outline, opaque) {
         painter.add(MarkShape::convex_polygon(part, style.color, Stroke::NONE));
     }
 }
 
 /// The arrow [`outline`] split into its convex parts: the head's triangle
-/// and the shaft's rectangle. The shaft starts inside the head, so the
-/// anti-aliased seam between them is covered and never shows as a line.
-pub(super) fn convex_parts(outline: &[Px]) -> [Vec<Px>; 2] {
+/// and the shaft's rectangle. An opaque shaft starts inside the head, so the
+/// anti-aliased seam between them is covered and never shows as a line; a
+/// translucent one butts at the shoulders, since an overlap would composite
+/// twice and show as a darker band.
+pub(super) fn convex_parts(outline: &[Px], opaque: bool) -> [Vec<Px>; 2] {
     let [
         tip,
         head_left,
@@ -214,7 +218,11 @@ pub(super) fn convex_parts(outline: &[Px]) -> [Vec<Px>; 2] {
     else {
         return [outline.to_vec(), Vec::new()];
     };
-    let overlap = (waist_left.y - tip.y) * 0.5;
+    let overlap = if opaque {
+        (waist_left.y - tip.y) * 0.5
+    } else {
+        0.0
+    };
     let inner = |waist: &Px| pos2(waist.x, waist.y - overlap);
     [
         vec![*tip, *head_left, *head_right],
@@ -332,7 +340,7 @@ mod tests {
             (Direction::Up, true),
         ] {
             let outline = outline(pos2(40.0, 80.0), direction, DEFAULT_MARK_PX, inverted);
-            let parts = convex_parts(&outline);
+            let parts = convex_parts(&outline, true);
             for point in &outline {
                 assert!(
                     parts.iter().any(|part| part.contains(point)),
