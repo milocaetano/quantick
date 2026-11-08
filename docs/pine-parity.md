@@ -102,6 +102,36 @@ each issue's Touch and integrated serially by the coordinator. This replaces the
 skeleton's freeze blocker: closed enums and dispatch matches may connect the
 owned handler without moving unrelated behavior or broadening the feature scope.
 
+## Executable slots and rollback state
+
+Child 4 lowers checked syntax into register instructions, explicit branch targets,
+and pre-resolved global/local slots. The AST remains inspection metadata: the C41
+test deletes it before running. Straight-line operands are expanded at compile
+time; logical and conditional execution uses jumps, with explicit eager-kernel
+advancement on skipped arms. Context-dependent coercions remain explicit
+instructions. Literal registers without contextual conversions initialize once.
+
+One `Vec<u64>` owns the mutable semantic image: globals, initialization flags,
+locals and result registers, call paths, history rings and staged samples, kernel
+lengths and payloads, object identifiers, revision, records and text. Offsets and
+allocation bookkeeping live in that image too. Preview takes one contiguous
+copy and restores it, preserving `varip` slots and the monotone object identifier
+counter. Strings and tuples are encoded values, not pointers to mutable heaps.
+`ObjectStore` is a regenerated immutable output projection, never transactional
+authority. Native indicator APIs remain unchanged.
+
+Packed TA kernels update caller-owned word slices directly, including rings and
+monotonic queues. Their outputs match the native arithmetic bits pinned before
+implementation, including NaN recovery. Acyclic scripts visit each textual
+site/path once. Scripts with loops retain temporary per-run initial images and
+argument/result caches so repeated visits replace that bar's result rather than
+advance a kernel repeatedly. Those caches are discarded after evaluation.
+
+`slot_ir_commit_preview_parity` covers the original hand-calculated fixture;
+`slot_ir_eager_paths_history_functions` combines a stateful condition, separate
+function paths, history and repeated previews. Arena tests independently check
+copy-only reconstruction, reclaimed text/frame storage and bounded history.
+
 ## Performance scenario
 
 `cargo bench -p quantick-pine --bench interp` retains the prior single-indicator
@@ -112,6 +142,74 @@ the timer. The same full partial bar is repeated to measure rollback work;
 this is a fixed synthetic throughput scenario, not exchange latency. No timing
 assertion is placed in correctness tests. Results belong to the exact measured
 commit and machine, and must be compared using the same command and workload.
+
+### Child 4 paired measurements (2026-11-08)
+
+Baseline source: `403e6c2c` (child 0). Candidate production source:
+`9af1c365757f0308ee043377f18c1cf4f2d2ec56`. The candidate samples below used
+the identical production inputs before commit; the only subsequent source edit
+added a `cfg(test)` offset-growth regression. Benchmark inputs and command stayed
+unchanged. Both targets were built before sampling with
+`cargo bench -p quantick-pine --bench interp --no-run`, then each sample ran
+`cargo bench -p quantick-pine --bench interp` in its isolated worktree.
+
+Host: Intel Core i5-12400F (6 cores, 12 logical processors), Windows 11 Pro
+10.0.26200, Rust 1.98.0 (`88d9e12ae`, LLVM 22.1.8), x86_64-pc-windows-msvc,
+repository bench profile. Owned builds were paused. Unrelated app/feed Rust
+compilations remained active; none were stopped or reprioritized. Two interleaved
+ABBA groups reduce ordering bias under that changing load. A is baseline, B is
+candidate. Values are aggregate microseconds per trade update across all ten
+indicators; each sample contains 100,000 updates.
+
+| Group | A first | B first | B second | A second |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 23.9662 | 21.1831 | 21.0920 | 20.9512 |
+| 2 | 19.6575 | 18.9287 | 18.5158 | 20.1448 |
+
+Across all four samples per source, baseline mean is **21.179925 us**, candidate
+mean **19.929900 us** (5.90% lower); medians are **20.548000 us** and
+**20.010350 us** (2.62% lower). Both ABBA groups independently have approximately
+5.9% lower candidate means. This meets C42's no-regression budget for this
+same-host workload; it does not establish exchange latency or a universal speedup.
+
+Earlier candidates were not accepted. All earlier raw ten-indicator samples are
+retained here to distinguish implementation changes from selective reporting:
+
+| Candidate source | Baseline samples, us/update | Candidate samples, us/update | Assessment |
+| --- | --- | --- | --- |
+| `fc61e360` | 17.6389, 17.2857, 17.8791 | 57.0471, 69.1498, 64.7715 | Regression; optimize execution |
+| `102d73ce` | 20.1458, 22.1865, 27.1099, 21.4516 | 26.8209, 27.2239, 20.5844, 21.0944 | Changing load; no acceptance |
+| `4c73270a` | 23.5145, 19.4740, 19.5238, 19.0229 | 20.2606, 21.1115, 22.2414, 20.3956 | No demonstrated no-regression |
+
+The accepted production delta completes direct offset copies for global reads,
+stores and register moves. Offset caches are immutable within an evaluation;
+arena growth moves its allocation but never its offsets. The offset-growth test
+also reconstructs state from a word copy and checks those same addresses.
+
+### Integrated v6 remeasurement
+
+After integrating the v6 base `93acda40`, the final runtime source
+`95bc85f8c84ec178f96b9148645e7aaef700124e` was remeasured against the same
+clean child-0 baseline `403e6c2c16fdde2ddc5a8c978c562e806327aaca`. The benchmark
+source, command, 100,000-update ten-indicator workload, host, toolchain and
+profile above were unchanged. Both binaries were built before sampling;
+owned builds were paused. Unrelated builds in three other worktrees remained
+active, with process inventories captured before each sample. No process was
+stopped or reprioritized. All eight samples are included below (us/update).
+
+| Group | A first | B first | B second | A second |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 25.4940 | 21.7342 | 23.1456 | 23.6919 |
+| 2 | 23.7147 | 21.0318 | 25.0673 | 22.7273 |
+
+Baseline mean **23.906975 us** compares with candidate **22.744725 us**
+(4.86% lower); medians are **23.703300 us** and **22.439900 us** (5.33% lower).
+Both interleaved groups favor the candidate mean (8.76% and 0.74% lower).
+The second group has a slower individual candidate sample, so these results
+support aggregate no-regression for this workload under the recorded load,
+not an improvement for every run or a universal speed claim. This fresh paired
+measurement satisfies C42 for the integrated runtime; prior measurements remain
+historical evidence rather than a substitute for measuring the version seams.
 
 Calendar acceptance uses independently calculated civil-date goldens in
 `tests/golden/calendar`, not PineTS oracle output. `calendar_from_bar_time`

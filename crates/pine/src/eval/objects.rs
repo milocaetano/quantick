@@ -124,7 +124,7 @@ impl<'a> Eval<'a> {
             }
             None => DEFAULT_LINE_WIDTH,
         };
-        let handle = self.state.objects.new_line(LineObj {
+        let handle = self.state.new_object(LineObj {
             x1,
             y1,
             x2,
@@ -142,7 +142,7 @@ impl<'a> Eval<'a> {
         let bottom = self.arg_price(args, 3, "bottom")?;
         let border_color = self.arg_color(args, 4, "border_color", DEFAULT_OBJECT_COLOR)?;
         let bg_color = self.arg_color(args, 5, "bgcolor", DEFAULT_BOX_FILL)?;
-        let handle = self.state.objects.new_box(BoxObj {
+        let handle = self.state.new_object(BoxObj {
             left,
             top,
             right,
@@ -174,7 +174,7 @@ impl<'a> Eval<'a> {
             }
             None => LabelStyle::Down,
         };
-        let handle = self.state.objects.new_label(LabelObj {
+        let handle = self.state.new_object(LabelObj {
             x,
             y,
             text,
@@ -198,13 +198,13 @@ impl<'a> Eval<'a> {
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
         match (kind, field) {
-            (ObjKind::Line, "delete") => self.state.objects.delete_line(handle),
-            (ObjKind::Box, "delete") => self.state.objects.delete_box(handle),
-            (ObjKind::Label, "delete") => self.state.objects.delete_label(handle),
+            (ObjKind::Line, "delete") => self.state.delete_object::<LineObj>(handle),
+            (ObjKind::Box, "delete") => self.state.delete_object::<BoxObj>(handle),
+            (ObjKind::Label, "delete") => self.state.delete_object::<LabelObj>(handle),
             (ObjKind::Line, "set_xy1" | "set_xy2") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
                 let y = self.arg_price(args, 1, "y")?;
-                if let Some(line) = self.state.objects.line_mut(handle) {
+                if let Some(mut line) = self.state.edit_object::<LineObj>(handle) {
                     if field == "set_xy1" {
                         line.x1 = x;
                         line.y1 = y;
@@ -216,7 +216,7 @@ impl<'a> Eval<'a> {
             }
             (ObjKind::Line, "set_x1" | "set_x2") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
-                if let Some(line) = self.state.objects.line_mut(handle) {
+                if let Some(mut line) = self.state.edit_object::<LineObj>(handle) {
                     if field == "set_x1" {
                         line.x1 = x;
                     } else {
@@ -226,7 +226,7 @@ impl<'a> Eval<'a> {
             }
             (ObjKind::Line, "set_y1" | "set_y2") => {
                 let y = self.arg_price(args, 0, "y")?;
-                if let Some(line) = self.state.objects.line_mut(handle) {
+                if let Some(mut line) = self.state.edit_object::<LineObj>(handle) {
                     if field == "set_y1" {
                         line.y1 = y;
                     } else {
@@ -236,20 +236,20 @@ impl<'a> Eval<'a> {
             }
             (ObjKind::Line, "set_color") => {
                 let color = self.arg_color(args, 0, "color", DEFAULT_OBJECT_COLOR)?;
-                if let Some(line) = self.state.objects.line_mut(handle) {
+                if let Some(mut line) = self.state.edit_object::<LineObj>(handle) {
                     line.color = color;
                 }
             }
             (ObjKind::Line, "set_width") => {
                 #[allow(clippy::cast_possible_truncation)]
                 let width = self.arg_price(args, 0, "width")? as f32;
-                if let Some(line) = self.state.objects.line_mut(handle) {
+                if let Some(mut line) = self.state.edit_object::<LineObj>(handle) {
                     line.width = width;
                 }
             }
             (ObjKind::Box, "set_left" | "set_right") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
-                if let Some(object) = self.state.objects.box_mut(handle) {
+                if let Some(mut object) = self.state.edit_object::<BoxObj>(handle) {
                     if field == "set_left" {
                         object.left = x;
                     } else {
@@ -259,7 +259,7 @@ impl<'a> Eval<'a> {
             }
             (ObjKind::Box, "set_top" | "set_bottom") => {
                 let y = self.arg_price(args, 0, "y")?;
-                if let Some(object) = self.state.objects.box_mut(handle) {
+                if let Some(mut object) = self.state.edit_object::<BoxObj>(handle) {
                     if field == "set_top" {
                         object.top = y;
                     } else {
@@ -270,7 +270,7 @@ impl<'a> Eval<'a> {
             (ObjKind::Box, "set_lefttop" | "set_rightbottom") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
                 let y = self.arg_price(args, 1, "y")?;
-                if let Some(object) = self.state.objects.box_mut(handle) {
+                if let Some(mut object) = self.state.edit_object::<BoxObj>(handle) {
                     if field == "set_lefttop" {
                         object.left = x;
                         object.top = y;
@@ -282,51 +282,51 @@ impl<'a> Eval<'a> {
             }
             (ObjKind::Box, "set_bgcolor") => {
                 let color = self.arg_color(args, 0, "color", DEFAULT_BOX_FILL)?;
-                if let Some(object) = self.state.objects.box_mut(handle) {
+                if let Some(mut object) = self.state.edit_object::<BoxObj>(handle) {
                     object.bg_color = color;
                 }
             }
             (ObjKind::Box, "set_border_color") => {
                 let color = self.arg_color(args, 0, "color", DEFAULT_OBJECT_COLOR)?;
-                if let Some(object) = self.state.objects.box_mut(handle) {
+                if let Some(mut object) = self.state.edit_object::<BoxObj>(handle) {
                     object.border_color = color;
                 }
             }
             (ObjKind::Label, "set_xy") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
                 let y = self.arg_price(args, 1, "y")?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.x = x;
                     label.y = y;
                 }
             }
             (ObjKind::Label, "set_x") => {
                 let x = self.arg_bar_index(args, 0, "x")?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.x = x;
                 }
             }
             (ObjKind::Label, "set_y") => {
                 let y = self.arg_price(args, 0, "y")?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.y = y;
                 }
             }
             (ObjKind::Label, "set_text") => {
                 let text = self.arg_text(args, 0, "text")?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.text = text;
                 }
             }
             (ObjKind::Label, "set_color") => {
                 let color = self.arg_color(args, 0, "color", DEFAULT_OBJECT_COLOR)?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.color = color;
                 }
             }
             (ObjKind::Label, "set_textcolor") => {
                 let color = self.arg_color(args, 0, "textcolor", DEFAULT_LABEL_TEXT)?;
-                if let Some(label) = self.state.objects.label_mut(handle) {
+                if let Some(mut label) = self.state.edit_object::<LabelObj>(handle) {
                     label.text_color = color;
                 }
             }
