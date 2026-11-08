@@ -20,6 +20,7 @@ pub fn compile_with_libraries(
         resolver,
         stack: Vec::new(),
         next: 0,
+        loaded: BTreeMap::new(),
         version: lexer::lex(source)?
             .version
             .map_or(5, |(version, _)| version),
@@ -32,6 +33,7 @@ struct Linker<F> {
     resolver: F,
     stack: Vec<String>,
     next: usize,
+    loaded: BTreeMap<String, BTreeMap<String, String>>,
     version: u32,
 }
 
@@ -100,6 +102,16 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                 if self.stack.len() >= 32 {
                     return Err(error("local library import depth exceeds 32"));
                 }
+                if let Some(public) = self.loaded.get(key) {
+                    if aliases
+                        .insert(parts[2].to_owned(), public.clone())
+                        .is_some()
+                    {
+                        return Err(error(format!("duplicate library alias `{}`", parts[2])));
+                    }
+                    body.push('\n');
+                    continue;
+                }
                 let library = (self.resolver)(key)
                     .ok_or_else(|| error(format!("missing local library `{key}`")))?;
                 self.stack.push(key.to_owned());
@@ -111,6 +123,7 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
                     failure.message = format!("local library `{key}`: {}", failure.message);
                     failure
                 })?;
+                self.loaded.insert(key.to_owned(), public.clone());
                 if aliases.insert(parts[2].to_owned(), public).is_some() {
                     return Err(error(format!("duplicate library alias `{}`", parts[2])));
                 }

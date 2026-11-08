@@ -495,6 +495,11 @@ version mismatches are rejected explicitly. Linking is bounded to 128 sources,
 Local library linking reserves identifiers beginning with `qlib` for generated
 names. Library globals and private methods are isolated from the importing
 script; only exported declarations are available through the import alias.
+Repeated imports of the same exact key share exported type identities, including
+through transitive dependencies. This follows our interpretation of import
+aliases as namespaces for the library's declarations in the primary
+[library documentation](https://www.tradingview.com/pine-script-docs/concepts/libraries/);
+the cross-alias case is authored coverage, not a TradingView oracle observation.
 Method receivers require explicit types. User-object field defaults are checked
 against their declared types even when the type is unused; an omitted v6 bool
 field defaults to false, while an explicit `na` bool default is rejected.
