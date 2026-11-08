@@ -214,7 +214,7 @@ pub(super) struct CandleDress {
     pub(super) half: f32,
     pub(super) candle_lane: f32,
     pub(super) content_half: f32,
-    faded: Option<CandleStyle>,
+    pub(super) faded: Option<CandleStyle>,
 }
 
 impl CandleDress {

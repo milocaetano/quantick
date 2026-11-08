@@ -4,8 +4,9 @@ use eframe::egui;
 use quantick_engine::Bar;
 use quantick_indicators::Rgba8;
 
-use crate::chart::{PixelRect, PriceScale, VerticalSegment, candle_geometry};
+use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
 use crate::style::{CandleStyle, ResolvedCandlePaint};
+use quantick_chart::candle_pixels::CandleRun;
 
 /// Whether a bar reads as bullish, and so which of the two candle colours it
 /// wears.
@@ -31,9 +32,6 @@ pub struct BarSlot {
     pub xc: f32,
     /// Half the body width.
     pub half_width: f32,
-    /// Whether the body and wick are drawn on pixel centres (the light time
-    /// chart's TradingView look) rather than where the geometry falls.
-    pub crisp: bool,
 }
 
 /// Draw one candle from pure geometry and a resolved paint description.
@@ -45,10 +43,6 @@ pub struct BarSlot {
 /// `bar_paint` is the colour an indicator asked this bar to wear (Pine's
 /// `barcolor`); `None` — the ordinary case — draws the trader's own direction
 /// colours.
-///
-/// A [`BarSlot::crisp`] slot puts the body's edges and the wick on pixel
-/// centres, so a one-pixel contour and wick land on one pixel column each
-/// instead of being smeared grey across two.
 pub fn draw_candle(
     painter: &egui::Painter,
     slot: BarSlot,
@@ -58,32 +52,15 @@ pub fn draw_candle(
     style: &CandleStyle,
     bar_paint: Option<Rgba8>,
 ) {
-    let crisp = slot.crisp;
-    let slot = if crisp {
-        BarSlot {
-            xc: painter.round_to_pixel_center(slot.xc),
-            half_width: slot.half_width.round().max(1.0),
-            crisp,
-        }
-    } else {
-        slot
-    };
     let paint = style.resolved_painted(
         is_bullish(bar),
         forming,
         bar_paint.map(|c| [c.r, c.g, c.b, c.a]),
     );
     let geometry = candle_geometry(scale, bar, slot.xc, slot.half_width, paint.min_body_height);
-    let edge = |at: f32| {
-        if crisp {
-            painter.round_to_pixel_center(at)
-        } else {
-            at
-        }
-    };
     let body = egui::Rect::from_min_max(
-        egui::pos2(geometry.body.left, edge(geometry.body.top)),
-        egui::pos2(geometry.body.right, edge(geometry.body.bottom)),
+        egui::pos2(geometry.body.left, geometry.body.top),
+        egui::pos2(geometry.body.right, geometry.body.bottom),
     );
 
     if let Some(wick) = paint.wick {
@@ -103,10 +80,6 @@ pub fn draw_candle(
         .min(body_width / 2.0)
         .min(body_height / 2.0)
         .max(0.0);
-    if crisp {
-        paint_crisp_body(painter, body, &paint);
-        return;
-    }
     let rounding = egui::Rounding::same(radius);
     if let Some(fill) = paint.fill
         && fill[3] > 0
@@ -128,24 +101,23 @@ pub fn draw_candle(
     }
 }
 
-/// A body on pixel centres as whole pixels (`quantick_chart::crisp_body`).
-fn paint_crisp_body(painter: &egui::Painter, body: egui::Rect, paint: &ResolvedCandlePaint) {
-    let (min, max) = (body.min, body.max);
-    let crisp =
-        quantick_chart::crisp_body::crisp_body([min.x, min.y], [max.x, max.y], paint.outline_width);
-    let fill = |rect: PixelRect, color: [u8; 4]| {
+/// Draw one candle by TradingView's whole-pixel rule: `run` decides where
+/// every pixel goes (`quantick_chart::candle_pixels`); this only paints
+/// them, as rectangles on device-pixel boundaries that nothing feathers.
+pub fn draw_pixel_candle(
+    painter: &egui::Painter,
+    run: &mut CandleRun,
+    xc: f32,
+    scale: &PriceScale,
+    bar: &Bar,
+    paint: &ResolvedCandlePaint,
+) {
+    let ppp = painter.ctx().pixels_per_point();
+    let pixels = run.place_bar(scale, bar, xc, paint.min_body_height);
+    for (rect, color) in pixels.paints(paint).into_iter().flatten() {
+        let rect = rect.in_points(ppp);
         let rect = egui::Rect::from_x_y_ranges(rect.left..=rect.right, rect.top..=rect.bottom);
         painter.rect_filled(rect, egui::Rounding::ZERO, color32(color));
-    };
-    if let (Some(color), Some(inner)) = (paint.fill.filter(|c| c[3] > 0), crisp.inner) {
-        fill(inner, color);
-    }
-    if paint.outline[3] > 0 {
-        crisp
-            .bands
-            .into_iter()
-            .flatten()
-            .for_each(|band| fill(band, paint.outline));
     }
 }
 

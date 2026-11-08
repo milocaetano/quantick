@@ -211,7 +211,11 @@ impl ChartPane {
         if !layout.tape_only {
             let mut candle_pass =
                 history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
-            candle_pass.crisp = !axes.resolved.dark && self.orderflow.is_none();
+            candle_pass.pixel = quantick_chart::candle_pixels::pixel_bodies(
+                self.orderflow.is_some(),
+                history.dress.faded.is_some() || history.dress.candle_lane > 0.0,
+                axes.resolved.dark,
+            );
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);

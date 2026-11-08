@@ -126,6 +126,12 @@ fn grid(p: &mut GridPass<'_, '_>) {
         if pointer_compass::claimed(y, label_height, label_height, claims.heights()) {
             continue;
         }
+        // A label half off the pane reads as clipped, not as a price:
+        // TradingView keeps only the labels whose whole text fits.
+        let (top, bottom) = (chart_rect.top(), chart_rect.bottom());
+        if !(top + label_height / 2.0..=bottom - label_height / 2.0).contains(&y) {
+            continue;
+        }
         painter.text(
             egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
             egui::Align2::LEFT_CENTER,

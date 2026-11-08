@@ -11,7 +11,7 @@ mod candles;
 mod style_window;
 
 use candles::color32;
-pub use candles::{BarSlot, draw_candle, is_bullish};
+pub use candles::{BarSlot, draw_candle, draw_pixel_candle, is_bullish};
 pub use style_window::{StylePanelResponse, draw_presets, draw_style_contents};
 
 #[cfg(test)]
