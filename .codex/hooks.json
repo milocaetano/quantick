@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" worktree-guard'",
-            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') worktree-guard\"",
+            "commandWindows": "$hookRepoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit 0 }; $hookGitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git.exe).Source); $hookShell = Join-Path -Path $hookGitRoot -ChildPath 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $hookShell --login (Join-Path -Path $hookRepoRoot -ChildPath '.claude/hooks/guardrails.sh') worktree-guard; exit $LASTEXITCODE",
             "timeout": 10,
             "statusMessage": "Checking the Quantick worktree policy"
           }
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" pr-gate'",
-            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') pr-gate\"",
+            "commandWindows": "$hookRepoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit 0 }; $hookGitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git.exe).Source); $hookShell = Join-Path -Path $hookGitRoot -ChildPath 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $hookShell --login (Join-Path -Path $hookRepoRoot -ChildPath '.claude/hooks/guardrails.sh') pr-gate; exit $LASTEXITCODE",
             "timeout": 10,
             "statusMessage": "Checking the Quantick PR gate"
           }
@@ -34,7 +34,7 @@
           {
             "type": "command",
             "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" commit-reminder'",
-            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') commit-reminder\"",
+            "commandWindows": "$hookRepoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit 0 }; $hookGitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git.exe).Source); $hookShell = Join-Path -Path $hookGitRoot -ChildPath 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $hookShell --login (Join-Path -Path $hookRepoRoot -ChildPath '.claude/hooks/guardrails.sh') commit-reminder; exit $LASTEXITCODE",
             "timeout": 10,
             "statusMessage": "Checking Quantick delivery state"
           }
@@ -46,7 +46,7 @@
           {
             "type": "command",
             "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" guard-watch'",
-            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') guard-watch\"",
+            "commandWindows": "$hookRepoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit 0 }; $hookGitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git.exe).Source); $hookShell = Join-Path -Path $hookGitRoot -ChildPath 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $hookShell --login (Join-Path -Path $hookRepoRoot -ChildPath '.claude/hooks/guardrails.sh') guard-watch; exit $LASTEXITCODE",
             "timeout": 10,
             "statusMessage": "Running Quantick repository guards"
           }

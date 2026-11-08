@@ -1986,6 +1986,19 @@ else
         failed=$((failed + 1))
     fi
 
+    # Codex already runs `commandWindows` in PowerShell. A nested
+    # `powershell.exe -Command "..."` has its `$` variables expanded empty by
+    # the outer shell, so every hook exits 0 and the gate silently fails open.
+    # Each command must also hand the guardrail's exit code back.
+    nested_shells=$(grep -c -- '"commandWindows": "powershell' "$codex_hooks")
+    forwarded_exits=$(grep -c -- '"commandWindows": .*exit \$LASTEXITCODE",' "$codex_hooks")
+    if [ "$nested_shells" -eq 0 ] && [ "$forwarded_exits" -eq 4 ]; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL Codex Windows hooks nest PowerShell (%s) or drop the exit code (%s of 4 forward it)\n' "$nested_shells" "$forwarded_exits"
+        failed=$((failed + 1))
+    fi
+
     for mode in worktree-guard pr-gate commit-reminder guard-watch; do
         if grep -qF -- '.claude/hooks/guardrails.sh' "$codex_hooks" &&
             grep -qF -- "$mode" "$codex_hooks"; then

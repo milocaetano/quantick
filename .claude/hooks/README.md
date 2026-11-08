@@ -8,7 +8,10 @@ is a wall. These make the harness enforce all three.
 
 Wired for Claude Code in `.claude/settings.json` and for Codex in
 `.codex/hooks.json`; both call `guardrails.sh` (POSIX sh, no `jq`) and are
-covered by `guardrails_test.sh`. Codex project hooks require one-time trust in
+covered by `guardrails_test.sh`. Codex runs each `commandWindows` in
+PowerShell itself, so those lines call Git's `sh.exe` directly and return its
+exit code; a nested `powershell.exe -Command` loses its variables and fails
+open. Codex project hooks require one-time trust in
 its `/hooks` screen, as required by the
 [Codex hooks contract](https://learn.chatgpt.com/docs/hooks).
 
