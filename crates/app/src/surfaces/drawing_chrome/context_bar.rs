@@ -146,7 +146,10 @@ pub(crate) fn draw(
         settings_available: !chrome.shared.pinned,
         confirming_delete: chrome.shared.delete_confirm && locked,
         tool_name: tool.name(),
-        draw_again: tool.freehand(),
+        draw_again: tool.freehand().then(|| drawings::context_bar::DrawAgain {
+            glyph: tool.icon(),
+            hover: tool.hover_text(),
+        }),
     };
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
         drawings::context_bar::capabilities(&object),

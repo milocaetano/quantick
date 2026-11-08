@@ -35,7 +35,6 @@ pub const BAR_HEIGHT_PX: f32 = 2.0 * BAR_PAD_Y_PX + TOOLRAIL_ICON.hit;
 const BAR_PAD_X_PX: f32 = 6.0;
 const BAR_PAD_Y_PX: f32 = 4.0;
 const DUPLICATE_HOVER_TEXT: &str = "Duplicate (Ctrl+D) · Copy and paste (Ctrl+C, Ctrl+V)";
-const DRAW_AGAIN_HOVER_TEXT: &str = "Keep drawing with the pencil (P)";
 /// Gap between two neighbouring slots.
 const ITEM_GAP_PX: f32 = 4.0;
 /// Width of the hairline that isolates a group.
@@ -614,8 +613,17 @@ pub struct BarObject<'a> {
     /// the registry's names are, which is what lets the tooltip be cached
     /// instead of formatted every frame.
     pub tool_name: &'static str,
-    /// Whether the tool that drew this object is offered again on the bar.
-    pub draw_again: bool,
+    /// The tool that drew this object, offered again on the bar as its own
+    /// rail glyph and hover text; `None` for a tool drawn once at a time.
+    pub draw_again: Option<DrawAgain>,
+}
+
+/// The rail's own face for the tool the bar offers again, so the bar and
+/// the rail cannot name one tool two ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawAgain {
+    pub glyph: &'static str,
+    pub hover: &'static str,
 }
 
 /// Which controls this object earns a slot for.
@@ -636,7 +644,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         settings: object.settings_available,
         sharing: object.shareable,
         magnet: object.magnet.is_some(),
-        draw_again: object.draw_again,
+        draw_again: object.draw_again.is_some(),
     }
 }
 
@@ -657,6 +665,10 @@ pub fn show(
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
     bar.rect = Some(rect);
+    #[cfg(test)]
+    {
+        bar.draw_again_rect = None;
+    }
     if bar.delete_hover_for != object.tool_name {
         bar.delete_hover_for = object.tool_name;
         bar.delete_hover = format!("Delete {} (Del)", object.tool_name.to_lowercase());
@@ -717,8 +729,12 @@ fn draw_slot(
         }
         Slot::Separator => draw_separator(ui),
         Slot::DrawAgain => {
-            let pencil = IconButton::new(icons::PENCIL_SIMPLE, TOOLRAIL_ICON)
-                .hover_text(DRAW_AGAIN_HOVER_TEXT)
+            // `slots` offers this cell only when the object names its tool.
+            let Some(face) = object.draw_again else {
+                return;
+            };
+            let pencil = IconButton::new(face.glyph, TOOLRAIL_ICON)
+                .hover_text(face.hover)
                 .show(ui);
             #[cfg(test)]
             {
@@ -1395,7 +1411,6 @@ mod tests {
             ..PLAIN
         });
         assert_eq!(&cells[..3], &[Slot::Grip, Slot::DrawAgain, Slot::Separator]);
-        assert!(DRAW_AGAIN_HOVER_TEXT.contains("(P)"));
     }
 
     #[test]
