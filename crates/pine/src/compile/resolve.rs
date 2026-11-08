@@ -501,6 +501,7 @@ impl Compiler {
             ));
         }
         match builtin {
+            Builtin::PlotCandle | Builtin::PlotBar => self.validate_candle_scope(call),
             Builtin::InputInt
             | Builtin::InputFloat
             | Builtin::InputBool

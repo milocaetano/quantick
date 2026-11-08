@@ -176,3 +176,24 @@ fn candle_kernel_preview_rollback_and_rebind() {
         script.plots().candle_column(0).unwrap()[1]
     );
 }
+
+#[test]
+fn candle_nested_expressions_are_rejected() {
+    for body in [
+        "plot(plotbar())",
+        "plot(plotbar(open, high, low, close))",
+        "a = 1 + plotcandle(open, high, low, close)",
+        "a = true ? plotbar(open, high, low, close) : na",
+        "plotcandle(open, high, low, plotbar(open, high, low, close))",
+    ] {
+        let errors = compile(&format!("//@version=5\n{body}\n"), "nested")
+            .err()
+            .expect("nested candle output must not compile");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("direct top-level")),
+            "{body}: {errors:?}"
+        );
+    }
+}

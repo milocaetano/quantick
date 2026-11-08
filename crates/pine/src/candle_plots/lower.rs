@@ -8,6 +8,20 @@ use crate::{
 use quantick_indicators::CandlePlotSpec;
 
 impl Compiler {
+    pub(super) fn validate_candle_scope(&mut self, call: NodeId) {
+        if !self
+            .pending_plots
+            .iter()
+            .any(|(registered, _, _)| *registered == call)
+        {
+            self.errors.push(PineError::new(
+                ErrorCode::PineSyntax,
+                self.span(call),
+                "candle plots must be direct top-level declarations",
+            ));
+        }
+    }
+
     pub(super) fn candle_call(&mut self, call: NodeId, args: &[Arg], is_bar: bool) {
         let names = if is_bar { BAR_ARGS } else { CANDLE_ARGS };
         let mut seen = std::collections::BTreeSet::new();
