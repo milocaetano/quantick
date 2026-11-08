@@ -228,10 +228,8 @@ pub(super) fn convex_parts(outline: &[Px], opaque: bool) -> [Vec<Px>; 2] {
         vec![*tip, *head_left, *head_right],
         vec![
             inner(waist_left),
-            *waist_left,
             *foot_left,
             *foot_right,
-            *waist_right,
             inner(waist_right),
         ],
     ]
@@ -334,17 +332,30 @@ mod tests {
     /// a corner of one of them, and each part is convex (one turn sense).
     #[test]
     fn the_painted_parts_are_convex_and_cover_the_outline() {
-        for (direction, inverted) in [
-            (Direction::Up, false),
-            (Direction::Down, false),
-            (Direction::Up, true),
+        for (direction, inverted, opaque) in [
+            (Direction::Up, false, true),
+            (Direction::Down, false, true),
+            (Direction::Up, true, true),
+            (Direction::Up, false, false),
+            (Direction::Down, true, false),
         ] {
             let outline = outline(pos2(40.0, 80.0), direction, DEFAULT_MARK_PX, inverted);
-            let parts = convex_parts(&outline, true);
+            let parts = convex_parts(&outline, opaque);
             for point in &outline {
+                let on_a_side = |part: &Vec<Px>| {
+                    (0..part.len()).any(|i| {
+                        let (a, b) = (part[i], part[(i + 1) % part.len()]);
+                        let cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+                        let within = point.x >= a.x.min(b.x) - 1e-3
+                            && point.x <= a.x.max(b.x) + 1e-3
+                            && point.y >= a.y.min(b.y) - 1e-3
+                            && point.y <= a.y.max(b.y) + 1e-3;
+                        cross.abs() < 1e-3 && within
+                    })
+                };
                 assert!(
-                    parts.iter().any(|part| part.contains(point)),
-                    "{point:?} is painted by no part"
+                    parts.iter().any(on_a_side),
+                    "{point:?} ({opaque}) lies on no part's edge"
                 );
             }
             for part in &parts {
