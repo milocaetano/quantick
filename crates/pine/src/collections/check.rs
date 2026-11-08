@@ -21,6 +21,13 @@ fn accepts(expected: &Base, actual: &Base) -> bool {
         || matches!(actual, Base::Na | Base::Unknown)
         || matches!((expected, actual), (Base::Float, Base::Int))
 }
+fn collection_arity(values: &[Type], min: usize, max: usize) -> Result<(), String> {
+    if (min..=max).contains(&values.len()) {
+        Ok(())
+    } else {
+        Err(format!("collection expects {min}..={max} arguments"))
+    }
+}
 impl Checker<'_> {
     pub(crate) fn collection_defaults(
         &mut self,
@@ -153,30 +160,28 @@ impl Checker<'_> {
             }
         }
     }
-    fn collection_type(&self, op: Op, values: &[Type]) -> Result<Base, String> {
+    fn collection_argument(
+        &self,
+        values: &[Type],
+        index: usize,
+        expected: &Base,
+    ) -> Result<(), String> {
+        if values.get(index).is_some_and(|v| {
+            accepts(expected, &v.base)
+                && !(self.version.two_state_bool() && *expected == Base::Bool && v.base == Base::Na)
+        }) {
+            Ok(())
+        } else {
+            Err(format!(
+                "collection argument {} requires {expected:?}",
+                index + 1
+            ))
+        }
+    }
+    fn collection_constructor(&self, op: Op, values: &[Type]) -> Result<Base, String> {
         use Op::*;
-        let arity = |min, max| {
-            if (min..=max).contains(&values.len()) {
-                Ok(())
-            } else {
-                Err(format!("collection expects {min}..={max} arguments"))
-            }
-        };
-        let require = |index: usize, expected: &Base| {
-            if values.get(index).is_some_and(|v| {
-                accepts(expected, &v.base)
-                    && !(self.version.two_state_bool()
-                        && *expected == Base::Bool
-                        && v.base == Base::Na)
-            }) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "collection argument {} requires {expected:?}",
-                    index + 1
-                ))
-            }
-        };
+        let arity = |min, max| collection_arity(values, min, max);
+        let require = |index, expected: &Base| self.collection_argument(values, index, expected);
         match op {
             NewArray(element) => {
                 arity(0, 2)?;
@@ -186,11 +191,11 @@ impl Checker<'_> {
                 if values.len() == 2 {
                     require(1, &base(element))?;
                 }
-                return Ok(Base::Array(Box::new(base(element))));
+                Ok(Base::Array(Box::new(base(element))))
             }
             NewMap(key, value) => {
                 arity(0, 0)?;
-                return Ok(Base::Map(Box::new(base(key)), Box::new(base(value))));
+                Ok(Base::Map(Box::new(base(key)), Box::new(base(value))))
             }
             From => {
                 arity(1, usize::MAX)?;
@@ -213,9 +218,17 @@ impl Checker<'_> {
                 ) {
                     return Err("array.from requires a scalar element type".into());
                 }
-                return Ok(Base::Array(Box::new(element)));
+                Ok(Base::Array(Box::new(element)))
             }
-            _ => {}
+            _ => unreachable!("only collection constructors are dispatched here"),
+        }
+    }
+    fn collection_type(&self, op: Op, values: &[Type]) -> Result<Base, String> {
+        use Op::*;
+        let arity = |min, max| collection_arity(values, min, max);
+        let require = |index, expected: &Base| self.collection_argument(values, index, expected);
+        if matches!(op, NewArray(_) | NewMap(..) | From) {
+            return self.collection_constructor(op, values);
         }
         let first = values.first().ok_or("collection receiver is missing")?;
         let map = matches!(
