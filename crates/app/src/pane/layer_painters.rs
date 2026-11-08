@@ -180,20 +180,29 @@ impl ChartPane {
         if chrome.style.canvas.time_grid_rgba().is_none() {
             return Vec::new();
         }
+        self.time_strip(frame, chrome, None).grid_xs()
+    }
+
+    /// The time strip this frame, standing aside for the pointer's `chip`.
+    fn time_strip<'s>(
+        &'s self,
+        frame: &'s DrawFrame<'_>,
+        chrome: &'s PaneChrome<'_>,
+        chip: Option<pointer_compass::TimeChip>,
+    ) -> crate::pane::render_registry::TimeStripPass<'s> {
         crate::pane::render_registry::TimeStripPass {
             painter: frame.painter,
             strip: frame.areas.time_strip,
             start: frame.start,
             end: frame.end,
             total: frame.total,
-            chip: None,
+            chip,
             style: chrome.style,
             tz: chrome.tz,
             candles_right: self.frame.candles_right,
             viewport: &frame.view,
             series: self.series_read(),
         }
-        .grid_xs()
     }
 
     /// The axis marks and the candles' own dividers: the trader's levels and
@@ -209,12 +218,9 @@ impl ChartPane {
     ) {
         let &DrawFrame {
             painter,
-            areas,
             chart_rect,
             history_rect,
             total,
-            start,
-            end,
             scale,
             closed,
             partial,
@@ -292,20 +298,7 @@ impl ChartPane {
                     gaps: chrome.feed_gaps,
                 });
         }
-        crate::pane::render_registry::TimeStripPass {
-            painter,
-            strip: areas.time_strip,
-            start,
-            end,
-            total,
-            chip: time_chip,
-            style: chrome.style,
-            tz: chrome.tz,
-            candles_right: self.frame.candles_right,
-            viewport: &frame.view,
-            series: self.series_read(),
-        }
-        .paint();
+        self.time_strip(frame, chrome, time_chip).paint();
     }
 
     /// Where the display day turns in view, or `None` with the separator

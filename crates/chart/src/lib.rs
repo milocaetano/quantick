@@ -18,6 +18,7 @@
 pub mod bar_progress;
 pub mod connection_state;
 mod constants;
+pub mod crisp_body;
 pub mod day_turn;
 pub mod flow_band;
 pub mod flow_execution;
