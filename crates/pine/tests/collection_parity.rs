@@ -325,3 +325,30 @@ fn collections_reject_invalid_scalar_methods() {
         assert!(compile(&source, "reject").is_err(), "{source}");
     }
 }
+
+#[test]
+fn collections_shared_slice_golden() {
+    let expected: Vec<f64> = include_str!("golden/collections/slices.csv")
+        .trim().split(',').map(|s| s.parse().unwrap()).collect();
+    assert_eq!(run(include_str!("fixtures/collections/slices.pine")), expected);
+}
+#[test]
+fn collections_slice_parent_lifetime_and_preview() {
+    let source = "//@version=6\nindicator(\"slice lifetime\")\nvar a = array.from(1, 2, 3)\nvar s = a.slice(1, 3)\na := array.new_int()\ns.set(0, s.get(0) + 1)\nplot(s.get(0))";
+    let mut script = ScriptIndicator::new(compile(source, "slice").unwrap(), source);
+    for index in 0..20 {
+        let mut ctx = Ctx { bar_index: index, cvd: &[] };
+        for _ in 0..3 { assert_eq!(script.preview(&bar(), &mut ctx).unwrap().values, vec![index as f64 + 3.0]); }
+        script.on_close(&bar(), &mut ctx).unwrap();
+        assert_eq!(script.plots().column(PlotId::new(0))[index], index as f64 + 3.0);
+    }
+}
+#[test]
+fn collections_varip_slice_transplants_parent_aliases() {
+    let source = "//@version=6\nindicator(\"slice varip\")\nvar a = array.from(1, 2, 3)\nvarip s = a.slice(1, 3)\ns.push(4)\nplot(a.size())\nplot(s.size())";
+    let mut script = ScriptIndicator::new(compile(source, "slice").unwrap(), source);
+    let mut ctx = Ctx { bar_index: 0, cvd: &[] };
+    script.on_close(&bar(), &mut ctx).unwrap();
+    ctx.bar_index = 1;
+    for size in 5..8 { assert_eq!(script.preview(&bar(), &mut ctx).unwrap().values, vec![size as f64, size as f64 - 1.0]); }
+}
