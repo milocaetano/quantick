@@ -267,6 +267,7 @@ pub fn project_past_heat(
                 carried: false,
                 time_averaged: false,
                 current_book: false,
+                lead_span: None,
             })
         })
         .collect();
@@ -289,5 +290,6 @@ fn pending_gap(x0: f64, x1: f64) -> GapPrimitive {
         x0,
         x1,
         reason: BOOK_PENDING.to_owned(),
+        lead_span: None,
     }
 }

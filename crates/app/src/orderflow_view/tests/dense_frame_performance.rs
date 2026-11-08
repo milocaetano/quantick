@@ -248,6 +248,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: geometry(&bars, &partial, rect).lane_bars,
+                tape_lead_share: 0.0,
             }),
         };
         let pending = timed("complete_pending_frame", ignore_opening, || {

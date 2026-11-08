@@ -40,6 +40,7 @@
 //! None at run time. The table is `const` data; [`drift`] and the renderer run
 //! only from `main`'s dump path, before a window exists, and from tests.
 
+pub(crate) use quantick_control_handlers::retry_matrix::*;
 pub(crate) use quantick_control_schema::retry_matrix::*;
 // What the sidecar tests reach through `super::*`.
 #[cfg(test)]

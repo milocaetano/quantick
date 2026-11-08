@@ -31,6 +31,7 @@ fn the_books_gaps_and_a_held_book_move_the_engine_revision_key() {
         x0: 0.0,
         x1: 0.1,
         reason: "sequence_gap".to_owned(),
+        lead_span: None,
     };
     let config = HeatmapConfig::default();
     assert_eq!(key(&config).with_book(&[], None), key(&config));

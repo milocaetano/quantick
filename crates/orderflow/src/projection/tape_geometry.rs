@@ -2,6 +2,7 @@
 
 use crate::HeatmapConfig;
 use crate::config::{BubbleScaleTarget, BubbleStyle, bubble_halo_padding};
+use crate::projection::HeatmapCell;
 
 use super::constants::{MAX_DECORATED_INSET_SHARE, MAX_VERTICAL_RADIUS_SHARE};
 
@@ -105,6 +106,85 @@ impl TapeHorizontalGeometry {
     #[must_use]
     pub fn x(self, fraction: f64) -> f32 {
         self.inset_px + fraction as f32 * self.span_px
+    }
+
+    /// [`Self::from_style`] for a caller holding the configuration, on the
+    /// same sanitized bubbles, so the view and the painter agree on one
+    /// inset.
+    #[must_use]
+    pub fn from_config(config: &HeatmapConfig, width: f32, height: f32) -> Option<Self> {
+        (config.native_tape() && config.live_lane.depth_time_averaging).then(|| {
+            let mut bubbles = config.bubbles.clone();
+            bubbles.sanitize();
+            Self::resolve(width, height, &bubbles)
+        })
+    }
+
+    /// The share of the lane's window the inset left of the oldest dot
+    /// holds on the dots' own clock: the book's lead
+    /// ([`crate::BarTimeline::with_lane_lead_ms`]), at most
+    /// [`MAX_LEAD_SHARE`]. A pane with no time span left takes the cap, so
+    /// the lead never falls to zero as the span closes.
+    #[must_use]
+    pub fn lead_share(self) -> f64 {
+        if self.inset_px <= 0.0 {
+            0.0
+        } else if self.span_px > 0.0 {
+            f64::from(self.inset_px / self.span_px).min(MAX_LEAD_SHARE)
+        } else {
+            MAX_LEAD_SHARE
+        }
+    }
+
+    /// Pixels from the lane's left edge a lead span `(from, to)`, in lane
+    /// fractions below zero, covers: the dots' clock, cut at the pane edge.
+    /// `None` for no span.
+    #[must_use]
+    pub fn lead_px(self, span: Option<(f64, f64)>) -> Option<(f32, f32)> {
+        span.map(|(from, to)| (self.x(from).max(0.0), self.x(to).max(0.0)))
+    }
+
+    /// Pixels from the lane's left edge a book cell of a frame with
+    /// `regions` slots is painted over, where the lane's own opening-to-NOW
+    /// mapping would cut it short: older depth in the lead left of the
+    /// oldest dot ([`HeatmapCell::lead_span`]), and a current row, which
+    /// ends at NOW, carried on to the lane's right edge while the frame's
+    /// current book is live. `None` leaves the cell where `x0..x1` puts it.
+    #[must_use]
+    pub fn book_span_px(
+        self,
+        cell: &HeatmapCell,
+        regions: usize,
+        current_book_live: bool,
+    ) -> Option<(f32, f32)> {
+        if cell.lead_span.is_some() {
+            return self.lead_px(cell.lead_span);
+        }
+        (cell.current_book && current_book_live).then(|| {
+            let regions = regions.max(1) as f64;
+            let from = (finite_unit_f64(cell.x0) * regions - (regions - 1.0)).max(0.0);
+            (self.x(from), self.x(1.0) + self.inset_px)
+        })
+    }
+}
+
+/// The most older depth the native tape's lead reads, in lane windows.
+///
+/// One window: the lead pads an inset, and a pad that read more history
+/// than the tape itself shows would cost more than the tape. The inset is
+/// capped at 45% of the pane a side, so only a pane whose time span is under
+/// a third of it asks for more; there the oldest edge of the strip stays
+/// empty rather than reading several windows back.
+pub const MAX_LEAD_SHARE: f64 = 1.0;
+
+/// `share` of `window_ms`, rounded up; zero for a share that is not a
+/// positive finite number.
+#[must_use]
+pub(super) fn share_of_window_ms(share: f64, window_ms: i64) -> i64 {
+    if share.is_finite() && share > 0.0 {
+        (share * window_ms.max(0) as f64).ceil() as i64
+    } else {
+        0
     }
 }
 
