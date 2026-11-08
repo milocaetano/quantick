@@ -96,6 +96,68 @@ fn combined_report_and_dialect_contract() {
         "{report}"
     );
     let dialect = include_str!("../../../docs/pine-dialect.md");
+    for version in [5, 6] {
+        let source = format!("//@version={version}\nindicator(\"calendar\")\nplot(year(0))\n");
+        let calendar = run(&source, &tape);
+        assert_eq!(
+            calendar.plots().column(quantick_indicators::PlotId::new(0)),
+            &[1970.0; 5]
+        );
+    }
+    for (source, code) in [
+        (
+            "//@version=7\nindicator(\"unsupported\")\nplot(close)\n",
+            "PINE_VERSION",
+        ),
+        (
+            "//@version=6\nindicator(\"unsupported\")\nplot(timeframe.period)\n",
+            "PINE_NO_TIMEFRAME",
+        ),
+    ] {
+        let errors = quantick_pine::compile(source, "unsupported")
+            .err()
+            .expect("unsupported construct must fail to compile");
+        assert!(errors.iter().any(|error| error.code.as_str() == code));
+        assert!(dialect.contains(code));
+    }
+    let language = dialect
+        .split("## Language")
+        .nth(1)
+        .unwrap()
+        .split("## Series variables")
+        .next()
+        .unwrap();
+    for version in ["//@version=5", "//@version=6"] {
+        assert!(
+            language.contains(version),
+            "undocumented support for {version}"
+        );
+    }
+    assert!(
+        !dialect.contains("PINE_NO_CALENDAR"),
+        "retired calendar rejection must not be documented"
+    );
+    let rejected = dialect
+        .split("## Rejected constructs")
+        .nth(1)
+        .unwrap()
+        .split("## Error codes")
+        .next()
+        .unwrap();
+    for supported in [
+        "calendar",
+        "`year`",
+        "`month`",
+        "`dayofmonth`",
+        "`dayofweek`",
+        "`hour`",
+        "`minute`",
+    ] {
+        assert!(
+            !rejected.contains(supported),
+            "supported {supported} must not be listed as rejected"
+        );
+    }
     for name in quantick_pine::builtins::Builtin::all_names() {
         assert!(dialect.contains(name), "undocumented {name}");
     }
