@@ -186,8 +186,8 @@ impl QuantickApp {
     /// and the tab strip record is carried out once it is drawn.
     pub(super) fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         let mut commands = Vec::new();
-        let context_column =
-            self.active_tab().layout.shows_time() && self.active_tab().layout.shows_flow();
+        let layout = self.active_tab().canvas.layout;
+        let context_column = layout.shows_time() && layout.shows_flow();
         let chart_shown = !self.chrome.title_bar.surface.is_home();
         commands::read_shortcuts(ctx, context_column, chart_shown, &mut commands);
         for command in commands.drain(..) {
@@ -241,8 +241,8 @@ impl QuantickApp {
                 }
             }
             MenuCommand::ToggleContextCharts => {
-                let collapsed = self.active_tab().context_collapsed;
-                self.active_tab_mut().set_context_collapsed(!collapsed);
+                let canvas = &mut self.active_tab_mut().canvas;
+                canvas.set_context_collapsed(!canvas.context_collapsed);
             }
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {

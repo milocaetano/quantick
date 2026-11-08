@@ -12,7 +12,7 @@ fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     run_frame(&mut app, &ctx);
 
     let context_ids = app
@@ -66,8 +66,9 @@ fn folded_flow_and_upper_context_have_no_stale_geometry_or_scene_canvases() {
     let visible_id = tab.time_panes[1].id;
 
     let tab = app.active_tab_mut();
-    tab.restore_context_heights(&[0.4, 0.6], &[true, false]);
-    tab.set_flow_collapsed(true);
+    tab.canvas
+        .restore_context_heights(&[0.4, 0.6], &[true, false]);
+    tab.canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
@@ -649,7 +650,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().split_fraction = 0.35;
+    app.active_tab_mut().canvas.split_fraction = 0.35;
     app.active_tab_mut().focus = PaneSide::Flow;
     app.runtime.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);

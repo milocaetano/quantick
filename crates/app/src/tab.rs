@@ -29,7 +29,7 @@ use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
-use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneIndex, PaneSide, SharedPick};
+use crate::pane::{ChartPane, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
 use quantick_feed::stall::{self};
@@ -42,7 +42,7 @@ use std::path::PathBuf;
 mod canvas;
 pub(crate) mod context_resize;
 mod feed;
-mod layout;
+pub(crate) mod layout;
 mod panes;
 mod strategies;
 
@@ -387,48 +387,9 @@ pub struct Tab {
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
-    /// The interval the time pane opens on when it is first built. The
-    /// header's default unless the feed declared one (`default_bars` with a
-    /// time-showing `default_layout`); once the pane exists, its own header
-    /// owns the interval and this is never read again.
-    time_pane_opening_interval_ms: i64,
-    /// The interval each context pane opens on, by slot, when a restored
-    /// workspace recorded more than one. A slot past the end of this list
-    /// opens on `time_pane_opening_interval_ms`, which is what every tab did
-    /// while the stack held one chart.
-    context_opening_intervals_ms: SmallVec<[i64; MAX_CONTEXT_PANES]>,
-    /// The layout each context pane opens on, by slot, from a restored
-    /// workspace. A slot past the end takes what a fresh pane takes: the
-    /// focused pane's layout.
-    context_opening: quantick_workspace::context_opening::ContextOpening,
-    /// Whether the time pane opens with its indicator legend folded, for the
-    /// same reason the interval above is stashed: a restored workspace names
-    /// the fold a frame before the pane it belongs to exists.
-    time_pane_opening_legend_collapsed: bool,
-    /// Set when the split is asked for and the time pane does not exist yet;
-    /// drained by [`Self::apply_pending_layout`] on the following frame.
-    pending_context_panes: usize,
-    /// Which panes this tab's canvas shows. In-session only for now: per-tab
-    /// chrome persistence is the open question §14 leaves to `ui-state.toml`,
-    /// and this field with `split_fraction` and `focus` is what it would
-    /// write.
-    pub layout: CanvasLayout,
-    /// The context column's share of the canvas width while it is shown.
-    ///
-    /// Kept while the column is collapsed, which is what it springs back to.
-    /// One number and one flag rather than two numbers: a separate "restore"
-    /// field would be a second opinion about the same width.
-    pub split_fraction: f32,
-    /// Whether the context column is collapsed to its rail.
-    pub context_collapsed: bool,
-    /// Whether the flow pane is folded against the right canvas edge.
-    pub flow_collapsed: bool,
-    /// Retained context heights and the geometry of their last drawn stack.
-    context_stack: context_resize::ContextStack,
-    /// Pixel width and opening direction of the divider drag in flight.
-    canvas_drag: Option<(f32, bool, bool)>,
-    /// The canvas the last drawn frame used. See [`Self::last_canvas_width`].
-    last_canvas: eframe::egui::Rect,
+    /// Which panes the canvas shows, how they are sized and folded, and what
+    /// the context panes not built yet open with.
+    pub canvas: layout::TabCanvas,
     /// The pane the chrome speaks for while this tab is active: status bar,
     /// indicator targeting and the keyboard's drawing grammar (§11).
     /// Meaningless while the canvas is Single — read it through
@@ -504,18 +465,7 @@ impl Tab {
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             time_panes: SmallVec::new(),
-            time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
-            context_opening_intervals_ms: SmallVec::new(),
-            context_opening: Default::default(),
-            time_pane_opening_legend_collapsed: false,
-            pending_context_panes: 0,
-            layout: CanvasLayout::Single,
-            split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: false,
-            flow_collapsed: false,
-            context_stack: context_resize::ContextStack::default(),
-            canvas_drag: None,
-            last_canvas: eframe::egui::Rect::ZERO,
+            canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]
@@ -652,7 +602,10 @@ impl Tab {
 
     #[cfg(test)]
     pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
-        self.flow_collapsed.then_some(self.collapsed_rail).flatten()
+        self.canvas
+            .flow_collapsed
+            .then_some(self.collapsed_rail)
+            .flatten()
     }
 
     /// Where the dividers between stacked context charts landed.

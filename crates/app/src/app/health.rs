@@ -273,7 +273,7 @@ impl<'a> HealthSummary<'a> {
                 .tape_reference_price()
                 .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
             footprint_rows = %self.tab.flow_pane.state.footprint_group(),
-            canvas_layout = ?self.tab.layout,
+            canvas_layout = ?self.tab.canvas.layout,
             screen_pt_w = self.geometry.screen.x,
             screen_pt_h = self.geometry.screen.y,
             client_px_w = self.geometry.client.map(|size| size.x),

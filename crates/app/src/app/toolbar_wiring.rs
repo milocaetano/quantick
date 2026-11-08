@@ -82,7 +82,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
-            layout_preset: Some(tab.layout.preset()),
+            layout_preset: Some(tab.canvas.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
             market: (chip, tab.chip_label()),

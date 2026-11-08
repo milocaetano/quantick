@@ -111,16 +111,20 @@ fn both_shortcuts_go_home_and_a_preset_does_not() {
     assert!(on_home(&app), "Ctrl+Shift+H");
     app.chrome.title_bar.surface.show_market();
 
-    let before = app.active_tab().layout;
+    let before = app.active_tab().canvas.layout;
     let second = preset_layout(1);
     assert_ne!(before, second);
     press(&mut app, &ctx, egui::Key::Num2, egui::Modifiers::CTRL);
-    assert_eq!(app.active_tab().layout, before, "Ctrl+2 left the presets");
+    assert_eq!(
+        app.active_tab().canvas.layout,
+        before,
+        "Ctrl+2 left the presets"
+    );
     assert!(!on_home(&app));
     press(&mut app, &ctx, egui::Key::Num2, CTRL_SHIFT);
     frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().layout,
+        app.active_tab().canvas.layout,
         second,
         "Ctrl+Shift+2 is the preset"
     );
@@ -130,7 +134,7 @@ fn both_shortcuts_go_home_and_a_preset_does_not() {
     press(&mut app, &ctx, egui::Key::Num1, CTRL_SHIFT);
     frame(&mut app, &ctx);
     assert_eq!(
-        app.active_tab().layout,
+        app.active_tab().canvas.layout,
         first,
         "Ctrl+Shift+1 is the first preset"
     );
@@ -653,11 +657,11 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     let (mut app, events, _, _) = test_app();
     let ctx = egui::Context::default();
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    app.active_tab_mut().split_fraction = 0.35;
+    app.active_tab_mut().canvas.split_fraction = 0.35;
     frame(&mut app, &ctx);
     frame(&mut app, &ctx);
     let width = app.active_tab().last_canvas_width();
-    let layout = app.active_tab().layout;
+    let layout = app.active_tab().canvas.layout;
     let live = app.active_tab().live_trades;
 
     app.show_home_tab().unwrap();
@@ -676,7 +680,7 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     assert!(app.active_tab().paper.is_flat(), "no order from Home");
     press(&mut app, &ctx, egui::Key::Num3, CTRL_SHIFT);
     frame(&mut app, &ctx);
-    assert_eq!(app.active_tab().layout, layout);
+    assert_eq!(app.active_tab().canvas.layout, layout);
 
     // The scene lists no pane, the cursor resolves to none, and a viewport
     // read says the geometry is unavailable.
@@ -688,13 +692,13 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     assert!(ids.iter().any(|id| id == "tab_strip.home"));
     let tab = app.active_tab();
     assert!(!crate::control::chart::viewport_snapshot(&tab.flow_pane).geometry_available);
-    assert_eq!(tab.split_fraction, 0.35, "Home writes no split");
+    assert_eq!(tab.canvas.split_fraction, 0.35, "Home writes no split");
     assert_eq!(tab.last_canvas_width(), width, "nor a canvas size");
 
     press(&mut app, &ctx, egui::Key::Tab, egui::Modifiers::CTRL);
     frame(&mut app, &ctx);
     let tab = app.active_tab();
-    assert_eq!(tab.split_fraction, 0.35);
+    assert_eq!(tab.canvas.split_fraction, 0.35);
     assert_eq!(
         tab.last_canvas_width(),
         width,
@@ -969,9 +973,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let ctx = egui::Context::default();
     let _second = two_tabs(&mut app, &ctx);
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
-    let layout = app.active_tab().layout;
+    let layout = app.active_tab().canvas.layout;
     let legend = app.active_tab().focused_pane().legend_collapsed;
-    let context = app.active_tab().context_collapsed;
+    let context = app.active_tab().canvas.context_collapsed;
     assert_ne!(layout, preset_layout(2));
 
     app.show_home_tab().unwrap();
@@ -984,9 +988,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert!(on_home(&app));
     assert_eq!(app.runtime.tabs.len(), 2);
     let tab = app.active_tab();
-    assert_eq!(tab.layout, layout);
+    assert_eq!(tab.canvas.layout, layout);
     assert_eq!(tab.focused_pane().legend_collapsed, legend);
-    assert_eq!(tab.context_collapsed, context);
+    assert_eq!(tab.canvas.context_collapsed, context);
     assert!(tab.paper.is_flat());
     assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");
 
@@ -1001,7 +1005,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
 
     // The same commands do act on a market.
     app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
-    assert_eq!(app.active_tab().layout, preset_layout(2));
+    assert_eq!(app.active_tab().canvas.layout, preset_layout(2));
 }
 
 #[test]

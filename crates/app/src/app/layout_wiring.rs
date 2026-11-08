@@ -529,7 +529,7 @@ impl LayoutAdapter<'_> {
             // is told what to open on; a built pane is switched now.
             if !self.pane_is_real(tab_id, side) {
                 if let Some(tab) = self.tabs.by_id_mut(tab_id) {
-                    tab.set_opening_layout(side, id);
+                    tab.canvas.set_opening_layout(side, id);
                 }
                 continue;
             }

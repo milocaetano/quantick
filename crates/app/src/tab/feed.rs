@@ -419,7 +419,7 @@ impl Tab {
                 .startup_spec_for(&self.feed_id)
                 .and_then(|spec| spec.time_interval_ms())
         {
-            self.time_pane_opening_interval_ms = ms;
+            self.canvas.time_pane_opening_interval_ms = ms;
         }
         tracing::info!(
             target: "quantick::app",
@@ -787,7 +787,7 @@ impl Tab {
     #[must_use]
     pub fn empty_panes_rect(&self) -> Option<egui::Rect> {
         if self.connection.overlay_owns_canvas() {
-            return Some(self.last_canvas);
+            return Some(self.canvas.last_canvas);
         }
         let empty = || {
             self.panes()

@@ -110,8 +110,8 @@ const ARRANGEMENTS: &[Arrangement] = &[
 
 fn arrange(app: &mut QuantickApp, ctx: &egui::Context, arrangement: &Arrangement) {
     let tab = app.active_tab_mut();
-    tab.set_flow_collapsed(false);
-    tab.set_context_collapsed(false);
+    tab.canvas.set_flow_collapsed(false);
+    tab.canvas.set_context_collapsed(false);
     tab.set_layout(arrangement.layout);
     run_frame(app, ctx);
     run_frame(app, ctx);
@@ -120,9 +120,11 @@ fn arrange(app: &mut QuantickApp, ctx: &egui::Context, arrangement: &Arrangement
         1.0 / arrangement.slots_collapsed.len().max(1) as f32;
         arrangement.slots_collapsed.len()
     ];
-    tab.restore_context_heights(&shares, arrangement.slots_collapsed);
-    tab.set_context_collapsed(arrangement.context_collapsed);
-    tab.set_flow_collapsed(arrangement.flow_collapsed);
+    tab.canvas
+        .restore_context_heights(&shares, arrangement.slots_collapsed);
+    tab.canvas
+        .set_context_collapsed(arrangement.context_collapsed);
+    tab.canvas.set_flow_collapsed(arrangement.flow_collapsed);
     run_frame(app, ctx);
     run_frame(app, ctx);
 }

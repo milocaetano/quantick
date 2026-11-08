@@ -66,21 +66,21 @@ mod shared_routing_tests {
     #[test]
     fn collapsing_a_column_keeps_the_width_it_springs_back_to() {
         let mut tab = tab_with_context_panes(1);
-        tab.split_fraction = 0.42;
+        tab.canvas.split_fraction = 0.42;
 
-        tab.context_collapsed = true;
+        tab.canvas.context_collapsed = true;
         assert_eq!(
-            tab.split_fraction, 0.42,
+            tab.canvas.split_fraction, 0.42,
             "the collapse spent the width it was supposed to remember"
         );
 
         // And again: a second collapse must not overwrite it either.
-        tab.context_collapsed = true;
-        assert_eq!(tab.split_fraction, 0.42);
+        tab.canvas.context_collapsed = true;
+        assert_eq!(tab.canvas.split_fraction, 0.42);
 
-        tab.context_collapsed = false;
+        tab.canvas.context_collapsed = false;
         assert_eq!(
-            tab.split_fraction, 0.42,
+            tab.canvas.split_fraction, 0.42,
             "the column came back at a width the trader never chose"
         );
     }
@@ -105,9 +105,10 @@ mod shared_routing_tests {
     #[test]
     fn flow_and_upper_context_collapsed_focus_the_visible_lower_chart() {
         let mut tab = tab_with_context_panes(2);
-        tab.layout = CanvasLayout::TimeTimeAndFlow;
-        tab.restore_context_heights(&[0.4, 0.6], &[true, false]);
-        tab.set_flow_collapsed(true);
+        tab.canvas.layout = CanvasLayout::TimeTimeAndFlow;
+        tab.canvas
+            .restore_context_heights(&[0.4, 0.6], &[true, false]);
+        tab.canvas.set_flow_collapsed(true);
         for stale_focus in [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(9)] {
             tab.focus = stale_focus;
             assert_eq!(tab.focused_side(), PaneSide::Time(1));
@@ -497,15 +498,15 @@ mod collapse_path_tests {
     fn collapsing_reports_change_and_is_idempotent() {
         let mut tab = tab();
         assert!(
-            tab.set_context_collapsed(true),
+            tab.canvas.set_context_collapsed(true),
             "the first collapse changes it"
         );
         assert!(
-            !tab.set_context_collapsed(true),
+            !tab.canvas.set_context_collapsed(true),
             "the second is a no-op and says so"
         );
-        assert!(tab.set_context_collapsed(false), "and it comes back");
-        assert!(!tab.set_context_collapsed(false));
+        assert!(tab.canvas.set_context_collapsed(false), "and it comes back");
+        assert!(!tab.canvas.set_context_collapsed(false));
     }
 
     /// The width the column springs back to is never spent by putting it away
@@ -513,13 +514,13 @@ mod collapse_path_tests {
     #[test]
     fn collapsing_never_spends_the_remembered_width() {
         let mut tab = tab();
-        tab.split_fraction = 0.42;
+        tab.canvas.split_fraction = 0.42;
         for _ in 0..3 {
-            tab.set_context_collapsed(true);
-            tab.set_context_collapsed(false);
+            tab.canvas.set_context_collapsed(true);
+            tab.canvas.set_context_collapsed(false);
         }
         assert_eq!(
-            tab.split_fraction, 0.42,
+            tab.canvas.split_fraction, 0.42,
             "the column came back at a width the trader never chose"
         );
     }
@@ -596,12 +597,12 @@ mod collapse_path_tests {
             &[60_000, 300_000],
             LegendFold::default(),
         );
-        assert!(tab.flow_collapsed);
-        assert!(tab.pane_collapsed(PaneSide::Time(0)));
-        assert!(!tab.pane_collapsed(PaneSide::Time(1)));
-        assert_eq!(tab.context_height_shares(), vec![0.4, 0.6]);
-        assert_eq!(tab.context_collapsed_slots(), vec![true, false]);
-        assert_eq!(tab.split_fraction, 0.42);
+        assert!(tab.canvas.flow_collapsed);
+        assert!(tab.canvas.pane_collapsed(PaneSide::Time(0)));
+        assert!(!tab.canvas.pane_collapsed(PaneSide::Time(1)));
+        assert_eq!(tab.canvas.context_height_shares(), vec![0.4, 0.6]);
+        assert_eq!(tab.canvas.context_collapsed_slots(), vec![true, false]);
+        assert_eq!(tab.canvas.split_fraction, 0.42);
     }
 
     /// over the trader's file.
@@ -625,11 +626,11 @@ mod collapse_path_tests {
             },
         );
         assert!(
-            tab.context_collapsed,
+            tab.canvas.context_collapsed,
             "the workspace recorded a collapsed column and it opened expanded"
         );
         assert_eq!(
-            tab.split_fraction, 0.42,
+            tab.canvas.split_fraction, 0.42,
             "and the width it springs back to is the saved one"
         );
     }
@@ -643,11 +644,11 @@ mod collapse_path_tests {
     fn re_picking_the_current_layout_brings_the_column_back() {
         let mut tab = tab();
         tab.set_layout(CanvasLayout::TimeAndFlow);
-        assert!(tab.set_context_collapsed(true));
+        assert!(tab.canvas.set_context_collapsed(true));
 
         tab.set_layout(CanvasLayout::TimeAndFlow);
         assert!(
-            !tab.context_collapsed,
+            !tab.canvas.context_collapsed,
             "the lit cell promised two panes and handed back a rail"
         );
     }
@@ -666,8 +667,8 @@ mod collapse_path_tests {
             300,
             crate::time_header::DEFAULT_INTERVAL_MS,
         ));
-        tab.layout = CanvasLayout::Time;
-        tab.context_collapsed = true;
+        tab.canvas.layout = CanvasLayout::Time;
+        tab.canvas.context_collapsed = true;
 
         assert_eq!(
             tab.focused_side(),

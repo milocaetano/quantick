@@ -248,12 +248,12 @@ fn result<P: TabsPort + ?Sized>(
     let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
         tab_id: WireU64::new(app.tab_reads().tabs().id_at(index)),
-        preset_id: tab.layout.preset().id.to_owned(),
+        preset_id: tab.canvas.layout.preset().id.to_owned(),
         pane_count: WireU64::new(tab.pane_count() as u64),
         focused_pane: WireU64::new(focused),
-        fraction: f64::from(tab.split_fraction),
-        collapsed: tab.context_collapsed,
-        flow_collapsed: tab.flow_collapsed,
+        fraction: f64::from(tab.canvas.split_fraction),
+        collapsed: tab.canvas.context_collapsed,
+        flow_collapsed: tab.canvas.flow_collapsed,
         changed,
     };
     serde_json::to_value(payload).map_err(|error| {
@@ -286,7 +286,7 @@ fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
         .tabs_mut()
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let changed = tab.layout != layout;
+    let changed = tab.canvas.layout != layout;
     tab.set_layout(layout);
     result(app, index, changed)
 }
@@ -347,8 +347,8 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
             )));
         }
     }
-    let changed = (tab.split_fraction - asked).abs() > f32::EPSILON;
-    tab.split_fraction = asked;
+    let changed = (tab.canvas.split_fraction - asked).abs() > f32::EPSILON;
+    tab.canvas.split_fraction = asked;
     result(app, index, changed)
 }
 
@@ -383,7 +383,7 @@ fn set_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The same call the divider drag, the rail and the menu take.
-    let changed = tab.set_context_collapsed(collapsed);
+    let changed = tab.canvas.set_context_collapsed(collapsed);
     result(app, index, changed)
 }
 
@@ -417,12 +417,12 @@ fn set_flow_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
         .tabs_mut()
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    if !tab.layout.shows_flow() || !tab.layout.shows_time() {
+    if !tab.canvas.layout.shows_flow() || !tab.canvas.layout.shows_time() {
         return Err(ControlError::invalid_request(
             "the flow pane has no right rail in this layout",
         ));
     }
-    let changed = tab.set_flow_collapsed(collapsed);
+    let changed = tab.canvas.set_flow_collapsed(collapsed);
     result(app, index, changed)
 }
 

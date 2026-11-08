@@ -4,9 +4,9 @@ use eframe::egui;
 use quantick_control::wire::ActorKind;
 use smallvec::SmallVec;
 
-use super::Tab;
+use super::layout::TabCanvas;
 use crate::canvas_layout::{self, MAX_CONTEXT_PANES, PaneKind, PaneWidth, RowAreas};
-use crate::pane::PaneSide;
+use crate::pane::{ChartPane, PaneSide};
 
 /// Height choices survive hidden layouts; frame geometry only describes a drawn stack.
 #[derive(Default)]
@@ -51,7 +51,12 @@ impl std::fmt::Display for ContextResizeError {
     }
 }
 
-impl Tab {
+impl TabCanvas {
+    /// See `Tab::shows_context_charts`: held, built, and not collapsed.
+    pub(crate) fn shows_context_charts(&self, time_panes: &[ChartPane]) -> bool {
+        self.layout.shows_time() && !time_panes.is_empty() && !self.context_collapsed
+    }
+
     pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
         match side {
             PaneSide::Flow => self.flow_collapsed && self.layout.shows_time(),
@@ -136,7 +141,10 @@ impl Tab {
 
     /// Current geometry from the same splitter the painter uses. Old layouts
     /// and reordered/replaced panes cannot lend their rectangles to an action.
-    pub(crate) fn context_stack_geometry(&self) -> Option<(egui::Rect, RowAreas)> {
+    pub(crate) fn context_stack_geometry(
+        &self,
+        time_panes: &[ChartPane],
+    ) -> Option<(egui::Rect, RowAreas)> {
         let frame = self.context_stack.frame.as_ref()?;
         let count = self
             .layout
@@ -144,14 +152,14 @@ impl Tab {
             .iter()
             .filter(|kind| **kind == PaneKind::Time)
             .count()
-            .min(self.time_panes.len());
-        if !self.shows_context_charts()
+            .min(time_panes.len());
+        if !self.shows_context_charts(time_panes)
             || count < 2
             || count != frame.pane_ids.len()
             || !frame
                 .pane_ids
                 .iter()
-                .zip(&self.time_panes)
+                .zip(time_panes)
                 .all(|(id, pane)| *id == pane.id)
             || frame.column.height() <= 0.0
         {
@@ -169,9 +177,10 @@ impl Tab {
         tab_id: u64,
         request: ResizeContextPair,
         actor: ActorKind,
+        time_panes: &[ChartPane],
     ) -> Result<ContextPairResult, ContextResizeError> {
         let (column, bands) = self
-            .context_stack_geometry()
+            .context_stack_geometry(time_panes)
             .ok_or(ContextResizeError::NotDrawn)?;
         let frame = self
             .context_stack

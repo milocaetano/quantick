@@ -194,7 +194,7 @@ pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option
     let shown = app.runtime.tabs.active_index();
     (app.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
     let timeframes = super::saved_context_intervals(&choice.context_bars, None);
-    app.active_tab_mut().open_context_on(&timeframes);
+    app.active_tab_mut().canvas.open_context_on(&timeframes);
     let tab = app.runtime.tabs.active_id();
     let sync = app.runtime.workspace.book.sync_mut();
     sync.join(tab, choice.arrival());

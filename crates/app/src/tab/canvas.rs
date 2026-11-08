@@ -129,7 +129,7 @@ impl Tab {
     /// The canvas's leading pane — the top context chart, else the flow pane. A
     /// takeover fills the canvas with its plot colour and speaks in its palette.
     pub fn lead_pane(&self) -> &crate::pane::ChartPane {
-        let time = self.layout.kinds().contains(&PaneKind::Time);
+        let time = self.canvas.layout.kinds().contains(&PaneKind::Time);
         let lead = self.time_panes.first().filter(|_| time);
         lead.unwrap_or(&self.flow_pane)
     }
@@ -201,8 +201,9 @@ impl Tab {
         // has actually built. The lower of the two is what gets drawn: a
         // layout may name a pane the tab is still building, and half a canvas
         // is better than a frame of nothing.
-        self.last_canvas = area;
+        self.canvas.last_canvas = area;
         let context_wanted = self
+            .canvas
             .layout
             .kinds()
             .iter()
@@ -213,28 +214,32 @@ impl Tab {
         // The flow pane also stands in for a time pane still being built, so
         // the frame between asking for the Time layout and the pane existing
         // shows the market rather than nothing.
-        let show_flow = self.layout.shows_flow() || !show_time;
+        let show_flow = self.canvas.layout.shows_flow() || !show_time;
         let split = show_time && show_flow;
-        if split && !self.context_collapsed && !self.flow_collapsed && area.width() > 0.0 {
+        if split
+            && !self.canvas.context_collapsed
+            && !self.canvas.flow_collapsed
+            && area.width() > 0.0
+        {
             let floor = canvas_layout::MIN_PANE_WIDTH_PX / area.width();
-            self.split_fraction = clamp_pane_fraction(self.split_fraction.max(floor));
+            self.canvas.split_fraction = clamp_pane_fraction(self.canvas.split_fraction.max(floor));
         }
         // One visible pane is handed the whole canvas and the rest of this
         // reduces to nothing: no divider, no focus frame — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_band) = if split {
-            let width = if self.flow_collapsed {
+            let width = if self.canvas.flow_collapsed {
                 canvas_layout::PaneWidth::Auto
-            } else if self.context_collapsed {
+            } else if self.canvas.context_collapsed {
                 canvas_layout::PaneWidth::Collapsed {
-                    restore: self.split_fraction,
+                    restore: self.canvas.split_fraction,
                 }
             } else {
-                canvas_layout::PaneWidth::Manual(self.split_fraction)
+                canvas_layout::PaneWidth::Manual(self.canvas.split_fraction)
             };
-            let flow_width = if self.flow_collapsed {
+            let flow_width = if self.canvas.flow_collapsed {
                 canvas_layout::PaneWidth::Collapsed {
-                    restore: 1.0 - self.split_fraction,
+                    restore: 1.0 - self.canvas.split_fraction,
                 }
             } else {
                 canvas_layout::PaneWidth::Auto
@@ -249,10 +254,10 @@ impl Tab {
         // A collapsed column paints a rail, not charts: eight pixels is a
         // handle, not a chart, and laying one out there would draw a price
         // axis and nothing else.
-        let collapsed_rail = (split && self.context_collapsed)
+        let collapsed_rail = (split && self.canvas.context_collapsed)
             .then_some(time_area)
             .flatten();
-        let flow_rail = (split && self.flow_collapsed).then_some(flow_band);
+        let flow_rail = (split && self.canvas.flow_collapsed).then_some(flow_band);
         let time_area = if collapsed_rail.is_some() {
             None
         } else {
@@ -295,7 +300,7 @@ impl Tab {
         };
         #[cfg(test)]
         self.context_dividers.clear();
-        self.context_stack.frame =
+        self.canvas.context_stack.frame =
             frame
                 .time_area
                 .map(|column| super::context_resize::StackFrame {
@@ -311,13 +316,16 @@ impl Tab {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
-            if self.context_stack.heights.len() < context_shown {
-                self.context_stack
+            if self.canvas.context_stack.heights.len() < context_shown {
+                self.canvas
+                    .context_stack
                     .heights
                     .resize(context_shown, canvas_layout::PaneWidth::Auto);
             }
-            let bands =
-                canvas_layout::split_column(column, &self.context_stack.heights[..context_shown]);
+            let bands = canvas_layout::split_column(
+                column,
+                &self.canvas.context_stack.heights[..context_shown],
+            );
             rects
                 .context_dividers
                 .extend(bands.dividers.iter().copied());
@@ -329,7 +337,7 @@ impl Tab {
                 .then(|| self.connection.slot(self.session.history_note()))
                 .flatten();
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
-                if self.context_stack.heights[slot].is_collapsed() {
+                if self.canvas.context_stack.heights[slot].is_collapsed() {
                     ui.painter()
                         .rect_filled(*band, egui::Rounding::ZERO, palette.chrome());
                     ui.painter().rect_filled(
@@ -832,7 +840,7 @@ impl Tab {
         };
 
         for viewer in 0..count {
-            if self.pane_collapsed(PaneSide::from_index(viewer)) {
+            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
                 continue;
             }
             let Some(pane) = self.pane_at(viewer) else {
@@ -953,7 +961,7 @@ impl Tab {
             return;
         }
         for viewer in 0..count {
-            if self.pane_collapsed(PaneSide::from_index(viewer)) {
+            if self.canvas.pane_collapsed(PaneSide::from_index(viewer)) {
                 continue;
             }
             let Some(pane) = self.pane_at(viewer) else {
@@ -1022,10 +1030,10 @@ impl Tab {
         // column was one target, which is how a third pane could never take
         // focus.
         if let Some(slot) = context_bands.iter().enumerate().position(|(slot, band)| {
-            band.contains(position) && !self.context_stack.heights[slot].is_collapsed()
+            band.contains(position) && !self.canvas.context_stack.heights[slot].is_collapsed()
         }) {
             self.focus = PaneSide::Time(slot);
-        } else if !self.flow_collapsed && flow_area.contains(position) {
+        } else if !self.canvas.flow_collapsed && flow_area.contains(position) {
             self.focus = PaneSide::Flow;
         }
     }
@@ -1129,15 +1137,19 @@ impl Tab {
         canvas_width: f32,
     ) {
         if response.drag_started() {
-            self.canvas_drag = Some((drawn_width, self.context_collapsed, self.flow_collapsed));
+            self.canvas.drag = Some((
+                drawn_width,
+                self.canvas.context_collapsed,
+                self.canvas.flow_collapsed,
+            ));
         }
         if response.dragged() && response.drag_delta().x.abs() > f32::EPSILON && canvas_width > 0.0
         {
             let (wanted_px, opening_left, opening_right) = {
-                let state = self.canvas_drag.get_or_insert((
+                let state = self.canvas.drag.get_or_insert((
                     drawn_width,
-                    self.context_collapsed,
-                    self.flow_collapsed,
+                    self.canvas.context_collapsed,
+                    self.canvas.flow_collapsed,
                 ));
                 state.0 += response.drag_delta().x;
                 *state
@@ -1151,12 +1163,12 @@ impl Tab {
                 return;
             }
             if wanted_px < canvas_layout::COLLAPSE_AT_PX {
-                self.set_context_collapsed(true);
+                self.canvas.set_context_collapsed(true);
             } else if canvas_width - wanted_px < canvas_layout::COLLAPSE_AT_PX {
-                self.set_flow_collapsed(true);
+                self.canvas.set_flow_collapsed(true);
             } else {
-                self.set_context_collapsed(false);
-                self.set_flow_collapsed(false);
+                self.canvas.set_context_collapsed(false);
+                self.canvas.set_flow_collapsed(false);
                 let width = if canvas_width >= 2.0 * canvas_layout::MIN_PANE_WIDTH_PX {
                     wanted_px.clamp(
                         canvas_layout::MIN_PANE_WIDTH_PX,
@@ -1165,11 +1177,11 @@ impl Tab {
                 } else {
                     wanted_px.clamp(0.0, canvas_width)
                 };
-                self.split_fraction = clamp_pane_fraction(width / canvas_width);
+                self.canvas.split_fraction = clamp_pane_fraction(width / canvas_width);
             }
         }
         if response.drag_stopped() {
-            self.canvas_drag = None;
+            self.canvas.drag = None;
         }
     }
 
@@ -1184,8 +1196,8 @@ impl Tab {
         self.context_dividers.extend(dividers.iter().copied());
 
         for (index, divider) in dividers.iter().copied().enumerate() {
-            let upper_collapsed = self.context_stack.heights[index].is_collapsed();
-            let lower_collapsed = self.context_stack.heights[index + 1].is_collapsed();
+            let upper_collapsed = self.canvas.context_stack.heights[index].is_collapsed();
+            let lower_collapsed = self.canvas.context_stack.heights[index + 1].is_collapsed();
             ui.painter()
                 .rect_filled(divider, egui::Rounding::ZERO, palette.border());
             let handle = ui
@@ -1219,7 +1231,7 @@ impl Tab {
             if handle.dragged()
                 && let Some(pointer) = ui.ctx().pointer_interact_pos()
             {
-                let _ = self.resize_context_pair(
+                let _ = self.canvas.resize_context_pair(
                     tab_id,
                     super::context_resize::ResizeContextPair {
                         upper_pane_id: self.time_panes[index].id,
@@ -1227,6 +1239,7 @@ impl Tab {
                         wanted_y: pointer.y,
                     },
                     quantick_control::wire::ActorKind::HumanUi,
+                    &self.time_panes,
                 );
             }
         }
