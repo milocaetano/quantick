@@ -448,6 +448,14 @@ The independent original fixtures follow the primary
 [map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.
 ## Local libraries and user objects
 
+`varip` collection declarations validate the complete element field graph,
+including UDT fields containing collections. Drawing handles (`line`, `box`,
+`label`) cannot occur in those graphs or directly in a `varip` field. Ordinary
+UDT fields may retain drawing handles, including on a `varip` object reference.
+This follows the distinction in TradingView's
+[variable declarations](https://www.tradingview.com/pine-script-docs/language/variable-declarations/)
+between persistent references and permitted collection contents.
+
 `libraries::compile_with_libraries(source, title, resolver)` accepts a pure
 caller-supplied `Fn(&str) -> Option<String>` source resolver. Imports use exact
 `local/name/version` keys and explicit aliases. No filesystem or network lookup

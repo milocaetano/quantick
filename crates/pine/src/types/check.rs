@@ -43,6 +43,7 @@ pub(crate) fn validate(
             break;
         }
     }
+    checker.validate_varip_fields();
     errors.extend(checker.errors);
     checker.contexts[0] = (checker.coercions, checker.integer_divisions);
     let (coercions, integer_divisions) = checker.contexts.into_iter().unzip();
@@ -217,7 +218,7 @@ impl Checker<'_> {
     }
     fn infer_statement(&mut self, id: NodeId, node: NodeKind) -> Type {
         match node {
-            NodeKind::Declare { value, .. } => {
+            NodeKind::Declare { value, mode, .. } => {
                 let mut actual = self.infer(value);
                 let previous = self.read(self.resolutions[id.index()]);
                 if actual.base == Base::Na
@@ -237,6 +238,12 @@ impl Checker<'_> {
                     self.error(id, "a declaration initialized with na requires a type");
                 }
                 let mut ty = self.annotated(id, value, actual, &words);
+                if mode == crate::ast::VarMode::Varip && !self.varip_type(&ty.base) {
+                    self.error(
+                        id,
+                        "varip requires a supported value or collection field graph",
+                    );
+                }
                 ty.qualifier = ty
                     .qualifier
                     .max(self.read(self.resolutions[id.index()]).qualifier);

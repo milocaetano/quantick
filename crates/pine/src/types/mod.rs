@@ -8,6 +8,8 @@ pub(crate) mod check;
 mod collection_check;
 #[path = "../libraries/check.rs"]
 mod library_check;
+#[path = "../libraries/persistence.rs"]
+mod library_persistence;
 pub(crate) mod model;
 #[path = "../version/types.rs"]
 mod version_policy;
