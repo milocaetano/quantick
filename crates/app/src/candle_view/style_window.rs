@@ -45,7 +45,7 @@ pub fn draw_style_contents(
     draw_outline_settings(
         ui,
         &mut style.candles,
-        &mut style.ownership.outline_width,
+        &mut style.ownership,
         &mut response.changed,
     );
     ui.separator();
@@ -181,28 +181,35 @@ pub fn draw_body_settings(
 pub fn draw_outline_settings(
     ui: &mut egui::Ui,
     style: &mut CandleStyle,
-    width_owner: &mut quantick_appearance::Inheritance,
+    ownership: &mut quantick_chart::style::ChartColorOwnership,
     changed: &mut bool,
 ) {
     ui.heading("Outline");
-    *changed |= ui
-        .add(
-            egui::Slider::new(&mut style.outline_opacity, 0.0..=1.0)
-                .text("outline opacity")
-                .step_by(0.01),
-        )
-        .changed();
-    if ui
-        .add(
-            egui::Slider::new(&mut style.outline_width, 0.5..=4.0)
-                .text("outline thickness px")
-                .step_by(0.05),
-        )
-        .changed()
-    {
-        *width_owner = quantick_appearance::Inheritance::Explicit;
-        *changed = true;
+    let slider =
+        |value, range, text, step| egui::Slider::new(value, range).text(text).step_by(step);
+    let opacity = slider(
+        &mut style.outline_opacity,
+        0.0..=1.0,
+        "outline opacity",
+        0.01,
+    );
+    *changed |= owned(ui.add(opacity), &mut ownership.outline_opacity);
+    let width = slider(
+        &mut style.outline_width,
+        0.5..=4.0,
+        "outline thickness px",
+        0.05,
+    );
+    *changed |= owned(ui.add(width), &mut ownership.outline_width);
+}
+
+/// Whether a slider moved; one that did makes its value the trader's.
+fn owned(response: egui::Response, owner: &mut quantick_appearance::Inheritance) -> bool {
+    let changed = response.changed();
+    if changed {
+        *owner = quantick_appearance::Inheritance::Explicit;
     }
+    changed
 }
 
 pub fn draw_wick_settings(
@@ -232,13 +239,8 @@ pub fn draw_wick_settings(
                 *changed |= edit_color(ui, &mut style.wick, &mut ownership.wick);
             });
         }
-        *changed |= ui
-            .add(
-                egui::Slider::new(&mut style.wick_opacity, 0.0..=1.0)
-                    .text("wick opacity")
-                    .step_by(0.01),
-            )
-            .changed();
+        let opacity = egui::Slider::new(&mut style.wick_opacity, 0.0..=1.0).text("wick opacity");
+        *changed |= owned(ui.add(opacity.step_by(0.01)), &mut ownership.wick_opacity);
         *changed |= ui
             .add(
                 egui::Slider::new(&mut style.wick_width, 0.5..=4.0)

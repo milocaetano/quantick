@@ -219,7 +219,7 @@
         },
         "style": {
           "additionalProperties": false,
-          "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+          "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. Geometry and opacity are canonical decimal strings in inclusive bounds.",
           "properties": {
             "candles": {
               "additionalProperties": false,
@@ -463,6 +463,13 @@
                   ],
                   "type": "string"
                 },
+                "outline_opacity": {
+                  "enum": [
+                    "theme",
+                    "explicit"
+                  ],
+                  "type": "string"
+                },
                 "outline_width": {
                   "enum": [
                     "theme",
@@ -478,6 +485,13 @@
                   "type": "string"
                 },
                 "wick": {
+                  "enum": [
+                    "theme",
+                    "explicit"
+                  ],
+                  "type": "string"
+                },
+                "wick_opacity": {
                   "enum": [
                     "theme",
                     "explicit"

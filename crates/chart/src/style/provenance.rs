@@ -15,6 +15,10 @@ pub struct ChartColorOwnership {
     pub grid: Inheritance,
     /// The candle contour width a fresh chart takes from its theme.
     pub outline_width: Inheritance,
+    /// The contour's opacity, likewise.
+    pub outline_opacity: Inheritance,
+    /// The wick's opacity, likewise.
+    pub wick_opacity: Inheritance,
     /// Whether the time grid is the theme's answer or the trader's.
     pub time_grid: Inheritance,
 }
@@ -30,6 +34,8 @@ impl ChartColorOwnership {
             background: Inheritance::Theme,
             grid: Inheritance::Theme,
             outline_width: Inheritance::Theme,
+            outline_opacity: Inheritance::Theme,
+            wick_opacity: Inheritance::Theme,
             time_grid: Inheritance::Theme,
         }
     }
@@ -62,6 +68,16 @@ impl ChartStyle {
             .ownership
             .outline_width
             .resolve(self.candles.outline_width, || theme.candle_outline_width);
+        self.candles.outline_opacity = self
+            .ownership
+            .outline_opacity
+            .resolve(self.candles.outline_opacity, || {
+                theme.candle_outline_opacity
+            });
+        self.candles.wick_opacity = self
+            .ownership
+            .wick_opacity
+            .resolve(self.candles.wick_opacity, || theme.candle_wick_opacity);
         self.canvas.time_grid_enabled = self
             .ownership
             .time_grid
@@ -183,6 +199,12 @@ mod tests {
         fresh.apply_theme(&light);
         assert!(fresh.canvas.time_grid_enabled);
         assert_eq!(fresh.candles.outline_width, 1.0);
+        // Pure black, one pixel: TradingView's contour and wick.
+        assert_eq!(fresh.candles.resolved(true, false).outline, [0, 0, 0, 255]);
+        assert_eq!(
+            fresh.candles.resolved(false, false).wick,
+            Some([0, 0, 0, 255])
+        );
         fresh.apply_theme(&dark);
         assert!(!fresh.canvas.time_grid_enabled);
         assert_eq!(fresh.candles.outline_width, 1.25);
@@ -201,10 +223,13 @@ mod tests {
         chosen.ownership.time_grid = Inheritance::Explicit;
         chosen.candles.outline_width = 2.0;
         chosen.ownership.outline_width = Inheritance::Explicit;
+        chosen.candles.wick_opacity = 0.5;
+        chosen.ownership.wick_opacity = Inheritance::Explicit;
         for theme in [&light, &dark] {
             chosen.apply_theme(theme);
             assert!(!chosen.canvas.time_grid_enabled);
             assert_eq!(chosen.candles.outline_width, 2.0);
+            assert_eq!(chosen.candles.wick_opacity, 0.5);
         }
         // A preset owns the contour, never the canvas's time grid.
         let mut preset = ChartStyle::default();

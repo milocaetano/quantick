@@ -107,6 +107,23 @@ pub(crate) fn outline_width(
     Ok(width)
 }
 
+pub(crate) fn opacity(
+    field: &str,
+    authored: Option<f32>,
+    inherited: Option<f32>,
+) -> Result<f32, ThemeError> {
+    let opacity = authored
+        .or(inherited)
+        .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?;
+    if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+        return Err(ThemeError::new(
+            field,
+            "must be finite and between 0 and 1 inclusive",
+        ));
+    }
+    Ok(opacity)
+}
+
 pub(crate) fn time_grid(
     authored: Option<bool>,
     fallback: Option<&ResolvedTheme>,
@@ -130,9 +147,19 @@ mod tests {
         assert_eq!(light.chart_axes.price_gutter, Some(76.0));
         assert_eq!(light.chart_axes.time_strip, Some(30.0));
         assert_eq!(light.candle_outline_width, 1.0);
+        assert_eq!(
+            (light.candle_outline_opacity, light.candle_wick_opacity),
+            (1.0, 1.0)
+        );
+        assert_eq!(
+            (dark.candle_outline_opacity, dark.candle_wick_opacity),
+            (0.96, 0.90)
+        );
         assert!(light.chart_time_grid);
         // The slate plot keeps Dark's contour, and the time grid follows Light.
         assert_eq!(light.bookmap().candle_outline_width, 1.25);
+        assert_eq!(light.bookmap().candle_outline_opacity, 0.96);
+        assert_eq!(light.bookmap().candle_wick_opacity, 0.90);
         assert!(light.bookmap().chart_time_grid);
     }
 
@@ -150,6 +177,8 @@ mod tests {
             ("candle_outline_width=nan", "candle_outline_width"),
             ("candle_outline_width=0.4", "candle_outline_width"),
             ("candle_outline_width=4.5", "candle_outline_width"),
+            ("candle_outline_opacity=1.5", "candle_outline_opacity"),
+            ("candle_wick_opacity=nan", "candle_wick_opacity"),
             ("[chart_axes]\nprice_gutter=8.0", "chart_axes.price_gutter"),
             ("[chart_axes]\ntime_strip=inf", "chart_axes.time_strip"),
             (

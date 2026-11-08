@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 pub struct BookmapOverride {
     pub candle_fill_opacity: Option<f32>,
     pub candle_outline_width: Option<f32>,
+    pub candle_outline_opacity: Option<f32>,
+    pub candle_wick_opacity: Option<f32>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
@@ -24,6 +26,8 @@ impl BookmapOverride {
             dark: parent.dark,
             candle_fill_opacity: self.candle_fill_opacity,
             candle_outline_width: self.candle_outline_width,
+            candle_outline_opacity: self.candle_outline_opacity,
+            candle_wick_opacity: self.candle_wick_opacity,
             chart_time_grid: None,
             chart_axes: None,
             colors: self.colors.clone(),

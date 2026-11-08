@@ -5,6 +5,8 @@ candle_fill_opacity = 1.0
 # The chart area follows TradingView's light chart, sampled from a capture of
 # it: one-pixel black contours and wicks, and gridlines on both axes.
 candle_outline_width = 1.0
+candle_outline_opacity = 1.0
+candle_wick_opacity = 1.0
 chart_time_grid = true
 
 [colors]
@@ -93,6 +95,10 @@ home_glow = "#12C68C0E"
 axis_ink = "#131722"
 # The plot and both axes; the chrome around them keeps canvas.
 chart_canvas = "#FFFFFF"
+# The last-price chip keeps the direction colours Light's candles wore before
+# their contours turned black.
+last_price_up = "#3D8540"
+last_price_down = "#000000"
 price_axis_rule = "#E0E3EB00"
 time_axis_rule = "#E0E3EB"
 border = "#B8B6B2"
@@ -174,6 +180,8 @@ preview_path = { premultiplied = [145, 145, 145, 145] }
 [bookmap]
 candle_fill_opacity = 0.20
 candle_outline_width = 1.25
+candle_outline_opacity = 0.96
+candle_wick_opacity = 0.90
 
 [bookmap.colors]
 drawing_default = "#B5832B"
@@ -275,6 +283,8 @@ draw_cyan = "#4DD0E1"
 float_shadow = { premultiplied = [0, 0, 0, 96] }
 candle_bull_outline = "#68E0C9"
 candle_bear_outline = "#FF898B"
+last_price_up = "#68E0C9"
+last_price_down = "#FF898B"
 candle_wick = "#B6C9D2"
 
 buy_ink = "#88CEC7"

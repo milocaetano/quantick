@@ -20,6 +20,8 @@ impl TitleStripOverride {
             dark: parent.dark,
             candle_fill_opacity: None,
             candle_outline_width: None,
+            candle_outline_opacity: None,
+            candle_wick_opacity: None,
             chart_time_grid: None,
             chart_axes: None,
             colors: self.colors.clone(),

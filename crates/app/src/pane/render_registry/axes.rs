@@ -161,13 +161,11 @@ fn last_price(p: &mut LastPricePass<'_>) {
     if y < chart_rect.top() || y > chart_rect.bottom() {
         return;
     }
-    // Same predicate and same two colours the candle wears, so the chip
-    // and the bar it reports can never disagree about direction.
-    let rgb = if crate::candle_view::is_bullish(bar) {
-        style.candles.bull_outline
-    } else {
-        style.candles.bear_outline
-    };
+    // Same predicate the candle uses, so the chip and the bar it reports can
+    // never disagree about direction; the colours are the theme's choice.
+    let theme = &theme::get(painter.ctx()).resolved;
+    let up = crate::candle_view::is_bullish(bar);
+    let rgb = quantick_chart::price_tag::last_price_rgb(theme, &style.candles, up);
     let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
 
     // Runs through the live strip when one is shown (`axis_x` then sits

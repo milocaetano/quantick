@@ -26,6 +26,8 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
             "background": inherited.clone(),
             "grid": inherited.clone(),
             "outline_width": inherited.clone(),
+            "outline_opacity": inherited.clone(),
+            "wick_opacity": inherited.clone(),
             "time_grid": inherited
         }
     });
@@ -76,7 +78,7 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
     schemars::json_schema!({
         "type": "object",
         "additionalProperties": false,
-        "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+        "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. Geometry and opacity are canonical decimal strings in inclusive bounds.",
         "required": ["candles", "canvas"],
         "properties": {
             "ownership": ownership,

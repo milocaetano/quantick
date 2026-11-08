@@ -175,6 +175,8 @@ struct OwnershipFile {
     background: Inheritance,
     grid: Inheritance,
     outline_width: Inheritance,
+    outline_opacity: Inheritance,
+    wick_opacity: Inheritance,
     time_grid: Inheritance,
 }
 impl From<ChartColorOwnership> for OwnershipFile {
@@ -189,6 +191,8 @@ impl From<ChartColorOwnership> for OwnershipFile {
             background: value.background,
             grid: value.grid,
             outline_width: value.outline_width,
+            outline_opacity: value.outline_opacity,
+            wick_opacity: value.wick_opacity,
             time_grid: value.time_grid,
         }
     }
@@ -205,6 +209,8 @@ impl From<OwnershipFile> for ChartColorOwnership {
             background: value.background,
             grid: value.grid,
             outline_width: value.outline_width,
+            outline_opacity: value.outline_opacity,
+            wick_opacity: value.wick_opacity,
             time_grid: value.time_grid,
         }
     }
@@ -282,7 +288,12 @@ mod tests {
                 .as_table_mut()
                 .unwrap()
                 .remove("time_grid_enabled");
-            for marker in ["outline_width", "time_grid"] {
+            for marker in [
+                "outline_width",
+                "outline_opacity",
+                "wick_opacity",
+                "time_grid",
+            ] {
                 legacy["ownership"].as_table_mut().unwrap().remove(marker);
             }
             let file: StyleFile = legacy.try_into().unwrap();
@@ -294,6 +305,12 @@ mod tests {
             assert_eq!(loaded.ownership.time_grid, Inheritance::Explicit);
             assert_eq!(loaded.ownership.outline_width, Inheritance::Explicit);
             assert_eq!(loaded.candles.outline_width, style.candles.outline_width);
+            assert_eq!(loaded.ownership.wick_opacity, Inheritance::Explicit);
+            assert_eq!(loaded.candles.wick_opacity, style.candles.wick_opacity);
+            assert_eq!(
+                loaded.candles.outline_opacity,
+                style.candles.outline_opacity
+            );
         }
     }
     #[test]

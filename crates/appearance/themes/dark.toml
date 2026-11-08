@@ -3,6 +3,8 @@ name = "Dark"
 dark = true
 candle_fill_opacity = 0.20
 candle_outline_width = 1.25
+candle_outline_opacity = 0.96
+candle_wick_opacity = 0.90
 chart_time_grid = false
 
 [colors]
@@ -90,6 +92,9 @@ home_glow = "#3AF0B210"
 # themes only, and record what Dark's axes look like by default.
 axis_ink = "#96A0AF"
 chart_canvas = "#131722"
+# Dark's chip wears the candle outline; these are read by light themes only.
+last_price_up = "#68E0C9"
+last_price_down = "#FF898B"
 price_axis_rule = "#232936A6"
 time_axis_rule = "#232936A6"
 border = "#2E3648"

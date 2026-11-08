@@ -184,9 +184,14 @@ pub enum Token {
     /// The chart's plot and axes. A document that leaves it out uses its own
     /// `canvas`, which every other surface keeps reading.
     ChartCanvas,
+    /// A light theme's last-price chip over a rising bar. Dark's chip wears
+    /// the candle's own outline colour.
+    LastPriceUp,
+    /// A light theme's last-price chip over a falling bar.
+    LastPriceDown,
 }
 impl Token {
-    pub const ALL: [Self; 111] = [
+    pub const ALL: [Self; 113] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -298,6 +303,8 @@ impl Token {
         Self::PriceAxisRule,
         Self::TimeAxisRule,
         Self::ChartCanvas,
+        Self::LastPriceUp,
+        Self::LastPriceDown,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -319,6 +326,8 @@ impl Token {
             Self::PriceAxisRule => "price_axis_rule",
             Self::TimeAxisRule => "time_axis_rule",
             Self::ChartCanvas => "chart_canvas",
+            Self::LastPriceUp => "last_price_up",
+            Self::LastPriceDown => "last_price_down",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

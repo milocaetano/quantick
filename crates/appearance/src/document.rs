@@ -66,6 +66,11 @@ pub struct ThemeDocument {
     /// Candle contour width a fresh chart takes, in logical pixels.
     #[serde(default)]
     pub candle_outline_width: Option<f32>,
+    /// Candle contour and wick opacities a fresh chart takes, in `[0, 1]`.
+    #[serde(default)]
+    pub candle_outline_opacity: Option<f32>,
+    #[serde(default)]
+    pub candle_wick_opacity: Option<f32>,
     /// Whether a fresh chart draws vertical gridlines at its time labels.
     #[serde(default)]
     pub chart_time_grid: Option<bool>,
@@ -186,6 +191,8 @@ impl ThemeDocument {
             Token::CandleBullOutline,
             Token::CandleBearOutline,
             Token::CandleWick,
+            Token::LastPriceUp,
+            Token::LastPriceDown,
         ] {
             if colors[token as usize].to_array()[3] != 255 {
                 return Err(ThemeError::new(
@@ -211,6 +218,16 @@ impl ThemeDocument {
             dark: self.dark,
             candle_fill_opacity,
             candle_outline_width: chart::outline_width(self.candle_outline_width, fallback)?,
+            candle_outline_opacity: chart::opacity(
+                "candle_outline_opacity",
+                self.candle_outline_opacity,
+                fallback.map(|theme| theme.candle_outline_opacity),
+            )?,
+            candle_wick_opacity: chart::opacity(
+                "candle_wick_opacity",
+                self.candle_wick_opacity,
+                fallback.map(|theme| theme.candle_wick_opacity),
+            )?,
             chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
             chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
             colors,
@@ -244,7 +261,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 11] = [
+pub(crate) const MODE_TOKENS: [Token; 13] = [
     Token::TabStrip,
     Token::Brand,
     Token::ReplayInk,
@@ -256,6 +273,8 @@ pub(crate) const MODE_TOKENS: [Token; 11] = [
     Token::AxisInk,
     Token::PriceAxisRule,
     Token::TimeAxisRule,
+    Token::LastPriceUp,
+    Token::LastPriceDown,
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +283,8 @@ pub struct ResolvedTheme {
     pub dark: bool,
     pub candle_fill_opacity: f32,
     pub candle_outline_width: f32,
+    pub candle_outline_opacity: f32,
+    pub candle_wick_opacity: f32,
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
