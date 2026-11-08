@@ -5,13 +5,16 @@ use quantick_stores::chart_style::{
 };
 use serde_json::{Value, json};
 
-pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    // No per-marker default: the ownership description states it once, which
-    // keeps the descriptor under its byte limit as markers are added.
-    let inherited = json!({
-        "type": "string",
-        "enum": ["theme", "explicit"]
-    });
+/// The one ownership marker every field's provenance uses, named once under
+/// `$defs` with its default so the many markers stay one reference each.
+const OWNERSHIP_MARKER: &str = "StyleOwnership";
+
+pub(super) fn chart_style(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.definitions_mut().insert(
+        OWNERSHIP_MARKER.to_owned(),
+        json!({"type": "string", "enum": ["theme", "explicit"], "default": "explicit"}),
+    );
+    let inherited = json!({"$ref": format!("#/$defs/{OWNERSHIP_MARKER}")});
     let ownership = json!({
         "type": "object",
         "additionalProperties": false,
@@ -106,4 +109,54 @@ fn rgb() -> Value {
 fn range(min: f32, max: f32) -> Value {
     json!({"type": "string", "pattern": r"^-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$",
         "description": format!("Decimal [{min}, {max}], inclusive.")})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{ChartSettingsInput, ChartSettingsResult, descriptor};
+    use quantick_control::limits::CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES;
+    use quantick_control::schema::{CompiledSchema, generated_schema};
+    use serde_json::{Value, json};
+
+    /// The style document as each published schema carries it.
+    fn style_of(schema: &Value) -> &Value {
+        let update = schema["oneOf"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|variant| variant["properties"]["action"]["const"] == "update_candles");
+        match update {
+            Some(variant) => &variant["properties"]["style"],
+            None => &schema["properties"]["effective_style"]["anyOf"][0],
+        }
+    }
+
+    #[test]
+    fn every_ownership_marker_states_its_explicit_default_and_the_descriptor_fits() {
+        for schema in [
+            generated_schema::<ChartSettingsInput>(),
+            generated_schema::<ChartSettingsResult>(),
+        ] {
+            let marker = &schema["$defs"][super::OWNERSHIP_MARKER];
+            assert_eq!(marker["default"], json!("explicit"), "{marker}");
+            assert_eq!(marker["enum"], json!(["theme", "explicit"]));
+            let markers = style_of(&schema)["properties"]["ownership"]["properties"]
+                .as_object()
+                .expect("an ownership object");
+            assert_eq!(markers.len(), 12, "{markers:?}");
+            for (field, value) in markers {
+                assert_eq!(
+                    value["$ref"],
+                    json!(format!("#/$defs/{}", super::OWNERSHIP_MARKER)),
+                    "{field}"
+                );
+            }
+            CompiledSchema::new(&schema).expect("the schema compiles with its reference");
+        }
+        let bytes = serde_json::to_vec(&descriptor()).unwrap().len();
+        assert!(
+            bytes <= CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES,
+            "chart settings descriptor is {bytes} bytes"
+        );
+    }
 }

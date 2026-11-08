@@ -32,6 +32,14 @@
       ],
       "type": "object"
     },
+    "StyleOwnership": {
+      "default": "explicit",
+      "enum": [
+        "theme",
+        "explicit"
+      ],
+      "type": "string"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -265,88 +273,40 @@
               "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
               "properties": {
                 "background": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bear_fill": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bear_outline": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bull_fill": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bull_outline": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "fill_opacity": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "grid": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "outline_opacity": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "outline_width": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "time_grid": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "wick": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "wick_opacity": {
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 }
               },
               "type": "object"
