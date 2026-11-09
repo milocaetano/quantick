@@ -77,4 +77,4 @@ These are non-negotiable; PRs that break them won't be merged (see `CLAUDE.md` f
 - **Determinism.** Same trades in → same bars out, always. No wall-clock time, randomness or iteration-order-dependent output inside the engine.
 - **One engine, three consumers.** Chart, backtest and bot consume the same aggregator code path — never fork bar-building logic per consumer.
 - **Data honesty.** Inferred or incomplete data is labeled as such, never silently patched.
-- **Desktop and local.** An open-source trading platform that runs on your machine: no web, mobile or cloud version. Orders reach a real broker only behind an explicit opt-in.
+- **Desktop and local.** An open-source trading platform that runs on your machine: no web app, mobile app or cloud. A real-broker venue stays off until enabled in configuration.

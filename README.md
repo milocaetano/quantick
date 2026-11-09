@@ -4,15 +4,15 @@
 
 # quantick
 
-**An open-source desktop trading platform for order flow: activity-sampled bars, a liquidity heatmap, footprint, paper trading, backtesting and scripting on one deterministic Rust engine, operable by you or by an AI agent.**
+**Open-source trading platform for order flow.** Visualize the market by activity: tick, volume, dollar and imbalance bars over a live liquidity heatmap, footprint and aggression bubbles. Then paper-trade, backtest and script on the same engine.
 
 <p align="center">
-  <img src="img/quantick_v2.png" alt="quantick desktop chart showing live BTCUSDT tick bars over a Bookmap-style L2 liquidity heatmap, with buy/sell aggression bubbles, L2 reduction marks and a dedicated live lane for the forming bar" width="900">
+  <img src="img/quantick_v2.png" alt="quantick desktop chart showing live BTCUSDT tick bars over an L2 liquidity heatmap, with buy/sell aggression bubbles, L2 reduction marks and a dedicated live lane for the forming bar" width="900">
 </p>
 
 <p align="center"><em>Live BTCUSDT tick bars over the L2 liquidity heatmap, with buy/sell aggression bubbles and L2 reduction marks.</em></p>
 
-> **Status:** in active development and used daily for live trading on crypto and Brazilian (B3) futures. Everything below runs today unless the [roadmap](#roadmap) marks it open. APIs still change. Orders go to a **paper account**: sending orders to a real broker is not built yet (see [Trading with real money](#trading-with-real-money)).
+> **Status:** in active development and used daily alongside live trading on crypto and Brazilian (B3) futures. Everything below runs today unless the [roadmap](#roadmap) marks it open. APIs still change. Orders go to a **paper account**: sending orders to a real broker is not built yet (see [Real-money orders](#real-money-orders)).
 
 ## Why this exists
 
@@ -20,9 +20,16 @@ Time-based candles distort order flow. A 1-minute bar at the session open and a 
 
 The fix has been known for decades: sample by **activity** instead of time. Close a bar every N trades, every N contracts, every $N of notional, or whenever buying or selling pressure gets unusually one-sided. The research literature, from Ané & Geman (2000) to López de Prado's *Advances in Financial Machine Learning*, documents why this works: activity-sampled bars have better statistical properties, and they make flow metrics comparable from bar to bar.
 
-The platforms that chart order flow well (Bookmap, ATAS, Sierra Chart, NinjaTrader) are closed. You cannot read their engine, you cannot hand their bars to your own backtest, and the bars your bot trades are not guaranteed to be the bars you studied.
+Bookmap, ATAS, Sierra Chart, NinjaTrader and Quantower chart order flow well, but they are closed source, mostly paid, and their bar engines cannot be read or reused outside them.
 
-quantick is the open alternative: **a free trading platform built around those charts, where the bars you read live are the bars you backtest and the bars your strategy trades.**
+quantick is the open alternative: **a free trading platform built around those charts, where the bars you read live are the bars you backtest and paper-trade, and the engine is yours to read and reuse.**
+
+## Who it's for
+
+- **Order-flow traders** who want professional bar types, heatmap and footprint without platform lock-in
+- **Strategy and bot developers** who need the bars they backtest to be the bars they trade
+- **Quant researchers** who want reproducible activity-sampled bars for research and ML features
+- **Agent builders** who want a real desktop application to drive over MCP, with a consent model instead of screen scraping
 
 ## What it does
 
@@ -31,15 +38,15 @@ quantick is the open alternative: **a free trading platform built around those c
 - **Activity-sampled bars.** Tick, deal, volume, dollar and imbalance bars, Renko, and time bars from seconds to monthly. Switch the bar type and its parameter live.
 - **Liquidity heatmap.** Resting L2 depth drawn behind the candles, with aggression bubbles, liquidity-response marks and honest gaps where the book was not synchronized. Details: [docs/liquidity-map.md](docs/liquidity-map.md).
 - **Footprint and flow pane.** Per-price bid/ask volume inside each bar, and a flow pane beside the chart that shows candles or the tape.
-- **Indicators and scripting.** 30 built-in indicators (EMA, VWAP, CVD, delta histogram, RSI, MACD, Bollinger and more) written in *Quantick Pine*, a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …) and hot reload. Write your own: [docs/pine-dialect.md](docs/pine-dialect.md).
-- **Drawing tools.** 24 tools: trend lines, rays, channels, Fibonacci retracement and extension, rectangles, measure, text, price and date ranges, anchored VWAP and fixed-range volume profile.
+- **Indicators and scripting.** A built-in indicator library (EMA, VWAP, CVD, delta histogram, RSI, MACD, Bollinger and more) written in *Quantick Pine*, a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …) and hot reload. Write your own: [docs/pine-dialect.md](docs/pine-dialect.md).
+- **Drawing tools.** Trend lines, rays, channels, Fibonacci retracement and extension, shapes, measure, text, price and date ranges, anchored VWAP, fixed-range volume profile and more.
 - **History and replay.** Page back through venue history where the source provides it, or replay a recorded session print by print at up to 50×. Details: [docs/market-replay.md](docs/market-replay.md).
 
 ### Trade it
 
-- **Paper trading from the chart.** An order ticket with risk-based sizing, brackets and exit ladders, filled against the live tape by a disclosed, conservative fill model.
+- **Paper trading from the chart.** An order ticket with risk-based sizing, brackets and exit ladders, filled against the live tape by a simulated fill model. Simulated fills differ from real executions.
 - **Journal and reports.** Every paper trade is journaled; a report reads it back by session and by calendar.
-- **Strategies and backtests.** A headless backtest runner replays a recorded session through the exact bar and indicator path the chart draws, and runs a strategy against the same order and fill core the paper account uses.
+- **Strategies and backtests.** A headless backtest runner replays a recorded session through the exact bar and indicator path the chart draws, and runs a strategy against the same `sim` order and fill core the paper account is built on.
 
 ### Work your way
 
@@ -51,21 +58,23 @@ quantick is the open alternative: **a free trading platform built around those c
 
 | Source | Trades | L2 depth | Account needed |
 | --- | --- | --- | --- |
-| Binance spot and USD-M perpetuals | ✅ | ✅ spot | No, public data |
+| Binance spot and USD-M perpetuals | ✅ | Spot only | No, public data |
 | Hyperliquid perpetuals (`BTC`, `ETH`, `HYPE`, `SOL`, `ZEC`) | ✅ | ✅ up to 20 levels | No, public data |
-| MetaTrader 5 (for example B3 mini index and mini dollar) | ✅ | ✅ DOM | A MetaTrader 5 terminal running the bridge EA |
+| MetaTrader 5 (for example B3 mini index and mini dollar) | ✅ | ✅ DOM | A broker account and a MetaTrader 5 terminal (Windows) running the bridge EA |
 
-Feeds and symbols are configuration, not code: [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml).
+Feeds and symbols are configuration, not code: [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml). Hyperliquid serves only a short recent-trades window, so history paging is disabled there.
 
-## Trading with real money
+## Real-money orders
 
 quantick does not send orders to a real broker today. Every order fills against a paper account.
 
-When live order routing arrives it will be **off by default** and enabled only by an explicit opt-in. The agent permission model already reserves a `trader` profile for order placement; it is denied by default and no agent can reach it today.
+When live order routing arrives, a real-broker venue will be **off by default** and enabled only in your configuration. That is the trader's own opt-in. Separately, agents can never place orders unless you grant them the `trader` profile, which is denied by default and which the MCP adapter never asks for.
+
+Nothing here is financial advice. quantick is MIT-licensed and provided as is, without warranty.
 
 ## Scope
 
-quantick is a **desktop, local** trading platform. It runs on your machine, talks to venues directly and keeps your data in local files. It will not have a web or mobile version, a cloud account or cloud sync.
+quantick is a **desktop, local** trading platform. It runs on your machine, talks to venues directly and keeps your data in local files. It will not have a web app, a mobile app, a cloud account or cloud sync.
 
 ## Quick start: build, test, run
 
@@ -81,16 +90,17 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Windows: download and run rustup-init.exe from https://rustup.rs
 ```
 
-### 2. Clone, build and test
+There are no prebuilt binaries yet, so you build from source.
+
+### 2. Clone and build
 
 ```sh
 git clone https://github.com/milocaetano/quantick.git
 cd quantick
-cargo build --workspace
-cargo test --workspace
+cargo build --release -p quantick-app
 ```
 
-The first build compiles every dependency and takes a few minutes; later builds are incremental.
+The first build compiles every dependency and takes a few minutes; later builds are incremental. Contributors also run `cargo test --workspace`.
 
 ### 3. Run it
 
@@ -98,7 +108,7 @@ The first build compiles every dependency and takes a few minutes; later builds 
 cargo run --release -p quantick-app
 ```
 
-A native window opens, recovers the recent trades the source provides and then streams live trades, forming bars as they happen.
+A native window opens, recovers the recent trades the source provides and then streams live trades, forming bars as they happen. The liquidity heatmap and the aggression bubbles are off by default: turn them on from the chart toolbar.
 
 > quantick is a native desktop app (egui) and needs a graphical display. CI builds and tests it on Linux and Windows; it is used daily on Windows. macOS is not built or tested by CI.
 
@@ -112,7 +122,7 @@ QUANTICK_DEFAULT_SYMBOL=BTC \
 cargo run --release -p quantick-app
 ```
 
-For a custom catalog, point `QUANTICK_CONFIG` at a TOML file or place a git-ignored `quantick.toml` in the working directory. Either replaces the built-in catalog rather than merging with it, so start from a copy of [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml). The same file documents the MetaTrader 5 bridge, L2 options and logging.
+For a custom catalog, point `QUANTICK_CONFIG` at a TOML file or place a git-ignored `quantick.toml` in the working directory. Either replaces the built-in catalog rather than merging with it, so start from a copy of [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml). The same file documents the MetaTrader 5 bridge, L2 options and logging; the L2 and logging environment variables are in [docs/liquidity-map.md](docs/liquidity-map.md).
 
 ## Drive it with an agent (MCP)
 
@@ -155,31 +165,24 @@ Grant the **annotator** profile and the agent can also annotate the chart, notif
 ### What keeps it safe
 
 - **Local only.** An authenticated loopback socket, discovered through a private per-user descriptor. Nothing listens on the network.
-- **You choose the ceiling.** `observer` reads, `annotator` also answers on the chart, `cockpit` also rearranges the canvas. The fourth profile, `trader`, covers order placement; it is denied by default and the MCP adapter never asks for it.
+- **You choose the ceiling.** A ladder of profiles, each containing the one below: `observer` reads, `analyst` adds private reads, `annotator` also answers on the chart, `cockpit` also rearranges the canvas. The top profile, `trader`, covers order placement; it is denied by default and the MCP adapter never asks for it.
 - **Refused at the gate.** A capability you did not grant fails with `control.permission_denied`, whichever tool asked for it.
 - **Attributed.** Anything an agent draws is marked as the agent's, and it can never remove something you drew by hand.
 - **Written down.** The [capability catalog](schemas/control/observer-capability-catalog-v1.json) and wire schemas are generated from the Rust contracts and checked by a snapshot test. The trust boundary has a [threat model](docs/control-plane/observer-threat-model.md).
 
 Full reference: [`crates/mcp/README.md`](crates/mcp/README.md) and [`docs/control-plane/`](docs/control-plane/).
 
-## Who it's for
-
-- **Order-flow traders** who want professional bar types, heatmap and footprint without platform lock-in
-- **Strategy and bot developers** who need the bars they backtest to be the bars they trade
-- **Quant researchers** who want reproducible activity-sampled bars for research and ML features
-- **Agent builders** who want a real desktop application to drive over MCP, with a consent model instead of screen scraping
-
 ## Design principles
 
-1. **One engine, every consumer.** Chart, backtest and strategies share the bar aggregator and the paper account. Live/backtest divergence is designed out, not tested out.
+1. **One engine, three consumers.** Chart, backtest and bot share the bar aggregator; paper trading and backtests share the `sim` order and fill core. Divergence between them is designed out, not tested out.
 2. **Deterministic.** Same trades in, same bars out. Always.
 3. **Data honesty.** Inferred or incomplete data is labelled, never silently patched: a depth reduction is an "unattributed L2 reduction", never a cancellation.
-4. **Desktop and local.** No web, mobile or cloud. Real-money orders only behind an explicit opt-in.
+4. **Desktop and local.** No web app, mobile app or cloud. A real-broker venue stays off until enabled in configuration.
 5. **Operable without a hand.** Every capability has a named call, a readable result and a registry entry. That is what makes the MCP control plane possible.
 
 ## Architecture
 
-A Cargo workspace of one-way-dependent crates. The domain below the app is headless (no UI, network, async or wall clock), and the build fails on a reverse dependency or a module cycle. [AGENTS.md](AGENTS.md) maps every crate.
+A Cargo workspace of one-way-dependent crates. The domain below the app is headless (no UI, network, async or wall clock), and the build fails on a reverse dependency or a module cycle. The main crates by area are below; [AGENTS.md](AGENTS.md) maps every crate.
 
 | Area | Crates |
 | --- | --- |
@@ -191,6 +194,7 @@ A Cargo workspace of one-way-dependent crates. The domain below the app is headl
 | Feeds and replay | `feed`, `feed-binance`, `feed-hyperliquid`, `feed-mt5`, `replay`, `sources` |
 | Agent control plane | `control`, `control-schema`, `control-host`, `control-handlers`, `control-local`, `mcp` |
 | Desktop app | `app`, `platform` |
+| Shared support | `session`, `stores`, `civil`, `backpressure`, `operability`, `anchored-studies`, `guards` |
 
 ## Roadmap
 
@@ -215,6 +219,7 @@ Most of this repository is written by AI agents (Claude Code and Codex) working 
 - **Rules the build enforces.** [`crates/guards`](crates/guards) fails the build on a reverse crate dependency, a module cycle, UI or wall-clock code below the app, or a file over 1,500 lines.
 - **Determinism proven by tests.** Engine work is test-first: fixture trades and expected bars come before the code.
 - **Workflows are versioned skills** under [`.claude/skills/`](.claude/skills/), shared with Codex through [`.agents/skills/`](.agents/skills/).
+- **The author never grades its own work.** A separate agent reviews each diff, and the maintainer proves user-facing changes by using the build.
 
 [docs/agentic-development.md](docs/agentic-development.md) tells the full story.
 
@@ -228,4 +233,6 @@ Ideas, use cases and design discussion are welcome: [start a discussion](https:/
 
 ## License
 
-MIT
+MIT, provided as is, without warranty.
+
+Bookmap, ATAS, Sierra Chart, NinjaTrader, Quantower and MetaTrader are trademarks of their owners; quantick is not affiliated with them.

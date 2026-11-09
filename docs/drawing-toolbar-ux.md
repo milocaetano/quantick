@@ -36,8 +36,8 @@ strip has none of these: it is a flat, evenly spaced run of eleven buttons in a
 *is* undifferentiated.
 
 **What stays quantick.** We are not cloning the rail. Three things stay ours.
-First, the size discipline: `CLAUDE.md` says this is not a trading platform,
-and §5 of the design model says the chart buys every pixel. TradingView's rail
+First, the size discipline: §5 of the design model says the chart buys every
+pixel. TradingView's rail
 is 52 px wide and hosts thirty tools behind eight family flyouts; ours is
 **44 px in its cross axis in every orientation** — the same 44 the design
 model already budgets for the top/bottom strip, so the shell's pixel accounting
