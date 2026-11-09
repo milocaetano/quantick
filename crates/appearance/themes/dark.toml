@@ -133,6 +133,16 @@ candle_wick = "#A0A9B8"
 
 buy_ink = "#88CEC7"
 sell_ink = "#F6A09F"
+# The filled replay key is Dark's amber with chip ink; a light theme lays
+# dark plates under its replay key, chart order labels and ledger session
+# rows instead. Dark paints its order labels on inset with side inks, and
+# writes gains and losses in buy_ink and sell_ink.
+replay_plate = "#F0B90B"
+replay_plate_ink = "#0E121A"
+order_plate = "#10141D"
+order_plate_ink = "#D2DAE2"
+plate_gain = "#88CEC7"
+plate_loss = "#F6A09F"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

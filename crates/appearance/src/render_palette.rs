@@ -323,4 +323,22 @@ impl<T: Copy> RenderPalette<T> {
     pub fn sell_ink(&self) -> T {
         *self.get(Token::SellInk)
     }
+    pub fn replay_plate(&self) -> T {
+        *self.get(Token::ReplayPlate)
+    }
+    pub fn replay_plate_ink(&self) -> T {
+        *self.get(Token::ReplayPlateInk)
+    }
+    pub fn order_plate(&self) -> T {
+        *self.get(Token::OrderPlate)
+    }
+    pub fn order_plate_ink(&self) -> T {
+        *self.get(Token::OrderPlateInk)
+    }
+    pub fn plate_gain(&self) -> T {
+        *self.get(Token::PlateGain)
+    }
+    pub fn plate_loss(&self) -> T {
+        *self.get(Token::PlateLoss)
+    }
 }

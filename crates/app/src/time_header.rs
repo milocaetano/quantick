@@ -136,7 +136,7 @@ pub fn draw(
                 )
                 .frame(false),
             );
-            if let Some(fill) = chip_fill(selected, chip.hovered()) {
+            if let Some(fill) = chip_fill(selected, chip.hovered(), palette.resolved.dark) {
                 let patch = egui::Rounding::same(crate::pane_header::HOVER_ROUNDING);
                 let shape = egui::Shape::rect_filled(chip.rect, patch, *palette.get(fill));
                 content.painter().set(backdrop, shape);

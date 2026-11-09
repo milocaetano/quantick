@@ -189,9 +189,23 @@ pub enum Token {
     LastPriceUp,
     /// A light theme's last-price chip over a falling bar.
     LastPriceDown,
+    /// The filled replay key: the REPLAY badge, the chosen speed and a replay
+    /// dialog's primary action. Dark's is its amber.
+    ReplayPlate,
+    /// Words on [`Token::ReplayPlate`].
+    ReplayPlateInk,
+    /// The plate a light theme lays under the chart's order and position
+    /// labels, and under the report's drawdown chip.
+    OrderPlate,
+    /// Words on [`Token::OrderPlate`].
+    OrderPlateInk,
+    /// A gain written on a dark plate in a light theme.
+    PlateGain,
+    /// A loss written on a dark plate in a light theme.
+    PlateLoss,
 }
 impl Token {
-    pub const ALL: [Self; 113] = [
+    pub const ALL: [Self; 119] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -305,6 +319,12 @@ impl Token {
         Self::ChartCanvas,
         Self::LastPriceUp,
         Self::LastPriceDown,
+        Self::ReplayPlate,
+        Self::ReplayPlateInk,
+        Self::OrderPlate,
+        Self::OrderPlateInk,
+        Self::PlateGain,
+        Self::PlateLoss,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -328,6 +348,12 @@ impl Token {
             Self::ChartCanvas => "chart_canvas",
             Self::LastPriceUp => "last_price_up",
             Self::LastPriceDown => "last_price_down",
+            Self::ReplayPlate => "replay_plate",
+            Self::ReplayPlateInk => "replay_plate_ink",
+            Self::OrderPlate => "order_plate",
+            Self::OrderPlateInk => "order_plate_ink",
+            Self::PlateGain => "plate_gain",
+            Self::PlateLoss => "plate_loss",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",
