@@ -55,6 +55,8 @@ const POPOVER_GAP_PX: f32 = 6.0;
 const SWATCH_SIDE_PX: f32 = 20.0;
 /// Side of one swatch inside the colour popover.
 const PALETTE_SWATCH_PX: f32 = 22.0;
+/// Gap between a palette swatch and the ring that marks it selected.
+const SELECTED_RING_GAP_PX: f32 = 1.5;
 /// Length of the stroke preview painted inside the width slot.
 const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
 /// Width of one row inside the width and size popovers.
@@ -63,9 +65,7 @@ const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
 /// label — neither has an intrinsic width — so a row sized from
 /// `ui.available_width()` reports back whatever the Area was laid out at and
 /// the two agree on it forever: an Area egui has not seen starts at its
-/// 600 px default, the rows fill it, and the measurement confirms it. The
-/// palette next door does have an intrinsic width, which is the only reason
-/// this stayed invisible while all three popovers shared one Area id.
+/// 600 px default, the rows fill it, and the measurement confirms it.
 const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
@@ -330,13 +330,9 @@ pub struct ContextBar {
     /// Where the trader dragged the bar. Absolute screen position, and it
     /// outlives the selection it was chosen under.
     ///
-    /// It used to be dropped on every selection change, on the reading that a
-    /// position belongs to the object it was picked for. That reading is
-    /// wrong about the gesture: nobody drags this bar to a corner *for one
-    /// object*. They drag it because it was covering the price action they
-    /// are reading, and the next object is on the same chart with the same
-    /// thing behind it. Snapping back to the next drawing hands them the
-    /// problem again, once per click, with no way to answer it once.
+    /// Nobody drags this bar to a corner *for one object*: they drag it off
+    /// the price action they are reading, and the next object is on the same
+    /// chart with the same thing behind it.
     ///
     /// So the hand outranks the placement here exactly as it does for the
     /// properties popup, and by the same argument: a trader who chose where
@@ -370,20 +366,38 @@ pub struct ContextBar {
     rect: Option<egui::Rect>,
     /// The rect the current press landed on — see [`Self::press_rect`].
     press_rect: Option<egui::Rect>,
-    /// Where the gear and the colour controls landed, so a test can press
-    /// the real buttons rather than trust arithmetic about slot order.
+    /// Where the open popover was laid out last frame — see [`Self::owns_press`].
+    popover_rect: Option<egui::Rect>,
+    /// What [`Self::owns_press`] decided when the current press began.
+    press_owned: bool,
+    /// The colour popover shows the full picker inline: egui's own picker
+    /// popup is a second Area, and a press inside it closed this popover.
+    custom_open: bool,
     #[cfg(test)]
-    gear_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    draw_again_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    sharing_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    magnet_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    color_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    swatch_rects: Vec<egui::Rect>,
+    probe: Probe,
+}
+
+/// Where the bar's controls landed, so a test can press the real buttons
+/// rather than trust arithmetic about slot order.
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct Probe {
+    gear: Option<egui::Rect>,
+    draw_again: Option<egui::Rect>,
+    sharing: Option<egui::Rect>,
+    magnet: Option<egui::Rect>,
+    color: Option<egui::Rect>,
+    colors: ColorProbe,
+}
+
+/// Where the colour popover's controls landed.
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct ColorProbe {
+    swatches: Vec<egui::Rect>,
+    fill: Option<egui::Rect>,
+    custom: Option<egui::Rect>,
+    picker: Option<egui::Rect>,
 }
 
 impl ContextBar {
@@ -493,12 +507,9 @@ impl ContextBar {
     /// without one: the grip's double-click *calls* this rather than clearing
     /// the field itself, so there is one way back and not two.
     ///
-    /// Not Escape. This doc used to say it was, and the code never wired it:
-    /// what happened on that key was the selection dropping and
-    /// [`Self::note_selection`] discarding the position along with it. Now
-    /// that the position outlives a selection, wiring Escape to it would mean
-    /// a key a trader presses many times an hour quietly undoing where they
-    /// put the bar — see the escape stack in `QuantickApp::drawing_keys`.
+    /// Not Escape: a key a trader presses many times an hour would quietly
+    /// undo where they put the bar — see the escape stack in
+    /// `QuantickApp::drawing_keys`.
     pub fn clear_manual(&mut self) -> bool {
         self.manual.take().is_some()
     }
@@ -508,40 +519,17 @@ impl ContextBar {
         self.rect
     }
 
-    #[cfg(test)]
-    #[must_use]
-    pub fn gear_rect(&self) -> Option<egui::Rect> {
-        self.gear_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn draw_again_rect(&self) -> Option<egui::Rect> {
-        self.draw_again_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn sharing_rect(&self) -> Option<egui::Rect> {
-        self.sharing_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn magnet_rect(&self) -> Option<egui::Rect> {
-        self.magnet_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn color_rect(&self) -> Option<egui::Rect> {
-        self.color_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn swatch_rect(&self, index: usize) -> Option<egui::Rect> {
-        self.swatch_rects.get(index).copied()
+    /// Whether the press began on the bar or its open popover — a drag there is
+    /// not a chart drag. Latched to the release, which egui still calls a drag.
+    pub fn owns_press(&mut self, origin: Option<egui::Pos2>, current: Option<egui::Rect>) -> bool {
+        let rect = self.press_rect(origin, current);
+        let Some(origin) = origin else {
+            return std::mem::take(&mut self.press_owned);
+        };
+        self.press_owned = rect.is_some_and(|rect| rect.contains(origin))
+            || (self.open != Popover::None
+                && self.popover_rect.is_some_and(|rect| rect.contains(origin)));
+        self.press_owned
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -550,12 +538,8 @@ impl ContextBar {
         } else {
             popover
         };
+        self.custom_open = false;
         self.anchor = Some(anchor);
-    }
-
-    #[cfg(test)]
-    pub fn popover_open(&self) -> bool {
-        self.open != Popover::None
     }
 }
 
@@ -667,7 +651,7 @@ pub fn show(
     bar.rect = Some(rect);
     #[cfg(test)]
     {
-        bar.draw_again_rect = None;
+        bar.probe.draw_again = None;
     }
     if bar.delete_hover_for != object.tool_name {
         bar.delete_hover_for = object.tool_name;
@@ -738,7 +722,7 @@ fn draw_slot(
                 .show(ui);
             #[cfg(test)]
             {
-                bar.draw_again_rect = Some(pencil.rect);
+                bar.probe.draw_again = Some(pencil.rect);
             }
             intent.draw_again |= pencil.clicked();
         }
@@ -778,7 +762,7 @@ fn draw_slot(
                 .show(ui);
             #[cfg(test)]
             {
-                bar.magnet_rect = Some(magnet.rect);
+                bar.probe.magnet = Some(magnet.rect);
             }
             if magnet.clicked() {
                 intent.toggle_magnet = true;
@@ -807,7 +791,7 @@ fn draw_slot(
                 .show(ui);
             #[cfg(test)]
             {
-                bar.sharing_rect = Some(sharing.rect);
+                bar.probe.sharing = Some(sharing.rect);
             }
             if sharing.clicked() {
                 intent.toggle_shared = true;
@@ -819,7 +803,7 @@ fn draw_slot(
                 .show(ui);
             #[cfg(test)]
             {
-                bar.gear_rect = Some(gear.rect);
+                bar.probe.gear = Some(gear.rect);
             }
             if gear.clicked() {
                 intent.open_settings = true;
@@ -947,7 +931,7 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
     }
     #[cfg(test)]
     {
-        bar.color_rect = Some(rect);
+        bar.probe.color = Some(rect);
     }
     let response = response.on_hover_text(hover_text(
         object,
@@ -1080,9 +1064,14 @@ fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) ->
 /// with it egui's invisible sizing pass, one frame of nothing where the
 /// trader clicked — every time the selection alternates between a tool with
 /// an interior and one without.
-fn popover_id(popover: Popover, fill: bool) -> egui::Id {
-    let fill = fill && matches!(popover, Popover::Color);
-    egui::Id::new(("drawing_context_bar_popover", popover as u8, fill))
+fn popover_id(popover: Popover, fill: bool, custom: bool) -> egui::Id {
+    let color = matches!(popover, Popover::Color);
+    egui::Id::new((
+        "drawing_context_bar_popover",
+        popover as u8,
+        fill && color,
+        custom && color,
+    ))
 }
 
 fn draw_popover(
@@ -1094,7 +1083,10 @@ fn draw_popover(
 ) {
     let palette = theme::get(ctx);
     let (popover, anchor) = match (bar.open, bar.anchor) {
-        (Popover::None, _) | (_, None) => return,
+        (Popover::None, _) | (_, None) => {
+            bar.popover_rect = None;
+            return;
+        }
         (popover, Some(anchor)) => (popover, anchor),
     };
     // One Area id per kind, not one for all three. egui keeps an Area's rect
@@ -1102,7 +1094,7 @@ fn draw_popover(
     // colour palette's height and flip a short popover that had room below —
     // then correct itself on the next frame, in front of a trader who has just
     // clicked. Each kind now remembers only its own size.
-    let id = popover_id(popover, object.supports_fill);
+    let id = popover_id(popover, object.supports_fill, bar.custom_open);
     // The size egui measured last time this kind was open. Zero the first
     // time, which is what makes the default answer the downward one.
     let size = ctx
@@ -1110,7 +1102,8 @@ fn draw_popover(
         .map_or(egui::Vec2::ZERO, |rect| rect.size());
     let at = popover_position(anchor, size, bounds);
     #[cfg(test)]
-    let mut swatch_rects = Vec::new();
+    let mut probe = ColorProbe::default();
+    let custom_open = &mut bar.custom_open;
     let response = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(at)
@@ -1123,8 +1116,9 @@ fn draw_popover(
                         ui,
                         object,
                         intent,
+                        custom_open,
                         #[cfg(test)]
-                        &mut swatch_rects,
+                        &mut probe,
                     ),
                     Popover::Width => draw_width_popover(ui, object, intent),
                     Popover::GlyphSize => draw_glyph_size_popover(ui, object, intent),
@@ -1132,9 +1126,10 @@ fn draw_popover(
                 });
         })
         .response;
+    bar.popover_rect = Some(response.rect);
     #[cfg(test)]
     {
-        bar.swatch_rects = swatch_rects;
+        bar.probe.colors = probe;
     }
     // Click anywhere else closes the popover and keeps the selection: the
     // bar is never modal, and dismissing a colour list is not a reason to
@@ -1155,12 +1150,91 @@ fn draw_color_popover(
     ui: &mut egui::Ui,
     object: &mut BarObject<'_>,
     intent: &mut ContextBarIntent,
-    #[cfg(test)] swatch_rects: &mut Vec<egui::Rect>,
+    custom_open: &mut bool,
+    #[cfg(test)] probe: &mut ColorProbe,
 ) {
     let palette = theme::get(ui.ctx());
     ui.spacing_mut().item_spacing.x = ITEM_GAP_PX;
+    let primaries = quantick_appearance::palette::DRAWING_PRIMARIES.map(super::to_color32);
+    for row in [&palette.drawing_swatches()[..], &primaries[..]] {
+        draw_swatch_row(
+            ui,
+            row,
+            object,
+            intent,
+            #[cfg(test)]
+            &mut probe.swatches,
+        );
+    }
+    ui.separator();
+    // The full picker stays one row away rather than one panel away: sending
+    // the trader to another surface to choose a violet trades one friction
+    // for a larger one.
     ui.horizontal(|ui| {
-        for swatch in palette.drawing_swatches() {
+        let custom = ui.selectable_label(
+            *custom_open,
+            egui::RichText::new("Custom")
+                .small()
+                .color(palette.text_support()),
+        );
+        #[cfg(test)]
+        {
+            probe.custom = Some(custom.rect);
+        }
+        if custom.clicked() {
+            *custom_open = !*custom_open;
+        }
+    });
+    if *custom_open {
+        let mut color = object.style.color32();
+        let picker = ui.scope(|ui| {
+            egui::color_picker::color_picker_color32(
+                ui,
+                &mut color,
+                egui::color_picker::Alpha::Opaque,
+            )
+        });
+        #[cfg(test)]
+        {
+            probe.picker = Some(picker.response.rect);
+        }
+        if picker.inner {
+            object.style.set_color32(color);
+            intent.edited = true;
+        }
+    }
+    if object.supports_fill {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Fill")
+                    .small()
+                    .color(palette.text_support()),
+            );
+            let fill = ui.add(egui::Slider::new(
+                &mut object.style.fill_alpha,
+                0..=MAX_DRAWING_FILL_ALPHA,
+            ));
+            #[cfg(test)]
+            {
+                probe.fill = Some(fill.rect);
+            }
+            if fill.changed() {
+                intent.edited = true;
+            }
+        });
+    }
+}
+
+fn draw_swatch_row(
+    ui: &mut egui::Ui,
+    swatches: &[egui::Color32],
+    object: &mut BarObject<'_>,
+    intent: &mut ContextBarIntent,
+    #[cfg(test)] rects: &mut Vec<egui::Rect>,
+) {
+    let palette = theme::get(ui.ctx());
+    ui.horizontal(|ui| {
+        for &swatch in swatches {
             let (rect, response) = ui.allocate_exact_size(
                 egui::vec2(PALETTE_SWATCH_PX, PALETTE_SWATCH_PX),
                 egui::Sense::click(),
@@ -1170,10 +1244,11 @@ fn draw_color_popover(
                 painter.rect_filled(rect, egui::Rounding::same(4.0), swatch);
                 if object.style.color32() == swatch {
                     // The ring is TEXT_PRIMARY, not ACCENT: ACCENT is itself
-                    // one of the eight, and a ring would vanish on it.
+                    // one of the swatches. It sits just outside the swatch,
+                    // on the popover's own fill, so white keeps it too.
                     painter.rect_stroke(
-                        rect,
-                        egui::Rounding::same(4.0),
+                        rect.expand(SELECTED_RING_GAP_PX),
+                        egui::Rounding::same(5.0),
                         egui::Stroke::new(2.0_f32, palette.text_primary()),
                     );
                 } else if response.hovered() {
@@ -1186,7 +1261,7 @@ fn draw_color_popover(
             }
             #[cfg(test)]
             {
-                swatch_rects.push(rect);
+                rects.push(rect);
             }
             if response.clicked() {
                 object.style.set_color32(swatch);
@@ -1194,40 +1269,6 @@ fn draw_color_popover(
             }
         }
     });
-    ui.separator();
-    // The full picker stays one row away rather than one panel away: sending
-    // the trader to another surface to choose a violet trades one friction
-    // for a larger one.
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Custom")
-                .small()
-                .color(palette.text_support()),
-        );
-        let mut color = object.style.color32();
-        if ui.color_edit_button_srgba(&mut color).changed() {
-            object.style.set_color32(color);
-            intent.edited = true;
-        }
-    });
-    if object.supports_fill {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Fill")
-                    .small()
-                    .color(palette.text_support()),
-            );
-            if ui
-                .add(egui::Slider::new(
-                    &mut object.style.fill_alpha,
-                    0..=MAX_DRAWING_FILL_ALPHA,
-                ))
-                .changed()
-            {
-                intent.edited = true;
-            }
-        });
-    }
 }
 
 fn draw_width_popover(
@@ -1330,6 +1371,58 @@ fn draw_preview_row(
         );
     }
     response.clicked()
+}
+
+#[cfg(test)]
+impl ContextBar {
+    #[must_use]
+    pub fn gear_rect(&self) -> Option<egui::Rect> {
+        self.probe.gear
+    }
+
+    #[must_use]
+    pub fn draw_again_rect(&self) -> Option<egui::Rect> {
+        self.probe.draw_again
+    }
+
+    #[must_use]
+    pub fn sharing_rect(&self) -> Option<egui::Rect> {
+        self.probe.sharing
+    }
+
+    #[must_use]
+    pub fn magnet_rect(&self) -> Option<egui::Rect> {
+        self.probe.magnet
+    }
+
+    #[must_use]
+    pub fn color_rect(&self) -> Option<egui::Rect> {
+        self.probe.color
+    }
+
+    #[must_use]
+    pub fn swatch_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.probe.colors.swatches.get(index).copied()
+    }
+
+    #[must_use]
+    pub fn fill_slider_rect(&self) -> Option<egui::Rect> {
+        self.probe.colors.fill
+    }
+
+    #[must_use]
+    pub fn custom_toggle_rect(&self) -> Option<egui::Rect> {
+        self.probe.colors.custom
+    }
+
+    #[must_use]
+    pub fn custom_picker_rect(&self) -> Option<egui::Rect> {
+        self.probe.colors.picker
+    }
+
+    pub fn popover_open(&self) -> bool {
+        self.open != Popover::None
+    }
 }
 
 #[cfg(test)]
@@ -1819,27 +1912,27 @@ mod tests {
         // that size — and on nothing else, because a fresh id costs a frame
         // of egui's invisible sizing pass right where the trader clicked.
         assert_ne!(
-            popover_id(Popover::Color, false),
-            popover_id(Popover::Width, false),
+            popover_id(Popover::Color, false, false),
+            popover_id(Popover::Width, false, false),
             "one kind never answers for another"
         );
         assert_ne!(
-            popover_id(Popover::Width, false),
-            popover_id(Popover::GlyphSize, false)
+            popover_id(Popover::Width, false, false),
+            popover_id(Popover::GlyphSize, false, false)
         );
         assert_ne!(
-            popover_id(Popover::Color, true),
-            popover_id(Popover::Color, false),
+            popover_id(Popover::Color, true, false),
+            popover_id(Popover::Color, false, false),
             "the palette with a fill row is a different height"
         );
         assert_eq!(
-            popover_id(Popover::Width, true),
-            popover_id(Popover::Width, false),
+            popover_id(Popover::Width, true, false),
+            popover_id(Popover::Width, false, false),
             "but the width rows do not read fill, so they must not split on it"
         );
         assert_eq!(
-            popover_id(Popover::GlyphSize, true),
-            popover_id(Popover::GlyphSize, false)
+            popover_id(Popover::GlyphSize, true, false),
+            popover_id(Popover::GlyphSize, false, false)
         );
     }
 

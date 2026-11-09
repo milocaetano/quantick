@@ -61,6 +61,18 @@ pub const DRAWING_SWATCHES: [PremultipliedRgba; 8] = [
     DRAW_VIOLET,
     DRAW_CYAN,
 ];
+/// Pure red, green and blue, their pairwise mixes and white: the additive
+/// wheel, offered beside the theme swatches. Theme-independent on purpose —
+/// a trader who picks pure red means pure red on either canvas.
+pub const DRAWING_PRIMARIES: [PremultipliedRgba; 7] = [
+    PremultipliedRgba::from_rgb(255, 0, 0),
+    PremultipliedRgba::from_rgb(0, 255, 0),
+    PremultipliedRgba::from_rgb(0, 0, 255),
+    PremultipliedRgba::from_rgb(255, 255, 0),
+    PremultipliedRgba::from_rgb(0, 255, 255),
+    PremultipliedRgba::from_rgb(255, 0, 255),
+    PremultipliedRgba::from_rgb(255, 255, 255),
+];
 
 /// Stable configuration keys. Order is stable and forms the indexed render palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

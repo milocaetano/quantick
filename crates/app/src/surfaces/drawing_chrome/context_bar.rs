@@ -254,10 +254,7 @@ impl GestureInput {
         // gesture that is moving it. The grip is the escape hatch for a bar
         // sitting over something the trader needs to see; it has to survive
         // being used.
-        let on_the_bar = matches!(
-            (self.origin, bar.press_rect(self.origin, bar_rect)),
-            (Some(origin), Some(rect)) if rect.contains(origin)
-        );
+        let on_the_bar = bar.owns_press(self.origin, bar_rect);
         if self.dragging && !on_the_bar {
             bar.suppress_gesture();
         } else if !self.dragging {
