@@ -456,7 +456,7 @@ pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
     let Some(request) = app.drawings.chrome.demos_mut().take_gallery(slots) else {
         return;
     };
-    if request.shared {
+    if request.shared == Some(true) {
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     }
     let pane = &mut app.active_tab_mut().flow_pane;

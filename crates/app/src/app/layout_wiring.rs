@@ -38,7 +38,9 @@
 //! Per-frame cost: integer and short string compares per pane. Nothing here
 //! allocates on a quiet frame.
 
-use quantick_workspace::market_settings::PaneWrite;
+use crate::state::BarConfiguration;
+use quantick_drawings::{PaneMarks, PaneSync};
+use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
@@ -68,10 +70,28 @@ fn facts_of(pane: &ChartPane) -> PaneFacts {
     }
 }
 
-/// The bars a pane's drawings were brought out at, and are written back at.
-fn held_bars(pane: &ChartPane) -> String {
-    let spec = pane.layout.drawings_spec.unwrap_or(*pane.state.spec());
-    spec.to_config_string()
+/// Re-anchor what a pane took from the store, once it has bars to anchor on.
+fn settle_marks(pane: &mut ChartPane) {
+    if pane.slots() == 0 {
+        pane.defer_reanchor();
+    } else {
+        let slots = pane.slots();
+        pane.reanchor_drawings(slots);
+    }
+    pane.layout.saved_revision = pane.drawings.revision();
+}
+
+/// A pane's side of the market store (see `quantick_drawings::PaneMarks`).
+fn marks_of(pane: &mut ChartPane) -> PaneMarks<'_, BarConfiguration> {
+    let now = *pane.state.spec();
+    let (drawings, layout) = (&mut pane.drawings, &mut pane.layout);
+    let rule = BarConfiguration::to_config_string;
+    PaneMarks {
+        drawings,
+        layout,
+        now,
+        rule,
+    }
 }
 
 /// Read-only layout projection over the actual session and current pane topology.
@@ -702,24 +722,23 @@ impl LayoutAdapter<'_> {
         Some(DrawingKey::of_pane(venue, asset, bars))
     }
 
+    /// A pane and the market store beside it, borrowed apart.
+    fn pane_and_store(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+    ) -> Option<(&mut ChartPane, &mut MarketSettings)> {
+        let pane = self.tabs.by_id_mut(tab)?.pane_at_mut(side.index())?;
+        Some((pane, self.store.market_mut().settings_mut()))
+    }
+
     /// Serialise what a pane holds into the market store under the key the pane
     /// says it holds, and empty the pane.
     fn put_away_drawings(&mut self, tab: u64, side: PaneSide) -> PaneWrite {
-        let Some(pane) = self.pane_mut_at(tab, side) else {
+        let Some((pane, market)) = self.pane_and_store(tab, side) else {
             return PaneWrite::default();
         };
-        let Some(key) = pane.layout.drawings_key.take() else {
-            // Never loaded: nothing of the layout's is on it. What a hook or
-            // a test placed before seeding is dropped with the key.
-            pane.drawings.take_all();
-            return PaneWrite::default();
-        };
-        let marks = pane.drawings.take_all();
-        pane.layout.saved_revision = pane.drawings.revision();
-        let bars = held_bars(pane);
-        pane.layout.drawings_spec = None;
-        let market = self.store.market_mut().settings_mut();
-        quantick_drawings::store_marks(market, &key, &bars, &marks)
+        marks_of(pane).put_away(market)
     }
 
     /// Adopt the drawings of the pane's current market and role. A context
@@ -745,7 +764,7 @@ impl LayoutAdapter<'_> {
         let grown = claimed.then(|| key.clone());
         let source = self.tabs.by_id(tab).map(Self::market_of);
         let source = source.map(|(venue, symbol)| (venue.to_owned(), symbol.to_owned()));
-        self.adopt_marks(tab, side, &key);
+        self.adopt_marks(tab, side, &key, PaneSync::Adopt);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -757,27 +776,14 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// Put what `key` shows at the pane's held bars on it.
-    fn adopt_marks(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
-        let Some(bars) = self.pane_at(tab, side).map(held_bars) else {
+    /// Take what `key` shows at the pane's held bars from the store, the `sync`
+    /// way (`quantick_drawings::PaneSync`).
+    fn adopt_marks(&mut self, tab: u64, side: PaneSide, key: &DrawingKey, sync: PaneSync) {
+        let Some((pane, market)) = self.pane_and_store(tab, side) else {
             return;
         };
-        let items = quantick_drawings::pane_marks(self.store.market().settings(), key, &bars);
-        let Some(pane) = self.pane_mut_at(tab, side) else {
-            return;
-        };
-        pane.drawings.adopt(items);
-        // The saved bar offsets are the old series'; market time is what
-        // puts each anchor back on its bar — once there are bars. At launch
-        // the pane is seeded before its first print, and an anchor asked
-        // against an empty series would be marked off it for the session.
-        if pane.slots() == 0 {
-            pane.defer_reanchor();
-        } else {
-            let slots = pane.slots();
-            pane.reanchor_drawings(slots);
-        }
-        pane.layout.saved_revision = pane.drawings.revision();
+        marks_of(pane).sync(sync, market, key);
+        settle_marks(pane);
     }
 
     /// A contract roll's half of the drawings. Contracts of one asset are one
@@ -803,7 +809,7 @@ impl LayoutAdapter<'_> {
             .filter(|(_, _, key)| key.market == to)
             .collect();
         for (tab, side, key) in holding {
-            self.rebuild_keeping_selection(tab, side, &key);
+            self.adopt_marks(tab, side, &key, PaneSync::Readopt);
         }
         self.mark_market_dirty();
         carried
@@ -861,16 +867,15 @@ impl LayoutAdapter<'_> {
             })
             .collect();
         for (tab, side) in changed {
-            let Some(pane) = self.pane_mut_at(tab, side) else {
+            let Some((pane, market)) = self.pane_and_store(tab, side) else {
                 continue;
             };
-            let Some(key) = pane.layout.drawings_key.clone() else {
+            let Some((key, write)) = marks_of(pane).persist(market) else {
                 continue;
             };
-            pane.layout.saved_revision = pane.drawings.revision();
-            let (marks, bars) = (pane.drawings.items().to_vec(), held_bars(pane));
-            let market = self.store.market_mut().settings_mut();
-            let write = quantick_drawings::store_marks(market, &key, &bars, &marks);
+            if write.merged {
+                settle_marks(pane);
+            }
             if write.changed() {
                 self.mark_market_dirty();
                 self.refresh_twins(tab, side, &key, write);
@@ -878,15 +883,11 @@ impl LayoutAdapter<'_> {
         }
     }
 
-    /// See `PaneLayout::recut_in_place`: a mark drawn since is then written at
-    /// the bars it was drawn on.
+    /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
     fn follow_quiet_recuts(&mut self) {
         let settings = self.store.market().settings();
         for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            pane.layout
-                .recut_in_place(*pane.state.spec(), |key, held, now| {
-                    settings.same_marks_at(key, &held.to_config_string(), &now.to_config_string())
-                });
+            marks_of(pane).follow_store(settings);
         }
     }
 
@@ -908,34 +909,13 @@ impl LayoutAdapter<'_> {
             .collect();
         for (twin_tab, twin_side, twin_key) in twins {
             self.leave_pane_gestures(twin_tab, twin_side);
-            self.rebuild_keeping_selection(twin_tab, twin_side, &twin_key);
-        }
-    }
-
-    /// Bring a pane to what its layout now holds for its market.
-    fn rebuild_keeping_selection(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
-        let selected_id = self.pane_at(tab, side).and_then(|pane| {
-            let index = pane.drawings.selected()?;
-            Some(pane.drawings.items().get(index)?.id)
-        });
-        if let Some(pane) = self.pane_mut_at(tab, side) {
-            pane.drawings.take_all();
-        }
-        // Under the key it holds, which a chart held by a strategy keeps whatever
-        // its bars are now.
-        self.adopt_marks(tab, side, key);
-        // By id, not by index: the set that came back may hold one more
-        // object than the one that went away, and the index the trader
-        // selected now points at a different mark.
-        if let Some(id) = selected_id
-            && let Some(pane) = self.pane_mut_at(tab, side)
-        {
-            let index = pane
-                .drawings
-                .items()
-                .iter()
-                .position(|drawing| drawing.id == id);
-            pane.drawings.select(index);
+            let own = write.own && twin_key == *key;
+            let sync = if own {
+                PaneSync::Readopt
+            } else {
+                PaneSync::Refresh
+            };
+            self.adopt_marks(twin_tab, twin_side, &twin_key, sync);
         }
     }
 }

@@ -117,7 +117,7 @@ impl SavedDrawingExt for SavedDrawing {
             } else {
                 DrawingScope::ThisChart
             },
-            legacy_unpinned: !self.shared && self.bars.is_none(),
+            legacy_unpinned: self.bars.is_none() && !self.all_timeframes(),
             foreign_market: false,
             off_series: false,
             origin: self.origin.clone(),
@@ -129,11 +129,15 @@ impl SavedDrawingExt for SavedDrawing {
 /// Write what a pane holding `key`, cut at `bars`, holds: see
 /// [`MarketSettings::store_pane`]. A mark kept to this chart is pinned to
 /// `bars` unless it predates pinning. Entries of a tool this build lacks stay.
+///
+/// `base` is the all-timeframes set the pane last loaded: see
+/// [`crate::persist_pane`], which keeps it.
 pub fn store_marks(
     settings: &mut MarketSettings,
     key: &DrawingKey,
     bars: &str,
     marks: &[Drawing<DrawingTool>],
+    base: &[SavedDrawing],
 ) -> PaneWrite {
     let items = marks
         .iter()
@@ -145,7 +149,8 @@ pub fn store_marks(
             entry
         })
         .collect();
-    settings.store_pane(key, bars, items, |tool| DrawingTool::by_id(tool).is_some())
+    let known = |tool: &str| DrawingTool::by_id(tool).is_some();
+    settings.store_pane(key, bars, items, base, known)
 }
 
 /// The live marks a pane holding `key`, cut at `bars`, shows: see
@@ -157,9 +162,13 @@ pub fn pane_marks(
     key: &DrawingKey,
     bars: &str,
 ) -> Vec<Drawing<DrawingTool>> {
-    let saved = settings.pane_drawings(key, bars);
+    live(&settings.pane_drawings(key, bars), key)
+}
+
+/// `saved` as live marks; an entry of a tool this build lacks is skipped.
+pub(crate) fn live(saved: &[SavedDrawing], key: &DrawingKey) -> Vec<Drawing<DrawingTool>> {
     let mut items = Vec::with_capacity(saved.len());
-    for entry in &saved {
+    for entry in saved {
         match entry.to_drawing(DrawingId(entry.id.unwrap_or(0))) {
             Some(drawing) => items.push(drawing),
             None => tracing::warn!(

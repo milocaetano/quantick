@@ -366,6 +366,147 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets one drawing's scope, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): `all_charts` shows it on every chart of its market (feed and asset) at any timeframe, placed by market time and price; `this_chart` keeps it to the chart it is on, pinned to the bars that chart is cut to now, so switching that chart to other bars hides it and switching back restores it. The same switch as \"Show on all timeframes\" on the drawing's context bar and inspector; it is saved with the market's drawings, and analysis.drawings reads it back as the drawing's `scope`. `all_charts` on a drawing with an anchor past the newest bar (no market time) is refused with control.invalid_request and `reason` `anchor_without_market_time`; an id no pane on that tab holds is refused too.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.drawing_scope.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "ScopeName": {
+            "description": "A drawing's scope as `analysis.drawings` names it.",
+            "oneOf": [
+              {
+                "const": "all_charts",
+                "description": "Every chart of the drawing's market, at any timeframe.",
+                "type": "string"
+              },
+              {
+                "const": "this_chart",
+                "description": "Only the chart it is on, at the bars that chart is cut to.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane holding the drawing on that tab, as `analysis.drawings`\nlists it. A drawing id is unique only within its pane."
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeName",
+            "description": "Where it should show."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab holding the drawing, as `analysis.drawings` lists it."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "drawing_id",
+          "scope"
+        ],
+        "title": "DrawingScopeInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "ScopeName": {
+            "description": "A drawing's scope as `analysis.drawings` names it.",
+            "oneOf": [
+              {
+                "const": "all_charts",
+                "description": "Every chart of the drawing's market, at any timeframe.",
+                "type": "string"
+              },
+              {
+                "const": "this_chart",
+                "description": "Only the chart it is on, at the bars that chart is cut to.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call moved it; `false` when it already stood there.",
+            "type": "boolean"
+          },
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pinned_bars": {
+            "description": "The bar rule (`time:15m`) a drawing kept to its chart shows at; absent\nfor one shown on all timeframes, and for one saved before drawings\nrecorded their bars, which shows at every bar rule of its chart.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/$defs/ScopeName",
+            "description": "The drawing's scope as it stands after the call."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "drawing_id",
+          "tab_id",
+          "pane_id",
+          "scope",
+          "changed"
+        ],
+        "title": "DrawingScopeResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the scope it wants rather than flipping it; repeating it is harmless and the result reads the scope back.",
+      "title": "Set where one drawing shows",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Projects one measured move forward from its second chart coordinate; a legacy third coordinate is the projection origin.",
       "destructive": false,
       "dry_run_supported": false,

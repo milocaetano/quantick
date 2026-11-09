@@ -93,6 +93,20 @@ impl<T> Drawing<T> {
         !self.points.is_empty() && self.points.iter().all(|point| point.time_ms.is_some())
     }
 
+    /// Whether every chart of its market shows it, at any bars: asked for, and
+    /// dated at every anchor. What the toggle, the chips and the store read.
+    #[must_use]
+    pub fn all_timeframes(&self) -> bool {
+        self.scope == DrawingScope::AllCharts && self.shareable()
+    }
+
+    /// The trader's pick of where it shows. A pick is a new decision, so a
+    /// mark read from before pinning is pinned like any other from now on.
+    pub fn set_scope(&mut self, scope: DrawingScope) {
+        self.scope = scope;
+        self.legacy_unpinned = false;
+    }
+
     /// Whether the other panes of this tab paint it this frame.
     #[must_use]
     pub fn shared(&self) -> bool {

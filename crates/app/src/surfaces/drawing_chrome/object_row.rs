@@ -9,7 +9,7 @@ use eframe::egui;
 
 use super::{DrawingChromeAsk, ManagerRow};
 use crate::bands::BandLabel;
-use crate::drawings::{Drawing, DrawingAuthor, DrawingScope};
+use crate::drawings::{Drawing, DrawingAuthor};
 use crate::theme;
 
 impl ManagerRow {
@@ -20,7 +20,7 @@ impl ManagerRow {
             selected,
             locked: drawing.locked,
             hidden: drawing.hidden,
-            shared: drawing.scope == DrawingScope::AllCharts,
+            shared: drawing.all_timeframes(),
             off_series: drawing.off_series,
             foreign_market: drawing.foreign_market,
             origin: drawing

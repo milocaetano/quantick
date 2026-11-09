@@ -64,7 +64,13 @@ fn prices(items: &[SavedDrawing]) -> Vec<f64> {
 fn a_mark_for_all_timeframes_reaches_every_pane_of_its_market_at_any_bars() {
     let mut settings = MarketSettings::default();
     let drawn_on = context("BTCUSDT", "time:15m");
-    let write = settings.store_pane(&drawn_on, "time:15m", vec![level(1, 100.0, true)], known);
+    let write = settings.store_pane(
+        &drawn_on,
+        "time:15m",
+        vec![level(1, 100.0, true)],
+        &[],
+        known,
+    );
     assert!(write.all_timeframes, "the market's set changed");
 
     for (key, bars) in [
@@ -96,7 +102,13 @@ fn a_mark_for_all_timeframes_reaches_every_pane_of_its_market_at_any_bars() {
 fn a_mark_for_this_chart_shows_only_at_the_bars_it_was_pinned_to() {
     let mut settings = MarketSettings::default();
     let key = flow("BTCUSDT");
-    settings.store_pane(&key, "time:15m", vec![pinned(1, 100.0, "time:15m")], known);
+    settings.store_pane(
+        &key,
+        "time:15m",
+        vec![pinned(1, 100.0, "time:15m")],
+        &[],
+        known,
+    );
 
     assert_eq!(prices(&settings.pane_drawings(&key, "time:15m")), [100.0]);
     assert!(
@@ -104,7 +116,7 @@ fn a_mark_for_this_chart_shows_only_at_the_bars_it_was_pinned_to() {
         "switching away hides it"
     );
     // The pane at 5m writes back what it shows; the 15m mark is not its to drop.
-    settings.store_pane(&key, "time:5m", Vec::new(), known);
+    settings.store_pane(&key, "time:5m", Vec::new(), &[], known);
     assert_eq!(
         prices(&settings.pane_drawings(&key, "time:15m")),
         [100.0],
@@ -155,7 +167,7 @@ fn a_shared_entry_from_before_reaches_every_pane_and_moves_only_on_an_edit() {
 
     // Written back as shown: nothing changed, nothing is rewritten.
     let shown = settings.pane_drawings(&flow("BTCUSDT"), "tick:100");
-    let write = settings.store_pane(&flow("BTCUSDT"), "tick:100", shown, known);
+    let write = settings.store_pane(&flow("BTCUSDT"), "tick:100", shown.clone(), &shown, known);
     assert_eq!(write, PaneWrite::default());
     assert_eq!(
         settings, before,
@@ -165,7 +177,7 @@ fn a_shared_entry_from_before_reaches_every_pane_and_moves_only_on_an_edit() {
     // An edit moves it to the market's set, once.
     let mut moved = level(1, 101.0, true);
     moved.id = Some(5);
-    let write = settings.store_pane(&flow("BTCUSDT"), "tick:100", vec![moved], known);
+    let write = settings.store_pane(&flow("BTCUSDT"), "tick:100", vec![moved], &shown, known);
     assert!(write.all_timeframes);
     assert_eq!(prices(settings.drawings(&old)), [90.0]);
     assert_eq!(
@@ -191,6 +203,7 @@ fn a_write_keeps_what_the_pane_never_held() {
         &key,
         "time:5m",
         vec![level(1, 100.0, true), pinned(2, 80.0, "time:5m")],
+        &[],
         known,
     );
     assert!(
@@ -217,7 +230,7 @@ fn an_undated_mark_stays_with_its_chart_whatever_its_scope() {
     undated.shared = true;
     undated.points[0].time_ms = None;
     let key = context("BTCUSDT", "time:5m");
-    settings.store_pane(&key, "time:5m", vec![undated], known);
+    settings.store_pane(&key, "time:5m", vec![undated], &[], known);
     assert_eq!(prices(settings.drawings(&key)), [100.0]);
     assert!(
         settings
@@ -231,23 +244,30 @@ fn an_undated_mark_stays_with_its_chart_whatever_its_scope() {
 fn a_write_names_the_panes_it_reaches() {
     let mut settings = MarketSettings::default();
     let writer = flow("BTCUSDT");
-    let own = settings.store_pane(&writer, "time:5m", vec![pinned(1, 1.0, "time:5m")], known);
+    let own = settings.store_pane(
+        &writer,
+        "time:5m",
+        vec![pinned(1, 1.0, "time:5m")],
+        &[],
+        known,
+    );
     assert_eq!(
         own,
         PaneWrite {
             all_timeframes: false,
-            own: true
+            own: true,
+            merged: false,
         }
     );
     assert!(own.reaches(&writer, &flow("BTCUSDT")));
     assert!(!own.reaches(&writer, &context("BTCUSDT", "time:5m")));
 
-    let wide = settings.store_pane(&writer, "time:5m", vec![level(2, 2.0, true)], known);
+    let wide = settings.store_pane(&writer, "time:5m", vec![level(2, 2.0, true)], &[], known);
     assert!(wide.all_timeframes && wide.own);
     assert!(wide.reaches(&writer, &context("BTCUSDT", "renko:20")));
     assert!(!wide.reaches(&writer, &flow("ETHUSDT")));
 
-    let none = settings.store_pane(&writer, "time:5m", vec![level(2, 2.0, true)], known);
+    let none = settings.store_pane(&writer, "time:5m", vec![level(2, 2.0, true)], &[], known);
     assert!(!none.changed());
 }
 
@@ -258,6 +278,7 @@ fn a_store_with_both_kinds_reads_back_as_written() {
         &flow("BTCUSDT"),
         "time:15m",
         vec![level(1, 100.0, true), pinned(2, 90.0, "time:15m")],
+        &[],
         known,
     );
     let text = to_text(&settings).unwrap();
@@ -291,7 +312,7 @@ fn held_changes_count_the_market_set_once_per_market() {
     let keys = [flow("BTCUSDT"), context("BTCUSDT", "time:1m")];
     store
         .settings_mut()
-        .store_pane(&keys[0], "time:5m", vec![level(1, 100.0, true)], known);
+        .store_pane(&keys[0], "time:5m", vec![level(1, 100.0, true)], &[], known);
     assert_eq!(store.held_changes(&keys), 1);
 
     assert!(store.discard(&keys, &[]));
@@ -317,9 +338,90 @@ fn a_recut_moves_nothing_unless_a_mark_is_pinned_to_either_cut() {
         &key,
         "tick:100",
         vec![level(1, 100.0, false), pinned(2, 90.0, "tick:100")],
+        &[],
         known,
     );
     assert!(!settings.same_marks_at(&key, "tick:100", "tick:200"));
     assert!(!settings.same_marks_at(&key, "tick:200", "tick:100"));
     assert!(settings.same_marks_at(&key, "tick:200", "tick:300"));
+}
+
+#[test]
+fn the_highest_id_counts_every_set_of_the_market_and_no_other() {
+    let mut settings = MarketSettings::default();
+    settings.replace(&flow("BTCUSDT"), vec![level(4, 1.0, false)], known);
+    settings.replace(
+        &context("BTCUSDT", "time:1m"),
+        vec![pinned(9, 1.0, "time:1m")],
+        known,
+    );
+    settings.replace(&flow("ETHUSDT"), vec![level(50, 1.0, false)], known);
+    assert_eq!(settings.max_drawing_id(&market("BTCUSDT")), 9);
+    assert_eq!(settings.max_drawing_id(&market("SOLUSDT")), 0);
+}
+
+#[test]
+fn a_write_from_a_stale_base_keeps_the_edit_it_did_not_see() {
+    let mut settings = MarketSettings::default();
+    let key = flow("BTCUSDT");
+    let both = vec![level(1, 100.0, true), level(2, 200.0, true)];
+    settings.store_pane(&key, "tick:100", both.clone(), &[], known);
+    // Another chart moved mark 1; this one, still on `both`, moves mark 2.
+    let other = vec![level(1, 101.0, true), level(2, 200.0, true)];
+    settings.store_pane(&key, "tick:100", other, &both, known);
+    let mine = vec![level(1, 100.0, true), level(2, 201.0, true)];
+    let write = settings.store_pane(&key, "tick:100", mine, &both, known);
+    assert!(write.merged && write.all_timeframes);
+    assert_eq!(
+        prices(&settings.pane_drawings(&key, "tick:100")),
+        [101.0, 201.0]
+    );
+}
+
+/// Autosave off: moving an old shared mark out of a chart nobody has open is
+/// part of the save and of the discard, or the file holds it twice or loses it.
+#[test]
+fn a_held_save_and_discard_carry_the_move_out_of_an_old_role() {
+    let held = || {
+        let mut settings = MarketSettings::default();
+        settings.replace(
+            &context("BTCUSDT", "time:1m"),
+            vec![level(1, 100.0, true), level(2, 90.0, false)],
+            known,
+        );
+        let mut store = crate::market_settings_store::MarketSettingsStore::new(
+            settings,
+            std::path::PathBuf::from(MARKET_SETTINGS_FILE),
+            false,
+        );
+        store.set_held(true);
+        let shown = store.settings().pane_drawings(&flow("BTCUSDT"), "tick:100");
+        let mut moved = shown[0].clone();
+        moved.points[0].price = 101.0;
+        store
+            .settings_mut()
+            .store_pane(&flow("BTCUSDT"), "tick:100", vec![moved], &shown, known);
+        store
+    };
+    let open = [flow("BTCUSDT")];
+
+    let store = held();
+    let saved = store.commit_document(&open).expect("something to save");
+    let on_disk = |key: &DrawingKey| prices(&saved.pane_drawings(key, "time:1m"));
+    assert_eq!(on_disk(&flow("BTCUSDT")), [101.0], "moved once");
+    assert_eq!(on_disk(&context("BTCUSDT", "time:1m")), [101.0, 90.0]);
+
+    let mut store = held();
+    assert!(store.discard(&open, &[]));
+    assert_eq!(store.settings(), &store_before_edit(), "nothing lost");
+}
+
+fn store_before_edit() -> MarketSettings {
+    let mut settings = MarketSettings::default();
+    settings.replace(
+        &context("BTCUSDT", "time:1m"),
+        vec![level(1, 100.0, true), level(2, 90.0, false)],
+        known,
+    );
+    settings
 }

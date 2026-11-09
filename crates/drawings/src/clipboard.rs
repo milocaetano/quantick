@@ -27,6 +27,10 @@ impl<T: Clone + PartialEq> Drawings<T> {
             point.time_ms = None;
         }
         copy.locked = false;
+        // Without instants the copy cannot be on another cut, and it is a new
+        // object: nothing it inherits predates pinning.
+        copy.legacy_unpinned = false;
+        let copy = crate::placement::truthful_scope(copy);
         let id = copy.id;
         self.items.push(copy);
         self.select(Some(self.items.len() - 1));

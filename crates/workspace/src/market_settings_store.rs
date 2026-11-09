@@ -2,7 +2,8 @@
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
     market_settings::{
-        DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings, pane_marks::shown_sets,
+        DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings, PaneRole,
+        pane_marks::shown_sets,
     },
 };
 use std::cell::Cell;
@@ -199,6 +200,9 @@ impl MarketSettingsStore {
         let mut document = self.saved.clone();
         for key in &shown_sets(keys) {
             document.restore(&self.settings, key);
+            if key.role == PaneRole::AllTimeframes {
+                document.carry_retirement(&self.settings, &key.market);
+            }
         }
         (document != self.saved).then_some(document)
     }
@@ -261,6 +265,9 @@ impl MarketSettingsStore {
         for key in shown_sets(closed).difference(&open) {
             dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
             self.settings.restore(&self.saved, key);
+            if key.role == PaneRole::AllTimeframes {
+                self.settings.undo_retirement(&self.saved, &key.market);
+            }
         }
         if self.settings == self.saved {
             // The pending change is consumed unwritten: the file already holds this.

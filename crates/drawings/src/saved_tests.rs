@@ -58,6 +58,7 @@ fn a_drawing_on_15m_shows_on_5m_tick_and_renko_of_its_market() {
         &context("BTCUSDT", AT_15M),
         AT_15M,
         pane.items(),
+        &[],
     );
     assert!(write.all_timeframes);
 
@@ -80,7 +81,7 @@ fn a_drawing_kept_to_this_chart_shows_only_at_its_bars_and_comes_back() {
     let on_15m = context("BTCUSDT", AT_15M);
     let mut pane = drawn(100.0);
     pane.selected_mut().expect("just placed").scope = DrawingScope::ThisChart;
-    store_marks(&mut settings, &on_15m, AT_15M, pane.items());
+    store_marks(&mut settings, &on_15m, AT_15M, pane.items(), &[]);
 
     for (key, bars) in every_cut() {
         let expected: &[f64] = if key == on_15m { &[100.0] } else { &[] };
@@ -94,7 +95,7 @@ fn a_drawing_kept_to_this_chart_shows_only_at_its_bars_and_comes_back() {
     // The same pane cut to 5m and back: hidden, then restored.
     let on_5m = context("BTCUSDT", "time:5m");
     let away = pane_marks(&settings, &on_5m, "time:5m");
-    store_marks(&mut settings, &on_5m, "time:5m", &away);
+    store_marks(&mut settings, &on_5m, "time:5m", &away, &[]);
     assert_eq!(prices(&pane_marks(&settings, &on_15m, AT_15M)), [100.0]);
 }
 
@@ -103,7 +104,13 @@ fn opting_out_on_the_flow_chart_pins_the_mark_to_the_flow_bars_it_was_on() {
     let mut settings = MarketSettings::default();
     let mut pane = drawn(100.0);
     pane.selected_mut().expect("just placed").scope = DrawingScope::ThisChart;
-    store_marks(&mut settings, &flow("BTCUSDT"), "tick:100", pane.items());
+    store_marks(
+        &mut settings,
+        &flow("BTCUSDT"),
+        "tick:100",
+        pane.items(),
+        &[],
+    );
 
     assert_eq!(
         prices(&pane_marks(&settings, &flow("BTCUSDT"), "tick:100")),
@@ -133,7 +140,7 @@ fn an_entry_from_before_pinning_comes_back_unpinned_and_is_written_so() {
 
     let mut edited = shown;
     edited[0].points[0].price = 101.0;
-    store_marks(&mut settings, &flow("BTCUSDT"), "tick:100", &edited);
+    store_marks(&mut settings, &flow("BTCUSDT"), "tick:100", &edited, &[]);
     let written = &settings.drawings(&flow("BTCUSDT"))[0];
     assert_eq!(written.bars, None, "an edit does not pin an old mark");
     assert_eq!(written.points[0].price, 101.0);
@@ -153,6 +160,7 @@ fn both_kinds_survive_a_save_and_a_load() {
         &context("BTCUSDT", AT_15M),
         AT_15M,
         pane.items(),
+        &[],
     );
 
     let loaded = parse_settings(&to_text(&settings).unwrap()).unwrap();

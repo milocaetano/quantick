@@ -15,6 +15,7 @@ use quantick_control::{
 };
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
+use quantick_control_handlers::drawing_scope as scope;
 use serde_json::Value;
 
 use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
@@ -70,6 +71,26 @@ fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
         payload,
     ));
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+
+/// `annotate.drawing_scope.set`, decided in `quantick_control_handlers`.
+pub(crate) fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let journal =
+        |kind, value| access.append_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value));
+    scope::call(
+        input,
+        move |tab, pane| {
+            let pane = super::price_axis::pane(app, tab, pane)?;
+            let bars = pane.layout.drawings_spec.unwrap_or(*pane.state.spec());
+            Ok((&mut pane.drawings, bars.to_config_string()))
+        },
+        journal,
+    )
 }
 
 /// A hand's flip of the rail's magnet is `annotate.magnet.set`, so it

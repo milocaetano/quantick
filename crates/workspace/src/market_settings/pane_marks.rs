@@ -23,6 +23,10 @@ pub struct PaneWrite {
     pub all_timeframes: bool,
     /// The marks kept to the writer's pane role.
     pub own: bool,
+    /// The writer was behind the store (another chart wrote the set since it
+    /// loaded it): only what it changed was written, and its own copy is now
+    /// behind the result.
+    pub merged: bool,
 }
 
 impl PaneWrite {
@@ -31,6 +35,7 @@ impl PaneWrite {
     pub const ALL: Self = Self {
         all_timeframes: true,
         own: true,
+        merged: false,
     };
 
     #[must_use]
@@ -62,6 +67,33 @@ fn held_shared_before(role: &PaneRole) -> bool {
 /// Whether a pane of the entry's role cut at `bars` shows it as its own mark.
 fn own_at(entry: &SavedDrawing, bars: &str) -> bool {
     !entry.all_timeframes() && entry.bars.as_deref().is_none_or(|pinned| pinned == bars)
+}
+
+/// `current` with what a pane changed since it loaded `base` into `ours`: its
+/// removals, and its edits and additions, by id. What it did not touch stays as
+/// another chart left it.
+fn merge(
+    current: &[SavedDrawing],
+    base: &[&SavedDrawing],
+    ours: &[SavedDrawing],
+) -> Vec<SavedDrawing> {
+    let mut next = current.to_vec();
+    for gone in base.iter().filter(|b| !ours.iter().any(|o| o.id == b.id)) {
+        next.retain(|entry| entry.id != gone.id);
+    }
+    for mine in ours {
+        if base
+            .iter()
+            .any(|b| b.id == mine.id && settled(b) == settled(mine))
+        {
+            continue;
+        }
+        match next.iter_mut().find(|entry| entry.id == mine.id) {
+            Some(entry) => *entry = mine.clone(),
+            None => next.push(mine.clone()),
+        }
+    }
+    next
 }
 
 fn same_marks<'a>(held: impl Iterator<Item = &'a SavedDrawing>, written: &[SavedDrawing]) -> bool {
@@ -103,12 +135,15 @@ impl MarketSettings {
     /// a mark pinned to other bars.
     ///
     /// `items` carry their pins already; the caller pins a mark kept to this
-    /// chart to `bars` unless it predates pinning.
+    /// chart to `bars` unless it predates pinning. `base` is the
+    /// all-timeframes set the pane last loaded: when the store moved on since,
+    /// only what the pane changed is written ([`PaneWrite::merged`]).
     pub fn store_pane(
         &mut self,
         key: &DrawingKey,
         bars: &str,
         items: Vec<SavedDrawing>,
+        base: &[SavedDrawing],
         known_tool: impl Fn(&str) -> bool,
     ) -> PaneWrite {
         let (wide, own): (Vec<_>, Vec<_>) =
@@ -123,13 +158,72 @@ impl MarketSettings {
             write.own = true;
         }
         let held = self.all_timeframes_of(&key.market);
-        if !same_marks(held.filter(|entry| known_tool(&entry.tool)), &wide) {
+        let current: Vec<SavedDrawing> = held.filter(|e| known_tool(&e.tool)).cloned().collect();
+        let base: Vec<&SavedDrawing> = base.iter().filter(|e| e.all_timeframes()).collect();
+        let next = if same_marks(base.iter().copied(), &current) {
+            wide
+        } else {
+            let next = merge(&current, &base, &wide);
+            write.merged = !same_marks(next.iter(), &wide);
+            next
+        };
+        if !same_marks(current.iter(), &next) {
             self.retire_shared_before(&key.market, &known_tool);
             let set = DrawingKey::all_timeframes(key.market.clone());
-            self.replace(&set, wide, known_tool);
+            self.replace(&set, next, known_tool);
             write.all_timeframes = true;
         }
         write
+    }
+
+    /// Every mark every chart of `market` shows at any bars.
+    #[must_use]
+    pub fn shared_drawings(&self, market: &MarketKey) -> Vec<SavedDrawing> {
+        self.all_timeframes_of(market).cloned().collect()
+    }
+
+    /// The highest id any set of `market` holds: a chart allocates above it,
+    /// so no two marks of one market ever share an id.
+    #[must_use]
+    pub fn max_drawing_id(&self, market: &MarketKey) -> u64 {
+        let sets = self.drawings.iter().filter(|set| set.is_market(market));
+        let ids = sets.flat_map(|set| set.items.iter().filter_map(|entry| entry.id));
+        ids.max().unwrap_or(0)
+    }
+
+    /// Make a document on its way to disk agree with `memory` on the old
+    /// shared marks that left `market`'s roles for its all-timeframes set:
+    /// a save that writes the set writes their leaving too.
+    pub fn carry_retirement(&mut self, memory: &Self, market: &MarketKey) {
+        self.drawings.retain_mut(|set| {
+            if !set.is_market(market) || !held_shared_before(&set.role) {
+                return true;
+            }
+            let now = memory.drawings(&set.key());
+            let before = set.items.len();
+            set.items
+                .retain(|entry| !entry.all_timeframes() || now.contains(entry));
+            // A set only this emptied goes; one the file held empty stays.
+            set.items.len() == before || !set.items.is_empty()
+        });
+    }
+
+    /// Put back, where `saved` had them, the old shared marks that left
+    /// `market`'s roles since: a discard of the set discards their leaving.
+    pub fn undo_retirement(&mut self, saved: &Self, market: &MarketKey) {
+        for old in saved.drawings.iter() {
+            if !old.is_market(market) || !held_shared_before(&old.role) {
+                continue;
+            }
+            let key = old.key();
+            let mut items = self.drawings(&key).to_vec();
+            for (at, entry) in old.items.iter().enumerate() {
+                if entry.all_timeframes() && !items.contains(entry) {
+                    items.insert(at.min(items.len()), entry.clone());
+                }
+            }
+            self.put(&key, items);
+        }
     }
 
     /// The marks every chart of `market` shows: its all-timeframes set, then

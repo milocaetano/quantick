@@ -74,6 +74,8 @@ mod candle_aggression;
 mod chart_settings_control;
 #[path = "drawing_magnet_control_tests.rs"]
 mod drawing_magnet_control;
+#[path = "drawing_scope_control_tests.rs"]
+mod drawing_scope_control;
 #[path = "feed_source_control_tests.rs"]
 mod feed_source_control;
 #[path = "history_control_tests.rs"]
@@ -861,6 +863,13 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        // Filled in when it runs: a dated line placed for the call to keep.
+        (
+            "annotate.drawing_scope.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
         (
             "workspace.new",
             1,
@@ -1201,6 +1210,19 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "pane_id": pane.id.to_string(),
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
+                })
+            }
+            "annotate.drawing_scope.set" => {
+                app.surfaces.chart_settings.close();
+                run_frame(&mut app, &ctx);
+                place_level(&mut app, PaneSide::Flow, 100.0);
+                run_frame(&mut app, &ctx);
+                let pane = &app.active_tab().flow_pane;
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "pane_id": pane.id.to_string(),
+                    "drawing_id": pane.drawings.items().last().unwrap().id.0.to_string(),
+                    "scope": "this_chart",
                 })
             }
             "desk.export" | "desk.import" => {

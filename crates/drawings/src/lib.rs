@@ -57,10 +57,14 @@ pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
+mod pane_sync;
 mod saved;
 pub use object::{
     ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
     Duplicated, NewDrawing, PaneKey,
+};
+pub use pane_sync::{
+    PaneMarks, PaneSync, adopt_pane, persist_pane, put_away_pane, refresh_shared, sync_pane,
 };
 pub use payload::{DrawingPayload, NoPayload};
 pub use placement::reanchor_points;

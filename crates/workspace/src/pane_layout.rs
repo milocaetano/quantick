@@ -1,5 +1,5 @@
 //! Pane-local layout binding and persistence bookkeeping; session owns membership.
-use crate::layout_document::LayoutId;
+use crate::layout_document::{LayoutId, SavedDrawing};
 use crate::market_settings::{DrawingKey, PaneRole};
 use crate::session::LayoutView;
 
@@ -16,6 +16,12 @@ pub struct PaneLayout<Bars = ()> {
     /// of formatting a role, and a change re-keys a context chart.
     pub drawings_spec: Option<Bars>,
     pub saved_revision: u64,
+    /// The market's all-timeframes marks as this pane last loaded them: what
+    /// its next write is merged against.
+    pub shared_base: Vec<SavedDrawing>,
+    /// A cut `recut_in_place` already found it could not take in place, so a
+    /// chart held at its old bars is not asked again every frame.
+    pub recut_checked: Option<Bars>,
 }
 impl<Bars> Default for PaneLayout<Bars> {
     fn default() -> Self {
@@ -27,6 +33,8 @@ impl<Bars> Default for PaneLayout<Bars> {
             drawings_source: None,
             drawings_spec: None,
             saved_revision: 0,
+            shared_base: Vec::new(),
+            recut_checked: None,
         }
     }
 }
@@ -68,10 +76,14 @@ impl<Bars> PaneLayout<Bars> {
         let (Some(key), Some(held)) = (&self.drawings_key, self.drawings_spec) else {
             return false;
         };
-        let moved = held != now && key.role == PaneRole::Flow && alike(key, &held, &now);
+        if held == now || key.role != PaneRole::Flow || self.recut_checked == Some(now) {
+            return false;
+        }
+        let moved = alike(key, &held, &now);
         if moved {
             self.drawings_spec = Some(now);
         }
+        self.recut_checked = (!moved).then_some(now);
         moved
     }
     pub fn drawings_dirty(&self, revision: u64) -> bool {
@@ -110,9 +122,9 @@ mod tests {
         let mut flow = keyed(PaneRole::Flow);
         assert!(!flow.recut_in_place(2, |_, _, _| false), "a pinned mark");
         assert_eq!(flow.drawings_spec, Some(1));
-        assert!(flow.recut_in_place(2, |_, held, now| (*held, *now) == (1, 2)));
-        assert_eq!(flow.drawings_spec, Some(2));
-        assert!(!flow.recut_in_place(2, |_, _, _| true), "nothing moved");
+        assert!(flow.recut_in_place(3, |_, held, now| (*held, *now) == (1, 3)));
+        assert_eq!(flow.drawings_spec, Some(3));
+        assert!(!flow.recut_in_place(3, |_, _, _| true), "nothing moved");
 
         let bars = "time:1m".to_owned();
         let mut context = keyed(PaneRole::Context { bars });
@@ -120,6 +132,26 @@ mod tests {
             !context.recut_in_place(2, |_, _, _| true),
             "a context chart's key names its bars"
         );
+    }
+
+    /// A chart held at its old bars (a strategy keeps it) asks the store once
+    /// per cut, not every frame: the answer costs a formatted rule.
+    #[test]
+    fn a_recut_that_cannot_move_in_place_is_asked_once() {
+        let mut flow = PaneLayout::<u32> {
+            drawings_key: Some(DrawingKey::of_pane("v", "a".to_owned(), None)),
+            drawings_spec: Some(1),
+            ..PaneLayout::default()
+        };
+        let mut asked = 0;
+        for _ in 0..3 {
+            assert!(!flow.recut_in_place(2, |_, _, _| {
+                asked += 1;
+                false
+            }));
+        }
+        assert_eq!(asked, 1);
+        assert!(flow.recut_in_place(3, |_, _, _| true), "a new cut is asked");
     }
 
     #[test]

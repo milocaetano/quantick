@@ -4951,6 +4951,92 @@ fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
 }
 
+/// An edit on one chart does not cost another chart its history: the flow
+/// chart adds a level every chart shows, and Ctrl+Z on the context chart still
+/// undoes what was done there.
+#[test]
+fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![50.0, 100.0]);
+
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    let undo = key_press_with(egui::Key::Z, egui::Modifiers::COMMAND);
+    run_frame_with_modifiers(&mut app, &ctx, vec![undo], egui::Modifiers::COMMAND);
+    run_frame(&mut app, &ctx);
+    let scopes: Vec<_> = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .drawings
+        .items()
+        .iter()
+        .map(|drawing| drawing.scope)
+        .collect();
+    assert_eq!(
+        scopes,
+        [drawings::DrawingScope::AllCharts; 2],
+        "the scope change made on the context chart is undone there"
+    );
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
+}
+
+/// A mark kept to the flow chart stays with the bars it was kept at: a re-cut
+/// hides it and the way back restores it.
+#[test]
+fn a_flow_chart_recut_hides_a_mark_kept_to_it_until_it_returns() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    run_frame(&mut app, &ctx);
+    let drawn_at = *app.active_tab().flow_pane.state.spec();
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Flow)
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty(), "other bars");
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Flow)
+        .set_spec(drawn_at);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0], "back again");
+}
+
+/// A strategy armed on a mark kept to its chart still names that mark after
+/// another chart of the market adds a level for all timeframes.
+#[test]
+fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    let index = pane
+        .drawings
+        .index_of(drawing)
+        .expect("the region kept its id");
+    assert_eq!(pane.drawings.items()[index].tool.id(), "rectangle");
+    assert_eq!(pane.drawings.items().len(), 2, "and the level arrived");
+    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+}
+
 /// A level is a level on every timeframe: drawn on one chart, it stays on it
 /// when that chart is cut to other bars, and on the flow chart beside it.
 #[test]
