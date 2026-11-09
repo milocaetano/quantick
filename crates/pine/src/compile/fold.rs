@@ -283,7 +283,8 @@ impl Compiler {
                             ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | alpha,
                         ))
                     }
-                    _ => None,
+                    Some(builtin) => self.fold_indicator_length_call(builtin, args),
+                    None => None,
                 }
             }
             _ => None,

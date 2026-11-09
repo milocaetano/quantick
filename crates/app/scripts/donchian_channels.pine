@@ -1,0 +1,9 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Donchian Channels", overlay=true)
+len = input.int(20, "Length", minval=1, maxval=500)
+upper = ta.highest(high, len)
+lower = ta.lowest(low, len)
+plot((upper + lower) / 2, title="Basis", color=color.orange)
+plot(upper, title="Upper", color=color.blue)
+plot(lower, title="Lower", color=color.blue)

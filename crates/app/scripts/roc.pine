@@ -1,0 +1,5 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Rate of Change", overlay=false)
+len = input.int(12, "Length", minval=1, maxval=500)
+plot(close[len] == 0 ? na : 100 * (close - close[len]) / close[len], title="ROC", color=color.blue)

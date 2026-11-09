@@ -43,6 +43,7 @@ mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 pub(crate) mod script;
+mod script_editor;
 mod system;
 mod trace;
 mod types;

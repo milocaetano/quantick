@@ -49,6 +49,8 @@ mod indicator_operations;
 mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
+mod script_editor_wiring;
+mod script_reload;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod home_wiring;
 mod menu_bar;

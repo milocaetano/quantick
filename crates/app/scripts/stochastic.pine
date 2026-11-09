@@ -1,0 +1,12 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Stochastic Oscillator", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+smooth = input.int(3, "K smoothing", minval=1, maxval=500)
+signal = input.int(3, "D smoothing", minval=1, maxval=500)
+upper = ta.highest(high, len)
+lower = ta.lowest(low, len)
+raw = upper == lower ? na : 100 * (close - lower) / (upper - lower)
+k = ta.sma(raw, smooth)
+plot(k, title="K", color=color.blue)
+plot(ta.sma(k, signal), title="D", color=color.orange)

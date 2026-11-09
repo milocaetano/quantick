@@ -44,6 +44,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::tape_view_set::READBACKS,
     crate::time_axis::READBACKS,
     script::READBACKS,
+    crate::script_editor::READBACKS,
     trade::READBACKS,
 ];
 

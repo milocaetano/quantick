@@ -1,0 +1,5 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Momentum", overlay=false)
+len = input.int(10, "Length", minval=1, maxval=500)
+plot(ta.mom(close, len), title="Momentum", color=color.blue)

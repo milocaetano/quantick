@@ -141,7 +141,7 @@ plot(close)
         .find(|v| v.slot == slot)
         .expect("the slot has a view");
     assert!(view.error.is_some(), "and it carries the read failure");
-    assert_eq!(view.label(), "vanishing.pine");
+    assert_eq!(view.label(), "vanishing");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -5540,7 +5540,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 144);
+    assert_eq!(documents.len(), 146);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",

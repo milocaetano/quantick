@@ -1,0 +1,10 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Money Flow Index", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+typical = (high + low + close) / 3.0
+change = ta.change(typical)
+flow = typical * volume
+positive = math.sum(na(volume) ? na : (change > 0 ? flow : 0), len)
+negative = math.sum(na(volume) ? na : (change < 0 ? flow : 0), len)
+plot(positive + negative == 0 ? na : 100 * positive / (positive + negative), title="MFI", color=color.purple)

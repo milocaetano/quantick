@@ -1,0 +1,4 @@
+# #848: the merged frame lends LayoutStore to the existing editor surface adapter.
+# Measured additive-merge drift only; no new root field or capability.
+QuantickApp +1
+!budget +1

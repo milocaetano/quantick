@@ -2938,4 +2938,7 @@ mod asset_bubbles_tests;
 mod feed_tape_scope_tests;
 mod native_split_pane_tests;
 
+#[path = "script_editor.rs"]
+mod script_editor_tests;
+mod script_library_extension_contract;
 mod window_capture_tests;
