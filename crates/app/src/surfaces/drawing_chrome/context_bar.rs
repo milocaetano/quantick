@@ -219,6 +219,8 @@ struct GestureInput {
     now_ms: u64,
     dragging: bool,
     origin: Option<egui::Pos2>,
+    /// The layer the press landed on — the chart's own notion of chrome.
+    layer: Option<egui::LayerId>,
     zoomed: bool,
     screen: egui::Rect,
 }
@@ -239,6 +241,7 @@ impl GestureInput {
             now_ms,
             dragging,
             origin,
+            layer: origin.and_then(|origin| ctx.layer_id_at(origin)),
             zoomed,
             screen,
         }
@@ -254,7 +257,7 @@ impl GestureInput {
         // gesture that is moving it. The grip is the escape hatch for a bar
         // sitting over something the trader needs to see; it has to survive
         // being used.
-        let on_the_bar = bar.owns_press(self.origin, bar_rect);
+        let on_the_bar = bar.owns_press(self.origin, bar_rect, self.layer);
         if self.dragging && !on_the_bar {
             bar.suppress_gesture();
         } else if !self.dragging {

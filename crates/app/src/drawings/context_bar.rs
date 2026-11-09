@@ -249,9 +249,8 @@ pub fn place(
     if above < chart.top() && below + size.y > chart.bottom() {
         // Taller than the pane leaves no room above or below — a volume
         // profile spanning the price axis, a channel across the whole view.
-        // Hugging the top edge used to be the answer, and for a full-height
-        // object the top edge *is* the object: the bar sat on the figure it
-        // edits, which is the one place it must never be.
+        // The top edge of a full-height object *is* the object, and the bar
+        // must never sit on the figure it edits.
         //
         // Beside it instead, on whichever side has room. Vertically it keeps
         // to the object's top, so the controls stay where the eye left them.
@@ -364,12 +363,10 @@ pub struct ContextBar {
     delete_hover_for: &'static str,
     /// Last resolved rect, for the wake radius and for tests.
     rect: Option<egui::Rect>,
-    /// The rect the current press landed on — see [`Self::press_rect`].
-    press_rect: Option<egui::Rect>,
-    /// Where the open popover was laid out last frame — see [`Self::owns_press`].
-    popover_rect: Option<egui::Rect>,
+    /// The open popover's Area — see [`Self::owns_press`].
+    popover_layer: Option<egui::Id>,
     /// What [`Self::owns_press`] decided when the current press began.
-    press_owned: bool,
+    press_owned: Option<bool>,
     /// The colour popover shows the full picker inline: egui's own picker
     /// popup is a second Area, and a press inside it closed this popover.
     custom_open: bool,
@@ -464,40 +461,10 @@ impl ContextBar {
     /// and stays where they put it, across the selections that come after —
     /// see [`Self::manual`].
     ///
-    /// It does *not* stop being suppressed. This line used to claim it did,
-    /// and the code never has: a parked bar hides through a pan, a wheel zoom
-    /// or a canvas drag exactly like a following one, and comes back in the
-    /// same place. Exempting it is a change to how the bar behaves during
-    /// gestures, not to where it opens, so it is not smuggled in here — and
-    /// it would turn the parked bar into a patch of chart that never yields
-    /// the pointer, since suppression is also what lets a drag reach the
-    /// canvas underneath it.
+    /// It still hides through a pan, zoom or canvas drag like a following bar:
+    /// suppression is what lets a drag reach the canvas underneath it.
     pub fn set_manual(&mut self, position: egui::Pos2) {
         self.manual = Some(position);
-    }
-
-    /// The bar's rect as it stood when the current press began.
-    ///
-    /// A press is answered by the geometry it actually landed on, for the
-    /// whole life of that press. Re-reading the live rect mid-gesture is the
-    /// mistake this repo has paid for once already: no gesture re-measures a
-    /// world that it is itself moving. Dragging the grip moves the bar, so
-    /// the moved rect would leave the press origin behind and suppress the
-    /// very gesture doing the moving.
-    pub fn press_rect(
-        &mut self,
-        origin: Option<egui::Pos2>,
-        current: Option<egui::Rect>,
-    ) -> Option<egui::Rect> {
-        if origin.is_none() {
-            // The press is over; the next one measures afresh.
-            self.press_rect = None;
-            return current;
-        }
-        if self.press_rect.is_none() {
-            self.press_rect = current;
-        }
-        self.press_rect
     }
 
     /// Give the placement back to the rule, reporting whether there was
@@ -519,17 +486,23 @@ impl ContextBar {
         self.rect
     }
 
-    /// Whether the press began on the bar or its open popover — a drag there is
-    /// not a chart drag. Latched to the release, which egui still calls a drag.
-    pub fn owns_press(&mut self, origin: Option<egui::Pos2>, current: Option<egui::Rect>) -> bool {
-        let rect = self.press_rect(origin, current);
+    /// Whether the press began on the bar or its open popover's layer — a drag
+    /// there is not a chart drag. Decided where the press landed and held to
+    /// the release: a grip drag moves the bar, and egui calls the release a drag.
+    pub fn owns_press(
+        &mut self,
+        origin: Option<egui::Pos2>,
+        current: Option<egui::Rect>,
+        layer: Option<egui::LayerId>,
+    ) -> bool {
         let Some(origin) = origin else {
-            return std::mem::take(&mut self.press_owned);
+            return self.press_owned.take().unwrap_or(false);
         };
-        self.press_owned = rect.is_some_and(|rect| rect.contains(origin))
-            || (self.open != Popover::None
-                && self.popover_rect.is_some_and(|rect| rect.contains(origin)));
-        self.press_owned
+        let popover = self.popover_layer;
+        let on_popover = popover.is_some() && layer.is_some_and(|layer| Some(layer.id) == popover);
+        *self
+            .press_owned
+            .get_or_insert_with(|| on_popover || current.is_some_and(|rect| rect.contains(origin)))
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -1032,6 +1005,10 @@ fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) ->
         && anchor.top() - POPOVER_GAP_PX - size.y >= bounds.top()
     {
         anchor.top() - POPOVER_GAP_PX - size.y
+    } else if size.y <= bounds.height() {
+        // Fits the pane, but on neither side of the slot: covering the bar
+        // beats rows on the time axis or a neighbouring pane.
+        below.y.min(bounds.bottom() - size.y)
     } else {
         below.y
     };
@@ -1084,7 +1061,8 @@ fn draw_popover(
     let palette = theme::get(ctx);
     let (popover, anchor) = match (bar.open, bar.anchor) {
         (Popover::None, _) | (_, None) => {
-            bar.popover_rect = None;
+            bar.popover_layer = None;
+            bar.custom_open = false;
             return;
         }
         (popover, Some(anchor)) => (popover, anchor),
@@ -1126,7 +1104,7 @@ fn draw_popover(
                 });
         })
         .response;
-    bar.popover_rect = Some(response.rect);
+    bar.popover_layer = Some(id);
     #[cfg(test)]
     {
         bar.probe.colors = probe;
@@ -1154,7 +1132,8 @@ fn draw_color_popover(
     #[cfg(test)] probe: &mut ColorProbe,
 ) {
     let palette = theme::get(ui.ctx());
-    ui.spacing_mut().item_spacing.x = ITEM_GAP_PX;
+    // Both axes: the selected ring sits outside its swatch.
+    ui.spacing_mut().item_spacing = egui::vec2(ITEM_GAP_PX, ITEM_GAP_PX);
     let primaries = quantick_appearance::palette::DRAWING_PRIMARIES.map(super::to_color32);
     for row in [&palette.drawing_swatches()[..], &primaries[..]] {
         draw_swatch_row(
@@ -1186,7 +1165,8 @@ fn draw_color_popover(
         }
     });
     if *custom_open {
-        let mut color = object.style.color32();
+        let before = object.style.color32();
+        let mut color = before;
         let picker = ui.scope(|ui| {
             egui::color_picker::color_picker_color32(
                 ui,
@@ -1198,7 +1178,11 @@ fn draw_color_popover(
         {
             probe.picker = Some(picker.response.rect);
         }
-        if picker.inner {
+        // The picker is opaque, so it keeps the drawing's own alpha, and it
+        // reports a change on opening: only a different colour is an edit.
+        let [r, g, b, _] = color.to_srgba_unmultiplied();
+        let color = egui::Color32::from_rgba_unmultiplied(r, g, b, before.a());
+        if picker.inner && color != before {
             object.style.set_color32(color);
             intent.edited = true;
         }
@@ -1871,6 +1855,14 @@ mod tests {
             popover_position(slot, tall, bounds).y,
             slot.bottom() + POPOVER_GAP_PX
         );
+    }
+
+    #[test]
+    fn a_popover_that_fits_the_pane_but_neither_side_covers_the_bar() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(100.0, 180.0), egui::pos2(132.0, 212.0));
+        let at = popover_position(slot, egui::vec2(160.0, 300.0), bounds);
+        assert_eq!(at.y, 100.0, "bottom edge on the pane's bottom edge");
     }
 
     #[test]

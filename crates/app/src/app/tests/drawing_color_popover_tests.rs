@@ -33,6 +33,14 @@ fn rectangle_style(app: &QuantickApp) -> drawings::DrawingStyle {
     app.active_tab().flow_pane.drawings.items()[0].style
 }
 
+/// The rectangle's anchors, to prove a drag on the popover never reached it.
+fn rectangle_points(app: &QuantickApp) -> String {
+    format!(
+        "{:?}",
+        app.active_tab().flow_pane.drawings.items()[0].points
+    )
+}
+
 #[test]
 fn the_palette_offers_pure_red_green_blue_and_their_mixes() {
     let (mut app, ctx) = rectangle_with_open_palette();
@@ -65,6 +73,7 @@ fn the_palette_offers_pure_red_green_blue_and_their_mixes() {
 fn dragging_the_fill_slider_changes_the_fill_and_keeps_the_popover() {
     let (mut app, ctx) = rectangle_with_open_palette();
     let before = rectangle_style(&app).fill_alpha;
+    let points = rectangle_points(&app);
     let slider = app
         .drawings
         .chrome
@@ -81,12 +90,15 @@ fn dragging_the_fill_slider_changes_the_fill_and_keeps_the_popover() {
         "a drag on the slider is not a drag of the chart"
     );
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+    assert_eq!(rectangle_points(&app), points, "the rectangle did not move");
 }
 
 #[test]
 fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     let (mut app, ctx) = rectangle_with_open_palette();
     let before = rectangle_style(&app).color32();
+    let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+    let points = rectangle_points(&app);
     let toggle = app
         .drawings
         .chrome
@@ -97,6 +109,11 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     run_frame(&mut app, &ctx);
     // The taller popover is re-measured and may flip above the bar.
     run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.undo_depth(),
+        undo_before,
+        "opening the picker is not an edit"
+    );
     let picker = app
         .drawings
         .chrome
@@ -110,6 +127,7 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     drag_chart(&mut app, &ctx, start, end);
     run_frame(&mut app, &ctx);
     assert_ne!(rectangle_style(&app).color32(), before, "the colour moved");
+    assert_eq!(rectangle_points(&app), points, "the rectangle did not move");
     assert!(app.drawings.chrome.context_bar().popover_open());
     assert!(
         app.drawings
