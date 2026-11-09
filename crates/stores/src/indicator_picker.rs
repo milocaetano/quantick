@@ -94,16 +94,17 @@ impl Picker {
                 .to_owned(),
             category: Category::Native,
         });
-        let scripts = scripts.iter().enumerate().map(|(i, s)| Entry {
+        let script_entries = scripts.iter().enumerate().map(|(i, s)| Entry {
             choice: Choice::Script(i),
             name: crate::script_library::script_title(&s.name),
             category: Category::Scripts,
         });
         natives
-            .chain(scripts)
+            .chain(script_entries)
             .filter(|e| {
                 (self.category == Category::All || self.category == e.category)
-                    && self.matches(&e.name)
+                    && (self.matches(&e.name)
+                        || matches!(e.choice, Choice::Script(index) if self.matches(&scripts[index].name)))
             })
             .collect()
     }

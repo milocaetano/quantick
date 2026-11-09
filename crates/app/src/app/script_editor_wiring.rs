@@ -157,7 +157,8 @@ pub(super) fn frame(
         }
     }
     let editor = &mut surfaces.script_editor;
-    if let Some(receiver) = &editor.compilation {
+    if let Some((revision, receiver)) = &editor.compilation {
+        let revision = *revision;
         match receiver.try_recv() {
             Ok((revision, document, error, inputs)) => {
                 editor.compilation = None;
@@ -170,7 +171,7 @@ pub(super) fn frame(
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 editor.compilation = None;
                 editor.state.complete(
-                    editor.state.revision,
+                    revision,
                     Some("source validation worker stopped".into()),
                     Vec::new(),
                 );
@@ -214,7 +215,7 @@ pub(super) fn frame(
             };
             let _ = sender.send((revision, document, error, inputs));
         }) {
-        Ok(_) => editor.compilation = Some(receiver),
+        Ok(_) => editor.compilation = Some((revision, receiver)),
         Err(error) => {
             editor.state.complete(
                 revision,

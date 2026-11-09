@@ -206,7 +206,7 @@ fn script_editor_live_update() {
     sender
         .send((old_revision, document, None, Vec::new()))
         .unwrap();
-    app.surfaces.script_editor.compilation = Some(receiver);
+    app.surfaces.script_editor.compilation = Some((old_revision, receiver));
     editor_frame(&mut app, 800);
     settle_indicators(&mut app);
     assert_eq!(values(&app), good);
@@ -220,6 +220,54 @@ fn script_editor_live_update() {
     assert_ne!(values(&app), good);
     assert_eq!(app.active_tab().flow_pane.indicators.all()[0].slot, slot);
 }
+#[test]
+fn script_editor_stale_read_disconnect_preserves_newer_unsaved_edit() {
+    let (mut app, _directory, _commands) = copy_fixture();
+    let state = &mut app.surfaces.script_editor.state;
+    assert!(state.due(0).is_none());
+    let (old_revision, _) = state.due(350).unwrap();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.surfaces.script_editor.compilation = Some((old_revision, receiver));
+    edit(
+        &mut app,
+        Action::Open {
+            id: "my-ema.pine".into(),
+        },
+    );
+    let source = "plot(bar_index * 4)\n";
+    edit(
+        &mut app,
+        Action::ReplaceSource {
+            source: source.into(),
+        },
+    );
+    drop(sender);
+    editor_frame(&mut app, 800);
+    let state = &app.surfaces.script_editor.state;
+    assert!(state.dirty);
+    assert!(state.source_edit_pending());
+    assert!(state.validation_pending());
+    assert!(state.diagnostics.is_none());
+    assert_eq!(state.document.as_ref().unwrap().source, source);
+    assert!(app.edit_script(Action::Close).is_err());
+    assert_ne!(
+        ScriptLibraryPort::read(&app.runtime.indicators.script_library, "my-ema.pine")
+            .unwrap()
+            .source,
+        source
+    );
+    validate_open_editor(&mut app, 1000);
+    assert!(!app.surfaces.script_editor.state.dirty);
+    assert_eq!(values(&app)[0][39], 39.0 * 4.0);
+    assert_eq!(
+        ScriptLibraryPort::read(&app.runtime.indicators.script_library, "my-ema.pine")
+            .unwrap()
+            .source,
+        source
+    );
+    edit(&mut app, Action::Close);
+}
+
 #[test]
 fn script_editor_compile_recovery() {
     let (mut app, _directory, _commands) = copy_fixture();
@@ -446,7 +494,7 @@ fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
             .inputs;
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender.send((revision, document, None, inputs)).unwrap();
-        app.surfaces.script_editor.compilation = Some(receiver);
+        app.surfaces.script_editor.compilation = Some((revision, receiver));
         editor_frame(&mut app, 500);
         // The reload may have finished on the worker, but publication has not
         // been drained: its old declaration cannot authorize any input edit.
@@ -625,7 +673,7 @@ fn script_editor_read_validation_never_republishes_an_old_open_snapshot() {
         .inputs;
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     sender.send((revision, opened, None, inputs)).unwrap();
-    app.surfaces.script_editor.compilation = Some(receiver);
+    app.surfaces.script_editor.compilation = Some((revision, receiver));
     editor_frame(&mut app, 500);
     settle_indicators(&mut app);
     assert_eq!(values(&app), current);

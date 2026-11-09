@@ -13,7 +13,7 @@ pub(crate) type CompileResult = (
 
 pub(crate) struct ScriptEditorSurface {
     pub state: quantick_stores::script_editor::ScriptEditor,
-    pub compilation: Option<Receiver<CompileResult>>,
+    pub compilation: Option<(u64, Receiver<CompileResult>)>,
     pub epoch: Instant,
     copy_name: String,
     keyboard: Vec<egui::Event>,
