@@ -351,6 +351,14 @@ Completion still requires a separate ordinary run at the final committed
 head with all five samples of every selected package below its fixed ceiling.
 Raw measurements and review records remain outside Git.
 
+The Pine library integration (#848) lifts `pine` into the top three, replacing
+`drawings`. The [scoped reference run](https://github.com/milocaetano/quantick/actions/runs/42679309502)
+at `85b7f57d3c39637977211aa950a937de84748647` measured the representative
+`crates/pine/src/parser.rs`. Its slowest of five loops was 2.122264053 s;
+`ceil(1.25 * 2.122264053 * 1000) / 1000` sets the Pine ceiling to **2.653 s**.
+The app and orderflow ceilings, host, toolchain, jobs, profile and protocol
+remain unchanged. A separate ordinary run on the final commit must pass.
+
 ### Rules for every calibration
 
 Do not replace these reviewed limits with automatic proposal output,
