@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 114 |
+| Reachable by capability | 115 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **168** |
+| **Total** | **169** |
 
-97 of the 168 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 71 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 169 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -245,7 +245,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 71 |
+| `authored` | 72 |
 
 ## Appendix: rows no registry stands behind
 

@@ -150,4 +150,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-124 capabilities registered.
+125 capabilities registered.
