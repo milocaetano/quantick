@@ -4,13 +4,14 @@
 use std::sync::Arc;
 
 use quantick_indicators::{
-    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
+    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PlotSpec, PreviewFrame, Rgba8,
 };
 
 use quantick_indicator_session::{LaneSample, SlotId};
 
-use crate::indicator_style::ResolvedPlot;
+use crate::indicator_style::{ResolvedPlot, theme_ink};
 use crate::price_view::PriceView;
+use quantick_appearance::ResolvedTheme;
 
 use super::PaneSizing;
 
@@ -112,6 +113,11 @@ pub struct IndicatorView {
     /// replaces `descriptor` wholesale — styling an EMA and then changing its
     /// period must not throw the colour away.
     pub style: crate::indicator_style::StyleOverride,
+    /// The ink the surface this view last painted on gives each plot nobody
+    /// restyled, in plot order ([`IndicatorView::paint_on`]). Render-side and
+    /// refreshed every frame; empty until the first, which means the
+    /// declaration.
+    pub inks: Vec<Option<Rgba8>>,
     /// The auto-fitted `(lo, hi)` the last frame drew this pane with.
     ///
     /// The gesture that zooms the pane runs before the frame that draws it,
@@ -151,16 +157,41 @@ impl IndicatorView {
             .unwrap_or(&self.objects)
     }
 
-    /// The style plot `index` draws with right now: the declaration with the
-    /// trader's layer applied, or `None` when this indicator has no such plot.
+    /// The style plot `index` draws with right now: the declaration under the
+    /// ink of the surface it paints on, with the trader's layer applied, or
+    /// `None` when this indicator has no such plot.
     ///
     /// The one door between the style layer and the renderer — every plot the
     /// chart draws is resolved through here, so a colour changed in the dialog
-    /// cannot reach one drawing path and miss another. Two `Vec` lookups and a
-    /// few `Option`s: it runs once per plot per frame and allocates nothing.
+    /// cannot reach one drawing path and miss another. Three `Vec` lookups and
+    /// a few `Option`s: it runs once per plot per frame and allocates nothing.
     pub fn plot_style(&self, index: usize) -> Option<ResolvedPlot> {
         let spec = self.descriptor.plots.get(index)?;
-        Some(self.style.resolve(index, spec))
+        let ink = self.inks.get(index).copied().flatten();
+        Some(self.style.resolve(index, spec, ink))
+    }
+
+    /// Take the plot inks of the surface this view paints on next, `theme`.
+    /// Two lookups in the theme's tiny ink table per plot, into a reused `Vec`.
+    pub fn paint_on(&mut self, theme: &ResolvedTheme) {
+        let title = &self.descriptor.title;
+        let ink = |plot: &PlotSpec| theme_ink(theme, title, &plot.title);
+        self.inks.clear();
+        self.inks.extend(self.descriptor.plots.iter().map(ink));
+    }
+
+    /// The plots as a dialog lists them: each declared colour replaced by its
+    /// ink from [`IndicatorView::inks`] where it has one, so a swatch shows the
+    /// default the chart paints and a reset returns to.
+    pub fn themed_plots(&self) -> Vec<PlotSpec> {
+        let ink = |index: usize| self.inks.get(index).copied().flatten();
+        let plots = self.descriptor.plots.iter().enumerate();
+        plots
+            .map(|(index, plot)| PlotSpec {
+                base_color: ink(index).unwrap_or(plot.base_color),
+                ..plot.clone()
+            })
+            .collect()
     }
 
     /// The label the UI shows for this indicator.

@@ -298,7 +298,7 @@ fn draw_style(ui: &mut egui::Ui, plots: &[PlotSpec], style: &mut StyleOverride) 
         .spacing([10.0, 8.0])
         .show(ui, |ui| {
             for (index, spec) in plots.iter().enumerate() {
-                let resolved = style.resolve(index, spec);
+                let resolved = style.resolve(index, spec, None);
                 let mut over = style.get(index);
 
                 let mut visible = resolved.visible;
@@ -338,21 +338,18 @@ fn draw_style(ui: &mut egui::Ui, plots: &[PlotSpec], style: &mut StyleOverride) 
                 // What the two controls beside it add up to. A swatch alone
                 // says nothing about width, and a number alone says nothing
                 // about how thin 0.5 px looks over candles.
-                draw_plot_preview(ui, style.resolve(index, spec), visible);
+                draw_plot_preview(ui, style.resolve(index, spec, None), visible);
                 style.set(index, over);
                 ui.end_row();
             }
         });
-    // The way back. The Inputs tab has one — the `Default` preset restores the
-    // declared values — and without this the Style tab had none: a trader who
-    // tuned a palette into something unreadable could only guess their way back
-    // to the colours the indicator's author chose. Disabled when there is
-    // nothing to undo, so it never offers to change what it would not.
+    // The way back to the defaults: the surface's ink for a plot (its colour as
+    // it arrives here), else its declared colour. Disabled with nothing to undo.
     ui.add_space(4.0);
     if ui
         .add_enabled(!style.is_default(), egui::Button::new("Reset style"))
-        .on_hover_text("back to the colours and widths the indicator declares")
-        .on_disabled_hover_text("already showing what the indicator declares")
+        .on_hover_text("back to the default colours (the theme's, else the script's) and widths")
+        .on_disabled_hover_text("already showing the defaults")
         .clicked()
     {
         style.clear();
@@ -797,7 +794,7 @@ mod tests {
                 ..crate::indicator_style::PlotOverride::default()
             },
         );
-        let resolved = style.resolve(0, &plot("ema"));
+        let resolved = style.resolve(0, &plot("ema"), None);
         assert_eq!(resolved.color, Rgba8::opaque(255, 0, 0));
         assert!(
             (resolved.width - 1.5).abs() < f32::EPSILON,

@@ -1174,6 +1174,7 @@ mod tests {
             mouse_vertical_line: false,
             scale: crate::price_view::PriceView::new(),
             sizing: crate::indicators::PaneSizing::Auto,
+            inks: Vec::new(),
             last_auto: None,
         }
     }

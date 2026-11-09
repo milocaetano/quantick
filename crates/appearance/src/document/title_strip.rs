@@ -25,6 +25,7 @@ impl TitleStripOverride {
             chart_time_grid: None,
             chart_axes: None,
             colors: self.colors.clone(),
+            plot_ink: BTreeMap::new(),
             typography: BTreeMap::new(),
             footprint_heat: Default::default(),
             orderflow: Default::default(),
