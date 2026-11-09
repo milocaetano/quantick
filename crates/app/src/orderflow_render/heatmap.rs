@@ -17,7 +17,7 @@ use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit, rgba,
 };
-use quantick_orderflow::projection::marker_band;
+use quantick_orderflow::projection::{drawn_gaps, marker_band};
 
 /// The lane depth caption's offset from the lane's left edge and chart top.
 const DEPTH_CAPTION_OFFSET: egui::Vec2 = egui::vec2(8.0, 30.0);
@@ -113,7 +113,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         );
     }
 
-    for gap in context.projection.gaps.iter() {
+    for gap in drawn_gaps(context.projection, context.current_book_live) {
         // Same two questions the reductions answer, and for the same reason: a
         // coverage gap explains a hole in the *book*, so it belongs to the pane
         // that draws one, and `show_gaps` reached only the legend until now.

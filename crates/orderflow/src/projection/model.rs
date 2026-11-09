@@ -180,12 +180,13 @@ pub struct HeatmapCell {
     /// zero-width at the confirmation instant, and at the live edge when the
     /// lane's own runs carry the book there (depth averaging off).
     pub current_book: bool,
-    /// Where a lane cell that reaches before the lane's opening runs on the
-    /// tape's own clock, as lane fractions `(from, to)`: zero is the opening
-    /// (the oldest dot), one is NOW, and below zero is the older depth the
-    /// native tape paints in its inset left of the oldest dot
-    /// ([`TapeHorizontalGeometry::book_span_px`](super::TapeHorizontalGeometry::book_span_px)).
-    /// `x0` and `x1` both stand at the opening, so no reader places it in a
+    /// Where a lane cell outside the lane's window runs on the tape's own
+    /// clock, as lane fractions `(from, to)`: zero is the opening (the
+    /// oldest dot), one is NOW. Below zero is the older depth the native
+    /// tape paints in its inset left of the oldest dot; above one, only on a
+    /// held tape, the depth recorded after its right edge, in the inset past
+    /// it ([`TapeHorizontalGeometry::book_span_px`](super::TapeHorizontalGeometry::book_span_px)).
+    /// `x0` and `x1` both stand at a lane edge, so no reader places it in a
     /// candle slot; one that asks which pane a cell is in reads this field
     /// ([`FlowCellHit::from_cell`] reports it on the lane). Painted after the
     /// lane's own bands, and only in the room their cap left. `None` for
@@ -315,6 +316,17 @@ pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
 /// drag outran the published blocks. Unknown, never an empty book.
 pub const BOOK_PENDING: &str = "book_pending_for_held_tape";
 
+/// Reason for the part of a native tape's inset farther from its window than
+/// the book it reads beside it
+/// ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)): recorded, but
+/// not read this far out. Never an empty book.
+pub const BOOK_BEYOND_LEAD: &str = "book_not_read_beyond_tape_lead";
+
+/// Reason for the inset past NOW while the live tape's current book is no
+/// longer current ([`book_is_current`](crate::projection::book_is_current)):
+/// there is no book to preview there, and a stale one is never carried.
+pub const BOOK_NOT_CURRENT: &str = "book_not_current_past_now";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {
@@ -328,9 +340,10 @@ pub struct GapPrimitive {
     pub x1: f64,
     /// Diagnostic reason copied from history.
     pub reason: String,
-    /// A gap older than the lane's window, inside the native tape's lead:
-    /// lane fractions, as [`HeatmapCell::lead_span`]; `x0` and `x1` stand at
-    /// the lane's opening. `None` for every other gap.
+    /// A gap outside the lane's window, in one of the native tape's insets:
+    /// lane fractions, as [`HeatmapCell::lead_span`], an infinite end
+    /// reaching the pane's edge; `x0` and `x1` stand at a lane edge. `None`
+    /// for every other gap.
     pub lead_span: Option<(f64, f64)>,
 }
 

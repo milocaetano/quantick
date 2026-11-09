@@ -60,9 +60,10 @@ pub use lane_heat::{
     BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, LaneFold, book_carry, book_is_current,
 };
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
-    GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow,
-    SettledProjection, TapeFacts, normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BOOK_NOT_CURRENT, BOOK_PENDING,
+    BookSource, CellHitContext, FlowCellHit, GapPrimitive, HeatmapCell, HeatmapProjection,
+    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
+    normalized_area_size, normalized_log_intensity,
 };
 pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
@@ -74,7 +75,10 @@ pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::{MAX_LEAD_SHARE, TapeHorizontalGeometry, finite_unit_f64};
+pub use tape_geometry::{
+    LEAD_READ_MARGIN, MAX_LEAD_SHARE, TapeHorizontalGeometry, drawn_gaps, finite_unit_f64,
+    stale_book_gap,
+};
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };

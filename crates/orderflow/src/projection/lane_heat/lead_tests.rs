@@ -11,19 +11,19 @@ use crate::{DisplayGrouping, HeatmapConfig, LiveEdge};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
 const LANE_WIDTH_PX: f32 = 400.0;
-const LANE_HEIGHT_PX: f32 = 600.0;
-const NOW_MS: i64 = 2_000;
-const WINDOW_MS: i64 = 500;
-const LANE_START_MS: i64 = NOW_MS - WINDOW_MS;
+pub(super) const LANE_HEIGHT_PX: f32 = 600.0;
+pub(super) const NOW_MS: i64 = 2_000;
+pub(super) const WINDOW_MS: i64 = 500;
+pub(super) const LANE_START_MS: i64 = NOW_MS - WINDOW_MS;
 /// A wall that changes inside every lead the tests use.
 const LEAD_CHANGE_MS: i64 = LANE_START_MS - 20;
 
-fn level(price: i64, quantity: i64) -> BookLevel {
+pub(super) fn level(price: i64, quantity: i64) -> BookLevel {
     BookLevel::new(price.into(), quantity.into()).unwrap()
 }
 
 /// An averaged native tape whose largest bubble is `max_radius`.
-fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
+pub(super) fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
     let mut config = HeatmapConfig {
         enabled: true,
         price_grouping: Decimal::ONE,
@@ -39,7 +39,7 @@ fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
 
 /// A synchronized book captured from `from_ms`, confirming at 1,900 so it
 /// is still the current book at NOW.
-fn history_from(from_ms: i64, config: HeatmapConfig) -> LiquidityHistory {
+pub(super) fn history_from(from_ms: i64, config: HeatmapConfig) -> LiquidityHistory {
     let mut history = LiquidityHistory::new(config);
     history
         .install_snapshot(
@@ -91,7 +91,7 @@ fn geometry(config: &HeatmapConfig) -> TapeHorizontalGeometry {
     TapeHorizontalGeometry::from_config(config, LANE_WIDTH_PX, LANE_HEIGHT_PX).unwrap()
 }
 
-fn timeline(lead_ms: i64) -> BarTimeline {
+pub(super) fn timeline(lead_ms: i64) -> BarTimeline {
     let bar = quantick_engine::Bar {
         open_time: 0,
         close_time: NOW_MS,
@@ -118,7 +118,7 @@ fn timeline(lead_ms: i64) -> BarTimeline {
     .with_lane_lead_ms(lead_ms)
 }
 
-fn project(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<HeatmapCell> {
+pub(super) fn project(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<HeatmapCell> {
     let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, 8.into());
     project_lane_heat(
         history,
@@ -138,7 +138,7 @@ fn lane(history: &LiquidityHistory) -> (Vec<HeatmapCell>, BarTimeline) {
 
 /// Pixels from the lane's left edge each cell is painted over: the tape's
 /// own span where it gives one, the lane's opening-to-NOW clock otherwise.
-fn painted(
+pub(super) fn painted(
     geometry: TapeHorizontalGeometry,
     cells: &[HeatmapCell],
     regions: usize,
@@ -155,7 +155,7 @@ fn painted(
         .collect()
 }
 
-fn reach(spans: &[(f32, f32)]) -> (f32, f32) {
+pub(super) fn reach(spans: &[(f32, f32)]) -> (f32, f32) {
     spans.iter().fold(
         (f32::INFINITY, f32::NEG_INFINITY),
         |(low, high), &(x0, x1)| (low.min(x0), high.max(x1)),
@@ -260,9 +260,11 @@ fn the_lead_is_the_painters_inset_and_never_more_than_its_cap() {
     let share = geometry(&config).lead_share();
     assert!(share > 0.0 && share <= MAX_LEAD_SHARE);
     assert_eq!(lead_ms(&config), (share * WINDOW_MS as f64).ceil() as i64);
-    // A pane one diameter wide keeps the capped lead instead of dropping it.
+    // A pane barely wider than one diameter keeps the capped lead instead of
+    // dropping it; one exactly one diameter wide has no clock to read on,
+    // and its whole inset is a labelled gap instead.
     let bubbles = config.bubbles.clone();
-    for width in [80.0, 81.0, 90.0, 120.0] {
+    for width in [81.0, 90.0, 120.0] {
         let tape = TapeHorizontalGeometry::resolve(width, LANE_HEIGHT_PX, &bubbles);
         assert!(
             tape.lead_share() <= MAX_LEAD_SHARE && tape.lead_share() > 0.0,
@@ -272,7 +274,17 @@ fn the_lead_is_the_painters_inset_and_never_more_than_its_cap() {
     }
     let closed = TapeHorizontalGeometry::resolve(80.0, LANE_HEIGHT_PX, &bubbles);
     assert_eq!(closed.span_px, 0.0);
-    assert_eq!(closed.lead_share(), MAX_LEAD_SHARE);
+    assert_eq!(closed.lead_share(), f64::INFINITY);
+    assert_eq!(
+        closed.lead_px(Some((f64::NEG_INFINITY, -1.0))),
+        Some((0.0, closed.inset_px)),
+        "the gap covers the inset"
+    );
+    assert_eq!(
+        closed.lead_px(Some((-2.0, 0.0))),
+        Some((closed.inset_px, closed.inset_px)),
+        "no band is stretched across it"
+    );
 }
 
 /// A busy book: every level changes every 37 ms from the start, enough for

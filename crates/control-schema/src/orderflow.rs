@@ -658,6 +658,21 @@ mod book_gap_tests {
             "the lead never moves the key"
         );
     }
+
+    /// The inset beyond a capped lead is no repeat: a script reads it as the
+    /// hand sees it.
+    #[test]
+    fn the_inset_beyond_a_capped_lead_is_reported() {
+        let beyond = GapPrimitive {
+            x0: 0.5,
+            x1: 0.5,
+            lead_span: Some((f64::NEG_INFINITY, -8.0)),
+            ..gap(quantick_orderflow::projection::BOOK_BEYOND_LEAD)
+        };
+        let rows = book_gap_rows(&[beyond]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "L2 not read this far from the window");
+    }
 }
 
 #[cfg(test)]
@@ -776,13 +791,16 @@ pub struct BookGapSnapshot {
 /// A gap the native tape repeats in its lead (`GapPrimitive::lead_span`) is
 /// a stretch the settled half already carries, painted a second time in the
 /// tape's inset: it is not counted again, and its sliding with the lead
-/// never moves the scope's revision.
+/// never moves the scope's revision. The one inset gap no other half carries,
+/// the inset beyond a lead stopped at its cap, is counted once.
 #[must_use]
 pub fn book_gap_rows(
     gaps: &[quantick_orderflow::projection::GapPrimitive],
 ) -> Vec<BookGapSnapshot> {
     let mut rows = std::collections::BTreeMap::<&str, u32>::new();
-    for gap in gaps.iter().filter(|gap| gap.lead_span.is_none()) {
+    for gap in gaps.iter().filter(|gap| {
+        gap.lead_span.is_none() || gap.reason == quantick_orderflow::projection::BOOK_BEYOND_LEAD
+    }) {
         *rows.entry(gap.reason.as_str()).or_default() += 1;
     }
     rows.into_iter()

@@ -200,6 +200,13 @@ impl DotZoom {
     pub fn tape_lead_ms(&self, window_ms: i64) -> i64 {
         super::tape_geometry::share_of_window_ms(self.tape_lead_share, window_ms)
     }
+
+    /// Whether [`Self::tape_lead_ms`] stops at its cap, short of the inset
+    /// it pads: the inset beyond is a labelled gap.
+    #[must_use]
+    pub fn tape_lead_capped(&self) -> bool {
+        self.tape_lead_share >= super::MAX_LEAD_SHARE
+    }
 }
 
 /// The rungs a view is using, so the next frame holds them through a wobble,

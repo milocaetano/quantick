@@ -64,6 +64,9 @@ struct Lane {
     /// Market time before `start_ms` the native tape draws its book over,
     /// left of its oldest dot ([`BarTimeline::with_lane_lead_ms`]).
     lead_ms: i64,
+    /// Whether that lead stopped at its cap, short of the inset it pads
+    /// ([`BarTimeline::with_lane_lead_capped`]).
+    lead_capped: bool,
 }
 
 /// One bar slot and the market time it represents.
@@ -159,6 +162,7 @@ impl BarTimeline {
             end_ms: edge.now_ms,
             reference_ms: edge.reference_ms,
             lead_ms: 0,
+            lead_capped: false,
         });
         Self {
             slots,
@@ -186,6 +190,23 @@ impl BarTimeline {
             lane.lead_ms = lead_ms.max(0);
         }
         self
+    }
+
+    /// Mark the lead as stopped at its cap
+    /// ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)): the inset
+    /// farther out than it is a labelled gap, never an empty book.
+    #[must_use]
+    pub fn with_lane_lead_capped(mut self, capped: bool) -> Self {
+        if let Some(lane) = &mut self.lane {
+            lane.lead_capped = capped;
+        }
+        self
+    }
+
+    /// Whether the lane's lead stopped at its cap.
+    #[must_use]
+    pub fn lane_lead_capped(&self) -> bool {
+        self.lane.is_some_and(|lane| lane.lead_capped)
     }
 
     /// The market time before the lane's opening its book reaches over;
