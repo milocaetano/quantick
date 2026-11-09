@@ -51,6 +51,7 @@ use quantick_stores::market_settings;
 
 mod bar_progress;
 mod indicators;
+pub(super) use indicators::saved_inputs;
 pub(crate) use indicators::set_indicator_mouse_vertical_line;
 mod strip;
 

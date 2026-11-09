@@ -166,6 +166,32 @@ pub(crate) trait IndicatorPickerPort {
 
 /// Indicator scripts an operator attaches and detaches.
 pub(crate) trait ScriptsPort {
+    fn set_script_numeric_input(
+        &mut self,
+        _id: &str,
+        _name: &str,
+        _value: quantick_control_schema::script_editor::NumericValue,
+    ) -> Result<(), String> {
+        Err("numeric script inputs are not available in this build".into())
+    }
+    fn add_library_script(&mut self, _id: &str) -> Result<(), String> {
+        Err("library attachment is not available in this build".into())
+    }
+    fn script_library_state(
+        &self,
+        _offset: usize,
+        _limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        Default::default()
+    }
+    /// Editor actions share one value lane with the surface. Unavailable in the skeleton.
+    fn edit_script(
+        &mut self,
+        _action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        Err("script editing is not available in this build".into())
+    }
+
     /// Attach `source` to the focused pane of the tab on screen, as an
     /// operator's or the trader's own; answers where it landed.
     fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot;
@@ -975,6 +1001,43 @@ impl IndicatorPickerPort for QuantickApp {
 }
 
 impl ScriptsPort for QuantickApp {
+    fn set_script_numeric_input(
+        &mut self,
+        id: &str,
+        name: &str,
+        value: quantick_control_schema::script_editor::NumericValue,
+    ) -> Result<(), String> {
+        super::script_editor_wiring::set_numeric_input(self, id, name, value)
+    }
+    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
+        super::script_editor_wiring::add_to_chart(self, id)
+    }
+    fn script_library_state(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        super::script_editor_wiring::inspect(
+            &self.surfaces,
+            &self.runtime.indicators,
+            &self.runtime.tabs,
+            self.runtime.workspace.layouts(),
+            offset,
+            limit,
+        )
+    }
+    fn edit_script(
+        &mut self,
+        action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        super::script_editor_wiring::apply(
+            &mut self.surfaces,
+            &mut self.runtime.indicators,
+            &mut self.runtime.tabs,
+            action,
+        )
+    }
+
     fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
         let runtime = self
             .runtime
@@ -1156,5 +1219,32 @@ impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
             &mut self.runtime,
             &mut self.drawings.presets,
         );
+    }
+}
+
+impl quantick_control_handlers::script_editor::ScriptEditorPort for ControlWindow {
+    fn set_script_numeric_input(
+        &mut self,
+        id: &str,
+        name: &str,
+        value: quantick_control_schema::script_editor::NumericValue,
+    ) -> Result<(), String> {
+        ScriptsPort::set_script_numeric_input(self, id, name, value)
+    }
+    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
+        ScriptsPort::add_library_script(self, id)
+    }
+    fn script_library_state(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        ScriptsPort::script_library_state(self, offset, limit)
+    }
+    fn script_editor(
+        &mut self,
+        action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        self.edit_script(action)
     }
 }

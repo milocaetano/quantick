@@ -1,0 +1,11 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Commodity Channel Index", overlay=false)
+len = input.int(20, "Length", minval=1, maxval=500)
+typical = (high + low + close) / 3.0
+basis = ta.sma(typical, len)
+deviation = 0.0
+for offset = 0 to len - 1
+    deviation := deviation + math.abs(typical[offset] - basis)
+deviation := deviation / len
+plot(deviation == 0 ? na : (typical - basis) / (0.015 * deviation), title="CCI", color=color.blue)

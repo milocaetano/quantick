@@ -1,0 +1,168 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "Document": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "source",
+        "read_only"
+      ],
+      "type": "object"
+    },
+    "LibraryEntry": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "read_only"
+      ],
+      "type": "object"
+    },
+    "NumericInput": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NumericValue"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "NumericValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "int",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "float",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "compiling": {
+      "type": "boolean"
+    },
+    "diagnostics": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dirty": {
+      "type": "boolean"
+    },
+    "document": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Document"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/LibraryEntry"
+      },
+      "type": "array"
+    },
+    "next_offset": {
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "numeric_inputs": {
+      "description": "Committed numeric inputs for the open identity on the focused pane.",
+      "items": {
+        "$ref": "#/$defs/NumericInput"
+      },
+      "type": "array"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "total": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "dirty",
+    "compiling",
+    "revision",
+    "entries",
+    "total",
+    "numeric_inputs"
+  ],
+  "title": "EditorResult",
+  "type": "object"
+}

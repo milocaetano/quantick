@@ -39,13 +39,21 @@ fn combined_byte_identical_runs() {
 
 #[test]
 fn combined_app_script_regression() {
-    let mut paths: Vec<_> = std::fs::read_dir(root().join("../../app/scripts"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    paths.sort();
-    assert_eq!(paths.len(), 9);
-    for path in paths {
+    // Keep the historical nine snapshots fixed; the market library has its
+    // independent numeric and preview fixtures in popular_pine.rs.
+    let originals = [
+        "ema",
+        "cvd",
+        "delta_histogram",
+        "vwap_cumulative",
+        "zigzag",
+        "range_box",
+        "copilot",
+        "force_bar",
+        "exhaustion_reversal",
+    ];
+    for name in originals {
+        let path = root().join(format!("../../app/scripts/{name}.pine"));
         let source = std::fs::read_to_string(&path).unwrap();
         golden(
             &format!("app-{}.txt", path.file_stem().unwrap().to_str().unwrap()),

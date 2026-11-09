@@ -53,7 +53,13 @@ struct RuntimeEffects<'a> {
     output: ObservedOutput<'a, IndicatorEvent>,
 }
 impl SessionEffects for RuntimeEffects<'_> {
-    fn event(&mut self, event: IndicatorEvent) {
+    fn event(&mut self, mut event: IndicatorEvent) {
+        if let IndicatorEvent::Rebuilt { descriptor, .. } = &mut event {
+            descriptor.title = quantick_stores::script_library::script_title(&descriptor.title);
+            if let Some(title) = &mut descriptor.short_title {
+                *title = quantick_stores::script_library::script_title(title);
+            }
+        }
         let _ = self.output.send(event);
     }
     fn inputs_rebound(&mut self, d: InputsRebound<'_>) {
