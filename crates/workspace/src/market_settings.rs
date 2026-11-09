@@ -15,6 +15,9 @@ use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrig
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod pane_marks;
+pub use pane_marks::PaneWrite;
+
 /// The market settings filename inside the cockpit home.
 pub const MARKET_SETTINGS_FILE: &str = "market-settings.toml";
 
@@ -24,6 +27,7 @@ const FORMAT_VERSION: u32 = 1;
 const ROLE_FLOW: &str = "flow";
 const ROLE_CONTEXT: &str = "context:";
 const ROLE_CONTEXT_SLOT: &str = "context-slot:";
+const ROLE_ALL_TIMEFRAMES: &str = "all-timeframes";
 
 /// The legacy pane address of the flow chart.
 const LEGACY_FLOW_PANE: usize = 0;
@@ -66,6 +70,8 @@ pub enum PaneRole {
     },
     /// A context chart whose legacy file named only its address.
     ContextSlot(usize),
+    /// Every chart of the market, at any bars: see [`pane_marks`].
+    AllTimeframes,
     /// A role a newer build wrote: kept in the file and shown nowhere.
     Other(String),
 }
@@ -74,6 +80,9 @@ impl From<String> for PaneRole {
     fn from(text: String) -> Self {
         if text == ROLE_FLOW {
             return Self::Flow;
+        }
+        if text == ROLE_ALL_TIMEFRAMES {
+            return Self::AllTimeframes;
         }
         if let Some(slot) = text
             .strip_prefix(ROLE_CONTEXT_SLOT)
@@ -96,6 +105,7 @@ impl From<PaneRole> for String {
             PaneRole::Flow => ROLE_FLOW.to_owned(),
             PaneRole::Context { bars } => format!("{ROLE_CONTEXT}{bars}"),
             PaneRole::ContextSlot(slot) => format!("{ROLE_CONTEXT_SLOT}{slot}"),
+            PaneRole::AllTimeframes => ROLE_ALL_TIMEFRAMES.to_owned(),
             PaneRole::Other(text) => text,
         }
     }
@@ -118,6 +128,15 @@ impl DrawingKey {
                 asset,
             },
             role: context_bars.map_or(PaneRole::Flow, |bars| PaneRole::Context { bars }),
+        }
+    }
+
+    /// The set every chart of `market` shows, whatever its bars.
+    #[must_use]
+    pub fn all_timeframes(market: MarketKey) -> Self {
+        Self {
+            market,
+            role: PaneRole::AllTimeframes,
         }
     }
 }
@@ -143,7 +162,11 @@ impl DrawingSet {
     }
 
     fn is(&self, key: &DrawingKey) -> bool {
-        self.venue == key.market.venue && self.asset == key.market.asset && self.role == key.role
+        self.is_market(&key.market) && self.role == key.role
+    }
+
+    fn is_market(&self, market: &MarketKey) -> bool {
+        self.venue == market.venue && self.asset == market.asset
     }
 }
 
@@ -545,5 +568,7 @@ pub fn to_text(settings: &MarketSettings) -> Result<String, toml::ser::Error> {
     toml::to_string_pretty(settings)
 }
 
+#[cfg(test)]
+mod pane_marks_tests;
 #[cfg(test)]
 mod tests;

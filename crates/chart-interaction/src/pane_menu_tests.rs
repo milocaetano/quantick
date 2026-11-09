@@ -170,7 +170,7 @@ fn locked_drawing_and_objects_keep_verbs_stable_ids_and_chip_order() {
             "locked",
             "other market",
             "off series",
-            "all charts"
+            "all timeframes"
         ]
     );
     assert!(matches!(

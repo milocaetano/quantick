@@ -147,7 +147,7 @@ impl ScopeToggle<'_> {
         ui.separator();
         let sharing = ui.add_enabled(
             shareable,
-            egui::Checkbox::new(&mut shared, "Show on all charts"),
+            egui::Checkbox::new(&mut shared, "Show on all timeframes"),
         );
         if sharing.changed() {
             edited.scope = if shared {

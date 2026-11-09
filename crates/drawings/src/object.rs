@@ -38,8 +38,13 @@ pub struct Drawing<T> {
     /// This object's own OHLC magnet: a drag of it snaps whenever this or the
     /// rail's magnet is on. Off unless the trader turned it on.
     pub magnet: bool,
-    /// Whether the other panes of this tab show it too.
+    /// Whether every chart of its market shows it, or only this one.
     pub scope: DrawingScope,
+    /// Read from a file written before a mark kept to its chart recorded its
+    /// bars: it shows at every bar rule of its chart, as it always has, and
+    /// is written back without bars. Provenance, never an edit, so it stays
+    /// out of [`PartialEq`].
+    pub legacy_unpinned: bool,
     /// Set when the tab changed the instrument under this mark.
     ///
     /// Time survives a symbol switch and price does not: BTC traded at the

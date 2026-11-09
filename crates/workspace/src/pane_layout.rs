@@ -1,6 +1,6 @@
 //! Pane-local layout binding and persistence bookkeeping; session owns membership.
 use crate::layout_document::LayoutId;
-use crate::market_settings::DrawingKey;
+use crate::market_settings::{DrawingKey, PaneRole};
 use crate::session::LayoutView;
 
 /// `Bars` is the host's bar rule, compared and never read here.
@@ -54,6 +54,26 @@ impl<Bars> PaneLayout<Bars> {
         let recut = context_bars.is_some_and(|bars| self.drawings_spec.as_ref() != Some(bars));
         self.seeded() && self.drawings_key.is_some() && (moved || recut)
     }
+    /// The flow chart cut to `now` keeps its key. When `alike` finds no mark
+    /// pinned to either cut, only the held bars move: nothing is rebuilt, so
+    /// selection and undo survive. Answers whether they moved.
+    pub fn recut_in_place(
+        &mut self,
+        now: Bars,
+        alike: impl FnOnce(&DrawingKey, &Bars, &Bars) -> bool,
+    ) -> bool
+    where
+        Bars: PartialEq + Copy,
+    {
+        let (Some(key), Some(held)) = (&self.drawings_key, self.drawings_spec) else {
+            return false;
+        };
+        let moved = held != now && key.role == PaneRole::Flow && alike(key, &held, &now);
+        if moved {
+            self.drawings_spec = Some(now);
+        }
+        moved
+    }
     pub fn drawings_dirty(&self, revision: u64) -> bool {
         self.drawings_key.is_some() && revision != self.saved_revision
     }
@@ -72,6 +92,34 @@ mod tests {
         assert_eq!(pane.layout_id(), None);
         assert!(!pane.seeded());
         assert!(!pane.drawings_dirty(3));
+    }
+
+    #[test]
+    fn only_the_flow_chart_moves_its_bars_in_place_and_only_when_alike() {
+        let keyed = |role| PaneLayout::<u32> {
+            drawings_key: Some(DrawingKey {
+                market: crate::market_settings::MarketKey {
+                    venue: "v".to_owned(),
+                    asset: "a".to_owned(),
+                },
+                role,
+            }),
+            drawings_spec: Some(1),
+            ..PaneLayout::default()
+        };
+        let mut flow = keyed(PaneRole::Flow);
+        assert!(!flow.recut_in_place(2, |_, _, _| false), "a pinned mark");
+        assert_eq!(flow.drawings_spec, Some(1));
+        assert!(flow.recut_in_place(2, |_, held, now| (*held, *now) == (1, 2)));
+        assert_eq!(flow.drawings_spec, Some(2));
+        assert!(!flow.recut_in_place(2, |_, _, _| true), "nothing moved");
+
+        let bars = "time:1m".to_owned();
+        let mut context = keyed(PaneRole::Context { bars });
+        assert!(
+            !context.recut_in_place(2, |_, _, _| true),
+            "a context chart's key names its bars"
+        );
     }
 
     #[test]

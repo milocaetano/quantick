@@ -144,7 +144,7 @@
           "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
         },
         "scope": {
-          "description": "`this_chart` or `all_charts` — whether the tab's other panes show it.",
+          "description": "`all_charts` (the default) when every chart of its market shows it at\nany timeframe; `this_chart` when only its own chart does, at the bars\nit was kept to.",
           "type": "string"
         },
         "tool_id": {

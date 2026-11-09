@@ -28,16 +28,17 @@
 //! attached to and out of every layout: they are an agent's overlay, removed
 //! by the agent, and were never part of what a trader keeps.
 //!
-//! **Drawings: put away and brought out.** Each pane holds the set of one
-//! [`DrawingKey`], its market and role, and no layout. A layout switch leaves it
-//! on the pane; a tab moving market, or a context chart to other bars, stores it
-//! under the old key and adopts the new key's, ids kept. A pane's revision
-//! counter is compared each frame; when it moved, the set goes to the market
-//! store and the debounced save follows.
+//! **Drawings: put away and brought out.** Each pane holds what one
+//! [`DrawingKey`] shows at its bars (`market_settings::pane_marks`), and no
+//! layout. A layout switch leaves it on the pane; a tab moving market, or a
+//! chart to other bars, stores it and adopts the new key's, ids kept. A pane's
+//! revision counter is compared each frame; when it moved, the set goes to the
+//! market store, the panes it reaches are rebuilt and the save follows.
 //!
 //! Per-frame cost: integer and short string compares per pane. Nothing here
 //! allocates on a quiet frame.
 
+use quantick_workspace::market_settings::PaneWrite;
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
@@ -65,6 +66,12 @@ fn facts_of(pane: &ChartPane) -> PaneFacts {
             || pane.drawings.draft().is_some()
             || !matches!(pane.gestures.drag, DrawingDrag::None),
     }
+}
+
+/// The bars a pane's drawings were brought out at, and are written back at.
+fn held_bars(pane: &ChartPane) -> String {
+    let spec = pane.layout.drawings_spec.unwrap_or(*pane.state.spec());
+    spec.to_config_string()
 }
 
 /// Read-only layout projection over the actual session and current pane topology.
@@ -697,19 +704,22 @@ impl LayoutAdapter<'_> {
 
     /// Serialise what a pane holds into the market store under the key the pane
     /// says it holds, and empty the pane.
-    fn put_away_drawings(&mut self, tab: u64, side: PaneSide) {
+    fn put_away_drawings(&mut self, tab: u64, side: PaneSide) -> PaneWrite {
         let Some(pane) = self.pane_mut_at(tab, side) else {
-            return;
+            return PaneWrite::default();
         };
         let Some(key) = pane.layout.drawings_key.take() else {
             // Never loaded: nothing of the layout's is on it. What a hook or
             // a test placed before seeding is dropped with the key.
             pane.drawings.take_all();
-            return;
+            return PaneWrite::default();
         };
         let marks = pane.drawings.take_all();
         pane.layout.saved_revision = pane.drawings.revision();
-        quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
+        let bars = held_bars(pane);
+        pane.layout.drawings_spec = None;
+        let market = self.store.market_mut().settings_mut();
+        quantick_drawings::store_marks(market, &key, &bars, &marks)
     }
 
     /// Adopt the drawings of the pane's current market and role. A context
@@ -742,15 +752,17 @@ impl LayoutAdapter<'_> {
         pane.layout.drawings_key = Some(key);
         pane.layout.drawings_source = source;
         pane.layout.drawings_spec = Some(*pane.state.spec());
-        pane.layout.saved_revision = pane.drawings.revision();
         if let Some(key) = grown {
-            self.refresh_twins(tab, side, &key);
+            self.refresh_twins(tab, side, &key, PaneWrite::ALL);
         }
     }
 
-    /// Put the set kept under `key` on a pane.
+    /// Put what `key` shows at the pane's held bars on it.
     fn adopt_marks(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
-        let items = quantick_drawings::live_marks(self.store.market().settings(), key);
+        let Some(bars) = self.pane_at(tab, side).map(held_bars) else {
+            return;
+        };
+        let items = quantick_drawings::pane_marks(self.store.market().settings(), key, &bars);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -797,9 +809,9 @@ impl LayoutAdapter<'_> {
         carried
     }
 
-    /// A tab whose market moved out from under a pane, or a context chart cut
-    /// to other bars: the drawings go to the key they were drawn on and the new
-    /// key's come out. A roll inside one asset lands on the same key. A chart
+    /// A tab whose market moved out from under a pane, or a chart cut to other
+    /// bars: the drawings go to the key they were drawn on and the new key's
+    /// come out. A roll inside one asset lands on the same key. A chart
     /// cut to other bars with a strategy live stays on the key it holds until the
     /// strategy stops: it names one of these drawings, and a re-cut is no reason
     /// to kill it. Moving the tab to another market still does, as it always has.
@@ -810,9 +822,8 @@ impl LayoutAdapter<'_> {
             .flat_map(|(tab_id, tab)| {
                 let (feed, symbol) = Self::market_of(tab);
                 tab.panes()
-                    .filter(move |(pane, side)| {
-                        let recuttable =
-                            *side != PaneSide::Flow && pane.strategies.anchors.watching() == 0;
+                    .filter(move |(pane, _)| {
+                        let recuttable = pane.strategies.anchors.watching() == 0;
                         let bars = recuttable.then(|| pane.state.spec());
                         pane.layout.needs_rekey(feed, symbol, bars)
                     })
@@ -824,18 +835,19 @@ impl LayoutAdapter<'_> {
             let left = self
                 .pane_at(tab, side)
                 .and_then(|pane| pane.layout.drawings_key.clone());
-            self.put_away_drawings(tab, side);
+            let write = self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
-            if let Some(left) = left {
-                self.refresh_twins(tab, side, &left);
+            if let Some(left) = left.filter(|_| write.changed()) {
+                self.refresh_twins(tab, side, &left, write);
+                self.mark_market_dirty();
             }
-            self.mark_market_dirty();
         }
     }
 
     /// Any pane whose drawings changed since they were last written has its
-    /// set copied into the market store.
+    /// set copied into the market store, at the bars it is cut to.
     pub(super) fn persist_changed_drawings(&mut self) {
+        self.follow_quiet_recuts();
         let changed: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()
@@ -856,35 +868,47 @@ impl LayoutAdapter<'_> {
                 continue;
             };
             pane.layout.saved_revision = pane.drawings.revision();
-            let marks = pane.drawings.items().to_vec();
-            quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
-            self.mark_market_dirty();
-            self.refresh_twins(tab, side, &key);
+            let (marks, bars) = (pane.drawings.items().to_vec(), held_bars(pane));
+            let market = self.store.market_mut().settings_mut();
+            let write = quantick_drawings::store_marks(market, &key, &bars, &marks);
+            if write.changed() {
+                self.mark_market_dirty();
+                self.refresh_twins(tab, side, &key, write);
+            }
         }
     }
 
-    /// One market and role is one set: every other pane holding `key` is brought
-    /// to what was written, or its next edit writes a stale set over it. The
-    /// selection crosses the rebuild by id; only a gesture in flight holds a twin
-    /// back, since a swap under it would land on another object.
-    fn refresh_twins(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
-        let twins: Vec<(u64, PaneSide)> = self
+    /// See `PaneLayout::recut_in_place`: a mark drawn since is then written at
+    /// the bars it was drawn on.
+    fn follow_quiet_recuts(&mut self) {
+        let settings = self.store.market().settings();
+        for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+            pane.layout
+                .recut_in_place(*pane.state.spec(), |key, held, now| {
+                    settings.same_marks_at(key, &held.to_config_string(), &now.to_config_string())
+                });
+        }
+    }
+
+    /// Every other pane a write reaches ([`PaneWrite::reaches`]) is brought to
+    /// it, or its next edit writes a stale set over it. The selection crosses
+    /// the rebuild by id; only a gesture in flight holds a twin back.
+    fn refresh_twins(&mut self, tab: u64, side: PaneSide, key: &DrawingKey, write: PaneWrite) {
+        let twins: Vec<(u64, PaneSide, DrawingKey)> = self
             .tabs
             .iter_with_ids()
             .flat_map(|(other_id, other)| {
-                other
-                    .panes()
-                    .filter(|(pane, _)| {
-                        pane.layout.drawings_key.as_ref() == Some(key)
-                            && !facts_of(pane).gesture_in_flight
-                    })
-                    .map(move |(_, other_side)| (other_id, other_side))
+                other.panes().filter_map(move |(pane, other_side)| {
+                    let held = pane.layout.drawings_key.as_ref()?;
+                    let reached = write.reaches(key, held) && !facts_of(pane).gesture_in_flight;
+                    reached.then(|| (other_id, other_side, held.clone()))
+                })
             })
-            .filter(|target| *target != (tab, side))
+            .filter(|(other, other_side, _)| (*other, *other_side) != (tab, side))
             .collect();
-        for (twin_tab, twin_side) in twins {
+        for (twin_tab, twin_side, twin_key) in twins {
             self.leave_pane_gestures(twin_tab, twin_side);
-            self.rebuild_keeping_selection(twin_tab, twin_side, key);
+            self.rebuild_keeping_selection(twin_tab, twin_side, &twin_key);
         }
     }
 

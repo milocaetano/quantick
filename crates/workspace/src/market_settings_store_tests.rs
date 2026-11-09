@@ -50,6 +50,7 @@ fn level(id: Option<u64>, price: f64) -> SavedDrawing {
         payload: None,
         text: None,
         origin: None,
+        bars: None,
     }
 }
 

@@ -65,7 +65,7 @@ pub use object::{
 pub use payload::{DrawingPayload, NoPayload};
 pub use placement::reanchor_points;
 pub use rect::{Align, Align2, PxRange, PxRect};
-pub use saved::{SavedDrawingExt, live_marks, store_marks};
+pub use saved::{SavedDrawingExt, pane_marks, store_marks};
 pub use scene::{
     FontFamily, FontSpec, MarkScene, MarkShape, Stroke, TextMetrics, UNMEASURED, Unmeasured,
     dashed_segment_within,

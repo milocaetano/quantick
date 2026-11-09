@@ -4363,8 +4363,10 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
         "redacted_pending_attention_scope"
     );
     let drawing = &capture.scopes[&scopes[1]].value["pointer"]["drawing"];
-    assert_eq!(drawing["mirrored"], true);
-    assert_eq!(drawing["owner_pane_side"], "flow");
+    // Every chart of the market holds the mark itself: the hit is the time
+    // chart's own copy, not a mirror of the flow chart's.
+    assert_eq!(drawing["mirrored"], false);
+    assert_eq!(drawing["owner_pane_side"], "time");
     assert_eq!(drawing["user_label_present"], true);
     let selection = &capture.scopes[&scopes[2]].value["drawing"];
     assert_eq!(selection["user_label_present"], true);

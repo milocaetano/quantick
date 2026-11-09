@@ -5,7 +5,11 @@ use crate::{
     DrawingTool, PaneKey,
 };
 use quantick_workspace::layout_document::{SavedAuthor, SavedBand, SavedDrawing, SavedPoint};
-use quantick_workspace::market_settings::{DrawingKey, MarketSettings};
+use quantick_workspace::market_settings::{DrawingKey, MarketSettings, PaneWrite};
+
+#[cfg(test)]
+#[path = "saved_tests.rs"]
+mod saved_tests;
 
 pub trait SavedDrawingExt {
     #[must_use]
@@ -55,6 +59,8 @@ impl SavedDrawingExt for SavedDrawing {
                 .inline_text(drawing.payload.as_ref())
                 .map(str::to_owned),
             origin: drawing.origin.clone(),
+            // Pinned by `store_marks`, which knows the bars it writes at.
+            bars: None,
         }
     }
 
@@ -111,6 +117,7 @@ impl SavedDrawingExt for SavedDrawing {
             } else {
                 DrawingScope::ThisChart
             },
+            legacy_unpinned: !self.shared && self.bars.is_none(),
             foreign_market: false,
             off_series: false,
             origin: self.origin.clone(),
@@ -119,23 +126,40 @@ impl SavedDrawingExt for SavedDrawing {
     }
 }
 
-/// Write a pane's marks under `key`. Entries of a tool this build lacks stay.
+/// Write what a pane holding `key`, cut at `bars`, holds: see
+/// [`MarketSettings::store_pane`]. A mark kept to this chart is pinned to
+/// `bars` unless it predates pinning. Entries of a tool this build lacks stay.
 pub fn store_marks(
     settings: &mut MarketSettings,
     key: &DrawingKey,
+    bars: &str,
     marks: &[Drawing<DrawingTool>],
-) {
-    let items = marks.iter().map(SavedDrawing::from_drawing).collect();
-    settings.replace(key, items, |tool| DrawingTool::by_id(tool).is_some());
+) -> PaneWrite {
+    let items = marks
+        .iter()
+        .map(|mark| {
+            let mut entry = SavedDrawing::from_drawing(mark);
+            if !entry.all_timeframes() && !mark.legacy_unpinned {
+                entry.bars = Some(bars.to_owned());
+            }
+            entry
+        })
+        .collect();
+    settings.store_pane(key, bars, items, |tool| DrawingTool::by_id(tool).is_some())
 }
 
-/// The live marks of `key`. An entry of a tool this build lacks stays in the
-/// file and draws nothing.
+/// The live marks a pane holding `key`, cut at `bars`, shows: see
+/// [`MarketSettings::pane_drawings`]. An entry of a tool this build lacks
+/// stays in the file and draws nothing.
 #[must_use]
-pub fn live_marks(settings: &MarketSettings, key: &DrawingKey) -> Vec<Drawing<DrawingTool>> {
-    let saved = settings.drawings(key);
+pub fn pane_marks(
+    settings: &MarketSettings,
+    key: &DrawingKey,
+    bars: &str,
+) -> Vec<Drawing<DrawingTool>> {
+    let saved = settings.pane_drawings(key, bars);
     let mut items = Vec::with_capacity(saved.len());
-    for entry in saved {
+    for entry in &saved {
         match entry.to_drawing(DrawingId(entry.id.unwrap_or(0))) {
             Some(drawing) => items.push(drawing),
             None => tracing::warn!(
