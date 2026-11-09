@@ -2329,7 +2329,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         background: false,
     };
     let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
-    super::super::tabs::apply_palette_intent(&mut app, add);
+    super::super::frame::apply_palette_intent(&mut app, add);
     let palette =
         (app.surfaces.market_palette.open.as_mut()).expect("the palette stays open on a refusal");
     assert!(
@@ -2379,7 +2379,7 @@ fn a_market_enters_recent_only_once_its_tab_has_closed() {
         .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
         .collect();
     assert_eq!(closed, [("ETHUSDT".to_owned(), "tick:77".to_owned())]);
-    let snapshot = super::super::tabs::market_snapshot(&app);
+    let snapshot = MarketPaletteHost::market_snapshot(&app);
     let world = snapshot.world();
     assert_eq!(
         quantick_workspace::market_list::market_bar(&world, "binance", "ETHUSDT").as_deref(),
@@ -2398,7 +2398,7 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     let active = quantick_engine::bar_registry::BUILTIN_BARS.parse("volume:13");
     app.active_tab_mut().flow_pane.set_spec(active.unwrap());
     type_into_palette(&mut app, &ctx, "ETHUSDT");
-    let snapshot = super::super::tabs::market_snapshot(&app);
+    let snapshot = MarketPaletteHost::market_snapshot(&app);
     let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
     let palette = (app.surfaces.market_palette.open.as_mut()).expect("open");
     assert_eq!(

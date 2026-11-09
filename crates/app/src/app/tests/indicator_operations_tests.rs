@@ -66,7 +66,8 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
         .copied()
         .unwrap();
     assert_ne!(app.active_tab().focused_side(), origin.side);
-    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(origin));
+    app.indicator_wiring()
+        .apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(origin));
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
     assert!(pane_set(&app, PaneSide::Flow).is_empty());
@@ -257,7 +258,8 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
             .find(|(target, _)| target.side != app.active_tab().focused_side())
             .unwrap()
             .0;
-        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(other));
+        app.indicator_wiring()
+            .apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(other));
         settle_indicators(&mut app);
         assert_one_indicator_save(&mut app);
         assert!(app.runtime.indicators.registry.slot_kinds().is_empty());

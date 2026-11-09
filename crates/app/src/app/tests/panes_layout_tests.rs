@@ -2829,7 +2829,7 @@ fn a_previewed_input_never_reaches_the_layout() {
         side: PaneSide::Flow,
         slot,
     };
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
@@ -2844,13 +2844,15 @@ fn a_previewed_input_never_reaches_the_layout() {
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
     ];
     let change = app.runtime.indicators.preview_settings();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     assert!(
         pane_set(&app, PaneSide::Flow)[0].inputs.is_empty(),
         "a preview is not a commit"
     );
     let change = app.runtime.indicators.apply_settings();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     assert_eq!(
         pane_set(&app, PaneSide::Flow)[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),

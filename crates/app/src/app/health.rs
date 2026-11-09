@@ -1,6 +1,6 @@
 //! What the application says about its own health.
 //!
-//! [`super::QuantickApp::maybe_emit_summary`] is the `APP_HEALTH_SUMMARY`
+//! [`HealthCounters::maybe_emit_summary`] is the `APP_HEALTH_SUMMARY`
 //! line a validation run reads to decide whether a frame budget held, and
 //! `status_model` is the same set of facts shaped for the status bar. They
 //! sit together because they answer one question from one set of counters,
@@ -18,7 +18,7 @@ use crate::style::CandlePreset;
 use crate::window_scale;
 use quantick_orderflow::engine::OrderflowHealth;
 
-use super::QuantickApp;
+use super::workspace_runtime::WorkspaceRuntime;
 
 /// What the window measures about itself between perf summaries.
 ///
@@ -57,29 +57,33 @@ impl HealthCounters {
             last_summary: Instant::now(),
         }
     }
-}
 
-impl QuantickApp {
     /// Periodically log a perf summary and warn on threshold breaches.
     ///
     /// The clock and the context are read here; what the line says is
     /// [`HealthSummary`]'s, built from those readings and the counters.
-    pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
-        let elapsed = now - self.health.last_summary;
-        if !worker_diagnostics::emit_if_due(&self.runtime.tabs, elapsed) {
+    pub(super) fn maybe_emit_summary(
+        &mut self,
+        now: Instant,
+        ctx: &egui::Context,
+        runtime: &mut WorkspaceRuntime,
+        surface: Option<&window_scale::SurfaceProbe>,
+    ) {
+        let elapsed = now - self.last_summary;
+        if !worker_diagnostics::emit_if_due(&runtime.tabs, elapsed) {
             return;
         }
-        let geometry = WindowGeometry::read(ctx, self.chrome.surface.as_ref());
-        let book = self.active_tab_mut().tape_mut().health();
-        let summary = HealthSummary::build(self, elapsed.as_secs_f64(), geometry, book);
+        let geometry = WindowGeometry::read(ctx, surface);
+        let book = runtime.active_tab_mut().tape_mut().health();
+        let summary = HealthSummary::build(self, runtime, elapsed.as_secs_f64(), geometry, book);
         summary.log();
         summary.warn_breaches();
         let envelope = summary.envelope;
 
-        self.health.envelope.warn(&envelope);
-        self.health.trades_since_summary = 0;
-        self.active_tab_mut().tape_mut().reset_summary_counters();
-        self.health.last_summary = now;
+        self.envelope.warn(&envelope);
+        self.trades_since_summary = 0;
+        runtime.active_tab_mut().tape_mut().reset_summary_counters();
+        self.last_summary = now;
     }
 
     /// Everything the status bar reports this frame.
@@ -87,41 +91,50 @@ impl QuantickApp {
     /// Provenance (venue, symbol, transport, side honesty) is the market's and
     /// reads from the window; the price-scale hint is the *focused pane's*
     /// (§11), so it always describes the chart the user is working in.
-    pub(super) fn status_model(&self) -> statusbar::StatusModel {
-        let pane = self.focused_pane();
-        let note = self.active_tab().side_note(&self.config);
-        let row = (self.runtime.workspace.book).tab_row(self.runtime.tabs.active_id());
-        let feed = &self.active_tab().link;
+    pub(super) fn status_model(
+        &self,
+        runtime: &WorkspaceRuntime,
+        config: &crate::config::AppConfig,
+        home: bool,
+    ) -> statusbar::StatusModel {
+        let tab = runtime.active_tab();
+        let pane = tab.focused_pane();
+        let note = tab.side_note(config);
+        let row = (runtime.workspace.book).tab_row(runtime.tabs.active_id());
         statusbar::StatusModel {
-            workspace: (!self.chrome.title_bar.surface.is_home()).then_some(row.0),
+            workspace: (!home).then_some(row.0),
             modified: row.1,
-            autosave: self.runtime.workspace.book.autosave(),
-            venue: if feed.replay.is_some() {
+            autosave: runtime.workspace.book.autosave(),
+            venue: if tab.link.replay.is_some() {
                 "recording".to_owned()
             } else {
-                self.active_tab().feed_display_name(&self.config).to_owned()
+                tab.feed_display_name(config).to_owned()
             },
-            symbol: self.active_tab().symbol.clone(),
-            replay: feed.replay.as_ref().map(|link| statusbar::ReplayFigures {
-                speed: link.status.speed(),
-                progress: link.status.progress(),
-            }),
-            feed_arrival_ms: feed.trade_arrival_ms(),
-            feed_latency: self.active_tab().feed_latency(),
-            tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
-            deal_recording: statusbar::DealCell::of(self.active_tab().deal_recording_view()),
-            deal_chip: self.active_tab().deal_chip(),
+            symbol: tab.symbol.clone(),
+            replay: tab
+                .link
+                .replay
+                .as_ref()
+                .map(|link| statusbar::ReplayFigures {
+                    speed: link.status.speed(),
+                    progress: link.status.progress(),
+                }),
+            feed_arrival_ms: tab.link.trade_arrival_ms(),
+            feed_latency: tab.feed_latency(),
+            tape_age_ms: tab.tape_age_at(metrics::wall_clock_ms()),
+            deal_recording: statusbar::DealCell::of(tab.deal_recording_view()),
+            deal_chip: tab.deal_chip(),
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),
             // Provenance follows the active tab (§11), and so does the
             // simulated P&L: the cell speaks for the market on screen, never
             // for a background tab's position.
-            sim_pnl: self.active_tab().paper.status_cell(),
+            sim_pnl: tab.paper.status_cell(),
             price_auto: pane.price_view.is_auto(),
-            fps: self.health.frames.fps(),
-            frame_avg_ms: self.health.frames.avg_ms(),
-            frame_cpu_ms: self.health.cpu_frames.avg_ms(),
-            show_perf: self.health.show_perf,
+            fps: self.frames.fps(),
+            frame_avg_ms: self.frames.avg_ms(),
+            frame_cpu_ms: self.cpu_frames.avg_ms(),
+            show_perf: self.show_perf,
             saves_off: crate::store_home::writes_refused().map(|refused| refused.to_string()),
         }
     }
@@ -197,30 +210,31 @@ impl<'a> HealthSummary<'a> {
     /// Everything the line reports, read off the window over the `seconds`
     /// since the last summary.
     fn build(
-        app: &'a QuantickApp,
+        health: &'a HealthCounters,
+        runtime: &'a WorkspaceRuntime,
         seconds: f64,
         geometry: WindowGeometry,
         book: OrderflowHealth,
     ) -> Self {
-        let trades_per_s = app.health.trades_since_summary as f64 / seconds;
+        let trades_per_s = health.trades_since_summary as f64 / seconds;
         let book_updates_per_s = book.depth_updates_since_summary as f64 / seconds;
-        let tab = app.active_tab();
+        let tab = runtime.active_tab();
         Self {
-            tab_count: app.runtime.tabs.len(),
-            tab_id: app.runtime.tabs.active_id(),
+            tab_count: runtime.tabs.len(),
+            tab_id: runtime.tabs.active_id(),
             tab,
-            health: &app.health,
-            style: &app.runtime.style,
-            style_revision: app.runtime.style_revision,
-            candle_preset: CandlePreset::detect(&app.runtime.style.candles)
+            health,
+            style: &runtime.style,
+            style_revision: runtime.style_revision,
+            candle_preset: CandlePreset::detect(&runtime.style.candles)
                 .map_or("custom", CandlePreset::log_value),
-            pane: app.focused_pane(),
+            pane: tab.focused_pane(),
             geometry,
-            envelope: envelope::observe(&app.runtime.tabs, trades_per_s, book_updates_per_s),
+            envelope: envelope::observe(&runtime.tabs, trades_per_s, book_updates_per_s),
             book,
             trades_per_s,
             book_updates_per_s,
-            frame_avg_ms: app.health.frames.avg_ms().unwrap_or(0.0),
+            frame_avg_ms: health.frames.avg_ms().unwrap_or(0.0),
             feed_arrival_ms: tab.link.trade_arrival_ms(),
         }
     }

@@ -124,7 +124,79 @@ use crate::surfaces::drawing_chrome::{
 use crate::tab::BOOK_GENERATION_STRIDE;
 use crate::time_header;
 use crate::viewport::Viewport;
+use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
+
+/// The window's test doors: its entry point and its read views.
+impl QuantickApp {
+    pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
+        arrangement_adapter::ArrangementRead {
+            tabs: &self.runtime.tabs,
+            config: &self.config,
+            toolrail: &self.toolrail,
+            tz: &self.runtime.tz,
+            dock: &self.dock,
+            show_perf: self.health.show_perf,
+            record_deals: self.chrome.record_deals,
+            history: &self.runtime.history,
+            drawing_chrome: &self.drawings.chrome,
+            workspace_book: self.runtime.workspace.book.book(),
+        }
+    }
+
+    pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
+        workspace_save_adapter::WorkspaceRead {
+            arrangement: self.arrangement_state(),
+            session: self.runtime.workspace.session(),
+            replay_view: &self.replay_view,
+        }
+    }
+
+    /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
+    /// (already streaming through `feed`) and bar `spec`, with no saved
+    /// workspace to restore.
+    ///
+    /// The window itself always has one (`main` reads the file before it
+    /// spawns a feed), so this is the tests' entry point: a case about the
+    /// chart is not a case about what the last session left on disk.
+    #[must_use]
+    pub fn new(
+        config: AppConfig,
+        feed_id: impl Into<String>,
+        symbol: impl Into<String>,
+        spec: impl Into<crate::state::BarConfiguration>,
+        feed: FeedHandle,
+    ) -> Self {
+        Self::new_with_workspace(
+            config,
+            feed_id,
+            symbol,
+            spec,
+            feed,
+            ui_state::Workspace::default(),
+            AppLaunch::default(),
+        )
+    }
+
+    /// Whether the toolbar's heatmap lamp is lit.
+    ///
+    /// The *switch*, not what capture lets through it — the same reading the
+    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
+    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
+    /// for as long as book capture is starting, and forever on a source with no
+    /// book: the trader sees an unlit button, presses it, and switches the
+    /// layer they wanted *off*. The button already has an honest way to say a
+    /// source cannot fill it — `.enabled(...)` carrying its
+    /// `disabled_explanation` — so the lamp beside it answers the only other
+    /// question there is. The header takes the pane's reading directly: a
+    /// second production entry point to the same answer is how the two drift.
+    #[must_use]
+    fn heatmap_lamp_on(&self) -> bool {
+        self.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
+    }
+}
 
 /// The slot a stored fractional anchor sits on, asked of the one owner.
 ///
@@ -2826,9 +2898,9 @@ fn attach_script_for_test(
         by_operator,
     );
     let owner = attached.target;
-    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
-        attached,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        crate::app::indicator_manager::IndicatorEdit::Attached(attached),
+    );
     (
         owner.tab,
         crate::control::pane_side_dto(owner.side),
@@ -2849,9 +2921,9 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
         index,
     )?;
     if let Some(attached) = added.attachment {
-        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
-            attached,
-        ));
+        app.indicator_wiring().apply_indicator_edit(
+            crate::app::indicator_manager::IndicatorEdit::Attached(attached),
+        );
     }
     app.runtime.indicators.watch_attachment(added.watch);
     Some(slot)
