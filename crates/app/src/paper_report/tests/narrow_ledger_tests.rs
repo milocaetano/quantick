@@ -138,18 +138,25 @@ fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
 }
 
 /// The trader's screenshot: side, round trip, instrument and points ran
-/// into one another. Narrow, the instrument goes and the points stay.
+/// into one another. Narrow, the words wrap and both figures stay whole,
+/// each flush right on its own line.
 #[test]
 fn a_trade_row_at_the_docked_width_keeps_its_result_and_overlaps_nothing() {
     let trade = short_four();
-    let points = PnlReader::plain().of("WINZ26").closed(&trade);
+    let (lead, behind) = PnlReader::plain().of("WINZ26").closed_split(&trade);
 
     let narrow = trade_row(NARROW_PX, &trade);
     assert_apart(&narrow, NARROW_PX);
     assert!(has(&narrow, "SHORT 4"), "the side is never cut: {narrow:?}");
+    for figure in [&lead, &behind] {
+        assert!(
+            narrow.iter().any(|(text, _)| text == figure),
+            "{figure} is never cut: {narrow:?}"
+        );
+    }
     assert!(
-        has(&narrow, &points),
-        "the points are never cut: {narrow:?}"
+        !has(&narrow, "21 Oct"),
+        "the day's card carries the date: {narrow:?}"
     );
 
     let wide = trade_row(WIDE_PX, &trade);
@@ -193,9 +200,10 @@ fn a_session_row_at_the_docked_width_wraps_its_complete_name_and_net() {
     let head = SessionHead {
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
         label: "morning replay of the opening drive".to_owned(),
+        title: "morning replay of the opening drive · 10:50–10:58".to_owned(),
         source: Some(SessionSource::Replay),
         count: 11,
-        net: (Decimal::new(11_520, 2), DAY_NET.to_owned()),
+        net: (Decimal::new(11_520, 2), "+115.20 BRL".to_owned()),
         folded: false,
         focused: false,
         live: false,
@@ -203,8 +211,8 @@ fn a_session_row_at_the_docked_width_wraps_its_complete_name_and_net() {
     let texts = painted_text(NARROW_PX, |ui| _ = draw_session_head(ui, &head));
     assert_apart(&texts, NARROW_PX);
     assert!(
-        has(&texts, &head.label) && has(&texts, DAY_NET),
-        "the name and calculation stay complete: {texts:?}"
+        has(&texts, &head.title) && has(&texts, "11 · +115.20 BRL"),
+        "the name, its span and the leading figure stay complete: {texts:?}"
     );
 }
 

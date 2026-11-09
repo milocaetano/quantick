@@ -156,6 +156,13 @@ connection_action = "#202020"
 loss_ink = "#88181E"
 bright_gain_ink = "#64DCA0"
 bright_loss_ink = "#FF9191"
+# The trade ledger: a white day card edged on the chrome, a blue-grey
+# session box inside it, and the selected trade (docs/layout/trades).
+ledger_card = "#FFFFFF"
+ledger_card_edge = "#D5D9E0"
+ledger_session = "#F1F4F8"
+ledger_session_edge = "#E1E6EE"
+ledger_selection = "#D6E6FB"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.

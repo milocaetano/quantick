@@ -169,13 +169,25 @@ impl SessionInfo {
     pub fn default_label(&self, tz: TzOffset) -> String {
         let mut label = source_word(self.source).to_owned();
         if let Some(first) = self.first_closed_ms {
-            let (.., hour, minute, _) = civil_utc(first.saturating_add(tz.offset_ms()));
-            label.push_str(&format!(" · {hour:02}:{minute:02}"));
+            label.push_str(&format!(" · {}", clock_minute(first, tz)));
         }
-        if let Some(rerun) = self.key.rerun() {
-            label.push_str(&format!(" · rerun {rerun}"));
-        }
+        label.push_str(&self.rerun_suffix());
         label
+    }
+
+    /// The label without its clock, for a row that writes its own time
+    /// span: the trader's name, or `Replay · rerun 2`.
+    #[must_use]
+    pub fn stem(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("{}{}", source_word(self.source), self.rerun_suffix()))
+    }
+
+    fn rerun_suffix(&self) -> String {
+        self.key
+            .rerun()
+            .map_or_else(String::new, |rerun| format!(" · rerun {rerun}"))
     }
 
     /// The tags this session's file gives one of its trades.
@@ -201,14 +213,32 @@ pub struct SessionLabel {
     pub text: String,
     /// `text` lowercased — what a [`LedgerQuery`]'s words are found in.
     pub folded: String,
+    /// The label without its clock ([`SessionInfo::stem`]): what a session's
+    /// header writes before its own time span.
+    pub stem: String,
 }
 
 impl SessionLabel {
     #[must_use]
     pub fn new(text: String) -> Self {
         let folded = text.to_lowercase();
-        Self { text, folded }
+        let stem = text.clone();
+        Self { text, folded, stem }
     }
+}
+
+/// `HH:MM` of `timestamp_ms` in the display timezone.
+#[must_use]
+pub fn clock_minute(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (.., hour, minute, _) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{hour:02}:{minute:02}")
+}
+
+/// `HH:MM:SS` of `timestamp_ms` in the display timezone.
+#[must_use]
+pub fn clock_second(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (.., hour, minute, second) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{hour:02}:{minute:02}:{second:02}")
 }
 
 /// The word a session's source reads as.
@@ -344,7 +374,13 @@ pub fn session_labels(
     history
         .sessions
         .iter()
-        .map(|(key, info)| (key.clone(), SessionLabel::new(info.label(tz))))
+        .map(|(key, info)| {
+            let label = SessionLabel {
+                stem: info.stem(),
+                ..SessionLabel::new(info.label(tz))
+            };
+            (key.clone(), label)
+        })
         .collect()
 }
 

@@ -92,7 +92,13 @@ mod tests {
                 // writes in the bright pair (`paper::pnl_ink`).
                 | Token::LossInk
                 | Token::BrightGainInk
-                | Token::BrightLossInk => light.color(token).to_array(),
+                | Token::BrightLossInk
+                // The trade ledger is the dock's, never a chart's.
+                | Token::LedgerCard
+                | Token::LedgerCardEdge
+                | Token::LedgerSession
+                | Token::LedgerSessionEdge
+                | Token::LedgerSelection => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

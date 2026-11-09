@@ -154,6 +154,11 @@ fn three_replays_of_one_day_are_three_sessions_not_one() {
     let label = loaded.sessions[&third].default_label(UTC);
     assert_eq!(label, "Replay · 13:01 · rerun 2");
     assert_eq!(
+        loaded.sessions[&third].stem(),
+        "Replay · rerun 2",
+        "a session header writes its own span instead of the first close"
+    );
+    assert_eq!(
         loaded.sessions[&second].label(UTC),
         "Replay · 13:01 · rerun 1"
     );

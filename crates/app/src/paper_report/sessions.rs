@@ -9,8 +9,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_appearance::FontRole;
-use quantick_appearance::paper::{RowKind, ledger_row};
+use quantick_appearance::paper::{RowKind, RowLook, SESSION_HEAD_PAD, ledger_row};
 use quantick_paper::report::LoadedHistory;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress, complete_tag,
@@ -20,13 +19,14 @@ use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
 
+use super::rows::{Bold, draw_header};
 use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
 use crate::paper_calendar::{CalendarAction, CalendarState, DayIndex, draw_month, today};
-use crate::paper_chrome::{pill_toggle, points_color};
+use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
 
-/// Indent of a session's row under its day header.
+/// Indent of the hidden-session line under its caption.
 const SESSION_INDENT_PX: f32 = 14.0;
 /// Width of the ledger's search box.
 const SEARCH_FIELD_PX: f32 = 120.0;
@@ -256,66 +256,24 @@ impl LedgerSessions {
     }
 }
 
-/// A session's row inside its day: fold caret, source glyph, label, count
-/// and net, on its own plate indented under the day
-/// (`paper::RowKind::Session`). A click folds it; the menu renames or
-/// deletes it.
+/// A session's header, the top of its box inside the day's card: a large
+/// caret, the source glyph and `Live · 12:16–13:56`, its count and leading
+/// figure flush right (`paper::RowKind::Session`). A click folds it; the
+/// menu renames or deletes it.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Session);
-    let ink = *palette.get(look.ink);
-    let (glyph, glyph_ink) =
-        source_glyph(&palette, head.source).unwrap_or(("", palette.text_faint()));
-    let glyph_ink = look.mark.map_or(glyph_ink, |token| *palette.get(token));
-    let mut job = egui::text::LayoutJob::default();
-    for (text, font_id, color) in [
-        (
-            format!("{} ", super::rows::caret(head.folded)),
-            palette.font(FontRole::Body),
-            ink,
-        ),
-        (format!("{glyph} "), palette.body_font(10.0), glyph_ink),
-        (format!("{}\n", head.label), palette.mono_font(10.0), ink),
-    ] {
-        job.append(
-            &text,
-            0.0,
-            egui::TextFormat {
-                font_id,
-                color,
-                valign: egui::Align::Center,
-                ..Default::default()
-            },
-        );
-    }
-    let numbers = crate::paper_chrome::signed_text(
-        &format!("{} \u{00b7} {}", head.count, head.net.1),
-        palette.mono_font(10.0),
-        ink,
-        |value| match look.pnl_ink(value.cmp(&rust_decimal::Decimal::ZERO)) {
-            Some(token) => *palette.get(token),
-            None => points_color(&palette, value),
-        },
-    );
-    for section in numbers.sections {
-        job.append(&numbers.text[section.byte_range], 0.0, section.format);
-    }
-    job.break_on_newline = true;
-    job.wrap.max_rows = usize::MAX;
-    job.wrap.max_width = (ui.available_width() - 2.0 * SESSION_INDENT_PX - 6.0).max(1.0);
-    let galley = ui.painter().layout_job(job);
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), galley.size().y + 12.0),
-        egui::Sense::click(),
+    let glyph = source_glyph(&palette, head.source, &look);
+    let figures = format!("{} \u{00b7} {}", head.count, head.net.1);
+    let response = draw_header(
+        ui,
+        &look,
+        (&head.title, glyph),
+        &figures,
+        (SESSION_HEAD_PAD, Bold::Neither),
+        (head.folded, head.focused),
     );
     let mut press = None;
-    if ui.is_rect_visible(rect) {
-        let plate = rect.with_min_x(rect.left() + SESSION_INDENT_PX);
-        let lit = head.focused || response.hovered();
-        super::rows::paint_look(ui, &palette, plate, &look, lit, 0.0);
-        ui.painter()
-            .galley(plate.min + egui::vec2(6.0, 6.0), galley, ink);
-    }
     if response.clicked() {
         press = Some(SessionPress::Fold(head.key.clone(), !head.folded));
     }
@@ -377,7 +335,7 @@ pub(super) fn draw_inline(
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_height(palette.layout(LEDGER_ROW_HEIGHT_PX));
-            ui.add_space(SESSION_INDENT_PX);
+            ui.add_space(SESSION_HEAD_PAD.left);
             match edit {
                 LedgerEdit::Rename { session, text } => {
                     let field = ui.add(
@@ -486,14 +444,19 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
     }
 }
 
-/// Replay wears an amber play glyph, live none, unrecorded a faint `?`.
+/// Replay wears a play glyph - Dark's amber, or the row's own mark ink -
+/// live none, unrecorded a `?` in the row's secondary ink.
 pub(super) fn source_glyph(
     palette: &crate::theme::Palette,
     source: Option<SessionSource>,
+    look: &RowLook,
 ) -> Option<(&'static str, egui::Color32)> {
     match source {
-        Some(SessionSource::Replay) => Some((icons::PLAY, palette.amber())),
+        Some(SessionSource::Replay) => Some((
+            icons::PLAY,
+            look.mark.map_or(palette.amber(), |mark| *palette.get(mark)),
+        )),
         Some(SessionSource::Live) => None,
-        None => Some(("?", palette.text_faint())),
+        None => Some(("?", *palette.get(look.detail))),
     }
 }

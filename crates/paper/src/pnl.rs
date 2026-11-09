@@ -305,6 +305,19 @@ impl SymbolPnl<'_> {
             .trade(self.symbol, trade.pnl_points, trade.quantity)
     }
 
+    /// [`Self::closed`] apart: the leading figure, and the one that keeps
+    /// it honest - a row writes them on two lines.
+    #[must_use]
+    pub fn closed_split(&self, trade: &ClosedTrade) -> (String, String) {
+        let units = self.reader.book.units(self.symbol);
+        let pnl = TradePnl::of(trade.pnl_points, trade.quantity, &units);
+        let primary = self.reader.settings.primary(units.money.is_some());
+        (
+            fmt_primary(&pnl, &units, primary),
+            fmt_primary(&pnl, &units, secondary_of(primary)),
+        )
+    }
+
     /// One closed trade of this symbol, in the leading figure alone.
     #[must_use]
     pub fn compact(&self, trade: &ClosedTrade) -> String {
