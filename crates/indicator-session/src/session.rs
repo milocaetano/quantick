@@ -12,48 +12,6 @@ pub struct IndicatorSession {
     pub(crate) retired_folds: u64,
 }
 
-#[cfg(test)]
-mod reload_tests {
-    use super::*;
-    struct Silent;
-    impl SessionEffects for Silent {
-        fn event(&mut self, _: IndicatorEvent) {}
-        fn inputs_rebound(&mut self, _: crate::InputsRebound<'_>) {}
-    }
-    fn source(default: i64) -> IndicatorSource {
-        IndicatorSource::Script {
-            name: "defaults.pine".into(),
-            text: format!("length = input.int({default})\nplot(bar_index * length)\n"),
-        }
-    }
-    #[test]
-    fn reload_uses_durable_override_provenance_and_preserves_last_good_on_error() {
-        let mut session = IndicatorSession::new();
-        let slot = SlotId(0);
-        session.add(slot, source(9), &mut Silent);
-        session.reload(slot, source(17), Some(vec![]), &mut Silent);
-        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(17)]);
-        session.reload(
-            slot,
-            source(23),
-            Some(vec![InputValue::Int(4)]),
-            &mut Silent,
-        );
-        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
-        session.reload(
-            slot,
-            IndicatorSource::Script {
-                name: "defaults.pine".into(),
-                text: "plot(unknown)".into(),
-            },
-            Some(vec![]),
-            &mut Silent,
-        );
-        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
-        assert!(session.slots[&slot].stale.is_some());
-        assert_eq!(session.live_instances(), 1);
-    }
-}
 /// Worker-side bookkeeping for one slot: the host id plus what the UI is
 /// known to have, so every event is an exact delta.
 pub(crate) struct SlotMirror {
@@ -272,5 +230,48 @@ impl IndicatorSession {
         {
             self.host.remove(host_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    struct Silent;
+    impl SessionEffects for Silent {
+        fn event(&mut self, _: IndicatorEvent) {}
+        fn inputs_rebound(&mut self, _: crate::InputsRebound<'_>) {}
+    }
+    fn source(default: i64) -> IndicatorSource {
+        IndicatorSource::Script {
+            name: "defaults.pine".into(),
+            text: format!("length = input.int({default})\nplot(bar_index * length)\n"),
+        }
+    }
+    #[test]
+    fn reload_uses_durable_override_provenance_and_preserves_last_good_on_error() {
+        let mut session = IndicatorSession::new();
+        let slot = SlotId(0);
+        session.add(slot, source(9), &mut Silent);
+        session.reload(slot, source(17), Some(vec![]), &mut Silent);
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(17)]);
+        session.reload(
+            slot,
+            source(23),
+            Some(vec![InputValue::Int(4)]),
+            &mut Silent,
+        );
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
+        session.reload(
+            slot,
+            IndicatorSource::Script {
+                name: "defaults.pine".into(),
+                text: "plot(unknown)".into(),
+            },
+            Some(vec![]),
+            &mut Silent,
+        );
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
+        assert!(session.slots[&slot].stale.is_some());
+        assert_eq!(session.live_instances(), 1);
     }
 }

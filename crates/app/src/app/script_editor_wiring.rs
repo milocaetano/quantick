@@ -35,9 +35,6 @@ pub(super) fn set_numeric_input(
     {
         return Err("open the attached script before editing its inputs".into());
     }
-    if app.surfaces.script_editor.state.dirty || app.surfaces.script_editor.state.compiling {
-        return Err("wait for source validation before editing inputs".into());
-    }
     if app.runtime.indicators.indicator_settings.is_some() {
         return Err("close indicator settings before editing inputs through control".into());
     }
@@ -51,6 +48,16 @@ pub(super) fn set_numeric_input(
         .ok_or("wait for the attached script to load")?;
     if view.stale.is_some() || app.surfaces.script_editor.state.diagnostics.is_some() {
         return Err("repair source errors before editing inputs".into());
+    }
+    if !app
+        .surfaces
+        .script_editor
+        .state
+        .inputs_ready(&view.descriptor.inputs)
+    {
+        return Err(
+            "wait for current source validation and chart reload before editing inputs".into(),
+        );
     }
     let saved = super::layout_wiring::saved_inputs(
         &app.runtime.tabs,
@@ -111,6 +118,7 @@ pub(super) fn inspect(
             owner.workspace == tabs.owner() && owner.tab == tabs.active_id() && owner.pane == pane.id
             && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == &document.id)
         }) && let Some(view) = pane.indicators.all().iter().find(|view| view.slot == owner.slot)
+          && surfaces.script_editor.state.inputs_ready(&view.descriptor.inputs)
           && let Some(saved) = super::layout_wiring::saved_inputs(tabs, indicators, store, *owner) {
             result.numeric_inputs = capture_numeric_inputs(&view.descriptor.inputs, &saved);
         }
@@ -124,7 +132,7 @@ pub(super) fn apply(
     _tabs: &mut ArrangementHost,
     action: ScriptEditorAction,
 ) -> Result<Option<ScriptDocument>, String> {
-    let saved = matches!(action, ScriptEditorAction::Save);
+    let saved = matches!(action, ScriptEditorAction::Save) && surfaces.script_editor.state.dirty;
     let document = surfaces
         .script_editor
         .state
@@ -151,10 +159,11 @@ pub(super) fn frame(
     let editor = &mut surfaces.script_editor;
     if let Some(receiver) = &editor.compilation {
         match receiver.try_recv() {
-            Ok((revision, document, error)) => {
+            Ok((revision, document, error, inputs)) => {
                 editor.compilation = None;
                 let valid = error.is_none();
-                if editor.state.complete(revision, error) && valid {
+                let edited = editor.state.source_edit_pending();
+                if editor.state.complete(revision, error, inputs) && valid && edited {
                     reload(indicators, tabs, store, &document);
                 }
             }
@@ -163,6 +172,7 @@ pub(super) fn frame(
                 editor.state.complete(
                     editor.state.revision,
                     Some("source validation worker stopped".into()),
+                    Vec::new(),
                 );
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => (),
@@ -176,33 +186,41 @@ pub(super) fn frame(
     let Some((revision, document)) = editor.state.due(elapsed) else {
         return;
     };
-    if let Err(error) = indicators.script_library.save(&document) {
-        editor.state.complete(revision, Some(error));
-        editor.state.dirty = true;
-        return;
+    if editor.state.dirty {
+        if let Err(error) = indicators.script_library.save(&document) {
+            editor.state.complete(revision, Some(error), Vec::new());
+            editor.state.dirty = true;
+            return;
+        }
+        observe_saved(indicators, &document);
     }
-    observe_saved(indicators, &document);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     match std::thread::Builder::new()
         .name("quantick-script-validator".into())
         .spawn(move || {
-            let error = quantick_pine::compile(&document.source, &document.title)
-                .err()
-                .map(|errors| {
-                    errors
-                        .iter()
-                        .take(8)
-                        .map(|error| error.render(&document.title, &document.source))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                });
-            let _ = sender.send((revision, document, error));
+            let (inputs, error) = match quantick_pine::compile(&document.source, &document.title) {
+                Ok(compiled) => (compiled.inputs, None),
+                Err(errors) => (
+                    Vec::new(),
+                    Some({
+                        errors
+                            .iter()
+                            .take(8)
+                            .map(|error| error.render(&document.title, &document.source))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }),
+                ),
+            };
+            let _ = sender.send((revision, document, error, inputs));
         }) {
         Ok(_) => editor.compilation = Some(receiver),
         Err(error) => {
-            editor
-                .state
-                .complete(revision, Some(format!("cannot validate source: {error}")));
+            editor.state.complete(
+                revision,
+                Some(format!("cannot validate source: {error}")),
+                Vec::new(),
+            );
         }
     }
 }

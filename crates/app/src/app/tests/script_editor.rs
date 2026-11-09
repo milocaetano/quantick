@@ -10,7 +10,7 @@ use std::time::Duration;
 fn edit(app: &mut QuantickApp, action: Action) {
     app.edit_script(action).unwrap();
 }
-fn editor_frame(app: &mut QuantickApp, elapsed_ms: u64) {
+pub(super) fn editor_frame(app: &mut QuantickApp, elapsed_ms: u64) {
     let now = app.surfaces.script_editor.epoch + Duration::from_millis(elapsed_ms);
     crate::app::script_editor_wiring::frame(
         &mut app.surfaces,
@@ -20,6 +20,17 @@ fn editor_frame(app: &mut QuantickApp, elapsed_ms: u64) {
         Vec::new(),
         now,
     );
+}
+pub(super) fn validate_open_editor(app: &mut QuantickApp, at: u64) {
+    editor_frame(app, at);
+    editor_frame(app, at + 350);
+    let started = Instant::now();
+    while app.surfaces.script_editor.compilation.is_some() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::yield_now();
+        editor_frame(app, at + 351);
+    }
+    settle_indicators(app);
 }
 fn compile_edit(app: &mut QuantickApp, source: &str, at: u64) {
     edit(
@@ -82,6 +93,29 @@ fn values(app: &QuantickApp) -> Vec<Vec<f64>> {
     app.active_tab().flow_pane.indicators.all()[0]
         .columns
         .clone()
+}
+fn poll_external_reload(app: &mut QuantickApp) {
+    let owners: Vec<_> = app
+        .runtime
+        .indicators
+        .registry
+        .script_files()
+        .iter()
+        .map(|(owner, ..)| *owner)
+        .collect();
+    for owner in owners {
+        app.runtime
+            .indicators
+            .registry
+            .observe_script(owner, std::time::SystemTime::UNIX_EPOCH);
+    }
+    app.runtime.indicators.last_script_poll = Instant::now() - Duration::from_secs(2);
+    crate::app::script_reload::reload_changed_scripts(
+        &mut app.runtime.indicators,
+        &mut app.runtime.tabs,
+        app.runtime.workspace.layouts(),
+    );
+    settle_indicators(app);
 }
 
 #[test]
@@ -169,7 +203,9 @@ fn script_editor_live_update() {
         },
     );
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender.send((old_revision, document, None)).unwrap();
+    sender
+        .send((old_revision, document, None, Vec::new()))
+        .unwrap();
     app.surfaces.script_editor.compilation = Some(receiver);
     editor_frame(&mut app, 800);
     settle_indicators(&mut app);
@@ -373,4 +409,235 @@ fn script_editor_defaults_and_explicit_numeric_settings_match_restart() {
             quantick_indicators::InputValue::Int(expected)
         );
     }
+}
+
+#[test]
+fn script_editor_numeric_edits_wait_for_saved_validation_and_published_specs() {
+    use quantick_control_schema::script_editor::NumericValue;
+    let base = "length = input.int(9, \"Length\", minval=1, maxval=30)\nfactor = input.int(2, \"Factor\", minval=1, maxval=30)\nplot(bar_index * length * factor)\n";
+    for declaration in [
+        "length = input.int(17, \"Period\", minval=1, maxval=30)",
+        "length = input.float(17.0, \"Length\", minval=1.0, maxval=30.0)",
+        "length = input.int(17, \"Length\", minval=1, maxval=20)",
+    ] {
+        let (mut app, _directory, _commands) = copy_fixture();
+        compile_edit(&mut app, base, 0);
+        let source = format!(
+            "{declaration}\nfactor = input.int(5, \"Factor\", minval=1, maxval=30)\nplot(bar_index * length * factor)\n"
+        );
+        edit(
+            &mut app,
+            Action::ReplaceSource {
+                source: source.clone(),
+            },
+        );
+        edit(&mut app, Action::Save);
+        assert!(!app.surfaces.script_editor.state.dirty);
+        assert!(!app.surfaces.script_editor.state.compiling);
+        assert!(
+            app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+                .is_err()
+        );
+        assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+        let document = app.surfaces.script_editor.state.document.clone().unwrap();
+        let revision = app.surfaces.script_editor.state.revision;
+        let inputs = quantick_pine::compile(&source, &document.title)
+            .unwrap()
+            .inputs;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send((revision, document, None, inputs)).unwrap();
+        app.surfaces.script_editor.compilation = Some(receiver);
+        editor_frame(&mut app, 500);
+        // The reload may have finished on the worker, but publication has not
+        // been drained: its old declaration cannot authorize any input edit.
+        assert!(
+            app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+                .is_err()
+        );
+        assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+        settle_indicators(&mut app);
+        app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(4))
+            .unwrap();
+        settle_indicators(&mut app);
+        assert_eq!(
+            values(&app)[0][39],
+            39.0 * 17.0 * 4.0,
+            "the untouched first input adopts its new default"
+        );
+        assert_eq!(
+            app.script_library_state(0, 64).numeric_inputs[1].value,
+            NumericValue::Int(4)
+        );
+    }
+}
+
+#[test]
+fn script_editor_initial_and_reopened_source_require_current_validation() {
+    use quantick_control_schema::script_editor::NumericValue;
+    let (mut app, _directory, _commands) = copy_fixture();
+    assert!(
+        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+            .is_err()
+    );
+    validate_open_editor(&mut app, 0);
+    app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+        .unwrap();
+    settle_indicators(&mut app);
+    let previous_output: Vec<_> = values(&app)
+        .into_iter()
+        .flatten()
+        .map(f64::to_bits)
+        .collect();
+    let mut external = app.surfaces.script_editor.state.document.clone().unwrap();
+    external.source =
+        "factor = input.int(5, \"Factor\", minval=1, maxval=10)\nplot(bar_index * factor)\n".into();
+    app.runtime
+        .indicators
+        .script_library
+        .save(&external)
+        .unwrap();
+    edit(&mut app, Action::Open { id: external.id });
+    assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+    assert!(
+        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
+            .is_err()
+    );
+    validate_open_editor(&mut app, 1000);
+    assert_eq!(
+        values(&app)
+            .into_iter()
+            .flatten()
+            .map(f64::to_bits)
+            .collect::<Vec<_>>(),
+        previous_output,
+        "reading source never publishes a replacement"
+    );
+    assert!(
+        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(3))
+            .is_err()
+    );
+    poll_external_reload(&mut app);
+    app.set_script_numeric_input("my-ema.pine", "factor", NumericValue::Int(3))
+        .unwrap();
+    assert_eq!(
+        app.script_library_state(0, 64).numeric_inputs[0].name,
+        "factor"
+    );
+}
+
+#[test]
+fn script_editor_external_default_changes_match_live_and_restart() {
+    use quantick_control_schema::script_editor::NumericValue;
+    for explicit in [false, true] {
+        let (mut app, directory, _commands) = copy_fixture();
+        compile_edit(
+            &mut app,
+            "length = input.int(9, \"Length\")\nplot(bar_index * length)\n",
+            0,
+        );
+        if explicit {
+            app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+                .unwrap();
+            settle_indicators(&mut app);
+        }
+        let mut external = app.surfaces.script_editor.state.document.clone().unwrap();
+        external.source =
+            "length = input.int(17, \"Length\")\nplot(bar_index * length + 1)\n".into();
+        app.runtime
+            .indicators
+            .script_library
+            .save(&external)
+            .unwrap();
+        poll_external_reload(&mut app);
+        let expected = if explicit { 4 } else { 17 };
+        assert_eq!(
+            app.active_tab().flow_pane.indicators.all()[0].input_values[0],
+            quantick_indicators::InputValue::Int(expected)
+        );
+        assert_eq!(values(&app)[0][39], (39 * expected + 1) as f64);
+        let tab = app.runtime.tabs.active_id();
+        let layout = app.layout_state().pane_layout(tab, PaneSide::Flow);
+        let saved = app
+            .layout_state()
+            .layouts()
+            .get(layout)
+            .unwrap()
+            .indicators
+            .clone();
+        assert_eq!(saved[0].inputs.is_empty(), !explicit);
+        let encoded = toml::to_string(&saved[0]).unwrap();
+        let restored = vec![toml::from_str(&encoded).unwrap()];
+        let (mut reopened, _commands) = app_with_history(40);
+        reopened.runtime.indicators.script_library = ScriptLibrary::open(&directory);
+        let tab = reopened.runtime.tabs.active_id();
+        reopened
+            .layout_adapter()
+            .materialize_indicators_at(tab, PaneSide::Flow, &restored);
+        settle_indicators(&mut reopened);
+        assert_eq!(values(&reopened), values(&app));
+    }
+}
+
+#[test]
+fn script_editor_read_validation_never_republishes_an_old_open_snapshot() {
+    use quantick_control_schema::script_editor::NumericValue;
+    let (mut app, _directory, _commands) = copy_fixture();
+    compile_edit(
+        &mut app,
+        "length = input.int(9, \"Length\")\nplot(bar_index * length)\n",
+        0,
+    );
+    let mut external = app.surfaces.script_editor.state.document.clone().unwrap();
+    external.source = "length = input.int(17, \"Length\")\nplot(bar_index * length)\n".into();
+    app.runtime
+        .indicators
+        .script_library
+        .save(&external)
+        .unwrap();
+    edit(
+        &mut app,
+        Action::Open {
+            id: external.id.clone(),
+        },
+    );
+    let revision = app.surfaces.script_editor.state.revision;
+    let opened = app.surfaces.script_editor.state.document.clone().unwrap();
+    external.source = "length = input.int(23, \"Length\")\nplot(bar_index * length)\n".into();
+    app.runtime
+        .indicators
+        .script_library
+        .save(&external)
+        .unwrap();
+    poll_external_reload(&mut app);
+    let current = values(&app);
+    assert_eq!(current[0][39], 39.0 * 23.0);
+    // A clean Save must neither overwrite the newer file with this older Open
+    // buffer nor suppress the file watcher's observation of that source.
+    edit(&mut app, Action::Save);
+    assert_eq!(
+        ScriptLibraryPort::read(&app.runtime.indicators.script_library, &external.id)
+            .unwrap()
+            .source,
+        external.source
+    );
+    let inputs = quantick_pine::compile(&opened.source, &opened.title)
+        .unwrap()
+        .inputs;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    sender.send((revision, opened, None, inputs)).unwrap();
+    app.surfaces.script_editor.compilation = Some(receiver);
+    editor_frame(&mut app, 500);
+    settle_indicators(&mut app);
+    assert_eq!(values(&app), current);
+    assert!(app.script_library_state(0, 64).numeric_inputs.is_empty());
+    assert!(
+        app.set_script_numeric_input("my-ema.pine", "length", NumericValue::Int(4))
+            .is_err()
+    );
+    edit(&mut app, Action::Open { id: external.id });
+    validate_open_editor(&mut app, 1000);
+    assert_eq!(
+        app.script_library_state(0, 64).numeric_inputs[0].value,
+        NumericValue::Int(23)
+    );
 }

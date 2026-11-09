@@ -37,6 +37,9 @@ such as `{"type":"float","value":"1.5"}`. Close any settings dialog and wait for
 source validation before setting inputs. Repeating a value is safe, including
 before worker output arrives. `numeric_inputs` returns up to 64 named committed
 numeric values for the open focused attachment; `inspect` reconciles them.
+Opening source or a new copy validates asynchronously through the same bounded
+worker. Numeric edits wait until the current declaration is validated and
+published on the chart; `numeric_inputs` is empty while that proof is pending.
 Use an idempotency key when creating a copy; the same key replays its first result.
 The journal records only editor status and revision, excluding private source.
 

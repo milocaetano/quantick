@@ -4,7 +4,12 @@ use eframe::egui;
 use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction};
 use std::{sync::mpsc::Receiver, time::Instant};
 
-pub(crate) type CompileResult = (u64, ScriptDocument, Option<String>);
+pub(crate) type CompileResult = (
+    u64,
+    ScriptDocument,
+    Option<String>,
+    Vec<quantick_indicators::InputSpec>,
+);
 
 pub(crate) struct ScriptEditorSurface {
     pub state: quantick_stores::script_editor::ScriptEditor,
@@ -156,7 +161,7 @@ impl Surface for ScriptEditorSurface {
                             ui.colored_label(crate::theme::get(ctx).sell(), error);
                         });
                     ui.label("The chart keeps the last valid version.");
-                } else if self.state.compiling {
+                } else if self.state.validation_pending() && !self.state.dirty {
                     ui.label("Checking source…");
                 } else if self.state.dirty {
                     ui.label("Waiting for typing to stop…");
@@ -175,7 +180,7 @@ impl Surface for ScriptEditorSurface {
             input.events.retain(|event| !keyboard_event(event));
             input.keys_down.clear();
         });
-        if self.state.dirty || self.state.compiling {
+        if self.state.dirty || self.state.validation_pending() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         SurfaceResponse {

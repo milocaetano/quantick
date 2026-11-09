@@ -226,6 +226,7 @@ impl QuantickApp {
                 surfaces::reload_changed_scripts(
                     &mut self.runtime.indicators,
                     &mut self.runtime.tabs,
+                    self.runtime.workspace.layouts(),
                 );
                 self.layout_adapter().apply_pending_indicator_state();
                 self.layer_wiring().maintain(ctx);

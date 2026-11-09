@@ -51,19 +51,31 @@ impl IndicatorState {
     }
 }
 
-pub(super) fn reload_changed_scripts(indicators: &mut IndicatorState, tabs: &mut ArrangementHost) {
+pub(super) fn reload_changed_scripts(
+    indicators: &mut IndicatorState,
+    tabs: &mut ArrangementHost,
+    store: &crate::workspace_store::LayoutStore,
+) {
     for (owner, name, text) in indicators.poll_script_files() {
+        let saved = super::layout_wiring::saved_inputs(tabs, indicators, store, owner);
         if owner.workspace == tabs.owner()
             && let Some(tab) = tabs.by_id_mut(owner.tab)
             && let Some(pane) = tab.pane_at_mut(owner.side.index())
             && pane.id == owner.pane
         {
             IndicatorState::log_reload(owner, &name);
-            pane.indicator_worker
-                .send(crate::indicator_worker::IndicatorCommand::Reload {
+            let source = crate::indicator_worker::IndicatorSource::Script { name, text };
+            pane.indicator_worker.send(match saved {
+                Some(values) => crate::indicator_worker::IndicatorCommand::ReloadWithInputs {
                     slot: owner.slot,
-                    source: crate::indicator_worker::IndicatorSource::Script { name, text },
-                });
+                    source,
+                    values,
+                },
+                None => crate::indicator_worker::IndicatorCommand::Reload {
+                    slot: owner.slot,
+                    source,
+                },
+            });
         }
     }
 }

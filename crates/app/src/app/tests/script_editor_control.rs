@@ -120,6 +120,7 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
     let _ = unkeyed_call(&mut app, &mut client, capability, add);
     settle_indicators(&mut app);
     assert_eq!(app.active_tab().focused_pane().indicators.all().len(), 1);
+    crate::app::tests::script_editor_tests::validate_open_editor(&mut app, 1000);
     let numeric = json!({"operation":{"action":"set_numeric_input","id":"control-copy.pine","name":"length","value":{"type":"int","value":4}}});
     let first_numeric = keyed_call(
         &mut app,
