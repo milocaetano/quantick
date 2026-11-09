@@ -144,7 +144,7 @@ impl LayoutAdapter<'_> {
                         pane.indicators.apply(IndicatorEvent::Rebuilt {
                             slot,
                             descriptor: quantick_indicators::IndicatorDescriptor {
-                                title: name.clone(),
+                                title: quantick_stores::script_library::script_title(name),
                                 short_title: None,
                                 overlay: false,
                                 plots: Vec::new(),

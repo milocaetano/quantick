@@ -140,6 +140,13 @@ pub(crate) trait IndicatorPickerPort {
 
 /// Indicator scripts an operator attaches and detaches.
 pub(crate) trait ScriptsPort {
+    fn script_library_state(
+        &self,
+        _offset: usize,
+        _limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        Default::default()
+    }
     /// Editor actions share one value lane with the surface. Unavailable in the skeleton.
     fn edit_script(
         &mut self,
@@ -812,6 +819,18 @@ impl IndicatorPickerPort for QuantickApp {
 }
 
 impl ScriptsPort for QuantickApp {
+    fn script_library_state(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        super::script_editor_wiring::inspect(
+            &self.surfaces,
+            &self.runtime.indicators,
+            offset,
+            limit,
+        )
+    }
     fn edit_script(
         &mut self,
         action: quantick_stores::script_library::ScriptEditorAction,
@@ -1007,6 +1026,13 @@ impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
 }
 
 impl quantick_control_handlers::script_editor::ScriptEditorPort for ControlWindow {
+    fn script_library_state(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> quantick_control_schema::script_editor::EditorResult {
+        ScriptsPort::script_library_state(self, offset, limit)
+    }
     fn script_editor(
         &mut self,
         action: quantick_stores::script_library::ScriptEditorAction,

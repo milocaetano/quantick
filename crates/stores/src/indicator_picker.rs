@@ -96,7 +96,7 @@ impl Picker {
         });
         let scripts = scripts.iter().enumerate().map(|(i, s)| Entry {
             choice: Choice::Script(i),
-            name: s.name.clone(),
+            name: crate::script_library::script_title(&s.name),
             category: Category::Scripts,
         });
         natives

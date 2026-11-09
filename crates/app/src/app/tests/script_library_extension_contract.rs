@@ -196,7 +196,7 @@ fn script_library_extension_contract_preserves_existing_behavior() {
     assert_eq!(Some(Ok(original.source.clone())), library.read(0));
     assert!(original.read_only);
     assert!(ScriptLibraryPort::read(&library, "missing.pine").is_err());
-    assert!(library.copy(&id, "copy.pine").is_err());
+    assert!(!library.copy(&id, "copy.pine").unwrap().read_only);
     assert!(library.save(&original).is_err());
     let mut surface = crate::surfaces::script_editor::ScriptEditorSurface::default();
     assert_eq!(
@@ -207,12 +207,10 @@ fn script_library_extension_contract_preserves_existing_behavior() {
         ),
         SurfaceResponse::default()
     );
-    assert!(
-        surface
-            .state
-            .dispatch(&mut library, ScriptEditorAction::Open { id },)
-            .is_err()
-    );
-    assert!(surface.state.document.is_none());
-    assert!(!dir.join("copy.pine").exists());
+    surface
+        .state
+        .dispatch(&mut library, ScriptEditorAction::Open { id })
+        .unwrap();
+    assert_eq!(surface.state.document, Some(original));
+    assert!(dir.join("copy.pine").exists());
 }

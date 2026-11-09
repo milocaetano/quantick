@@ -581,7 +581,7 @@ impl IndicatorState {
                 pane.indicators.apply(IndicatorEvent::Rebuilt {
                     slot,
                     descriptor: quantick_indicators::IndicatorDescriptor {
-                        title: name,
+                        title: quantick_stores::script_library::script_title(&name),
                         short_title: None,
                         overlay: false,
                         plots: Vec::new(),
