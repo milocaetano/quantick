@@ -11,19 +11,19 @@ use crate::{DisplayGrouping, HeatmapConfig, LiveEdge};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
 const LANE_WIDTH_PX: f32 = 400.0;
-const LANE_HEIGHT_PX: f32 = 600.0;
-const NOW_MS: i64 = 2_000;
-const WINDOW_MS: i64 = 500;
-const LANE_START_MS: i64 = NOW_MS - WINDOW_MS;
+pub(super) const LANE_HEIGHT_PX: f32 = 600.0;
+pub(super) const NOW_MS: i64 = 2_000;
+pub(super) const WINDOW_MS: i64 = 500;
+pub(super) const LANE_START_MS: i64 = NOW_MS - WINDOW_MS;
 /// A wall that changes inside every lead the tests use.
 const LEAD_CHANGE_MS: i64 = LANE_START_MS - 20;
 
-fn level(price: i64, quantity: i64) -> BookLevel {
+pub(super) fn level(price: i64, quantity: i64) -> BookLevel {
     BookLevel::new(price.into(), quantity.into()).unwrap()
 }
 
 /// An averaged native tape whose largest bubble is `max_radius`.
-fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
+pub(super) fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
     let mut config = HeatmapConfig {
         enabled: true,
         price_grouping: Decimal::ONE,
@@ -39,7 +39,7 @@ fn config(max_radius: f32, max_visible_cells: usize) -> HeatmapConfig {
 
 /// A synchronized book captured from `from_ms`, confirming at 1,900 so it
 /// is still the current book at NOW.
-fn history_from(from_ms: i64, config: HeatmapConfig) -> LiquidityHistory {
+pub(super) fn history_from(from_ms: i64, config: HeatmapConfig) -> LiquidityHistory {
     let mut history = LiquidityHistory::new(config);
     history
         .install_snapshot(
@@ -91,7 +91,7 @@ fn geometry(config: &HeatmapConfig) -> TapeHorizontalGeometry {
     TapeHorizontalGeometry::from_config(config, LANE_WIDTH_PX, LANE_HEIGHT_PX).unwrap()
 }
 
-fn timeline(lead_ms: i64) -> BarTimeline {
+pub(super) fn timeline(lead_ms: i64) -> BarTimeline {
     let bar = quantick_engine::Bar {
         open_time: 0,
         close_time: NOW_MS,
@@ -118,7 +118,7 @@ fn timeline(lead_ms: i64) -> BarTimeline {
     .with_lane_lead_ms(lead_ms)
 }
 
-fn project(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<HeatmapCell> {
+pub(super) fn project(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<HeatmapCell> {
     let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, 8.into());
     project_lane_heat(
         history,
@@ -138,7 +138,7 @@ fn lane(history: &LiquidityHistory) -> (Vec<HeatmapCell>, BarTimeline) {
 
 /// Pixels from the lane's left edge each cell is painted over: the tape's
 /// own span where it gives one, the lane's opening-to-NOW clock otherwise.
-fn painted(
+pub(super) fn painted(
     geometry: TapeHorizontalGeometry,
     cells: &[HeatmapCell],
     regions: usize,
@@ -155,7 +155,7 @@ fn painted(
         .collect()
 }
 
-fn reach(spans: &[(f32, f32)]) -> (f32, f32) {
+pub(super) fn reach(spans: &[(f32, f32)]) -> (f32, f32) {
     spans.iter().fold(
         (f32::INFINITY, f32::NEG_INFINITY),
         |(low, high), &(x0, x1)| (low.min(x0), high.max(x1)),

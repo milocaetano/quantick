@@ -18,7 +18,10 @@ use std::collections::BTreeMap;
 use quantick_orderbook::OrderBook;
 
 use super::heat_cells::{DraftCell, PriceRows, book_gaps, finish_with_priority};
-use super::model::{BEFORE_CAPTURE, BookSource, GapPrimitive, HeatmapCell, PriceWindow};
+use super::model::{
+    BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BookSource, GapPrimitive, HeatmapCell, PriceWindow,
+};
+use super::tape_geometry::MAX_LEAD_SHARE;
 use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep_grouped_runs};
 use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
@@ -32,6 +35,9 @@ pub use lane_fold::LaneFold;
 #[cfg(test)]
 #[path = "lane_heat/tests.rs"]
 mod cap_tests;
+#[cfg(test)]
+#[path = "lane_heat/edge_tests.rs"]
+mod edge_tests;
 #[cfg(test)]
 #[path = "lane_heat/lead_tests.rs"]
 mod lead_tests;
@@ -207,7 +213,9 @@ pub(super) fn project_lane_heat(
 /// still open past the opening is left to the settled half, whose band
 /// already runs across the divider and the inset. Where the lead reaches
 /// before the retained book, that stretch is marked as before capture, as
-/// the settled half marks its own oldest edge.
+/// the settled half marks its own oldest edge; where the lead stopped at its
+/// cap ([`MAX_LEAD_SHARE`]), the inset farther out is
+/// [`BOOK_BEYOND_LEAD`].
 pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<GapPrimitive> {
     let config = history.config();
     let lead_ms = timeline.lane_lead_ms();
@@ -241,13 +249,30 @@ pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> V
         Some(fraction(time_ms))
     });
     gaps.retain(|gap| gap.x1 <= 0.0);
+    // A lead cut at its cap leaves the inset farther out unread: it is a
+    // gap out to the pane's edge, never a dark strip.
+    let capped = lead_ms as f64 >= MAX_LEAD_SHARE * window_ms - 1.0;
+    let far = if capped {
+        f64::NEG_INFINITY
+    } else {
+        fraction(from_ms)
+    };
     if captured_ms > from_ms && captured_ms <= lane_start_ms {
         gaps.push(GapPrimitive {
             from_generation: None,
             to_generation: Some(first.generation),
-            x0: fraction(from_ms),
+            x0: far,
             x1: fraction(captured_ms),
             reason: BEFORE_CAPTURE.to_owned(),
+            lead_span: None,
+        });
+    } else if capped {
+        gaps.push(GapPrimitive {
+            from_generation: None,
+            to_generation: None,
+            x0: far,
+            x1: fraction(from_ms),
+            reason: BOOK_BEYOND_LEAD.to_owned(),
             lead_span: None,
         });
     }

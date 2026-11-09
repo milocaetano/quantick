@@ -120,28 +120,51 @@ impl TapeHorizontalGeometry {
         })
     }
 
-    /// The share of the lane's window the inset left of the oldest dot
-    /// holds on the dots' own clock: the book's lead
-    /// ([`crate::BarTimeline::with_lane_lead_ms`]), at most
-    /// [`MAX_LEAD_SHARE`]. A pane with no time span left takes the cap, so
-    /// the lead never falls to zero as the span closes.
+    /// The share of the lane's window the book reads beyond each side of
+    /// it, under the insets on the dots' own clock: the live book's lead
+    /// ([`crate::BarTimeline::with_lane_lead_ms`]), and a held tape's lead
+    /// and trail. The inset's own share with [`LEAD_READ_MARGIN`], at most
+    /// [`MAX_LEAD_SHARE`]; the inset beyond it is a labelled gap
+    /// ([`BOOK_BEYOND_LEAD`](crate::projection::BOOK_BEYOND_LEAD)). A pane
+    /// with no time span left takes the cap, so the lead never falls to zero
+    /// as the span closes.
     #[must_use]
     pub fn lead_share(self) -> f64 {
         if self.inset_px <= 0.0 {
             0.0
         } else if self.span_px > 0.0 {
-            f64::from(self.inset_px / self.span_px).min(MAX_LEAD_SHARE)
+            (f64::from(self.inset_px / self.span_px) * LEAD_READ_MARGIN).min(MAX_LEAD_SHARE)
         } else {
             MAX_LEAD_SHARE
         }
     }
 
-    /// Pixels from the lane's left edge a lead span `(from, to)`, in lane
-    /// fractions below zero, covers: the dots' clock, cut at the pane edge.
+    /// Pixels from the lane's left edge a span `(from, to)` in lane
+    /// fractions covers on the dots' clock: below zero the lead, above one
+    /// the stretch past NOW. Cut at both pane edges; an infinite end reaches
+    /// the edge on its side. With no time span left the window is the one
+    /// column at the inset, so an inset holds only what lies beyond it.
     /// `None` for no span.
     #[must_use]
     pub fn lead_px(self, span: Option<(f64, f64)>) -> Option<(f32, f32)> {
-        span.map(|(from, to)| (self.x(from).max(0.0), self.x(to).max(0.0)))
+        let width = f64::from(self.x(1.0) + self.inset_px);
+        let px = |fraction: f64| {
+            let x = if self.span_px > 0.0 {
+                f64::from(self.inset_px) + fraction * f64::from(self.span_px)
+            } else if fraction < 0.0 {
+                0.0
+            } else if fraction > 1.0 {
+                width
+            } else {
+                f64::from(self.inset_px)
+            };
+            if x.is_nan() {
+                0.0
+            } else {
+                x.clamp(0.0, width) as f32
+            }
+        };
+        span.map(|(from, to)| (px(from), px(to)))
     }
 
     /// Pixels from the lane's left edge a book cell of a frame with
@@ -168,14 +191,45 @@ impl TapeHorizontalGeometry {
     }
 }
 
-/// The most older depth the native tape's lead reads, in lane windows.
+/// The most depth the native tape reads beyond each side of its window, in
+/// lane windows.
 ///
-/// One window: the lead pads an inset, and a pad that read more history
-/// than the tape itself shows would cost more than the tape. The inset is
-/// capped at 45% of the pane a side, so only a pane whose time span is under
-/// a third of it asks for more; there the oldest edge of the strip stays
-/// empty rather than reading several windows back.
-pub const MAX_LEAD_SHARE: f64 = 1.0;
+/// The inset is capped at 45% of the pane a side, but never below the
+/// largest disc, so at the largest bubbles a narrow pane keeps only a sliver
+/// of time span and its insets ask for many windows. Eight cover a lane down
+/// to about 2.3 insets wide; past that the read stops, and the rest of the
+/// inset is a labelled gap
+/// ([`BOOK_BEYOND_LEAD`](crate::projection::BOOK_BEYOND_LEAD)), never a dark
+/// strip.
+pub const MAX_LEAD_SHARE: f64 = 8.0;
+
+/// How much longer than its inset the lead reads. The view sizes the lead
+/// and the painter places it on separate frames, so a pane resized or a
+/// divider dragged between them would otherwise leave a sliver at the edge;
+/// what the margin over-reads is cut there.
+pub const LEAD_READ_MARGIN: f64 = 1.25;
+
+/// The inset past NOW of a live frame whose current book is no longer
+/// current: a [`BOOK_NOT_CURRENT`](crate::projection::BOOK_NOT_CURRENT) gap
+/// from NOW to the pane's right edge, where a live book would be previewed
+/// ([`TapeHorizontalGeometry::book_span_px`]). `None` while the book is live
+/// or when the frame read none.
+#[must_use]
+pub fn stale_book_gap(
+    projection: &crate::projection::HeatmapProjection,
+    current_book_live: bool,
+) -> Option<crate::projection::GapPrimitive> {
+    (!current_book_live && projection.current_book.is_some()).then(|| {
+        crate::projection::GapPrimitive {
+            from_generation: None,
+            to_generation: None,
+            x0: 1.0,
+            x1: 1.0,
+            reason: crate::projection::BOOK_NOT_CURRENT.to_owned(),
+            lead_span: Some((1.0, f64::INFINITY)),
+        }
+    })
+}
 
 /// `share` of `window_ms`, rounded up; zero for a share that is not a
 /// positive finite number.

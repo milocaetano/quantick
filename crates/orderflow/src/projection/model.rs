@@ -315,6 +315,17 @@ pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
 /// drag outran the published blocks. Unknown, never an empty book.
 pub const BOOK_PENDING: &str = "book_pending_for_held_tape";
 
+/// Reason for the part of a native tape's inset farther from its window than
+/// the book it reads beside it
+/// ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)): recorded, but
+/// not read this far out. Never an empty book.
+pub const BOOK_BEYOND_LEAD: &str = "book_not_read_beyond_tape_lead";
+
+/// Reason for the inset past NOW while the live tape's current book is no
+/// longer current ([`book_is_current`](crate::projection::book_is_current)):
+/// there is no book to preview there, and a stale one is never carried.
+pub const BOOK_NOT_CURRENT: &str = "book_not_current_past_now";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {

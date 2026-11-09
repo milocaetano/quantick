@@ -113,7 +113,11 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         );
     }
 
-    for gap in context.projection.gaps.iter() {
+    let stale = quantick_orderflow::projection::stale_book_gap(
+        context.projection,
+        context.current_book_live,
+    );
+    for gap in context.projection.gaps.iter().chain(stale.as_ref()) {
         // Same two questions the reductions answer, and for the same reason: a
         // coverage gap explains a hole in the *book*, so it belongs to the pane
         // that draws one, and `show_gaps` reached only the legend until now.

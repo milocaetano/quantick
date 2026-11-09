@@ -1,6 +1,6 @@
 //! Interpretation of displayed depth and coverage, independent of a painter.
 
-use super::{BEFORE_CAPTURE, BOOK_PENDING};
+use super::{BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BOOK_NOT_CURRENT, BOOK_PENDING};
 use crate::config::painting::GAP_EDGE_EPSILON;
 
 /// Only a current, exactly confirmed row can preview the book in chart forward
@@ -84,6 +84,8 @@ pub fn gap_label(reason: &str) -> &'static str {
     match reason {
         BEFORE_CAPTURE => "L2 unavailable before capture",
         BOOK_PENDING => "L2 loading for this stretch",
+        BOOK_BEYOND_LEAD => "L2 not read this far from the window",
+        BOOK_NOT_CURRENT => "L2 not current · no book past NOW",
         "capture_disabled" => "L2 capture disabled",
         "sequence_gap" => "L2 sequence gap · resynchronizing",
         _ => "L2 continuity unavailable",
