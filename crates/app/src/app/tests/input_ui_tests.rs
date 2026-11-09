@@ -707,6 +707,11 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 101.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
     app.active_tab_mut().focus = PaneSide::Time(0);
     let source = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
 

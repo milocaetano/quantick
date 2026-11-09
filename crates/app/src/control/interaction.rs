@@ -13,7 +13,7 @@ pub(crate) use quantick_control_schema::interaction::{
 };
 
 use crate::{
-    drawings::{Drawing, DrawingBand, DrawingScope},
+    drawings::{Drawing, DrawingBand},
     pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
     tab::Tab,
 };
@@ -250,11 +250,7 @@ fn drawing_selection(
         user_label_present: drawing.name.is_some(),
         band: drawing_band(&drawing.band),
         annotation_band: quantick_control_handlers::annotate::annotation_band(&drawing.band),
-        scope: match drawing.scope {
-            DrawingScope::ThisChart => "this_chart",
-            DrawingScope::AllCharts => "all_charts",
-        }
-        .to_owned(),
+        scope: quantick_control_handlers::analysis::scope_name(drawing).to_owned(),
         locked: drawing.locked,
         hidden: drawing.hidden,
         foreign_market: drawing.foreign_market,

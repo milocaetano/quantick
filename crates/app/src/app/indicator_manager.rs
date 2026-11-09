@@ -373,6 +373,7 @@ impl IndicatorState {
             return SettingsChange::None;
         };
         dialog.title = view.label().to_owned();
+        let plots = view.themed_plots();
         let IndicatorView {
             descriptor, style, ..
         } = view;
@@ -380,7 +381,7 @@ impl IndicatorState {
             ctx,
             dialog,
             &descriptor.inputs,
-            &descriptor.plots,
+            &plots,
             style,
             preset_names.as_deref(),
         );

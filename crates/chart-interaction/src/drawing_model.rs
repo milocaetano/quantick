@@ -53,16 +53,18 @@ impl ChartPoint {
 /// (`docs/ux/drawing-tools-2026-08.md` §D7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DrawingScope {
-    /// The pane it was drawn on, and only that one. Today's behaviour, and
-    /// the default, so nothing that exists changes.
-    #[default]
+    /// The chart it was drawn on, at the bars it was cut to then: switching
+    /// that chart to other bars hides it, and switching back restores it.
     ThisChart,
-    /// Every pane of the same tab — one symbol, one feed, two bar types. The
-    /// anchors are re-expressed through each pane's own market clock.
+    /// Every chart of the same market — one asset on one feed — at any bars:
+    /// time, tick, volume, renko. The anchors are re-expressed through each
+    /// chart's own market clock. The default: a level is a level on every
+    /// timeframe.
     ///
-    /// Never across tabs: a price level drawn on BTC means nothing on a WIN
-    /// chart, and a mark that says otherwise is the data-honesty failure this
-    /// repo refuses.
+    /// Never across markets: a price level drawn on BTC means nothing on a
+    /// WIN chart, and a mark that says otherwise is the data-honesty failure
+    /// this repo refuses.
+    #[default]
     AllCharts,
 }
 

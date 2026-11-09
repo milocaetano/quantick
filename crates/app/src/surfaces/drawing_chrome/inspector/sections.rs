@@ -142,24 +142,24 @@ impl ScopeToggle<'_> {
         let palette = theme::get(ui.ctx());
         let edited = self.edited;
         let shareable = edited.shareable();
-        let mut shared = edited.scope == drawings::DrawingScope::AllCharts;
+        let mut shared = edited.all_timeframes();
         let mut changed = false;
         ui.separator();
         let sharing = ui.add_enabled(
             shareable,
-            egui::Checkbox::new(&mut shared, "Show on all charts"),
+            egui::Checkbox::new(&mut shared, "Show on all timeframes"),
         );
         if sharing.changed() {
-            edited.scope = if shared {
+            edited.set_scope(if shared {
                 drawings::DrawingScope::AllCharts
             } else {
                 drawings::DrawingScope::ThisChart
-            };
+            });
             changed = true;
         }
         // A disabled control with no reason reads as a bug.
         let sharing_hint = if shareable {
-            "The other chart of this tab draws it at the same moment in market time"
+            "Every chart of this market draws it, at any timeframe, at the same moment"
         } else {
             "This drawing has an anchor past the newest bar, so there is no market time to place          it by on another chart"
         };

@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "ScopeName": {
+      "description": "A drawing's scope as `analysis.drawings` names it.",
+      "oneOf": [
+        {
+          "const": "all_charts",
+          "description": "Every chart of the drawing's market, at any timeframe.",
+          "type": "string"
+        },
+        {
+          "const": "this_chart",
+          "description": "Only the chart it is on, at the bars that chart is cut to.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane holding the drawing on that tab, as `analysis.drawings`\nlists it. A drawing id is unique only within its pane."
+    },
+    "scope": {
+      "$ref": "#/$defs/ScopeName",
+      "description": "Where it should show."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab holding the drawing, as `analysis.drawings` lists it."
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "drawing_id",
+    "scope"
+  ],
+  "title": "DrawingScopeInput",
+  "type": "object"
+}

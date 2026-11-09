@@ -837,7 +837,7 @@ fn sharing_control(shared: bool) -> (&'static str, &'static str) {
     if shared {
         (icons::GRID_FOUR, "Show only on this chart")
     } else {
-        (icons::GRID_FOUR, "Show on all charts")
+        (icons::GRID_FOUR, "Show on all timeframes")
     }
 }
 
@@ -1563,7 +1563,7 @@ mod tests {
         let cells = slots(PLAIN);
         let hide = cells.iter().position(|slot| *slot == Slot::Hide).unwrap();
         assert_eq!(cells[hide + 1], Slot::Sharing);
-        assert_eq!(sharing_control(false).1, "Show on all charts");
+        assert_eq!(sharing_control(false).1, "Show on all timeframes");
         assert_eq!(sharing_control(true).1, "Show only on this chart");
         assert_eq!(sharing_control(false).0, icons::GRID_FOUR);
         assert_eq!(sharing_control(true).0, icons::GRID_FOUR);

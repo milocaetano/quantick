@@ -12,6 +12,9 @@ pub struct BookmapOverride {
     pub candle_wick_opacity: Option<f32>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
+    /// The pane's own plot inks; the root theme's are never inherited here.
+    #[serde(default)]
+    pub plot_ink: BTreeMap<String, BTreeMap<String, ColorValue>>,
     #[serde(default)]
     pub footprint_heat: crate::heat::HeatOverride,
 }
@@ -31,6 +34,7 @@ impl BookmapOverride {
             chart_time_grid: None,
             chart_axes: None,
             colors: self.colors.clone(),
+            plot_ink: self.plot_ink.clone(),
             typography: BTreeMap::new(),
             footprint_heat: self.footprint_heat.clone(),
             orderflow: Default::default(),

@@ -9,7 +9,7 @@ use eframe::egui;
 
 use super::{DrawingChromeAsk, ManagerRow};
 use crate::bands::BandLabel;
-use crate::drawings::{Drawing, DrawingAuthor, DrawingScope};
+use crate::drawings::{Drawing, DrawingAuthor};
 use crate::theme;
 
 impl ManagerRow {
@@ -20,7 +20,7 @@ impl ManagerRow {
             selected,
             locked: drawing.locked,
             hidden: drawing.hidden,
-            shared: drawing.scope == DrawingScope::AllCharts,
+            shared: drawing.all_timeframes(),
             off_series: drawing.off_series,
             foreign_market: drawing.foreign_market,
             origin: drawing
@@ -114,10 +114,10 @@ pub(crate) fn object_row(
         if row.shared {
             // Which marks are global is a question the list must answer at a
             // glance (Marina, §D7).
-            ui.label(egui::RichText::new("all charts").small())
+            ui.label(egui::RichText::new("all timeframes").small())
                 .on_hover_text(
-                    "Also drawn on the other chart of this tab, at the same moment in market \
-                     time",
+                    "Drawn on every chart of this market, at any timeframe, at the same moment \
+                     in market time",
                 );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

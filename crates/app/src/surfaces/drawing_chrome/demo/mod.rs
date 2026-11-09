@@ -14,7 +14,8 @@ pub(crate) use gallery::{DraftPlan, apply_recut_marker, demo_recut_count};
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct DrawingsDemo {
     pub bands: bool,
-    pub shared: bool,
+    /// `QUANTICK_DRAWINGS_DEMO_SHARED`: `1` splits the canvas, `0` keeps them to their chart.
+    pub shared: Option<bool>,
     pub select_tool: Option<String>,
 }
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +45,9 @@ impl DrawingDemoLaunch {
             .filter(|value| matches!(value.as_str(), "1" | "bands"))
             .map(|value| DrawingsDemo {
                 bands: value == "bands",
-                shared: read("QUANTICK_DRAWINGS_DEMO_SHARED").is_some_and(|value| value == "1"),
+                shared: read("QUANTICK_DRAWINGS_DEMO_SHARED")
+                    .filter(|value| value == "0" || value == "1")
+                    .map(|value| value == "1"),
                 select_tool: read("QUANTICK_DRAWINGS_DEMO_SELECT"),
             });
         let recut = read("QUANTICK_DRAWINGS_DEMO_RECUT").is_some_and(|value| value == "1");

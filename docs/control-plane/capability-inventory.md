@@ -26,6 +26,7 @@ capability that cannot change application state.
 | --- | --- | --- | --- | --- |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.drawing_magnet.set` | 1 | `annotate` | no | `cockpit` |
+| `annotate.drawing_scope.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.fib_projection.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fib_retracement.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fixed_range_profile.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -149,4 +150,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-124 capabilities registered.
+125 capabilities registered.

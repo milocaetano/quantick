@@ -16,8 +16,9 @@
 //! fe595c70: Light 18ae3b79a8423fbfbe2c9783989d7c7d7f0d9ed7 (amber drawing marks, before
 //! the per-surface recolour).
 //! 9c443e08: Light 7670bb0679eb7630d2fd9552668e2c7bf085a126 (main's green and red marks).
+//! 297976ae: Light 297976ae72c4051982c403be035816877a4bc9d3 (warm toolbar row, blue VWAP).
 
-const LIGHT_SOURCES: [&str; 12] = [
+const LIGHT_SOURCES: [&str; 13] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
@@ -30,6 +31,7 @@ const LIGHT_SOURCES: [&str; 12] = [
     include_str!("legacy-light-f32407a0.toml"),
     include_str!("legacy-light-fe595c70.toml"),
     include_str!("legacy-light-9c443e08.toml"),
+    include_str!("legacy-light-297976ae.toml"),
 ];
 const DARK_SOURCES: [&str; 5] = [
     include_str!("legacy-dark-66aa9abc.toml"),

@@ -904,3 +904,38 @@ fn drawing_primaries_are_every_additive_mix_of_red_green_and_blue() {
         "the row reads red, green, blue first"
     );
 }
+
+/// A drawing still in its role's root default paints the surface's own colour
+/// for that role; an authored colour keeps the legibility fallback alone.
+#[test]
+fn a_default_drawing_colour_takes_the_surface_role_and_an_authored_one_does_not() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let flow = light.bookmap();
+    let born = light.color(Token::DrawingVwap);
+    assert_eq!(born.to_array(), [0x2B, 0x36, 0x40, 255]);
+    let on_flow = flow.legible_drawing_as(born, Token::DrawingVwap);
+    assert_eq!(on_flow.to_array(), [0x8A, 0xB4, 0xF8, 255]);
+    assert_eq!(light.legible_drawing_as(born, Token::DrawingVwap), born);
+    for role in [Token::DrawingBuy, Token::DrawingSell, Token::DrawingProfile] {
+        let born = light.color(role);
+        assert_eq!(flow.legible_drawing_as(born, role), flow.color(role));
+        assert_eq!(light.legible_drawing_as(born, role), born);
+    }
+    // Authored: main's stored blue stays, a vanished slate falls back as before.
+    let blue = PremultipliedRgba::from_rgb(0x24, 0x5D, 0xB1);
+    let slate = PremultipliedRgba::from_rgb(0x2B, 0x36, 0x41);
+    for authored in [blue, slate] {
+        let painted = flow.legible_drawing_as(authored, Token::DrawingVwap);
+        assert_eq!(painted, flow.legible_drawing(authored));
+    }
+    assert_eq!(
+        flow.legible_drawing(slate),
+        flow.color(Token::DrawingDefault)
+    );
+    // Dark has no flow surface of its own: nothing changes there.
+    let dark = ResolvedTheme::default();
+    for role in [Token::DrawingVwap, Token::DrawingBuy, Token::DrawingDefault] {
+        let born = dark.color(role);
+        assert_eq!(dark.bookmap().legible_drawing_as(born, role), born);
+    }
+}

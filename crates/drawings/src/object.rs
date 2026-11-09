@@ -38,8 +38,13 @@ pub struct Drawing<T> {
     /// This object's own OHLC magnet: a drag of it snaps whenever this or the
     /// rail's magnet is on. Off unless the trader turned it on.
     pub magnet: bool,
-    /// Whether the other panes of this tab show it too.
+    /// Whether every chart of its market shows it, or only this one.
     pub scope: DrawingScope,
+    /// Read from a file written before a mark kept to its chart recorded its
+    /// bars: it shows at every bar rule of its chart, as it always has, and
+    /// is written back without bars. Provenance, never an edit, so it stays
+    /// out of [`PartialEq`].
+    pub legacy_unpinned: bool,
     /// Set when the tab changed the instrument under this mark.
     ///
     /// Time survives a symbol switch and price does not: BTC traded at the
@@ -86,6 +91,20 @@ impl<T> Drawing<T> {
     #[must_use]
     pub fn shareable(&self) -> bool {
         !self.points.is_empty() && self.points.iter().all(|point| point.time_ms.is_some())
+    }
+
+    /// Whether every chart of its market shows it, at any bars: asked for, and
+    /// dated at every anchor. What the toggle, the chips and the store read.
+    #[must_use]
+    pub fn all_timeframes(&self) -> bool {
+        self.scope == DrawingScope::AllCharts && self.shareable()
+    }
+
+    /// The trader's pick of where it shows. A pick is a new decision, so a
+    /// mark read from before pinning is pinned like any other from now on.
+    pub fn set_scope(&mut self, scope: DrawingScope) {
+        self.scope = scope;
+        self.legacy_unpinned = false;
     }
 
     /// Whether the other panes of this tab paint it this frame.

@@ -55,7 +55,7 @@ fn capture_retains_conditional_reads_and_exact_grammars() {
         ("QUANTICK_DRAWING_CONSTRAIN", " 1 "),
     ]);
     let gallery = input.gallery.unwrap();
-    assert!(gallery.bands && !gallery.shared);
+    assert!(gallery.bands && gallery.shared.is_none());
     assert_eq!(gallery.select_tool.as_deref(), Some(" trend-line "));
     assert!(input.recut && input.avwap);
     assert_eq!(
@@ -111,7 +111,7 @@ impl DrawingRecipient for RefusingRecipient {
         self.finishes += 1;
         false
     }
-    fn share_selected(&mut self) {
+    fn keep_selected_to_chart(&mut self) {
         self.shares += 1;
     }
     fn selected(&self) -> Option<usize> {

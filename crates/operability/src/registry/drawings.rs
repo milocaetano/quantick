@@ -383,6 +383,18 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
         mapping: capability!("annotate.drawing_magnet.set"),
     },
     UiBehaviour {
+        id: "drawing.scope.toggle",
+        title: "Show one drawing on every timeframe of its market, or keep it to its chart",
+        reach: "the object context bar's sharing button, beside Hide, and the inspector's \
+                Coordinates tab checkbox",
+        keys: &[(
+            Source::Authored,
+            "the context bar's sharing button and the inspector checkbox are widgets, not \
+             registry entries",
+        )],
+        mapping: capability!("annotate.drawing_scope.set"),
+    },
+    UiBehaviour {
         id: "drawing.hide",
         title: "Hide or show one drawing without deleting it",
         reach: "the object context bar, Alt+H, the canvas right-click menu (drawing section and \

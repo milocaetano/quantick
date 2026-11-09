@@ -19,6 +19,7 @@ pub mod contract_roll;
 pub mod deal_recording;
 pub mod desk;
 pub mod drawing_magnet;
+pub mod drawing_scope;
 pub mod evidence;
 pub mod feed;
 pub mod feed_source;

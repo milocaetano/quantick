@@ -56,6 +56,7 @@ impl<T: ToolCatalog> Drawings<T> {
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
+                legacy_unpinned: false,
                 magnet: false,
                 foreign_market: false,
                 off_series: false,
@@ -69,8 +70,8 @@ impl<T: ToolCatalog> Drawings<T> {
         // the release, through `finish_draft`, never by arithmetic here.
         if tool.required_points() > 0 && draft.points.len() == tool.required_points() {
             let before = self.snapshot();
-            self.items
-                .push(self.draft.take().expect("draft has points"));
+            let placed = self.draft.take().expect("draft has points");
+            self.items.push(truthful_scope(placed));
             self.select(Some(self.items.len() - 1));
             // Drawing while hide-all is engaged releases it (audit M8): the
             // act of placing a new object is the strongest possible request
@@ -103,7 +104,7 @@ impl<T: ToolCatalog> Drawings<T> {
             return false;
         }
         let before = self.snapshot();
-        self.items.push(draft);
+        self.items.push(truthful_scope(draft));
         self.select(Some(self.items.len() - 1));
         // Same rule as a clicked placement: drawing releases hide-all, and
         // it does so inside the one undo entry the gesture records.
@@ -375,4 +376,14 @@ pub fn reanchor_points(
         }
     }
     off_series
+}
+
+/// A mark is for all timeframes by default only when it can be: an anchor
+/// without a market instant (dropped past the newest bar) has no place on
+/// another cut, so the object opens kept to its chart, and says so.
+pub(crate) fn truthful_scope<T>(mut drawing: Drawing<T>) -> Drawing<T> {
+    if !drawing.shareable() {
+        drawing.scope = DrawingScope::ThisChart;
+    }
+    drawing
 }

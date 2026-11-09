@@ -411,3 +411,38 @@ fn a_script_stuck_short_does_not_hide_a_later_drift_beside_it() {
     views.apply(rebuilt(other, descriptor(false, 1), vec![vec![1.0, 2.0]]));
     assert_eq!(views.row_drift(3), Some(2), "its neighbour still speaks");
 }
+
+/// The bundled VWAP painted on Light's paper takes the slate ink; on the
+/// slate flow pane and on Dark it keeps its declared colour; the trader's
+/// colour beats the ink; and the dialog lists the plot in the painted ink.
+#[test]
+fn a_view_paints_the_ink_of_the_surface_it_paints_on() {
+    use quantick_appearance::{LIGHT, ResolvedTheme};
+    let mut views = IndicatorViews::new();
+    let slot = views.allocate_slot("script.vwap_cumulative");
+    let mut vwap = descriptor(true, 1);
+    vwap.title = "VWAP (cumulative)".to_owned();
+    vwap.plots[0].title = "vwap".to_owned();
+    vwap.plots[0].base_color = Rgba8::opaque(0x9C, 0x27, 0xB0);
+    views.apply(rebuilt(slot, vwap, vec![vec![1.0]]));
+    let color = |views: &IndicatorViews| views.all()[0].plot_style(0).unwrap().color;
+    let purple = Rgba8::opaque(0x9C, 0x27, 0xB0);
+    let slate = Rgba8::opaque(0x2B, 0x36, 0x40);
+    assert_eq!(color(&views), purple, "unpainted: the declaration");
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    views.paint_on(&light);
+    assert_eq!(color(&views), slate);
+    assert_eq!(views.all()[0].themed_plots()[0].base_color, slate);
+    assert_eq!(views.all()[0].descriptor.plots[0].base_color, purple);
+    views.paint_on(light.bookmap());
+    assert_eq!(color(&views), purple);
+    views.paint_on(ResolvedTheme::bundled_dark());
+    assert_eq!(color(&views), purple);
+    views.paint_on(&light);
+    let over = crate::indicator_style::PlotOverride {
+        color: Some(Rgba8::opaque(1, 2, 3)),
+        ..Default::default()
+    };
+    views.view_mut(slot).unwrap().style.set(0, over);
+    assert_eq!(color(&views), Rgba8::opaque(1, 2, 3));
+}

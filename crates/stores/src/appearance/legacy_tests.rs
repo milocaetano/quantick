@@ -253,3 +253,27 @@ fn light_choice_before_the_tradingview_chart_migrates_to_current_light() {
     assert_eq!(store.builtin(), Some(Builtin::Dark));
     assert_eq!(store.resolved(), &ResolvedTheme::parse(dark).unwrap());
 }
+
+/// A Light choice saved with the warm toolbar row and the blue VWAP opens on
+/// the grey toolbar row, the slate VWAP drawing and the slate VWAP indicator.
+#[test]
+fn light_choice_before_the_slate_vwap_migrates_to_current_light() {
+    let old = include_str!("legacy-light-297976ae.toml");
+    let scratch = ScratchDir::new("legacy-light-slate-vwap");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    let theme = store.resolved();
+    assert_eq!(theme, &ResolvedTheme::parse(LIGHT).unwrap());
+    let slate = [0x2B, 0x36, 0x40, 255];
+    assert_eq!(
+        theme.color(Token::ToolbarSheet).to_array(),
+        [0xED, 0xED, 0xED, 255]
+    );
+    assert_eq!(theme.color(Token::DrawingVwap).to_array(), slate);
+    let ink = theme.plot_ink("VWAP (cumulative)", "vwap");
+    assert_eq!(ink.map(|ink| ink.to_array()), Some(slate));
+    let old = ResolvedTheme::parse(old).unwrap();
+    assert_eq!(old.plot_ink("VWAP (cumulative)", "vwap"), None);
+}
