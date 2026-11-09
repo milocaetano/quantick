@@ -33,6 +33,20 @@ impl NativeWindows {
     pub(super) fn request_position(&mut self, window: WindowId, origin: Point) {
         self.positions.insert(window, origin);
     }
+
+    /// The exit every tab settled for: the window closes, and with it the app.
+    pub(super) fn exit_when_settled(
+        &mut self,
+        close: &mut CloseQueue,
+        ctx: &egui::Context,
+    ) -> bool {
+        let settled = close.take_exit();
+        if settled {
+            self.final_exit = true;
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+        }
+        settled
+    }
 }
 
 pub(crate) fn viewport(id: WindowId) -> egui::ViewportId {
@@ -158,28 +172,16 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
 }
 
-/// The close prompt, in the focused window: an answer settles its tab, and
-/// an exit's last answer closes the app.
-pub(super) fn close_prompt(app: &mut QuantickApp, ctx: &egui::Context) {
-    let focused = viewport(app.runtime.tabs.windows().focused()) == ctx.viewport_id();
-    let queue = &app.chrome.window_menu.tab_workspace.close;
-    let asked = quantick_control_handlers::workspace_book::close_prompt(queue).filter(|_| focused);
-    let Some(at) = asked.and_then(|prompt| crate::widgets::ask(ctx, &prompt)) else {
-        return;
-    };
-    let answer = WorkspaceCommand::AnswerClose(CloseAnswer::BUTTONS[at]);
-    super::tab_workspaces::apply_workspace_command(app, answer);
-    exit_when_settled(app, ctx);
-}
-
-/// The exit every tab settled for: the window closes, and with it the app.
-fn exit_when_settled(app: &mut QuantickApp, ctx: &egui::Context) -> bool {
-    let settled = app.chrome.window_menu.tab_workspace.close.take_exit();
-    if settled {
-        app.presentation.native.final_exit = true;
-        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
-    }
-    settled
+/// The close prompt, in the `focused` window: the answer the trader gave.
+pub(super) fn close_answer(
+    focused: WindowId,
+    queue: &CloseQueue,
+    ctx: &egui::Context,
+) -> Option<WorkspaceCommand> {
+    let asked = quantick_control_handlers::workspace_book::close_prompt(queue);
+    let asked = asked.filter(|_| viewport(focused) == ctx.viewport_id());
+    let at = asked.and_then(|prompt| crate::widgets::ask(ctx, &prompt))?;
+    Some(WorkspaceCommand::AnswerClose(CloseAnswer::BUTTONS[at]))
 }
 
 pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId, now: Instant) {
@@ -191,7 +193,8 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
             let tabs = app.runtime.tabs.iter_with_ids().map(|(id, _)| id).collect();
             let exit = WorkspaceCommand::Close(CloseScope::App, tabs);
             super::tab_workspaces::apply_workspace_command(app, exit);
-            if !exit_when_settled(app, ctx) {
+            let close = &mut app.chrome.window_menu.tab_workspace.close;
+            if !app.presentation.native.exit_when_settled(close, ctx) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
             return;
