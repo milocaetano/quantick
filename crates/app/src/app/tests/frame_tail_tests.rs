@@ -146,7 +146,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
         report.set_report_list_open(true);
         report.open(&env);
     }
-    app.active_tab_mut().notice =
+    app.active_tab_mut().link.notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
     app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
     for _ in 0..3 {
@@ -302,9 +302,10 @@ fn frame_tail_recovery_refusals_never_spawn_or_reset_and_reconnect_keeps_the_pos
         paper.on_trade(&print(1, 100));
         let tape_before = app.active_tab().flow_pane.state.trades().len();
         if refused == "replay" {
-            app.active_tab_mut().replay = Some(quantick_feed::replay::test_support::detached_link(
-                recording_at(&dir.join("recording")),
-            ));
+            app.active_tab_mut().link.replay =
+                Some(quantick_feed::replay::test_support::detached_link(
+                    recording_at(&dir.join("recording")),
+                ));
         } else if refused == "missing-provider" {
             app.active_tab_mut().feed_id = "not-configured".to_owned();
         }

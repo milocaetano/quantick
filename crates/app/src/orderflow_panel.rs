@@ -23,7 +23,7 @@ const STATE_GAP_PX: f32 = 8.0;
 
 /// Whether the tab has the pane its panel attaches to: no flow pane, no gear.
 pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
-    tab.layout.shows_flow() && !tab.flow_collapsed
+    tab.canvas.layout.shows_flow() && !tab.canvas.flow_collapsed
 }
 
 /// Open the tab's panel on `section`.

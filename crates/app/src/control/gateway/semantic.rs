@@ -35,13 +35,11 @@ impl SemanticTab for TabRead<'_> {
         &self.tab.active.1
     }
     fn connection(&self) -> &'static str {
-        connection_state(self.tab.feed_connection)
+        connection_state(self.tab.link.feed_connection)
     }
     fn replay(&self) -> Option<(bool, bool)> {
-        self.tab
-            .replay
-            .as_ref()
-            .map(|link| (link.status.is_playing(), link.status.is_finished()))
+        let replay = self.tab.link.replay.as_ref()?;
+        Some((replay.status.is_playing(), replay.status.is_finished()))
     }
     /// [`Tab::panes`] and not a local `Vec`: walked on every frame, in the
     /// order both analysis scopes publish.

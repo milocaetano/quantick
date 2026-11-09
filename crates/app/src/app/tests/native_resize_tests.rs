@@ -31,7 +31,7 @@ fn native_resize_all_edges_and_both_arms_of_each_free_corner_emit_the_native_dir
         let ctx = egui::Context::default();
         let size = egui::vec2(width, 760.0);
         let market = app.runtime.tabs.active_id();
-        let channel = app.active_tab().commands.clone();
+        let channel = app.active_tab().link.commands.clone();
         for _ in 0..3 {
             frame(&mut app, &ctx, size, vec![]);
         }
@@ -78,7 +78,7 @@ fn native_resize_all_edges_and_both_arms_of_each_free_corner_emit_the_native_dir
             assert!(resize_commands(&held).is_empty(), "one command per gesture");
             frame(&mut app, &ctx, size, vec![pointer_button(at, false)]);
             assert_eq!(app.runtime.tabs.active_id(), market);
-            assert!(app.active_tab().commands.same_channel(&channel));
+            assert!(app.active_tab().link.commands.same_channel(&channel));
         }
     }
 }

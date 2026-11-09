@@ -783,8 +783,8 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
                 workspace: book.tab_row(tabs.id_at(index)).0,
                 bar: tab.flow_pane.state.spec().to_config_string(),
                 context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
-                replay: tab.replay.is_some(),
-                streaming: tab.latest_trade_ms.is_some(),
+                replay: tab.link.replay.is_some(),
+                streaming: tab.link.latest_trade_ms.is_some(),
                 price: super::menu_bar::last_price(tab),
                 trades_per_s: None,
             })
@@ -810,7 +810,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
         let shown = self.runtime.tabs.active_index();
         (self.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
         let timeframes = super::saved_context_intervals(&choice.context_bars, None);
-        self.active_tab_mut().open_context_on(&timeframes);
+        self.active_tab_mut().canvas.open_context_on(&timeframes);
         let tab = self.runtime.tabs.active_id();
         let sync = self.runtime.workspace.book.sync_mut();
         sync.join(tab, choice.arrival());

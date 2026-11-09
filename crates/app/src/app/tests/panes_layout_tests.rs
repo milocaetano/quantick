@@ -834,7 +834,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     for tab in app.runtime.tabs.iter_mut() {
-        tab.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+        tab.link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     }
     app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
@@ -901,14 +901,14 @@ fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
     assert_eq!(
         statusbar::tape_text(
             None,
-            app.active_tab().trade_arrival_ms(),
+            app.active_tab().link.trade_arrival_ms(),
             Some(50),
             app.active_tab().feed_latency(),
         ),
         "MT5 18112 ms"
     );
     assert_eq!(
-        app.active_tab().trade_arrival_ms(),
+        app.active_tab().link.trade_arrival_ms(),
         None,
         "and the chart's own measurement is untouched by the reading"
     );
@@ -1485,7 +1485,7 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
     );
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
 
-    assert!(app.active_tab().pane_collapsed(PaneSide::Time(1)));
+    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(1))
@@ -1514,7 +1514,7 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
     );
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(1)));
+    assert!(!app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
 
     let handle = app.active_tab().context_divider_rect(0).unwrap();
     drag_sized(
@@ -1525,7 +1525,7 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         egui::pos2(handle.center().x, 0.0),
     );
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(0))
@@ -1542,7 +1542,7 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
     );
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(!app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
 
     let short_window = egui::vec2(TEST_WINDOW.x, 440.0);
     run_frame_at(&mut app, &ctx, short_window);
@@ -1559,7 +1559,7 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         egui::pos2(divider.center().x, 0.0),
     );
     run_frame_at(&mut app, &ctx, short_window);
-    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(1))
@@ -1585,7 +1585,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
             "fraction": fraction
         })
     };
-    let width = app.active_tab().split_fraction;
+    let width = app.active_tab().canvas.split_fraction;
     let before = app.active_tab().context_divider_rect(0).unwrap();
     let result = app
         .control_action(
@@ -1601,7 +1601,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
     run_frame(&mut app, &ctx);
     let moved = app.active_tab().context_divider_rect(0).unwrap();
     assert!(moved.center().y < before.center().y);
-    assert_eq!(app.active_tab().split_fraction, width);
+    assert_eq!(app.active_tab().canvas.split_fraction, width);
     for invalid in [
         input(lower, upper, "0.8"),
         input(upper, u64::MAX, "0.8"),
@@ -1641,7 +1641,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
     )
     .unwrap();
     run_frame(&mut app, &ctx);
-    assert!(app.active_tab().pane_collapsed(PaneSide::Time(1)));
+    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(1))
@@ -1649,7 +1649,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
             .area
             .is_none()
     );
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     assert!(
         app.control_action(
             "layout.pane.resize_pair",
@@ -1706,7 +1706,7 @@ fn resetting_the_startup_layout_leaves_this_session_alone() {
         "the next launch opens on config"
     );
     assert_eq!(
-        app.active_tab().layout,
+        app.active_tab().canvas.layout,
         CanvasLayout::TimeAndFlow,
         "the charts on screen are not the trader's startup preference"
     );
@@ -1747,7 +1747,7 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
-    assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::TimeAndFlow);
     assert_eq!(
         app.active_tab().focused_side(),
         PaneSide::Flow,
@@ -1906,7 +1906,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
         },
     );
 
-    assert_eq!(app.active_tab().layout, CanvasLayout::Time);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Time);
     assert_eq!(
         app.active_tab().flow_pane.state.spec(),
         &BarSpec::Time(300_000),
@@ -1952,7 +1952,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         record_deals: false,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
-    assert_eq!(app.active_tab().layout, CanvasLayout::Single);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);
 
     app.arrangement_adapter().adopt_tab(
         "mt".to_string(),
@@ -1965,7 +1965,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         &BarSpec::Tick(7),
         "the declaration wins over the inherited spec"
     );
-    assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::TimeAndFlow);
 
     app.arrangement_adapter().adopt_tab(
         "binance".to_string(),
@@ -1979,7 +1979,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         "a feed declaring nothing still inherits from the tab you were on"
     );
     assert_eq!(
-        app.active_tab().layout,
+        app.active_tab().canvas.layout,
         CanvasLayout::Single,
         "and opens on the factory canvas"
     );
@@ -2007,9 +2007,9 @@ fn dragging_the_divider_resizes_then_collapses_the_flow_pane() {
     drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 120.0, grab.y));
     run_frame(&mut app, &ctx);
     assert!(
-        app.active_tab().split_fraction > DEFAULT_PANE_FRACTION,
+        app.active_tab().canvas.split_fraction > DEFAULT_PANE_FRACTION,
         "dragging right widens the time pane, got {}",
-        app.active_tab().split_fraction
+        app.active_tab().canvas.split_fraction
     );
     assert!(
         app.active_tab()
@@ -2034,11 +2034,11 @@ fn dragging_the_divider_resizes_then_collapses_the_flow_pane() {
             divider.center() + egui::vec2(400.0, 0.0),
         );
         run_frame(&mut app, &ctx);
-        if app.active_tab().flow_collapsed {
+        if app.active_tab().canvas.flow_collapsed {
             break;
         }
     }
-    assert!(app.active_tab().flow_collapsed);
+    assert!(app.active_tab().canvas.flow_collapsed);
     assert!(app.active_tab().flow_pane.frame.area.is_none());
     assert!(app.active_tab().flow_rail_rect().is_some());
 }
@@ -2047,25 +2047,25 @@ fn dragging_the_divider_resizes_then_collapses_the_flow_pane() {
 fn a_right_rail_reopens_the_flow_chart_by_dragging_left() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let restore = app.active_tab().split_fraction;
-    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    let restore = app.active_tab().canvas.split_fraction;
+    assert!(app.active_tab_mut().canvas.set_flow_collapsed(true));
     run_frame(&mut app, &ctx);
     let rail = app.active_tab().flow_rail_rect().expect("right rail drawn");
     assert!(rail.width() >= crate::canvas_layout::COLLAPSED_PANE_WIDTH_PX - 1.0);
     assert!(app.active_tab().flow_pane.frame.area.is_none());
     slow_primary_drag(&mut app, &ctx, rail.center(), egui::vec2(-20.0, 0.0), 18);
     run_frame(&mut app, &ctx);
-    assert!(!app.active_tab().flow_collapsed);
+    assert!(!app.active_tab().canvas.flow_collapsed);
     assert!(app.active_tab().flow_pane.frame.area.is_some());
-    assert!(app.active_tab().split_fraction < restore + 0.5);
+    assert!(app.active_tab().canvas.split_fraction < restore + 0.5);
 }
 
 #[test]
 fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().split_fraction = 0.072;
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.split_fraction = 0.072;
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     run_frame(&mut app, &ctx);
     let rail = app
         .active_tab()
@@ -2076,7 +2076,7 @@ fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.active_tab().context_collapsed,
+        !app.active_tab().canvas.context_collapsed,
         "dragging opens the rail"
     );
     let divider_x = app
@@ -2096,7 +2096,7 @@ fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
 fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().split_fraction = 0.072;
+    app.active_tab_mut().canvas.split_fraction = 0.072;
     run_frame(&mut app, &ctx);
     let divider = app
         .active_tab()
@@ -2108,7 +2108,7 @@ fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.active_tab().context_collapsed,
+        !app.active_tab().canvas.context_collapsed,
         "a stale fraction must not snap an open column shut"
     );
     let after = app
@@ -2127,7 +2127,7 @@ fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
 fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     run_frame(&mut app, &ctx);
     let rail = app
         .active_tab()
@@ -2135,11 +2135,11 @@ fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
         .expect("the collapsed column leaves a rail");
     click_chart(&mut app, &ctx, rail.center());
     assert!(
-        app.active_tab().context_collapsed,
+        app.active_tab().canvas.context_collapsed,
         "a rail click opened the column"
     );
 
-    app.active_tab_mut().set_context_collapsed(false);
+    app.active_tab_mut().canvas.set_context_collapsed(false);
     run_frame(&mut app, &ctx);
     let divider = app
         .active_tab()
@@ -2147,7 +2147,7 @@ fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
         .expect("the open column has a divider");
     click_chart(&mut app, &ctx, divider.center());
     assert!(
-        !app.active_tab().context_collapsed,
+        !app.active_tab().canvas.context_collapsed,
         "a divider click closed the column"
     );
 }
@@ -2164,7 +2164,7 @@ fn a_slow_left_drag_past_the_threshold_magnetically_closes_the_column() {
     slow_primary_drag(&mut app, &ctx, divider.center(), egui::vec2(-20.0, 0.0), 20);
 
     assert!(
-        app.active_tab().context_collapsed,
+        app.active_tab().canvas.context_collapsed,
         "crossing the collapse threshold should snap the column shut"
     );
 }
@@ -2173,8 +2173,8 @@ fn a_slow_left_drag_past_the_threshold_magnetically_closes_the_column() {
 fn ctrl_zero_reopens_a_stale_fraction_at_the_drawn_floor() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().split_fraction = 0.072;
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.split_fraction = 0.072;
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     run_frame(&mut app, &ctx);
 
     run_frame_with_modifiers(
@@ -2186,12 +2186,15 @@ fn ctrl_zero_reopens_a_stale_fraction_at_the_drawn_floor() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert!(!tab.context_collapsed, "Ctrl+0 remains the reopen path");
     assert!(
-        tab.split_fraction * tab.last_canvas_width()
+        !tab.canvas.context_collapsed,
+        "Ctrl+0 remains the reopen path"
+    );
+    assert!(
+        tab.canvas.split_fraction * tab.last_canvas_width()
             >= crate::canvas_layout::MIN_PANE_WIDTH_PX - 1.0,
         "reopen retained a {} px stale width below the {} px floor",
-        tab.split_fraction * tab.last_canvas_width(),
+        tab.canvas.split_fraction * tab.last_canvas_width(),
         crate::canvas_layout::MIN_PANE_WIDTH_PX
     );
 }
@@ -2210,7 +2213,7 @@ fn dragging_the_divider_to_the_edge_collapses_the_column() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     assert!(
-        !app.active_tab().context_collapsed,
+        !app.active_tab().canvas.context_collapsed,
         "the split opens with its context column shown"
     );
 
@@ -2224,13 +2227,13 @@ fn dragging_the_divider_to_the_edge_collapses_the_column() {
     }
 
     assert!(
-        app.active_tab().context_collapsed,
+        app.active_tab().canvas.context_collapsed,
         "dragging the divider to the edge must dismiss the column, not              stall against a floor the gesture can never cross"
     );
     // And the width it springs back to survived the gesture that put it
     // away, which is the whole promise of the rail.
     assert!(
-        app.active_tab().split_fraction > 0.0,
+        app.active_tab().canvas.split_fraction > 0.0,
         "the collapse spent the width it was meant to remember"
     );
 }
@@ -2254,7 +2257,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let untouched = app.runtime.tabs[1].split_fraction;
+    let untouched = app.runtime.tabs[1].canvas.split_fraction;
 
     // Back to the first tab, and press its divider.
     app.runtime.tabs.select(0);
@@ -2277,7 +2280,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     run_frame_with_events(&mut app, &ctx, vec![pointer_button(moved, false)]);
 
     assert_eq!(
-        app.runtime.tabs[1].split_fraction, untouched,
+        app.runtime.tabs[1].canvas.split_fraction, untouched,
         "the second tab's divider must not inherit the first tab's drag"
     );
 }
@@ -3001,7 +3004,7 @@ fn the_single_layout_still_gives_the_flow_pane_the_whole_canvas() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
 
-    assert_eq!(app.active_tab().layout, CanvasLayout::Single);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);
     assert!(
         app.active_tab().time_panes.is_empty(),
         "an unsplit canvas builds no second pane, and no worker behind it"
@@ -3366,7 +3369,7 @@ fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
     run_frame(&mut app, &ctx);
     app.drain_tabs();
 
-    assert!(app.active_tab().replay.is_some());
+    assert!(app.active_tab().link.replay.is_some());
     assert!(
         !app.active_tab()
             .loading
@@ -3682,7 +3685,7 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
             },
         )
     });
-    assert!(app.active_tab().replay.is_some());
+    assert!(app.active_tab().link.replay.is_some());
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         texts.iter().any(|text| text.contains("WINJ26")),
@@ -3693,11 +3696,11 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
     // its own tab, but the transport belongs to whoever is on screen.
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     assert!(
-        app.runtime.tabs[0].replay.is_some(),
+        app.runtime.tabs[0].link.replay.is_some(),
         "the background tab is still the one holding the recording"
     );
     assert!(
-        app.active_tab().replay.is_none(),
+        app.active_tab().link.replay.is_none(),
         "and the active tab is streaming"
     );
     let texts = painted_text(&run_frame(&mut app, &ctx));

@@ -96,13 +96,13 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
             .map(|(index, tab)| {
                 let active = index == active_index;
                 let focused = tab.focused_side();
-                let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
+                let shown = usize::from(!tab.canvas.context_collapsed) * tab.context_panes_shown();
                 let panes: Vec<WorkspacePane> = tab
                     .panes()
                     .map(|(pane, side)| {
                         let visible = match side {
-                            PaneSide::Flow => tab.layout.shows_flow(),
-                            PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+                            PaneSide::Flow => tab.canvas.layout.shows_flow(),
+                            PaneSide::Time(slot) => tab.canvas.layout.shows_time() && slot < shown,
                         };
                         WorkspacePane {
                             pane_id: WireU64::new(pane.id),
@@ -112,7 +112,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                                 app.layout_state().pane_layout(tabs.id_at(index), side).0,
                             ),
                             visible: active && visible,
-                            collapsed: tab.pane_collapsed(side),
+                            collapsed: tab.canvas.pane_collapsed(side),
                             focused: active && focused == side,
                         }
                     })
@@ -129,15 +129,15 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     feed_id: tab.feed_id.clone(),
                     symbol: tab.symbol.clone(),
                     active,
-                    layout: tab.layout.into(),
+                    layout: tab.canvas.layout.into(),
                     focused_pane: crate::control::pane_side_dto(focused),
                     split_fraction: canonical_f32(
-                        tab.split_fraction,
+                        tab.canvas.split_fraction,
                         SPLIT_FRACTION_DECIMAL_PLACES,
                     )
                     .expect("the pane split fraction is finite"),
-                    context_collapsed: tab.context_collapsed,
-                    flow_collapsed: tab.flow_collapsed,
+                    context_collapsed: tab.canvas.context_collapsed,
+                    flow_collapsed: tab.canvas.flow_collapsed,
                     panes,
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,

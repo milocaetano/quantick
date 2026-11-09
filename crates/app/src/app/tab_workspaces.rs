@@ -72,7 +72,7 @@ impl TabRecipeHost for BookTabs<'_> {
         self.0.runtime.tabs.by_id(id).is_some_and(|tab| {
             tab.panes().all(|(pane, _)| pane.layout_seeded())
                 && tab.time_panes.len()
-                    >= crate::config::DeclaredLayout::from(tab.layout).context_panes()
+                    >= crate::config::DeclaredLayout::from(tab.canvas.layout).context_panes()
         })
     }
     fn live_recipe(&self, id: u64) -> Option<WorkspaceRecipe> {
@@ -102,10 +102,14 @@ impl TabRecipeHost for BookTabs<'_> {
         let (app, mut hash) = (&*self.0, std::hash::DefaultHasher::new());
         app.runtime.workspace.layouts().revision().hash(&mut hash);
         if let Some(tab) = app.runtime.tabs.by_id(id) {
-            let canvas = (tab.layout as u8, tab.context_collapsed, tab.flow_collapsed);
-            (canvas, tab.split_fraction.to_bits()).hash(&mut hash);
-            tab.context_collapsed_slots().hash(&mut hash);
-            for share in tab.context_height_shares() {
+            let canvas = (
+                tab.canvas.layout as u8,
+                tab.canvas.context_collapsed,
+                tab.canvas.flow_collapsed,
+            );
+            (canvas, tab.canvas.split_fraction.to_bits()).hash(&mut hash);
+            tab.canvas.context_collapsed_slots().hash(&mut hash);
+            for share in tab.canvas.context_height_shares() {
                 share.to_bits().hash(&mut hash);
             }
             for (pane, _) in tab.panes() {

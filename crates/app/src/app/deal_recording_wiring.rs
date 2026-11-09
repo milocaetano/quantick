@@ -49,7 +49,7 @@ pub(super) fn ensure(app: &mut QuantickApp) {
             .take_day_cache();
         let mut recorder = recorder_for(app, &feed_id, &symbol, day_cache);
         let tab = app.runtime.tabs.runtime_mut(index);
-        recorder.set_available(tab.feed_capabilities.borrow().deal_counter);
+        recorder.set_available(tab.link.feed_capabilities.borrow().deal_counter);
         tab.deal_recorder = recorder;
     }
 }

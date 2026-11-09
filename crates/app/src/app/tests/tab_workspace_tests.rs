@@ -34,6 +34,7 @@ fn edit_split(app: &mut QuantickApp, tab: u64, fraction: f32) {
         .tabs
         .by_id_mut(tab)
         .expect("an open tab")
+        .canvas
         .split_fraction = fraction;
     observe_tab(app, tab);
 }
@@ -186,7 +187,7 @@ fn an_edit_undone_by_hand_on_the_factory_default_reads_clean() {
         .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
     let third = app.runtime.tabs.active_id();
     frames(&mut app, 3);
-    let was = app.active_tab().split_fraction;
+    let was = app.active_tab().canvas.split_fraction;
     edit_split(&mut app, third, 0.27);
     assert_eq!(
         app.runtime.workspace.book.tab_row(third),
@@ -299,6 +300,7 @@ fn an_edit_a_command_reads_first_is_due_for_write_through() {
         .tabs
         .by_id_mut(first)
         .expect("an open tab")
+        .canvas
         .split_fraction = 0.27;
     let read_first = quantick_session::workspace_menu::WorkspaceCommand::BeginSaveAs;
     crate::app::tab_workspaces::apply_workspace_command(&mut app, read_first);
@@ -389,7 +391,7 @@ fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
     );
     let tab = app.runtime.tabs.by_id(third).expect("the new tab");
     assert_eq!(
-        tab.layout,
+        tab.canvas.layout,
         CanvasLayout::TimeAndFlow,
         "the feed's declaration"
     );

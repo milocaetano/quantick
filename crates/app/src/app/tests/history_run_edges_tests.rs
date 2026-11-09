@@ -134,7 +134,7 @@ fn a_press_after_a_reconnect_on_a_quiet_market_begins_at_once() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
+    app.active_tab_mut().link.resume_floor_ms = Some(live_edge_ms(&app));
 
     let config = app.config.clone();
     let press = app
@@ -165,7 +165,7 @@ fn a_press_after_a_reconnect_on_a_quiet_market_begins_at_once() {
         "and the run asked again"
     );
     assert!(
-        app.active_tab().resume_floor_ms.is_some(),
+        app.active_tab().link.resume_floor_ms.is_some(),
         "an older page is not the session's recovery window"
     );
 }
@@ -179,7 +179,7 @@ fn a_reply_during_the_resume_floor_is_judged_on_its_own_prints() {
     drain_load_older(&mut commands);
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
-    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
+    app.active_tab_mut().link.resume_floor_ms = Some(live_edge_ms(&app));
 
     events
         .try_send(FeedEvent::HistoryPrepended(
@@ -205,7 +205,7 @@ fn the_recovery_window_is_not_taken_for_a_runs_reply() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
+    app.active_tab_mut().link.resume_floor_ms = Some(live_edge_ms(&app));
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
 
@@ -216,7 +216,7 @@ fn the_recovery_window_is_not_taken_for_a_runs_reply() {
         .unwrap();
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().resume_floor_ms,
+        app.active_tab().link.resume_floor_ms,
         None,
         "the floor was spent"
     );

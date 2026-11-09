@@ -39,7 +39,7 @@ impl FeedSourcePort for dyn ControlPort {
         Some(FeedSelection {
             feed_id: tab.active.0.clone(),
             symbol: tab.active.1.clone(),
-            replay: tab.replay.is_some(),
+            replay: tab.link.replay.is_some(),
         })
     }
     fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection> {
@@ -435,7 +435,7 @@ impl SessionPort for dyn ControlPort {
         for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
             let read = SessionTabRead {
                 tab,
-                replay: tab.replay.as_ref().map(ReplayLinkRead),
+                replay: tab.link.replay.as_ref().map(ReplayLinkRead),
             };
             visit(tab_id, &read);
         }

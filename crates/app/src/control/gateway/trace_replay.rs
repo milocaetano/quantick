@@ -40,7 +40,7 @@ pub(super) fn load_trace_for_reinjection(session_path: &std::path::Path) -> Trac
 /// replay link publishes.
 pub(super) fn playing(tabs: &ArrangementHost) -> impl Iterator<Item = PlayingTab<'_>> {
     tabs.iter_with_ids().filter_map(|(tab_id, tab)| {
-        let link = tab.replay.as_ref()?;
+        let link = tab.link.replay.as_ref()?;
         Some(PlayingTab {
             tab_id,
             session_path: &link.session.path,

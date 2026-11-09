@@ -181,8 +181,8 @@ fn live_trade_batches_preserve_per_print_fills_panes_and_one_arrival_clock_per_d
             });
         assert_eq!(position(&singles), position(&batches));
         assert_eq!(
-            singles.active_tab().live_trades,
-            batches.active_tab().live_trades
+            singles.active_tab().link.live_trades,
+            batches.active_tab().link.live_trades
         );
         let left: Vec<_> = singles.active_tab().panes().collect();
         let right: Vec<_> = batches.active_tab().panes().collect();
@@ -230,7 +230,7 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
         ingest(&mut app, &trades[..200]);
         assert!(!app.active_tab().paper.is_flat());
         assert!(position(&app).is_none());
-        app.active_tab_mut().resume_floor_ms = Some(trades[199].timestamp_ms);
+        app.active_tab_mut().link.resume_floor_ms = Some(trades[199].timestamp_ms);
         let window = trades[199..].to_vec();
         let event = match kind {
             0 => FeedEvent::Backfilled(window),
@@ -250,8 +250,8 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
             position(&app).is_none(),
             "resume path {kind} filled against history"
         );
-        assert_eq!(app.active_tab().resume_floor_ms, None);
-        assert_eq!(app.active_tab().live_trades, 200);
+        assert_eq!(app.active_tab().link.resume_floor_ms, None);
+        assert_eq!(app.active_tab().link.live_trades, 200);
         assert_eq!(app.active_tab().history_trades, 1);
         assert_eq!(
             app.active_tab().paper.account().mark_price(),
@@ -296,7 +296,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
             .unwrap()
             .1
     );
-    app.active_tab_mut().resume_floor_ms = Some(trades[149].timestamp_ms);
+    app.active_tab_mut().link.resume_floor_ms = Some(trades[149].timestamp_ms);
     events
         .blocking_send(FeedEvent::Backfilled(trades[149..200].to_vec()))
         .unwrap();
@@ -356,7 +356,7 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
             .unwrap()
             .1
     );
-    let latency = app.active_tab().latest_trade_latency_ms;
+    let latency = app.active_tab().link.latest_trade_latency_ms;
     let report = TapeBackfill {
         from_ms: trades[149].timestamp_ms,
         to_ms: trades[199].timestamp_ms,
@@ -381,7 +381,7 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
 
     let tab = app.active_tab();
     assert_eq!(tab.flow_pane.state.bars().len(), 4, "the hole builds bars");
-    assert_eq!((tab.live_trades, tab.history_trades), (150, 50));
+    assert_eq!((tab.link.live_trades, tab.history_trades), (150, 50));
     assert_eq!(
         tab.paper.account().mark_price(),
         Some(trades[199].price),
@@ -389,7 +389,10 @@ fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency()
     );
     assert!(tab.paper.is_flat(), "no strategy command from the hole");
     assert!(position(&app).is_none(), "nothing fills against the hole");
-    assert_eq!(tab.latest_trade_latency_ms, latency, "no arrival reading");
+    assert_eq!(
+        tab.link.latest_trade_latency_ms, latency,
+        "no arrival reading"
+    );
     assert!(tab.pending_alarm_sounds.is_empty(), "no alarm sounds");
 
     // The next live print does not evaluate the bar the hole closed, where

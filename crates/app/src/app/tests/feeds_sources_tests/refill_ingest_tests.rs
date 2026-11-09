@@ -57,7 +57,10 @@ fn a_refill_keeps_the_live_bars_live_with_a_hole_or_without_one() {
             tab.flow_pane.state.trades().len(),
             if hole { 261 } else { 201 }
         );
-        assert_eq!(tab.live_trades, 101, "only the prints that arrived live");
+        assert_eq!(
+            tab.link.live_trades, 101,
+            "only the prints that arrived live"
+        );
     }
 }
 
@@ -81,12 +84,12 @@ fn a_refill_moves_the_tape_to_its_last_print() {
 
     let last_ms = trade(200).timestamp_ms;
     let tab = app.active_tab();
-    assert_eq!(tab.latest_trade_ms, Some(last_ms));
+    assert_eq!(tab.link.latest_trade_ms, Some(last_ms));
     assert_eq!(tab.tape_age_at(last_ms + 1_000), Some(1_000));
 
     let _feed = reconnect_onto_fresh_feed(&mut app);
     assert_eq!(
-        app.active_tab().resume_floor_ms,
+        app.active_tab().link.resume_floor_ms,
         Some(last_ms),
         "the next reconnect resumes after the refilled prints"
     );

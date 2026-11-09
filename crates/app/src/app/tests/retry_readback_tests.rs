@@ -2077,7 +2077,7 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-focus-hidden");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
