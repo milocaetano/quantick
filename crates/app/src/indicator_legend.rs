@@ -27,7 +27,6 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_appearance::ResolvedTheme;
 use quantick_indicators::Rgba8;
 
 use crate::chart;
@@ -153,7 +152,6 @@ pub(crate) fn draw(
     views: &[IndicatorView],
     preview_slot: Option<SlotId>,
     collapsed: bool,
-    surface: &ResolvedTheme,
 ) -> (Vec<LegendAction>, Option<egui::Rect>) {
     let palette = theme::get(ctx);
     let mut actions = Vec::new();
@@ -189,7 +187,7 @@ pub(crate) fn draw(
                         let previewing_folded = views.iter().any(|view| {
                             Some(view.slot) == preview_slot && !survives_collapse(view)
                         });
-                        draw_puck(ui, views, previewing_folded, &mut actions, surface);
+                        draw_puck(ui, views, previewing_folded, &mut actions);
                         for view in views.iter().filter(|view| survives_collapse(view)) {
                             // Its own preview, not the puck's: a row that
                             // kept its place through the fold states
@@ -200,7 +198,6 @@ pub(crate) fn draw(
                                 preview_slot == Some(view.slot),
                                 false,
                                 &mut actions,
-                                surface,
                             );
                         }
                     } else {
@@ -211,7 +208,6 @@ pub(crate) fn draw(
                                 preview_slot == Some(view.slot),
                                 index == 0,
                                 &mut actions,
-                                surface,
                             );
                         }
                     }
@@ -235,7 +231,6 @@ fn draw_puck(
     views: &[IndicatorView],
     previewing: bool,
     actions: &mut Vec<LegendAction>,
-    surface: &ResolvedTheme,
 ) {
     let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
@@ -248,7 +243,7 @@ fn draw_puck(
             .scope(|ui| {
                 ui.horizontal(|ui| {
                     chevron(ui, Some(COLLAPSED_CHEVRON));
-                    draw_folded_dots(ui, views, surface);
+                    draw_folded_dots(ui, views);
                     if previewing {
                         ui.label(
                             egui::RichText::new("preview")
@@ -290,11 +285,11 @@ fn draw_puck(
 /// numbers next door are quantities and prices. Past [`MAX_PUCK_DOTS`] the
 /// rest becomes `+N`, which keeps the number attached to the dots explaining
 /// it.
-fn draw_folded_dots(ui: &mut egui::Ui, views: &[IndicatorView], surface: &ResolvedTheme) {
+fn draw_folded_dots(ui: &mut egui::Ui, views: &[IndicatorView]) {
     let palette = theme::get(ui.ctx());
     let folded = folded_views(views);
     for view in folded.iter().take(MAX_PUCK_DOTS) {
-        draw_status_dot(ui, view, surface);
+        draw_status_dot(ui, view);
     }
     if folded.len() > MAX_PUCK_DOTS {
         ui.label(
@@ -399,7 +394,6 @@ fn draw_row(
     previewing: bool,
     leads: bool,
     actions: &mut Vec<LegendAction>,
-    surface: &ResolvedTheme,
 ) {
     let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
@@ -417,7 +411,7 @@ fn draw_row(
         let identity = ui
             .scope(|ui| {
                 ui.horizontal(|ui| {
-                    draw_status_dot(ui, view, surface);
+                    draw_status_dot(ui, view);
                     let name_color = if view.error.is_some() {
                         palette.sell()
                     } else if view.stale.is_some() {
@@ -531,7 +525,7 @@ fn draw_row(
 /// The row's colour dot: the first plot's own colour, so the row and the
 /// line it names can never disagree; error and stale wear the same glyphs
 /// as the toolbar menu's status dot.
-fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView, surface: &ResolvedTheme) {
+fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView) {
     let palette = theme::get(ui.ctx());
     if view.error.is_some() {
         ui.label(
@@ -552,7 +546,7 @@ fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView, surface: &ResolvedTh
     // Resolved, not declared: the dot exists so the row and the line it names
     // can never disagree, which a restyled plot would break instantly.
     let color = view
-        .plot_style(0, surface)
+        .plot_style(0)
         .map_or(palette.text_muted(), |plot| rgba(plot.color));
     let color = if view.hidden {
         color.gamma_multiply(HIDDEN_DOT_FADE)
@@ -613,15 +607,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let (actions, _) = draw(
-                    ctx,
-                    0,
-                    chart,
-                    views.all(),
-                    None,
-                    collapsed,
-                    ResolvedTheme::bundled_dark(),
-                );
+                let (actions, _) = draw(ctx, 0, chart, views.all(), None, collapsed);
                 assert!(actions.is_empty(), "no clicks, no actions");
             });
             text.clear();
@@ -681,15 +667,7 @@ mod tests {
                     let mut bottom = f32::NEG_INFINITY;
                     for _ in 0..2 {
                         let output = ctx.run(egui::RawInput::default(), |ctx| {
-                            draw(
-                                ctx,
-                                0,
-                                chart,
-                                views.all(),
-                                None,
-                                collapsed,
-                                ResolvedTheme::bundled_dark(),
-                            );
+                            draw(ctx, 0, chart, views.all(), None, collapsed);
                         });
                         bottom = f32::NEG_INFINITY;
                         for shape in output.shapes {
@@ -808,15 +786,7 @@ mod tests {
         let mut dots = 0_usize;
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                draw(
-                    ctx,
-                    0,
-                    rect,
-                    views.all(),
-                    None,
-                    true,
-                    ResolvedTheme::bundled_dark(),
-                );
+                draw(ctx, 0, rect, views.all(), None, true);
             });
             dots = output
                 .shapes
@@ -860,15 +830,7 @@ mod tests {
             let mut text = String::new();
             for _ in 0..2 {
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw(
-                        ctx,
-                        0,
-                        chart,
-                        views.all(),
-                        preview,
-                        true,
-                        ResolvedTheme::bundled_dark(),
-                    );
+                    draw(ctx, 0, chart, views.all(), preview, true);
                 });
                 text.clear();
                 for shape in output.shapes {
@@ -944,15 +906,7 @@ mod tests {
             let mut target = None;
             for _ in 0..2 {
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw(
-                        ctx,
-                        0,
-                        chart,
-                        views.all(),
-                        None,
-                        collapsed,
-                        ResolvedTheme::bundled_dark(),
-                    );
+                    draw(ctx, 0, chart, views.all(), None, collapsed);
                 });
                 for shape in output.shapes {
                     if let egui::epaint::Shape::Text(galley) = &shape.shape
@@ -974,18 +928,7 @@ mod tests {
                     modifiers: egui::Modifiers::default(),
                 });
                 let _ = ctx.run(input, |ctx| {
-                    actions.extend(
-                        draw(
-                            ctx,
-                            0,
-                            chart,
-                            views.all(),
-                            None,
-                            collapsed,
-                            ResolvedTheme::bundled_dark(),
-                        )
-                        .0,
-                    );
+                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed).0);
                 });
             }
             assert!(
@@ -1020,15 +963,7 @@ mod tests {
         let mut target = None;
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                draw(
-                    ctx,
-                    0,
-                    chart,
-                    views.all(),
-                    None,
-                    false,
-                    ResolvedTheme::bundled_dark(),
-                );
+                draw(ctx, 0, chart, views.all(), None, false);
             });
             for shape in output.shapes {
                 if let egui::epaint::Shape::Text(galley) = &shape.shape
@@ -1051,18 +986,7 @@ mod tests {
                 modifiers: egui::Modifiers::default(),
             });
             let _ = ctx.run(input, |ctx| {
-                actions.extend(
-                    draw(
-                        ctx,
-                        0,
-                        chart,
-                        views.all(),
-                        None,
-                        false,
-                        ResolvedTheme::bundled_dark(),
-                    )
-                    .0,
-                );
+                actions.extend(draw(ctx, 0, chart, views.all(), None, false).0);
             });
         }
         assert!(

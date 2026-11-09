@@ -16,7 +16,7 @@
 //! [`IndicatorDescriptor`]: quantick_indicators::IndicatorDescriptor
 
 use quantick_appearance::ResolvedTheme;
-use quantick_indicators::{IndicatorDescriptor, PlotSpec, Rgba8};
+use quantick_indicators::{PlotSpec, Rgba8};
 
 /// Thinnest a plot may be dragged to and still be a line rather than a rumour.
 pub const MIN_PLOT_WIDTH_PX: f32 = 0.5;
@@ -101,11 +101,6 @@ impl StyleOverride {
         self.plots.iter().all(|plot| plot.is_default())
     }
 
-    /// Whether plot `index` is drawn: no theme decides that, only the trader.
-    pub fn visible(&self, index: usize) -> bool {
-        self.get(index).visible.unwrap_or(true)
-    }
-
     /// The layer as stored, for persistence.
     pub fn plots(&self) -> &[PlotOverride] {
         &self.plots
@@ -117,7 +112,7 @@ impl StyleOverride {
     pub fn resolve(&self, index: usize, spec: &PlotSpec, ink: Option<Rgba8>) -> ResolvedPlot {
         let over = self.get(index);
         ResolvedPlot {
-            visible: self.visible(index),
+            visible: over.visible.unwrap_or(true),
             color: over.color.or(ink).unwrap_or(spec.base_color),
             width: over.width.map_or(spec.width, |px| {
                 px.clamp(MIN_PLOT_WIDTH_PX, MAX_PLOT_WIDTH_PX)
@@ -139,13 +134,6 @@ impl StyleOverride {
 pub fn theme_ink(theme: &ResolvedTheme, indicator: &str, plot: &str) -> Option<Rgba8> {
     let [r, g, b, a] = theme.plot_ink(indicator, plot)?.to_array();
     Some(Rgba8::new(r, g, b, a))
-}
-
-/// Every plot's [`theme_ink`] under `theme`, in plot order, for a surface
-/// that lists them all (the settings dialog's style rows).
-pub fn theme_inks(theme: &ResolvedTheme, descriptor: &IndicatorDescriptor) -> Vec<Option<Rgba8>> {
-    let ink = |plot: &PlotSpec| theme_ink(theme, &descriptor.title, &plot.title);
-    descriptor.plots.iter().map(ink).collect()
 }
 
 #[cfg(test)]

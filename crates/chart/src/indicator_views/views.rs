@@ -126,6 +126,7 @@ impl IndicatorViews {
                         scale: PriceView::new(),
                         sizing: PaneSizing::Auto,
                         style: crate::indicator_style::StyleOverride::default(),
+                        inks: Vec::new(),
                         last_auto: None,
                     });
                 }
@@ -329,6 +330,14 @@ impl IndicatorViews {
     /// All views, in add order (for the manager UI).
     pub fn all(&self) -> &[IndicatorView] {
         &self.views
+    }
+
+    /// Every view takes the plot inks of `theme`, the surface the pane paints
+    /// on this frame — see [`IndicatorView::paint_on`].
+    pub fn paint_on(&mut self, theme: &quantick_appearance::ResolvedTheme) {
+        for view in &mut self.views {
+            view.paint_on(theme);
+        }
     }
 
     /// Overlay indicators that should draw on the price chart right now.

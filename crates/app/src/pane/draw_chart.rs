@@ -74,7 +74,9 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
-        self.frame.axis_metrics = crate::theme::get(painter.ctx()).resolved.axis_metrics();
+        let surface = theme::get(painter.ctx());
+        self.frame.axis_metrics = surface.resolved.axis_metrics();
+        self.indicators.paint_on(&surface.resolved);
         let layout = self.lay_out(area, chrome);
         let axes = theme::axes(painter.ctx());
         let light_flow = self.orderflow.is_some() && !axes.resolved.dark;

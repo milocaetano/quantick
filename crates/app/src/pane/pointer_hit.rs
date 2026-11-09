@@ -257,7 +257,10 @@ impl PaneHitTest<'_> {
         let mut best: Option<(f32, SlotId)> = None;
         for view in self.projection.indicators.visible_overlays() {
             for index in 0..view.descriptor.plots.len() {
-                if view.plot_visible(index) != Some(true) {
+                let Some(resolved) = view.plot_style(index) else {
+                    continue;
+                };
+                if !resolved.visible {
                     continue;
                 }
                 let Some(column) = view.columns.get(index) else {

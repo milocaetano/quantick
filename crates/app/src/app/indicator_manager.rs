@@ -347,7 +347,6 @@ impl IndicatorState {
             pane.indicators.all(),
             preview,
             pane.legend_collapsed,
-            &pane.palette(ctx).resolved,
         );
         pane.frame.indicator_legend = footprint;
         actions
@@ -358,7 +357,6 @@ impl IndicatorState {
         ctx: &egui::Context,
         view: Option<&mut IndicatorView>,
         presets_path: &std::path::Path,
-        surface: &quantick_appearance::ResolvedTheme,
     ) -> SettingsChange {
         let target = self.indicator_settings_target;
         let preset_names: Option<Vec<String>> = self.registry.kind(target).map(|kind| {
@@ -375,6 +373,7 @@ impl IndicatorState {
             return SettingsChange::None;
         };
         dialog.title = view.label().to_owned();
+        let plots = view.themed_plots();
         let IndicatorView {
             descriptor, style, ..
         } = view;
@@ -382,8 +381,7 @@ impl IndicatorState {
             ctx,
             dialog,
             &descriptor.inputs,
-            &descriptor.plots,
-            &quantick_chart::indicator_style::theme_inks(surface, descriptor),
+            &plots,
             style,
             preset_names.as_deref(),
         );
