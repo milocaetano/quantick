@@ -131,7 +131,9 @@ pub fn icon_paint(
     }
     if hovered {
         return IconPaint {
-            fill: Some(palette.border()),
+            fill: Some(*palette.get(quantick_appearance::widget::hover_fill(
+                palette.resolved.dark,
+            ))),
             glyph: palette.text_primary(),
         };
     }

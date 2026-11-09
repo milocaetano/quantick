@@ -1,11 +1,13 @@
 //! Paints what [`quantick_chart::connection_state`] decides: the overlay over
 //! empty panes, the header's chip and slot, and the small spinner embedded in
-//! windows. All of it grey; none of it above a menu.
+//! windows. All of it grey but a light theme's Reconnect; none of it above a
+//! menu.
 
 use std::sync::{Arc, OnceLock};
 
 use eframe::egui::{self, text::Fonts};
 use egui_phosphor::regular as icons;
+use quantick_appearance::widget::text_action;
 use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWords};
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
@@ -26,6 +28,8 @@ const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
 /// The label a press on the overlay answers to: same word as the popup's.
 pub const RECONNECT_LABEL: &str = "Reconnect";
+/// egui bundles one weight; an action struck again this far right reads bold.
+const BOLD_STRIKE_PX: f32 = 0.4;
 
 /// The chip: 10 pt monospace in a 1 px pill.
 const CHIP_PT: f32 = 10.0;
@@ -221,10 +225,11 @@ fn lay_out_overlay(
             fonts.layout_job(title),
             steady(&palette, fonts, &words.meta, mono, rect.width()),
             with_control.then(|| {
+                let (ink, _) = text_action(palette.resolved.dark);
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
                     palette.body_font(CONTROL_PT),
-                    palette.loading_meta(),
+                    *palette.get(ink),
                 )
             }),
         )
@@ -303,6 +308,9 @@ pub fn draw_overlay(
         } else {
             palette.loading_meta()
         };
+        if text_action(palette.resolved.dark).1 {
+            painter.galley(at + egui::vec2(BOLD_STRIKE_PX, 0.0), control.clone(), ink);
+        }
         painter.galley(at, control, ink);
         if lit {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -700,9 +708,14 @@ mod tests {
                 .iter()
                 .rposition(|shape| matches!(shape, egui::Shape::Mesh(_)))
                 .expect("the logo");
-            let text: Vec<_> = (0..shapes.len())
+            let mut text: Vec<_> = (0..shapes.len())
                 .filter(|&index| matches!(shapes[index], egui::Shape::Text(_)))
                 .collect();
+            // A bold action is struck twice; the strike is one word.
+            text.dedup_by(|a, b| match (shapes[*a], shapes[*b]) {
+                (egui::Shape::Text(a), egui::Shape::Text(b)) => a.galley.text() == b.galley.text(),
+                _ => false,
+            });
             assert_eq!(text.len(), 3, "title, metadata and Reconnect");
             assert!(text.iter().all(|&index| index < logo), "{text:?} {logo}");
             assert!(

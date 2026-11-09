@@ -1263,7 +1263,10 @@ fn draw_preview_row(
                 theme::active_tint(palette.accent()),
             );
         } else if response.hovered() {
-            painter.rect_filled(rect, egui::Rounding::same(4.0), palette.border());
+            let hover = *palette.get(quantick_appearance::widget::hover_fill(
+                palette.resolved.dark,
+            ));
+            painter.rect_filled(rect, egui::Rounding::same(4.0), hover);
         }
         let ink = if active {
             palette.accent()
