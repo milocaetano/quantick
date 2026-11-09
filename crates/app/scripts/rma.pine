@@ -1,0 +1,6 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Wilder Moving Average", overlay=true)
+len = input.int(14, "Length", minval=1, maxval=500)
+src = input.source(close, "Source")
+plot(ta.rma(src, len), title="Wilder Moving Average", color=color.orange)

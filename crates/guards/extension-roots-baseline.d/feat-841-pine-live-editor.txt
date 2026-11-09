@@ -1,0 +1,5 @@
+# Numeric settings and durable readback add forwarding only; dedicated wiring owns pane routing.
+# #841 adds paged script_library_state and canonical library attachment forwarding.
+# Its state and projection remain behind dedicated stores/control-schema modules.
+QuantickApp +26
+!budget +26

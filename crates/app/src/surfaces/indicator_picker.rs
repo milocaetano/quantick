@@ -69,6 +69,7 @@ impl Surface for IndicatorPickerSurface {
         let escape =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut actions = Vec::new();
+        let mut editor_actions = Vec::new();
         let mut open = true;
         let available = ctx.screen_rect().size();
         let width = (available.x - 32.0).clamp(240.0, 760.0);
@@ -164,6 +165,22 @@ impl Surface for IndicatorPickerSurface {
                                     ui.label("No indicators match your search.");
                                 }
                                 for entry in entries {
+                                    if let Choice::Script(index) = &entry.choice {
+                                        ui.horizontal(|ui| {
+                                            ui.label(&entry.name);
+                                            if ui.small_button("View source").clicked() {
+                                                editor_actions.push(quantick_stores::script_library::ScriptEditorAction::Open {
+                                                    id: env.picker_scripts[*index].name.clone(),
+                                                });
+                                                self.state.close();
+                                            }
+                                            if ui.small_button("Add to chart").clicked() {
+                                                actions.push(ToolbarAction::AddScriptIndicator(*index));
+                                                self.state.close();
+                                            }
+                                        });
+                                        continue;
+                                    }
                                     if ui
                                         .allocate_ui_with_layout(
                                             egui::vec2(ui.available_width(), 32.0),
@@ -205,6 +222,7 @@ impl Surface for IndicatorPickerSurface {
         });
         SurfaceResponse {
             indicator_actions: actions,
+            script_editor_actions: editor_actions,
             ..Default::default()
         }
     }

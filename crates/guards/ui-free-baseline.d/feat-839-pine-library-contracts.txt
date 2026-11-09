@@ -1,0 +1,4 @@
+# #839 app-only wiring resolves QuantickApp panes, surface and IndicatorState owners.
+# Editor decisions and document state remain headless in stores/control-handlers.
+crates/app +8
+!budget +8

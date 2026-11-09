@@ -1,0 +1,4 @@
+# #848: merged layout/editor frame needs a narrow layout-store binding and
+# existing IndicatorWiring compatibility calls; both reviewed parent behaviors remain.
+crates/app +8
+!budget +8

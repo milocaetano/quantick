@@ -49,6 +49,7 @@ pub(crate) mod home;
 pub(crate) mod indicator_picker;
 pub(crate) mod indicator_preview;
 pub(crate) mod market_palette;
+pub(crate) mod script_editor;
 pub(crate) mod strategy_popup;
 pub(crate) mod toast;
 
@@ -173,6 +174,7 @@ impl SurfaceEnv<'static> {
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
     pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
+    pub script_editor_actions: Vec<quantick_stores::script_library::ScriptEditorAction>,
     /// The toast's Undo button was pressed — the host owns the drawing stack,
     /// and the sweep of any strategy left orphaned by the undo.
     pub undo_drawing: bool,
@@ -261,6 +263,8 @@ impl SurfaceResponse {
     /// rather than a surprise.
     fn merge(&mut self, other: Self) {
         self.indicator_actions.extend(other.indicator_actions);
+        self.script_editor_actions
+            .extend(other.script_editor_actions);
         self.undo_drawing |= other.undo_drawing;
         self.style = self.style.take().or(other.style);
         self.log_style_change = self.log_style_change.take().or(other.log_style_change);
@@ -304,6 +308,7 @@ pub(crate) trait Surface {
 /// Every floating surface the application owns.
 #[derive(Default)]
 pub(crate) struct Surfaces {
+    pub script_editor: script_editor::ScriptEditorSurface,
     pub indicator_picker: indicator_picker::IndicatorPickerSurface,
     /// Whether the capture hooks have run.
     ///
@@ -335,6 +340,12 @@ pub(crate) struct Surfaces {
 }
 
 impl Surfaces {
+    /// Modal keyboard capture runs before chrome hotkeys.
+    pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
+        self.indicator_picker.capture_keyboard(ctx);
+        self.script_editor.capture_keyboard(ctx);
+    }
+
     /// Whether the capture hooks have still to run.
     ///
     /// The host reads this when it decides whether to build the environment
@@ -378,6 +389,7 @@ impl Surfaces {
         if !self.hooks_applied {
             self.hooks_applied = true;
             self.indicator_picker.apply_env_hook(env);
+            self.script_editor.apply_env_hook(env);
             self.agent_popup.apply_env_hook(env);
             self.bar_switch.apply_env_hook(env);
             self.chart_settings.apply_env_hook(env);
@@ -388,6 +400,7 @@ impl Surfaces {
         }
         let mut response = SurfaceResponse::default();
         response.merge(self.indicator_picker.draw(ctx, env));
+        response.merge(script_editor::draw(&mut self.script_editor, ctx, env));
         response.merge(self.agent_popup.draw(ctx, env));
         response.merge(self.bar_switch.draw(ctx, env));
         response.merge(self.chart_settings.draw(ctx, env));
@@ -527,6 +540,7 @@ mod tests {
         contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
             indicator_actions: Vec::new(),
+            script_editor_actions: Vec::new(),
             style: Some(contested),
             log_style_change: Some(StyleLogRequest {
                 applied_preset: Some(crate::style::CandlePreset::Classic),
