@@ -76,7 +76,8 @@ pub use tape_frame::{
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
 pub use tape_geometry::{
-    LEAD_READ_MARGIN, MAX_LEAD_SHARE, TapeHorizontalGeometry, finite_unit_f64, stale_book_gap,
+    LEAD_READ_MARGIN, MAX_LEAD_SHARE, TapeHorizontalGeometry, drawn_gaps, finite_unit_f64,
+    stale_book_gap,
 };
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,

@@ -232,6 +232,20 @@ pub fn stale_book_gap(
     })
 }
 
+/// The gaps a frame paints: its own, and [`stale_book_gap`] past NOW while
+/// its current book is no longer current.
+pub fn drawn_gaps(
+    projection: &crate::projection::HeatmapProjection,
+    current_book_live: bool,
+) -> impl Iterator<Item = std::borrow::Cow<'_, crate::projection::GapPrimitive>> {
+    let stale = stale_book_gap(projection, current_book_live);
+    projection
+        .gaps
+        .iter()
+        .map(std::borrow::Cow::Borrowed)
+        .chain(stale.map(std::borrow::Cow::Owned))
+}
+
 /// `share` of `window_ms`, rounded up; zero for a share that is not a
 /// positive finite number.
 #[must_use]
