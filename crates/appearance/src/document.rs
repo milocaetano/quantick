@@ -248,6 +248,7 @@ impl ThemeDocument {
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
             bookmap: None,
             title_strip: None,
+            root_colors: None,
         };
         // A surface the document leaves out is the root itself, unless the
         // root authors plot ink: then it is the root resolved apart, ink-free.
@@ -256,13 +257,21 @@ impl ThemeDocument {
             .bookmap
             .clone()
             .or_else(|| root_inks.then(BookmapOverride::default))
-            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .map(|surface| {
+                surface
+                    .resolve(&resolved)
+                    .map(|theme| resolved.derive(theme))
+            })
             .transpose()?;
         resolved.title_strip = self
             .title_strip
             .clone()
             .or_else(|| root_inks.then(TitleStripOverride::default))
-            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .map(|surface| {
+                surface
+                    .resolve(&resolved)
+                    .map(|theme| resolved.derive(theme))
+            })
             .transpose()?;
         Ok(resolved)
     }
@@ -310,6 +319,8 @@ pub struct ResolvedTheme {
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
+    /// A derived surface's root colours, which new drawings are born in.
+    root_colors: Option<Box<[PremultipliedRgba; Token::ALL.len()]>>,
     plot_ink: plot_ink::PlotInks,
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
@@ -345,6 +356,20 @@ impl ResolvedTheme {
 
     pub fn parse(source: &str) -> Result<Self, ThemeError> {
         ThemeDocument::parse(source)?.resolve()
+    }
+
+    /// The colour `token` has on the root theme this surface derives from:
+    /// its own on the root, the parent's on the flow pane or title strip.
+    pub(crate) fn root_color(&self, token: Token) -> PremultipliedRgba {
+        self.root_colors
+            .as_ref()
+            .map_or_else(|| self.color(token), |root| root[token as usize])
+    }
+
+    /// `surface` as resolved under this root: it remembers the root's colours.
+    fn derive(&self, mut surface: ResolvedTheme) -> Box<ResolvedTheme> {
+        surface.root_colors = Some(Box::new(self.colors));
+        Box::new(surface)
     }
 
     /// Indexed lookup: rendering never parses keys or locks a global palette.

@@ -119,6 +119,22 @@ impl crate::ResolvedTheme {
         )
     }
 
+    /// A drawing's colour as it is painted on this surface when its tool's
+    /// colour role is `role`. A colour that is still the role's root default
+    /// (the colour a new drawing is born in) takes this surface's own colour
+    /// for the role, so the flow pane's VWAP reads in the flow pane's VWAP
+    /// colour; any other colour is authored and painted as
+    /// [`Self::legible_drawing`] paints it.
+    #[must_use]
+    pub fn legible_drawing_as(
+        &self,
+        color: PremultipliedRgba,
+        role: crate::Token,
+    ) -> PremultipliedRgba {
+        let born = color == self.root_color(role);
+        self.legible_drawing(if born { self.color(role) } else { color })
+    }
+
     /// Readout text as it is painted on the readout plate, which sits over
     /// the canvas; see [`legible`].
     #[must_use]

@@ -418,16 +418,6 @@ pub enum PointerHint {
     ResizeSide { handle: usize },
 }
 
-/// The style an object is painted in on the active canvas: its own, with a
-/// colour that has vanished there swapped for the theme's legible one. The
-/// saved style is untouched — see [`quantick_appearance::contrast::legible`].
-fn legible(style: DrawingStyle, ctxt: &DrawContext<'_>) -> DrawingStyle {
-    DrawingStyle {
-        color: ctxt.appearance.legible_drawing(style.color),
-        ..style
-    }
-}
-
 /// A cheap, copyable reference to one registered implementation.
 #[derive(Clone, Copy)]
 pub struct DrawingTool(pub(crate) &'static dyn MarkTool);
@@ -650,6 +640,24 @@ impl DrawingTool {
         self.0.pending_anchor(placed, cursor, constrain)
     }
 
+    /// The style an object is painted in on `surface`: its own, with a colour
+    /// still its role's default taking the surface's colour for the role, and
+    /// a colour that has vanished there swapped for the surface's legible one.
+    /// The saved style is untouched — see
+    /// [`quantick_appearance::ResolvedTheme::legible_drawing_as`].
+    #[must_use]
+    pub fn painted_style(
+        self,
+        style: DrawingStyle,
+        surface: &quantick_appearance::ResolvedTheme,
+    ) -> DrawingStyle {
+        let role = self.0.default_color_token();
+        DrawingStyle {
+            color: surface.legible_drawing_as(style.color, role),
+            ..style
+        }
+    }
+
     /// Paint the part of the object that goes under the candles — see
     /// [`MarkTool::paint_under`]. No halo, no handles.
     pub fn paint_under(
@@ -660,7 +668,7 @@ impl DrawingTool {
         points: &[Px],
         ctxt: &DrawContext<'_>,
     ) {
-        let style = legible(style, ctxt);
+        let style = self.painted_style(style, ctxt.appearance);
         self.0.paint_under(painter, chart_rect, style, points, ctxt);
     }
 
@@ -676,7 +684,7 @@ impl DrawingTool {
         ctxt: &DrawContext<'_>,
         show_handles: bool,
     ) {
-        let style = legible(style, ctxt);
+        let style = self.painted_style(style, ctxt.appearance);
         if ctxt.selected {
             let halo_style = DrawingStyle {
                 color: ctxt.appearance.color(Token::DrawingSelectionHalo),
@@ -846,6 +854,10 @@ impl DrawingTool {
         self.0.test_geometry()
     }
 }
+
+#[cfg(test)]
+#[path = "tool_surface_tests.rs"]
+mod surface_tests;
 
 impl PartialEq for DrawingTool {
     fn eq(&self, other: &Self) -> bool {
