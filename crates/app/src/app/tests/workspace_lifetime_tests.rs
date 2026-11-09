@@ -57,7 +57,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
         drawing_tool("horizontal-line"),
         ChartPoint::at_time(1.0, 100.0, Some(trade(50).timestamp_ms)),
     );
-    app.active_tab_mut().replay = Some(quantick_feed::replay::test_support::detached_link(
+    app.active_tab_mut().link.replay = Some(quantick_feed::replay::test_support::detached_link(
         recording_at(&scratch.join("replay")),
     ));
     let target = *app
@@ -75,7 +75,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
         .runtime
         .tabs
         .iter()
-        .map(|tab| tab.commands.clone())
+        .map(|tab| tab.link.commands.clone())
         .collect();
     let sessions: Vec<_> = app
         .runtime
@@ -105,10 +105,11 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     let before = identities(&app);
     let saved = toml::to_string(&app.workspace_state().capture_workspace()).unwrap();
     let kinds = format!("{:?}", app.runtime.indicators.registry.slot_kinds());
-    let replay = app.active_tab().replay.clone().unwrap();
+    let replay = app.active_tab().link.replay.clone().unwrap();
     let paper = app.active_tab().paper.position_summary();
     let drawings = app.active_tab().flow_pane.drawings.items().len();
-    app.open_indicator_picker_on(app.active_tab().focused_side());
+    let side = app.active_tab().focused_side();
+    app.indicator_wiring().open_indicator_picker_on(side);
     app.surfaces.indicator_picker.state.query = "owned".into();
     let picker = app.surfaces.indicator_picker.state.clone();
     let destination = egui::ViewportId::from_hash_of("rebound-workspace");
@@ -145,14 +146,19 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     );
     assert_eq!(paper, app.active_tab().paper.position_summary());
     assert_eq!(drawings, app.active_tab().flow_pane.drawings.items().len());
-    let retained = app.active_tab().replay.as_ref().unwrap();
+    let retained = app.active_tab().link.replay.as_ref().unwrap();
     assert!(std::sync::Arc::ptr_eq(&replay.session, &retained.session));
     assert!(std::sync::Arc::ptr_eq(&replay.status, &retained.status));
     for (tab, channel) in app.runtime.tabs.iter().zip(commands) {
-        assert!(channel.same_channel(&tab.commands));
+        assert!(channel.same_channel(&tab.link.commands));
     }
     assert!(!scratch.join("paper/ETHUSDT").exists());
-    let live: Vec<_> = app.runtime.tabs.iter().map(|tab| tab.live_trades).collect();
+    let live: Vec<_> = app
+        .runtime
+        .tabs
+        .iter()
+        .map(|tab| tab.link.live_trades)
+        .collect();
     first.try_send(FeedEvent::Live(trade(202))).unwrap();
     second.events.try_send(FeedEvent::Live(trade(202))).unwrap();
     assert!(
@@ -164,7 +170,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
         app.runtime
             .tabs
             .iter()
-            .map(|tab| tab.live_trades)
+            .map(|tab| tab.link.live_trades)
             .collect::<Vec<_>>(),
         live.iter().map(|n| n + 1).collect::<Vec<_>>()
     );
@@ -176,7 +182,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
         app.runtime
             .tabs
             .iter()
-            .map(|tab| tab.live_trades)
+            .map(|tab| tab.link.live_trades)
             .collect::<Vec<_>>(),
         live.iter().map(|n| n + 1).collect::<Vec<_>>()
     );
@@ -197,7 +203,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
     paper.on_trade(&frame_tail_tests::print(2, 105));
     let (report, env) = paper.report_parts();
     report.open(&env);
-    app.active_tab_mut().notice =
+    app.active_tab_mut().link.notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
     let tab = app.runtime.tabs.active_id();
     app.chrome.feed_popup_tab = Some(tab);
@@ -460,7 +466,7 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
         .map(|(target, _)| target)
         .find(|target| target.side == PaneSide::Time(0))
         .unwrap();
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
@@ -475,13 +481,13 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
     assert_eq!(moved.side, PaneSide::Time(1));
     assert_eq!(app.runtime.validate_target(moved), Ok(()));
     let before = app.runtime.indicators.registry.slot_kinds().len();
-    app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
-        target,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        super::super::indicator_manager::IndicatorEdit::Remove(target),
+    );
     assert_eq!(app.runtime.indicators.registry.slot_kinds().len(), before);
-    app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
-        moved,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        super::super::indicator_manager::IndicatorEdit::Remove(moved),
+    );
     assert!(app.runtime.validate_target(moved).is_err());
 }
 

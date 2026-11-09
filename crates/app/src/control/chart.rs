@@ -28,11 +28,11 @@ impl ChartPort for dyn ControlPort {
         for (tab_index, tab) in reads.tabs().iter().enumerate() {
             let tab_id = reads.tabs().id_at(tab_index);
             let focused = tab.focused_side();
-            let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
+            let shown = usize::from(!tab.canvas.context_collapsed) * tab.context_panes_shown();
             for (pane, side) in tab.panes() {
                 let visible = match side {
-                    PaneSide::Flow => tab.layout.shows_flow(),
-                    PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+                    PaneSide::Flow => tab.canvas.layout.shows_flow(),
+                    PaneSide::Time(slot) => tab.canvas.layout.shows_time() && slot < shown,
                 };
                 let framing = PaneFraming {
                     visible: tab_index == active && visible,

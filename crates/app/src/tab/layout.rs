@@ -1,31 +1,93 @@
-//! The tab's canvas layout and the pane settings it persists: switching
-//! layout, the layout a restored pane opens with, and the bar spec changes
-//! a pane applies.
+//! The tab's canvas arrangement, owned whole: which panes the canvas shows,
+//! the width and heights the trader gave them, the folds, the divider drag in
+//! flight, and what the context panes not built yet will open with.
 
-use super::{CanvasCollapseRestore, CanvasLayout, LegendFold, Tab};
+use eframe::egui;
+use smallvec::SmallVec;
+
+use super::CanvasLayout;
+use super::context_resize::ContextStack;
 use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
-use crate::config::AppConfig;
-use crate::loading::LoadingTask;
-use crate::pane::{ChartPane, PaneIndex, PaneSide, clamp_pane_fraction};
-use crate::style::ChartStyle;
+use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneSide};
 
-impl Tab {
-    /// Switch which panes the canvas shows (§11).
+/// The geometry owner of one tab's canvas. The tab holds one and reads its
+/// panes against it; the painter writes the drawn rectangles back.
+pub struct TabCanvas {
+    /// Which panes this tab's canvas shows. In-session only for now: per-tab
+    /// chrome persistence is the open question §14 leaves to `ui-state.toml`,
+    /// and this field with `split_fraction` and the tab's focus is what it
+    /// would write.
+    pub layout: CanvasLayout,
+    /// The context column's share of the canvas width while it is shown.
     ///
-    /// The first layout that needs the time pane builds it and seeds it from
-    /// the trades the flow pane already holds, so it opens showing the same
-    /// market rather than an empty chart waiting for the next print. Leaving
-    /// a layout only stops drawing its pane: indicators, drawings and bars
-    /// survive, and the pane keeps being fed, so re-showing it never has to
-    /// catch up.
-    ///
-    /// Focus follows what the switch reveals: the pane that just appeared is
-    /// the one the user asked to work on, so the chrome speaks for it without
-    /// a second click. A switch that reveals nothing new (Time + Flow from
-    /// Time + Flow) keeps the focus where it was.
-    pub fn set_layout(&mut self, layout: CanvasLayout) {
+    /// Kept while the column is collapsed, which is what it springs back to.
+    /// One number and one flag rather than two numbers: a separate "restore"
+    /// field would be a second opinion about the same width.
+    pub split_fraction: f32,
+    /// Whether the context column is collapsed to its rail.
+    pub context_collapsed: bool,
+    /// Whether the flow pane is folded against the right canvas edge.
+    pub flow_collapsed: bool,
+    /// Retained context heights and the geometry of their last drawn stack.
+    pub(super) context_stack: ContextStack,
+    /// Pixel width and opening direction of the divider drag in flight.
+    pub(super) drag: Option<(f32, bool, bool)>,
+    /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
+    pub(super) last_canvas: egui::Rect,
+    /// Set when the split is asked for and the time pane does not exist yet;
+    /// drained by `Tab::apply_pending_layout` on the following frame.
+    pub(super) pending_context_panes: usize,
+    /// The interval the time pane opens on when it is first built. The
+    /// header's default unless the feed declared one (`default_bars` with a
+    /// time-showing `default_layout`); once the pane exists, its own header
+    /// owns the interval and this is never read again.
+    pub(super) time_pane_opening_interval_ms: i64,
+    /// The interval each context pane opens on, by slot, when a restored
+    /// workspace recorded more than one. A slot past the end of this list
+    /// opens on `time_pane_opening_interval_ms`, which is what every tab did
+    /// while the stack held one chart.
+    context_opening_intervals_ms: SmallVec<[i64; MAX_CONTEXT_PANES]>,
+    /// The layout each context pane opens on, by slot, from a restored
+    /// workspace. A slot past the end takes what a fresh pane takes: the
+    /// focused pane's layout.
+    pub(super) context_opening: quantick_workspace::context_opening::ContextOpening,
+    /// Whether the time pane opens with its indicator legend folded, for the
+    /// same reason the interval above is stashed: a restored workspace names
+    /// the fold a frame before the pane it belongs to exists.
+    pub(super) time_pane_opening_legend_collapsed: bool,
+}
+
+impl Default for TabCanvas {
+    fn default() -> Self {
+        Self {
+            layout: CanvasLayout::Single,
+            split_fraction: DEFAULT_PANE_FRACTION,
+            context_collapsed: false,
+            flow_collapsed: false,
+            context_stack: ContextStack::default(),
+            drag: None,
+            last_canvas: egui::Rect::ZERO,
+            pending_context_panes: 0,
+            time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
+            context_opening_intervals_ms: SmallVec::new(),
+            context_opening: Default::default(),
+            time_pane_opening_legend_collapsed: false,
+        }
+    }
+}
+
+impl TabCanvas {
+    /// The canvas half of `Tab::set_layout`. A layout chosen from the picker
+    /// shows the panes its thumbnail drew, so the folds open even when the
+    /// layout is the one already selected. Returns the focus the switch
+    /// reveals, or `None` when the layout did not change.
+    pub(super) fn switch_layout(
+        &mut self,
+        layout: CanvasLayout,
+        built_context_panes: usize,
+        focus: PaneSide,
+    ) -> Option<PaneSide> {
         let previous = self.layout;
-        // A layout chosen from the picker shows the panes its thumbnail drew.
         // Leaving the column collapsed meant the cell lit, two panes were
         // promised, and an 8 px rail arrived instead. Before the early return,
         // because picking the arrangement that is *already* selected is
@@ -35,7 +97,7 @@ impl Tab {
         self.flow_collapsed = false;
         self.expand_context_stack();
         if layout == previous {
-            return;
+            return None;
         }
         self.layout = layout;
         let wanted = layout
@@ -47,17 +109,8 @@ impl Tab {
         // the next frame used to leave the count where the wider layout put
         // it, and the tab then built a pane no layout had asked for — seeded
         // from the whole retained tape and fed every trade thereafter.
-        self.pending_context_panes = wanted.saturating_sub(self.time_panes.len());
-        if wanted > self.time_panes.len() {
-            // Seeding replays every retained trade, which on a deep history
-            // holds the render thread long enough to notice. Armed here and
-            // done on the next frame, exactly as a bar-spec change is: the
-            // frame carrying the menu click paints the loading overlay first,
-            // so the wait reads as the chart working rather than the app
-            // hanging.
-            self.loading.begin(LoadingTask::BarRebuild);
-        }
-        self.focus = match layout {
+        self.pending_context_panes = wanted.saturating_sub(built_context_panes);
+        Some(match layout {
             CanvasLayout::Single => PaneSide::Flow,
             CanvasLayout::Time => PaneSide::Time(0),
             // The split reveals whichever pane the previous layout was not
@@ -66,158 +119,41 @@ impl Tab {
             CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
                 CanvasLayout::Single => PaneSide::Time(0),
                 CanvasLayout::Time => PaneSide::Flow,
-                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => self.focus,
+                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => focus,
             },
-        };
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "CANVAS_LAYOUT",
-            layout = ?layout,
-            time_pane_bars = self.time_pane().map(|pane| pane.state.bars().len()),
-            action = if self.pending_context_panes > 0 {
-                "build_time_pane_next_frame"
-            } else {
-                "relayout_canvas"
-            },
-            "canvas layout changed"
-        );
+        })
     }
 
-    /// Build the context panes the last layout change asked for, if any are
-    /// due.
-    ///
-    /// Runs at the top of the frame after the click, so the overlay armed by
-    /// [`Self::set_layout`] has already been painted once. `ids` is the
-    /// window's allocator rather than the tab's: pane ids namespace egui
-    /// interaction state across the whole window, so a tab may not mint its
-    /// own.
-    pub fn apply_pending_layout(
+    /// The context pane due in `slot`, empty and opening on what a restored
+    /// workspace named for that slot, or `None` when no layout change asked.
+    pub(super) fn take_pending_pane(
         &mut self,
-        tab_id: u64,
-        config: &AppConfig,
-        style: &ChartStyle,
+        slot: usize,
         ids: &mut PaneIdAllocator,
-    ) {
+    ) -> Option<ChartPane> {
         if self.pending_context_panes == 0 {
-            return;
+            return None;
         }
         self.pending_context_panes -= 1;
-        // The slot this pane will take is the next free one in the stack.
         let interval_ms = self
             .context_opening_intervals_ms
-            .get(self.time_panes.len())
+            .get(slot)
             .copied()
             .unwrap_or(self.time_pane_opening_interval_ms);
         let mut pane = ChartPane::time(ids.alloc(), interval_ms);
-        let saved_style = self.context_opening.take_style(self.time_panes.len() + 1);
+        let saved_style = self.context_opening.take_style(slot + 1);
         pane.presentation.candles =
-            quantick_stores::pane_style::restore(saved_style.as_slice(), self.time_panes.len() + 1);
+            quantick_stores::pane_style::restore(saved_style.as_slice(), slot + 1);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.layout.opening = Some(
             self.context_opening
                 .layouts
-                .get(self.time_panes.len())
+                .get(slot)
                 .copied()
                 .flatten()
                 .map(crate::layouts::LayoutId),
         );
-        pane.seed_from(
-            self.flow_pane.state.trades(),
-            self.flow_pane.state.backfill_trade_count(),
-            self.flow_pane.state.deal_samples(),
-        );
-        // Seeded from what the flow pane shows, so it also takes every page
-        // the flow pane holds unpublished — a run's held pages, a recut in
-        // progress — and publishes the same tape its siblings will.
-        for page in self.flow_pane.unpublished_history() {
-            pane.receive_history(page, true);
-        }
-        pane.hold_history(self.session.history_reach_running());
-        // The pane opens looking like the one it splits away from: a user who
-        // switched the crosshair off is not asking for it back by opening a
-        // second view of the same market. Orientation is part of that look —
-        // an upside-down market does not turn back over by being given a
-        // second view, and the boot's QUANTICK_INVERTED hook fires before
-        // this pane exists at all.
-        // Headless policy selects inheritable switches and marks their effects
-        // as opening state, so feature owners do not create user undo entries.
-        pane.layer_write()
-            .inherit_states(&self.flow_pane.layer_read().states(style));
-        pane.price_view
-            .set_inverted(self.flow_pane.price_view.is_inverted());
-        self.time_panes.push(pane);
-        // One pane per frame, for the reason the first one waits a frame at
-        // all: seeding replays every retained trade, and building three at
-        // once would hold the render thread for three times as long. The
-        // overlay stays up until the last one lands.
-        if self.pending_context_panes == 0 {
-            self.loading.end(LoadingTask::BarRebuild);
-        }
-        // Its copy counts against a running campaign's memory ceiling, and
-        // there is something for a prefix to go in front of now.
-        self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
-    }
-
-    /// The layout each pane opens on, from a saved workspace: the flow pane's
-    /// now, each context pane's when it is built.
-    ///
-    /// `context` is the wire form — [`crate::ui_state::LAYOUT_UNRECORDED`]
-    /// for a slot the file did not state — and it is read back into an
-    /// `Option` here, at the one place the file's shape meets the pane's.
-    ///
-    /// **Ordering.** This names what a pane *will* show; it does not move a
-    /// pane that is already showing something. A caller that reaches a tab
-    /// whose stack is standing must follow with
-    /// `QuantickApp::reload_layouts`, which clears every pane's set and seeds
-    /// it again from the layout named here — otherwise a seeded pane keeps
-    /// the old layout's indicators, drawings and header label under the new
-    /// layout's id, and the next edit is written into the wrong entries.
-    /// Both callers do (`restore_workspace` and the bundle import, each
-    /// through `reload_cockpit_stores`).
-    pub fn set_opening_layouts(&mut self, flow: Option<u64>, context: &[u64]) {
-        self.flow_pane
-            .request_opening_layout(flow.map(crate::layouts::LayoutId));
-        self.context_opening.layouts = context
-            .iter()
-            .map(|id| (*id != crate::ui_state::LAYOUT_UNRECORDED).then_some(*id))
-            .take(MAX_CONTEXT_PANES)
-            .collect();
-        // A context pane already built takes its name now: an import lands on
-        // a tab whose stack is standing, and the stash alone would only reach
-        // the panes still to come.
-        for (slot, pane) in self.time_panes.iter_mut().enumerate() {
-            if let Some(id) = context
-                .get(slot)
-                .copied()
-                .filter(|id| *id != crate::ui_state::LAYOUT_UNRECORDED)
-            {
-                pane.request_opening_layout(Some(crate::layouts::LayoutId(id)));
-            }
-        }
-    }
-
-    pub(crate) fn candle_styles(
-        &self,
-    ) -> Vec<quantick_workspace::arrangement_document::SavedPaneStyle> {
-        quantick_stores::pane_style::capture_all(
-            self.panes()
-                .enumerate()
-                .map(|(index, (pane, _))| (index, pane.presentation.candles)),
-            &self.context_opening.styles,
-        )
-    }
-
-    pub(crate) fn restore_candle_styles(
-        &mut self,
-        saved: &[quantick_workspace::arrangement_document::SavedPaneStyle],
-    ) {
-        self.flow_pane.presentation.candles = quantick_stores::pane_style::restore(saved, 0);
-        for (index, pane) in self.time_panes.iter_mut().enumerate() {
-            pane.presentation.candles = quantick_stores::pane_style::restore(saved, index + 1);
-        }
-        self.context_opening
-            .set_styles(saved, self.time_panes.len());
+        Some(pane)
     }
 
     /// Name the layout a context pane will open on when the stack builds it.
@@ -245,20 +181,6 @@ impl Tab {
         self.context_opening.layouts[slot] = Some(id.0);
     }
 
-    /// Put this tab's canvas back the way a saved workspace recorded it: the
-    /// layout, the divider, the focused pane, and the interval the time pane
-    /// opens on.
-    ///
-    /// One method rather than four public fields, because the order matters
-    /// and only the tab knows it. The opening interval has to be set *before*
-    /// [`Self::set_layout`] arms the time pane, or the pane is built on the
-    /// header default and the saved interval lands one frame too late. The
-    /// focus is applied *after*, because `set_layout` moves it to whatever the
-    /// switch reveals — right for a menu click, wrong for a restore, where the
-    /// saved focus is the answer.
-    ///
-    /// Startup-scoped, like [`Self::apply_feed_declared_layout`]: the only
-    /// caller is the app restoring a workspace into a tab it has just opened.
     /// The intervals the context charts not built yet open on, top first.
     /// None leaves what they would open on: the timeframe is the tab's.
     pub fn open_context_on(&mut self, context_intervals_ms: &[i64]) {
@@ -272,149 +194,40 @@ impl Tab {
         self.context_opening_intervals_ms = intervals.take(MAX_CONTEXT_PANES).collect();
     }
 
-    pub fn restore_canvas(
-        &mut self,
-        layout: CanvasLayout,
-        split_fraction: Option<f32>,
-        collapse: CanvasCollapseRestore<'_>,
-        focus: Option<PaneSide>,
-        context_intervals_ms: &[i64],
-        legends: LegendFold,
-    ) {
-        self.open_context_on(context_intervals_ms);
-        self.set_layout(layout);
-        // *After* `set_layout`, for the reason the focus below is: a switch
-        // opens the column it just revealed, which is right for a menu click
-        // and wrong for a restore, where the saved state is the answer.
-        // Assigned before, a workspace saved with its charts put away reopened
-        // with them out — and the next `capture_arrangement` wrote that over
-        // the trader's choice.
-        self.context_collapsed = collapse.context;
-        self.flow_collapsed = collapse.flow && !collapse.context;
-        self.restore_context_heights(collapse.heights, collapse.collapsed_slots);
-        if let Some(fraction) = split_fraction {
-            self.split_fraction = clamp_pane_fraction(fraction);
-        }
-        if let Some(side) = focus {
-            self.focus = side;
-        }
-        self.flow_pane.legend_collapsed = legends.flow;
-        // The time pane may not exist yet. `set_layout` only *arms* it
-        // (`pending_time_pane`); `apply_pending_layout` builds it a frame
-        // later, which is the very reason the opening interval above is
-        // stashed rather than assigned. Writing the fold here alone would
-        // write it to `None` and the pane would open expanded — and the next
-        // `capture_arrangement` would then persist that `false` over the
-        // trader's choice.
-        self.time_pane_opening_legend_collapsed = legends.time;
-        if let Some(time) = self.time_pane_mut() {
-            time.legend_collapsed = legends.time;
-        }
-    }
-
-    /// Let every pane's selectors settle, then mirror the result onto the
-    /// rebuild indicator: it is up while *any* pane has a rebuild pending.
-    pub fn apply_spec_changes(&mut self) {
-        // Every pane, by address. Settling "the flow pane and the time pane"
-        // left the second stacked chart's selector armed for ever: its header
-        // chip lit, its interval changed, and its bars never rebuilt.
-        for pane in 0..self.pane_count() {
-            self.apply_spec_change_at(pane);
-        }
-        let rebuilding = self
-            .panes()
-            .any(|(pane, _side)| pane.spec.pending().is_some());
-        self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
-    }
-
-    /// Apply one pane's bar-type/parameter change, a frame after its selectors
-    /// settle.
+    /// Put the context column away, or bring it back.
     ///
-    /// Switching the spec replays every retained trade synchronously, which
-    /// can hold this thread long enough to notice on a deep history. Deferring
-    /// the rebuild by one frame lets the frame that carries the change paint
-    /// the loading overlay first, so the wait reads as the chart working
-    /// rather than the app hanging. A selector still moving (a dragged
-    /// parameter) keeps pushing the pending spec forward, which also debounces
-    /// the rebuild to one per gesture.
+    /// **The one collapse path.** The divider drag, the rail, the View menu,
+    /// `Ctrl+0` and `layout.pane.collapse` all arrive here. Before this
+    /// existed the only way a *trader* could collapse the column was a mouse
+    /// drag, while an assistant had a named call for it — the second operator
+    /// holding a capability the first could not reach from the keyboard,
+    /// which is the rule inverted.
     ///
-    /// The panes run this independently: each pane's own header governs that
-    /// pane (§11), so a change to one must not rebuild the chart beside it.
-    fn apply_spec_change_at(&mut self, index: PaneIndex) {
-        let Some(pane) = self.pane_at_mut(index) else {
-            return;
-        };
-        if let quantick_engine::bar_selection::SelectionEffect::Rebuild(desired) =
-            pane.spec.settle(*pane.state.spec())
-        {
-            self.recut_pane_with(
-                index,
-                quantick_strategy::DisarmReason::BarSpecChanged,
-                |pane| pane.set_spec(desired),
-            );
+    /// `split_fraction` is deliberately untouched: it is the width the column
+    /// springs back to, and spending it here would hand back a different chart
+    /// from the one that was put away.
+    ///
+    /// Returns whether anything changed.
+    pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
+        if self.context_collapsed == collapsed && (!collapsed || !self.flow_collapsed) {
+            return false;
         }
+        self.context_collapsed = collapsed;
+        if collapsed {
+            self.flow_collapsed = false;
+        }
+        true
     }
 
-    /// Re-cut one pane while preserving its view and drawing anchors and
-    /// disarming strategies that belonged to the old timeline.
-    pub(crate) fn recut_pane_with(
-        &mut self,
-        index: PaneIndex,
-        reason: quantick_strategy::DisarmReason,
-        recut: impl FnOnce(&mut ChartPane),
-    ) {
-        {
-            let Some(pane) = self.pane_at_mut(index) else {
-                return;
-            };
-            // Where the user is looking, in market time — the one thing a
-            // rebuild preserves. The new series cuts the same trades into
-            // a different number of bars, so the old right-edge *index*
-            // may not exist in it at all: keeping it would leave the
-            // window past the end of the data, drawing nothing.
-            let anchor = pane.right_edge_time();
-            // The series the drawings are still anchored to, captured
-            // before it is replaced: their bar indices are meaningless in
-            // the new cut and have to be re-derived from the market time
-            // each anchor carries.
-            let old_slots = pane.slots();
-            recut(pane);
-            // The venue prefix folds to the new interval before the view
-            // is reanchored: the market time the user was looking at has
-            // to resolve against the series they will be looking at.
-            // Either pane: `bars → time` on the flow pane is exactly the
-            // spec change this refold exists for (audit S1).
-            //
-            // Installing a prefix rebuilds the indicators over the whole
-            // composed series, so the plain rebuild is only sent when the
-            // refold did not — two rebuilds of ~130k bars per settled drag
-            // frame, with no coalescing in the worker, is the cost of
-            // sending both.
-            let refolded = self.refold_history_prefix().rebuilt_panes & (1 << index) != 0;
-            if !refolded && let Some(pane) = self.pane_at_mut(index) {
-                pane.send_indicator_rebuild();
-            }
-            let Some(pane) = self.pane_at_mut(index) else {
-                return;
-            };
-            let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
-            let slots = pane.slots();
-            pane.model.viewport.reanchor(slot, slots);
-            // The marks follow the view: same market time, this pane's
-            // new bar space. Nothing is lost, so there is nothing to
-            // announce.
-            pane.reanchor_drawings(old_slots);
-            // The strategies do not follow: the body average that
-            // defines a force bar means something else under another
-            // bar spec, so the instances disarm and say why. The tape
-            // itself continues, so any pending bot entry is swept here
-            // and now — through the same funnel manual orders use.
-            let cleanup = pane.strategies.anchors.disarm_all(reason);
-            let _ = pane.strategies.take_bars();
-            for command in cleanup {
-                let _ = self.paper.account_mut().apply_strategy_command(command);
-            }
-            self.drop_overlay_gestures();
+    /// Fold or restore the flow pane while retaining the split's open width.
+    pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
+        if self.flow_collapsed == collapsed && (!collapsed || !self.context_collapsed) {
+            return false;
         }
+        self.flow_collapsed = collapsed;
+        if collapsed {
+            self.context_collapsed = false;
+        }
+        true
     }
 }

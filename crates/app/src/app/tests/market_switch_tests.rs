@@ -31,7 +31,7 @@ fn a_switch_keeps_drawings_with_each_market() {
     let bars = format!("{:?}", app.active_tab().flow_pane.spec.spec());
 
     let intent = switch_to(&app, "ETHUSDT");
-    super::super::tabs::apply_palette_intent(&mut app, intent);
+    super::super::frame::apply_palette_intent(&mut app, intent);
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert!(
@@ -40,7 +40,7 @@ fn a_switch_keeps_drawings_with_each_market() {
     );
 
     let intent = switch_to(&app, "TESTUSDT");
-    super::super::tabs::apply_palette_intent(&mut app, intent);
+    super::super::frame::apply_palette_intent(&mut app, intent);
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "TESTUSDT");
     assert_eq!(
@@ -64,7 +64,7 @@ fn a_switch_with_a_picked_bar_puts_the_flow_pane_on_it() {
         unreachable!()
     };
     choice.bar = Some("tick:7".to_owned());
-    super::super::tabs::apply_palette_intent(&mut app, PaletteIntent::Switch(choice));
+    super::super::frame::apply_palette_intent(&mut app, PaletteIntent::Switch(choice));
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
         app.active_tab().flow_pane.spec.spec().to_config_string(),
@@ -129,7 +129,7 @@ fn the_palette_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
         from_symbol: "TESTUSDT".to_owned(),
     };
     app.apply_toolbar_action(ToolbarAction::SwitchMarket);
-    super::super::tabs::apply_palette_intent(&mut app, roll());
+    super::super::frame::apply_palette_intent(&mut app, roll());
     assert_eq!(app.active_tab().active.1, "TESTUSDT", "the roll refused");
     let refusal = (app.surfaces.market_palette.open.as_ref())
         .and_then(|palette| palette.refusal().map(str::to_owned));
@@ -144,7 +144,7 @@ fn the_palette_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
     evt_tx.try_send(FeedEvent::Live(trade(5))).unwrap();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(app.active_tab().paper.is_flat(), "the position closed");
-    super::super::tabs::apply_palette_intent(&mut app, roll());
+    super::super::frame::apply_palette_intent(&mut app, roll());
     assert_eq!(app.active_tab().active.1, "ETHUSDT", "flat, it rolled");
     assert!(
         !app.surfaces.market_palette.is_open(),

@@ -44,7 +44,7 @@ fn switching_tabs_preserves_everything_each_one_owns() {
 
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     assert_eq!(
-        app.active_tab().layout,
+        app.active_tab().canvas.layout,
         CanvasLayout::Single,
         "a new tab opens on the default layout, not the previous tab's"
     );
@@ -62,7 +62,7 @@ fn switching_tabs_preserves_everything_each_one_owns() {
         first_edge,
         "the viewport came back where it was left"
     );
-    assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
+    assert_eq!(app.active_tab().canvas.layout, CanvasLayout::TimeAndFlow);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
     assert_eq!(
         app.active_tab().focused_pane().drawings.items().len(),

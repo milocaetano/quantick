@@ -7,8 +7,10 @@
 //! what a toolbar looks like.
 
 use eframe::egui;
+use quantick_control_handlers::market_palette::MarketPaletteHost as _;
 use quantick_engine::Side;
 
+use super::indicator_manager::IndicatorEdit;
 use crate::indicator_worker::SlotId;
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
@@ -32,22 +34,19 @@ impl QuantickApp {
     /// overflow rule; this method owns the side effects).
     pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
         let chip = self.config.venue_chip(&self.active_tab().feed_id);
-        let replay = self
-            .active_tab()
-            .replay
-            .as_ref()
-            .map(|link| toolbar::ReplaySource {
-                label: link.label(),
-                hover: format!(
-                    "Replaying {}\nSide source: {}",
-                    link.session.path.display(),
-                    link.session
-                        .header
-                        .side_source
-                        .as_deref()
-                        .unwrap_or("not recorded"),
-                ),
-            });
+        let feed = &self.active_tab().link;
+        let replay = feed.replay.as_ref().map(|link| toolbar::ReplaySource {
+            label: link.label(),
+            hover: format!(
+                "Replaying {}\nSide source: {}",
+                link.session.path.display(),
+                link.session
+                    .header
+                    .side_source
+                    .as_deref()
+                    .unwrap_or("not recorded"),
+            ),
+        });
         let capabilities = toolbar_caps(self.active_tab(), &self.config);
         let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
@@ -82,7 +81,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
-            layout_preset: Some(tab.layout.preset()),
+            layout_preset: Some(tab.canvas.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
             market: (chip, tab.chip_label()),
@@ -148,7 +147,7 @@ impl QuantickApp {
                 self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
-            ToolbarAction::SwitchMarket => _ = super::tabs::open_palette(self, "", true),
+            ToolbarAction::SwitchMarket => _ = self.open_market_palette("", true),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }
@@ -175,29 +174,25 @@ impl QuantickApp {
                     self.runtime.tabs.active_id(),
                     self.active_tab().focused_side(),
                 );
-                let attached = self.runtime.indicators.attach_native(
-                    self.runtime
-                        .tabs
-                        .runtime_mut(self.runtime.tabs.active_index())
-                        .pane_mut(target.1),
-                    target,
-                    id,
-                );
-                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Attached(
-                    attached,
-                ));
+                let tabs = &mut self.runtime.tabs;
+                let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
+                let attached = self.runtime.indicators.attach_native(pane, target, id);
+                self.indicator_wiring()
+                    .apply_indicator_edit(IndicatorEdit::Attached(attached));
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
-                let target = self.target_slot(SlotId(slot));
-                self.apply_indicator_legend_action(
+                let mut wiring = self.indicator_wiring();
+                let target = wiring.runtime.target_slot(SlotId(slot));
+                wiring.apply_indicator_legend_action(
                     target.tab,
                     target.side,
                     crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
                 );
             }
             ToolbarAction::RemoveIndicator(slot) => {
-                let target = self.target_slot(SlotId(slot));
-                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Remove(target));
+                let mut wiring = self.indicator_wiring();
+                let target = wiring.runtime.target_slot(SlotId(slot));
+                wiring.apply_indicator_edit(IndicatorEdit::Remove(target));
             }
             ToolbarAction::AddScriptIndicator(index) => {
                 super::indicator_manager::IndicatorState::set_legend_collapsed(
@@ -208,25 +203,20 @@ impl QuantickApp {
                     self.runtime.tabs.active_id(),
                     self.active_tab().focused_side(),
                 );
-                if let Some((_, added)) = self.runtime.indicators.add_library(
-                    self.runtime
-                        .tabs
-                        .runtime_mut(self.runtime.tabs.active_index())
-                        .pane_mut(target.1),
-                    target,
-                    index,
-                ) {
+                let tabs = &mut self.runtime.tabs;
+                let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(target.1);
+                if let Some((_, added)) = self.runtime.indicators.add_library(pane, target, index) {
                     if let Some(attached) = added.attachment {
-                        self.apply_indicator_edit(
-                            super::indicator_manager::IndicatorEdit::Attached(attached),
-                        );
+                        self.indicator_wiring()
+                            .apply_indicator_edit(IndicatorEdit::Attached(attached));
                     }
                     self.runtime.indicators.watch_attachment(added.watch);
                 }
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
-                let target = self.target_slot(SlotId(slot));
-                self.apply_indicator_legend_action(
+                let mut wiring = self.indicator_wiring();
+                let target = wiring.runtime.target_slot(SlotId(slot));
+                wiring.apply_indicator_legend_action(
                     target.tab,
                     target.side,
                     crate::indicator_legend::LegendAction::OpenSettings(target.slot),

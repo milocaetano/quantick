@@ -18,7 +18,7 @@ fn market_shown(tabs: &ArrangementHost) -> MarketShown<'_> {
     MarketShown {
         tab_id: tabs.active_id(),
         label: tab.chip_label(),
-        replaying: tab.replay.is_some(),
+        replaying: tab.link.replay.is_some(),
     }
 }
 

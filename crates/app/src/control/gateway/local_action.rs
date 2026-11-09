@@ -152,6 +152,7 @@ impl ControlAccess {
                 .active_tab_index()
                 .min(tabs.len().saturating_sub(1))];
             active
+                .link
                 .replay
                 .as_ref()
                 .filter(|_| traced)

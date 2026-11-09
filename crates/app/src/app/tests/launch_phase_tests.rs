@@ -33,10 +33,14 @@ fn collapse_hooks_reach_each_rail_after_layout_selection() {
         };
         let (app, _evt, _cmd, _book) = test_app_with_launch(launch);
         let tab = app.active_tab();
-        assert_eq!(tab.layout, crate::tab::CanvasLayout::TimeTimeAndFlow);
-        assert_eq!(tab.flow_collapsed, flow, "{name}");
+        assert_eq!(tab.canvas.layout, crate::tab::CanvasLayout::TimeTimeAndFlow);
+        assert_eq!(tab.canvas.flow_collapsed, flow, "{name}");
         if upper || lower {
-            assert_eq!(tab.context_collapsed_slots(), vec![upper, lower], "{name}");
+            assert_eq!(
+                tab.canvas.context_collapsed_slots(),
+                vec![upper, lower],
+                "{name}"
+            );
         }
     }
 }
@@ -56,9 +60,9 @@ fn two_pane_launch_hooks_reach_both_horizontal_rails() {
         };
         let (app, _evt, _cmd, _book) = test_app_with_launch(launch);
         let tab = app.active_tab();
-        assert_eq!(tab.layout, crate::tab::CanvasLayout::TimeAndFlow);
-        assert_eq!(tab.context_collapsed, context, "{name}");
-        assert_eq!(tab.flow_collapsed, flow, "{name}");
+        assert_eq!(tab.canvas.layout, crate::tab::CanvasLayout::TimeAndFlow);
+        assert_eq!(tab.canvas.context_collapsed, context, "{name}");
+        assert_eq!(tab.canvas.flow_collapsed, flow, "{name}");
     }
 }
 

@@ -15,7 +15,7 @@ fn dialog_app() -> QuantickApp {
         side: PaneSide::Time(0),
         slot: app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot,
     };
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
@@ -48,7 +48,8 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
         .unwrap()
         .draft[0] = InputValue::Int(37);
     let change = app.runtime.indicators.preview_settings();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     settle_indicators(&mut app);
     assert_eq!(
         app.active_tab().pane(target.side).indicators.all()[0].input_values[0],
@@ -81,7 +82,8 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
             .is_empty()
     );
     let change = app.runtime.indicators.discard_preview();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     settle_indicators(&mut app);
     assert_eq!(
         app.active_tab().pane(target.side).indicators.all()[0].input_values,
@@ -131,7 +133,8 @@ fn i1_preset_keeps_an_invalid_cell_position_before_a_valid_neighbor() {
         .runtime
         .indicators
         .load_preset(Some("positional".to_owned()), &specs);
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     let dialog = app.runtime.indicators.indicator_settings.as_ref().unwrap();
     assert_eq!(dialog.draft[0], original[0]);
     assert_eq!(dialog.draft[1], InputValue::Source(SourceId::Open));
@@ -246,7 +249,8 @@ fn i1_origin_watch_observes_file_time_only_after_layout_mirroring() {
         .unwrap()
         .set_times(std::fs::FileTimes::new().set_modified(observed_after_read))
         .unwrap();
-    app.apply_indicator_edit(IndicatorEdit::Attached(added.attachment.unwrap()));
+    app.indicator_wiring()
+        .apply_indicator_edit(IndicatorEdit::Attached(added.attachment.unwrap()));
     assert_eq!(
         app.runtime.indicators.registry.script_files().len(),
         1,

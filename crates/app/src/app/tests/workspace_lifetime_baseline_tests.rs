@@ -20,7 +20,7 @@ fn workspace_lifetime_frame_baseline() {
         .tab_reads()
         .tabs()
         .iter()
-        .map(|tab| tab.commands.clone())
+        .map(|tab| tab.link.commands.clone())
         .collect();
     let ids: Vec<_> = app
         .tab_reads()
@@ -57,7 +57,7 @@ fn workspace_lifetime_frame_baseline() {
             .tab_reads()
             .tabs()
             .iter()
-            .map(|tab| tab.live_trades)
+            .map(|tab| tab.link.live_trades)
             .sum();
         for frame in 0..FRAMES {
             let index = HISTORY + round as u64 * FRAMES + frame;
@@ -98,7 +98,7 @@ fn workspace_lifetime_frame_baseline() {
             app.tab_reads()
                 .tabs()
                 .iter()
-                .map(|tab| tab.live_trades)
+                .map(|tab| tab.link.live_trades)
                 .sum::<u64>()
                 - live_before,
             2 * FRAMES,
@@ -126,7 +126,7 @@ fn workspace_lifetime_frame_baseline() {
             "actual worker instances survive each workload"
         );
         for (index, tab) in app.tab_reads().tabs().iter().enumerate() {
-            assert!(feed_commands[index].same_channel(&tab.commands));
+            assert!(feed_commands[index].same_channel(&tab.link.commands));
         }
         println!(
             "workspace_lifetime paint={paint} frames={FRAMES} median_ns={} allocs={} bytes={} reallocs={} copy_bytes={} retained_trades={retained_trades} retained_tape_bytes={retained_tape_bytes} feed_handles={} worker_instances={:?}",

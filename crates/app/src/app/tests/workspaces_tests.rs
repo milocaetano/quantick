@@ -165,7 +165,7 @@ fn saved_workspace_restores_both_right_and_vertical_rails() {
         crate::control::ActionOrigin::Human,
         serde_json::json!({"upper_pane_id": upper.to_string(), "lower_pane_id": lower.to_string(), "fraction": "0"}),
     ).unwrap();
-    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    assert!(app.active_tab_mut().canvas.set_flow_collapsed(true));
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_workspace("test");
     let saved = ui_state::load(app.runtime.workspace.ui_state_path());
@@ -176,9 +176,9 @@ fn saved_workspace_restores_both_right_and_vertical_rails() {
         .restore_workspace(saved.restore(&config));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    assert!(app.active_tab().flow_collapsed);
-    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
-    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(1)));
+    assert!(app.active_tab().canvas.flow_collapsed);
+    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
+    assert!(!app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(0))
@@ -678,8 +678,8 @@ fn a_restored_workspace_puts_the_window_back() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert_eq!(tab.layout, CanvasLayout::TimeAndFlow);
-    assert!((tab.split_fraction - 0.4).abs() < f32::EPSILON);
+    assert_eq!(tab.canvas.layout, CanvasLayout::TimeAndFlow);
+    assert!((tab.canvas.split_fraction - 0.4).abs() < f32::EPSILON);
     assert_eq!(
         tab.focused_side(),
         PaneSide::Flow,

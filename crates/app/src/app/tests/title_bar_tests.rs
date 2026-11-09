@@ -331,7 +331,7 @@ fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() 
     let second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     for tab in app.runtime.tabs.iter_mut() {
         tab.set_layout(CanvasLayout::TimeAndFlow);
-        tab.split_fraction = 0.35;
+        tab.canvas.split_fraction = 0.35;
     }
     app.runtime.tabs.select(0);
     settled_frame(&mut app, &ctx);
@@ -342,10 +342,10 @@ fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() 
             .map(|(id, tab)| {
                 (
                     id,
-                    tab.layout,
-                    tab.split_fraction,
-                    tab.context_collapsed,
-                    tab.flow_collapsed,
+                    tab.canvas.layout,
+                    tab.canvas.split_fraction,
+                    tab.canvas.context_collapsed,
+                    tab.canvas.flow_collapsed,
                     tab.focused_side(),
                     tab.panes().map(|(pane, _)| pane.id).collect::<Vec<_>>(),
                 )
@@ -361,12 +361,17 @@ fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() 
             .collect::<Vec<_>>()
     };
     let worker_before = workers(&app);
-    let live_before: Vec<_> = app.runtime.tabs.iter().map(|tab| tab.live_trades).collect();
+    let live_before: Vec<_> = app
+        .runtime
+        .tabs
+        .iter()
+        .map(|tab| tab.link.live_trades)
+        .collect();
     let channels: Vec<_> = app
         .runtime
         .tabs
         .iter()
-        .map(|tab| tab.commands.clone())
+        .map(|tab| tab.link.commands.clone())
         .collect();
     crate::orderflow_view::layers::set_layer_switch(
         app.active_tab_mut().tape_mut(),
@@ -408,13 +413,13 @@ fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() 
     {
         assert_eq!(before.instance, after.instance);
         assert!(after.counts.retired > before.counts.retired);
-        assert!(channel.same_channel(&tab.commands));
+        assert!(channel.same_channel(&tab.link.commands));
     }
     assert_eq!(
         app.runtime
             .tabs
             .iter()
-            .map(|tab| tab.live_trades)
+            .map(|tab| tab.link.live_trades)
             .collect::<Vec<_>>(),
         live_before
             .iter()

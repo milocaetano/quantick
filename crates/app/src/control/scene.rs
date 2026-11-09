@@ -301,7 +301,7 @@ fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
 
 /// Stable pair IDs are shared with the pointer handle and the resize request.
 fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, tab: &Tab) {
-    let Some((_, bands)) = tab.context_stack_geometry() else {
+    let Some((_, bands)) = tab.canvas.context_stack_geometry(&tab.time_panes) else {
         return;
     };
     for (index, divider) in bands.dividers.iter().enumerate() {

@@ -470,7 +470,7 @@ impl WindowMenu<'_> {
     /// Read from the registry, like the picker: a menu holding its own list
     /// of layouts is the second opinion that goes stale the day one is added.
     fn layout_presets(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let current = self.tab.layout.preset();
+        let current = self.tab.canvas.layout.preset();
         for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
             // The menu is where a shortcut is learned, so it carries the
             // binding beside the name.
@@ -490,10 +490,10 @@ impl WindowMenu<'_> {
     /// Collapsing was drag-only, which a trader working by keyboard could not
     /// do at all, while the assistant had `layout.pane.collapse`.
     fn context_charts(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        if !(self.tab.layout.shows_time() && self.tab.layout.shows_flow()) {
+        if !(self.tab.canvas.layout.shows_time() && self.tab.canvas.layout.shows_flow()) {
             return;
         }
-        let label = if self.tab.context_collapsed {
+        let label = if self.tab.canvas.context_collapsed {
             "Show context charts"
         } else {
             "Hide context charts"

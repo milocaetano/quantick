@@ -639,7 +639,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         side: PaneSide::Time(0),
         slot,
     };
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
@@ -653,7 +653,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
             .hidden,
         "the time pane's own slot was toggled, focus notwithstanding"
     );
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
