@@ -447,6 +447,7 @@ fn draw_lane_plots(
     lane: &LaneFrame<'_>,
     y_of: &impl Fn(f64) -> f32,
 ) {
+    let surface = theme::get(painter.ctx());
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         if spec.marker.is_some()
             || !matches!(
@@ -461,7 +462,7 @@ fn draw_lane_plots(
         };
         // Same resolution the history pane uses, so a restyled plot cannot
         // look like one series on the chart and another in the live lane.
-        let Some(resolved) = view.plot_style(index) else {
+        let Some(resolved) = view.plot_style(index, &surface.resolved) else {
             continue;
         };
         if !resolved.visible {
@@ -623,6 +624,7 @@ fn draw_view_plots(
     for fill in &view.descriptor.fills {
         draw_fill(painter, view, fill, x, &y_of, start, end, partial_slot);
     }
+    let surface = theme::get(painter.ctx());
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         let Some(column) = view.columns.get(index) else {
             continue;
@@ -647,7 +649,7 @@ fn draw_view_plots(
         // The trader's style layer over the author's declaration. A plot they
         // switched off draws nothing at all — the eye in the legend hides the
         // whole indicator, this hides one series of several.
-        let Some(resolved) = view.plot_style(index) else {
+        let Some(resolved) = view.plot_style(index, &surface.resolved) else {
             continue;
         };
         if !resolved.visible {

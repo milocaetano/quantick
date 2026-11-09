@@ -2,6 +2,7 @@
 
 mod bookmap;
 mod chart;
+mod plot_ink;
 mod title_strip;
 pub use bookmap::BookmapOverride;
 pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
@@ -78,6 +79,9 @@ pub struct ThemeDocument {
     pub chart_axes: Option<ChartAxes>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
+    /// Indicator plot inks, `"<indicator title>.<plot title>" = colour`.
+    #[serde(default)]
+    pub plot_ink: BTreeMap<String, ColorValue>,
     #[serde(default)]
     pub typography: BTreeMap<String, FontOverride>,
     #[serde(default)]
@@ -231,6 +235,7 @@ impl ThemeDocument {
             chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
             chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
             colors,
+            plot_ink: plot_ink::resolve(&self.plot_ink)?,
             typography: Typography::resolve(
                 &self.typography,
                 fallback.map(|theme| &theme.typography),
@@ -300,6 +305,7 @@ pub struct ResolvedTheme {
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
+    plot_ink: Vec<plot_ink::PlotInk>,
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,

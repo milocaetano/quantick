@@ -15,7 +15,8 @@
 //!
 //! [`IndicatorDescriptor`]: quantick_indicators::IndicatorDescriptor
 
-use quantick_indicators::{PlotSpec, Rgba8};
+use quantick_appearance::ResolvedTheme;
+use quantick_indicators::{IndicatorDescriptor, PlotSpec, Rgba8};
 
 /// Thinnest a plot may be dragged to and still be a line rather than a rumour.
 pub const MIN_PLOT_WIDTH_PX: f32 = 0.5;
@@ -105,12 +106,14 @@ impl StyleOverride {
         &self.plots
     }
 
-    /// The style plot `index` draws with, given what its spec declared.
-    pub fn resolve(&self, index: usize, spec: &PlotSpec) -> ResolvedPlot {
+    /// The style plot `index` draws with, given what its spec declared and
+    /// the ink its surface's theme gives it ([`theme_ink`]): the trader's
+    /// colour wins, then the theme's, then the declaration.
+    pub fn resolve(&self, index: usize, spec: &PlotSpec, ink: Option<Rgba8>) -> ResolvedPlot {
         let over = self.get(index);
         ResolvedPlot {
             visible: over.visible.unwrap_or(true),
-            color: over.color.unwrap_or(spec.base_color),
+            color: over.color.or(ink).unwrap_or(spec.base_color),
             width: over.width.map_or(spec.width, |px| {
                 px.clamp(MIN_PLOT_WIDTH_PX, MAX_PLOT_WIDTH_PX)
             }),
@@ -124,6 +127,20 @@ impl StyleOverride {
             self.plots.pop();
         }
     }
+}
+
+/// The ink `theme` gives plot `plot` of the indicator titled `indicator`, if
+/// any. Theme plot inks are opaque, so the premultiplied bytes are straight.
+pub fn theme_ink(theme: &ResolvedTheme, indicator: &str, plot: &str) -> Option<Rgba8> {
+    let [r, g, b, a] = theme.plot_ink(indicator, plot)?.to_array();
+    Some(Rgba8::new(r, g, b, a))
+}
+
+/// Every plot's [`theme_ink`] under `theme`, in plot order, for a surface
+/// that lists them all (the settings dialog's style rows).
+pub fn theme_inks(theme: &ResolvedTheme, descriptor: &IndicatorDescriptor) -> Vec<Option<Rgba8>> {
+    let ink = |plot: &PlotSpec| theme_ink(theme, &descriptor.title, &plot.title);
+    descriptor.plots.iter().map(ink).collect()
 }
 
 #[cfg(test)]
@@ -150,13 +167,13 @@ mod tests {
     #[test]
     fn an_untouched_layer_draws_exactly_what_the_indicator_declared() {
         let style = StyleOverride::default();
-        let resolved = style.resolve(0, &spec());
+        let resolved = style.resolve(0, &spec(), None);
         assert!(resolved.visible);
         assert_eq!(resolved.color, spec().base_color);
         assert!((resolved.width - spec().width).abs() < f32::EPSILON);
         assert!(style.is_default());
         // And a plot far past anything ever set resolves the same way.
-        assert_eq!(style.resolve(7, &spec()), resolved);
+        assert_eq!(style.resolve(7, &spec(), None), resolved);
     }
 
     #[test]
@@ -169,7 +186,7 @@ mod tests {
                 ..PlotOverride::default()
             },
         );
-        let resolved = style.resolve(1, &spec());
+        let resolved = style.resolve(1, &spec(), None);
         assert_eq!(resolved.color, Rgba8::opaque(1, 2, 3), "the override wins");
         assert!(
             (resolved.width - spec().width).abs() < f32::EPSILON,
@@ -180,6 +197,35 @@ mod tests {
 
         // Plot 0 was never named and is untouched, even though 1 grew the Vec.
         assert!(style.get(0).is_default());
+    }
+
+    /// A theme ink fills in only where the trader set no colour, and an
+    /// indicator the theme does not name keeps its declaration.
+    #[test]
+    fn the_trader_colour_beats_the_theme_ink_which_beats_the_declaration() {
+        let slate = Rgba8::opaque(0x2B, 0x36, 0x40);
+        let ink = Some(slate);
+        let mut style = StyleOverride::default();
+        assert_eq!(style.resolve(0, &spec(), ink).color, slate);
+        assert_eq!(style.resolve(0, &spec(), None).color, spec().base_color);
+        style.set(
+            0,
+            PlotOverride {
+                color: Some(Rgba8::opaque(1, 2, 3)),
+                ..PlotOverride::default()
+            },
+        );
+        assert_eq!(style.resolve(0, &spec(), ink).color, Rgba8::opaque(1, 2, 3));
+    }
+
+    #[test]
+    fn the_light_paper_inks_the_bundled_vwap_and_its_flow_pane_does_not() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let vwap = |theme: &ResolvedTheme| theme_ink(theme, "VWAP (cumulative)", "vwap");
+        assert_eq!(vwap(&light), Some(Rgba8::opaque(0x2B, 0x36, 0x40)));
+        assert_eq!(vwap(light.bookmap()), None);
+        assert_eq!(vwap(ResolvedTheme::bundled_dark()), None);
+        assert_eq!(theme_ink(&light, "VWAP (cumulative)", "p0"), None);
     }
 
     /// A width is a stroke the renderer hands to egui: a hand-edited state file
@@ -196,7 +242,7 @@ mod tests {
                     ..PlotOverride::default()
                 },
             );
-            let resolved = style.resolve(0, &spec());
+            let resolved = style.resolve(0, &spec(), None);
             assert!(
                 (resolved.width - expected).abs() < f32::EPSILON,
                 "{asked} px should clamp to {expected}"

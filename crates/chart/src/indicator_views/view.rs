@@ -9,8 +9,9 @@ use quantick_indicators::{
 
 use quantick_indicator_session::{LaneSample, SlotId};
 
-use crate::indicator_style::ResolvedPlot;
+use crate::indicator_style::{ResolvedPlot, theme_ink};
 use crate::price_view::PriceView;
+use quantick_appearance::ResolvedTheme;
 
 use super::PaneSizing;
 
@@ -151,16 +152,18 @@ impl IndicatorView {
             .unwrap_or(&self.objects)
     }
 
-    /// The style plot `index` draws with right now: the declaration with the
+    /// The style plot `index` draws with right now on a surface painted in
+    /// `theme`: the declaration under the theme's ink for it, with the
     /// trader's layer applied, or `None` when this indicator has no such plot.
     ///
     /// The one door between the style layer and the renderer — every plot the
     /// chart draws is resolved through here, so a colour changed in the dialog
     /// cannot reach one drawing path and miss another. Two `Vec` lookups and a
     /// few `Option`s: it runs once per plot per frame and allocates nothing.
-    pub fn plot_style(&self, index: usize) -> Option<ResolvedPlot> {
+    pub fn plot_style(&self, index: usize, theme: &ResolvedTheme) -> Option<ResolvedPlot> {
         let spec = self.descriptor.plots.get(index)?;
-        Some(self.style.resolve(index, spec))
+        let ink = theme_ink(theme, &self.descriptor.title, &spec.title);
+        Some(self.style.resolve(index, spec, ink))
     }
 
     /// The label the UI shows for this indicator.

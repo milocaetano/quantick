@@ -123,6 +123,7 @@ pub(crate) fn draw(
     dialog: &mut SettingsDialog,
     specs: &[InputSpec],
     plots: &[PlotSpec],
+    inks: &[Option<Rgba8>],
     style: &mut StyleOverride,
     presets: Option<&[String]>,
 ) -> SettingsOutcome {
@@ -154,7 +155,7 @@ pub(crate) fn draw(
                 ui.separator();
             }
             if dialog.tab == SettingsTab::Style {
-                style_changed = draw_style(ui, plots, style);
+                style_changed = draw_style(ui, plots, inks, style);
                 draw_buttons(ui, previewed, &mut outcome);
                 return;
             }
@@ -291,14 +292,20 @@ fn draw_buttons(ui: &mut egui::Ui, previewed: bool, outcome: &mut SettingsOutcom
 /// repaint rather than a rebuild and a replay, and the chart already shows the
 /// answer. Returns whether anything moved, which is all the caller needs to
 /// know to write the state file.
-fn draw_style(ui: &mut egui::Ui, plots: &[PlotSpec], style: &mut StyleOverride) -> bool {
+fn draw_style(
+    ui: &mut egui::Ui,
+    plots: &[PlotSpec],
+    inks: &[Option<Rgba8>],
+    style: &mut StyleOverride,
+) -> bool {
     let mut changed = false;
     egui::Grid::new("indicator-style-grid")
         .num_columns(4)
         .spacing([10.0, 8.0])
         .show(ui, |ui| {
             for (index, spec) in plots.iter().enumerate() {
-                let resolved = style.resolve(index, spec);
+                let ink = inks.get(index).copied().flatten();
+                let resolved = style.resolve(index, spec, ink);
                 let mut over = style.get(index);
 
                 let mut visible = resolved.visible;
@@ -338,7 +345,7 @@ fn draw_style(ui: &mut egui::Ui, plots: &[PlotSpec], style: &mut StyleOverride) 
                 // What the two controls beside it add up to. A swatch alone
                 // says nothing about width, and a number alone says nothing
                 // about how thin 0.5 px looks over candles.
-                draw_plot_preview(ui, style.resolve(index, spec), visible);
+                draw_plot_preview(ui, style.resolve(index, spec, ink), visible);
                 style.set(index, over);
                 ui.end_row();
             }
@@ -745,7 +752,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                draw(ctx, dialog, specs, plots, style, None);
+                draw(ctx, dialog, specs, plots, &[], style, None);
             });
             text.clear();
             for shape in output.shapes {
@@ -797,7 +804,7 @@ mod tests {
                 ..crate::indicator_style::PlotOverride::default()
             },
         );
-        let resolved = style.resolve(0, &plot("ema"));
+        let resolved = style.resolve(0, &plot("ema"), None);
         assert_eq!(resolved.color, Rgba8::opaque(255, 0, 0));
         assert!(
             (resolved.width - 1.5).abs() < f32::EPSILON,
@@ -862,7 +869,7 @@ mod tests {
                     ..egui::RawInput::default()
                 };
                 let _ = ctx.run(input, |ctx| {
-                    draw(ctx, &mut dialog, &specs, &plots, &mut style, None);
+                    draw(ctx, &mut dialog, &specs, &plots, &[], &mut style, None);
                 });
             }
             // The window's own rect, not the painted shapes: egui draws a drop
@@ -899,7 +906,7 @@ mod tests {
         let mut style = StyleOverride::default();
 
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let outcome = draw(ctx, &mut dialog, &specs, &[], &mut style, None);
+            let outcome = draw(ctx, &mut dialog, &specs, &[], &[], &mut style, None);
             assert!(matches!(outcome, SettingsOutcome::Open), "nothing pressed");
         });
 
@@ -914,7 +921,7 @@ mod tests {
         let mut closed = false;
         let _ = ctx.run(input, |ctx| {
             closed = matches!(
-                draw(ctx, &mut dialog, &specs, &[], &mut style, None),
+                draw(ctx, &mut dialog, &specs, &[], &[], &mut style, None),
                 SettingsOutcome::Close
             );
         });
@@ -978,6 +985,7 @@ mod tests {
                     ctx,
                     &mut dialog,
                     &specs,
+                    &[],
                     &[],
                     &mut StyleOverride::default(),
                     None,

@@ -83,16 +83,21 @@ impl WorkspaceRuntime {
         let slot = self.indicators.indicator_settings.as_ref()?.slot;
         let target = self.indicators.indicator_settings_target;
         let valid = self.validate_target(target).is_ok();
-        let view = self
+        let pane = self
             .tabs
             .by_id_mut(target.tab)
             .filter(|_| valid)
             .and_then(|tab| tab.pane_at_mut(target.side.index()))
-            .filter(|pane| pane.id == target.pane)
-            .and_then(|pane| pane.indicators.view_mut(slot));
+            .filter(|pane| pane.id == target.pane);
+        // The swatches show the ink the pane paints the plots in.
+        let surface = pane
+            .as_ref()
+            .map_or_else(|| crate::theme::get(ctx), |pane| pane.palette(ctx));
+        let view = pane.and_then(|pane| pane.indicators.view_mut(slot));
+        let presets = self.workspace.indicator_presets_path();
         Some(
             self.indicators
-                .draw_settings(ctx, view, self.workspace.indicator_presets_path()),
+                .draw_settings(ctx, view, presets, &surface.resolved),
         )
     }
 
