@@ -7,8 +7,13 @@
 //! is pressable exactly while it is painted: the paint here and the desk's
 //! hit-test ask one function the same question and get the same rectangle.
 
+use std::cmp::Ordering;
+use std::sync::Arc;
+
 use eframe::egui;
 use eframe::egui::{Color32, Stroke};
+use quantick_appearance::Token;
+use quantick_appearance::paper::{self, ChartLevel};
 use quantick_paper::desk::geometry::{self, Bounds, Point};
 use quantick_paper::desk::geometry::{
     LINE_GRAB_RADIUS_PX, TAG_BUTTON_PX, TAG_GAP_PX, TAG_HEIGHT_PX,
@@ -21,6 +26,14 @@ use super::{
 };
 use crate::chart::PriceScale;
 use crate::theme;
+
+/// How one priced level is drawn: its line and price chip in `color` and,
+/// on a theme that plates its chart, its words in the plate's ink.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LevelPaint {
+    pub(super) color: Color32,
+    pub(super) plate_ink: Option<Color32>,
+}
 
 /// The frame geometry every paper paint helper reads: one struct so a tag,
 /// a chip and a line can never disagree about where the plot ends.
@@ -42,6 +55,61 @@ pub(super) struct PaintCtx<'a> {
 }
 
 impl PaintCtx<'_> {
+    /// A level's paint: the plate `paper::level_plate` lays under it, or
+    /// `fallback` (the accent, side or leg colour) where the chart has none.
+    pub(super) fn level(&self, level: ChartLevel, fallback: Color32) -> LevelPaint {
+        match paper::level_plate(&self.palette.resolved, level) {
+            Some(plate) => LevelPaint {
+                color: *self.palette.get(plate.fill),
+                plate_ink: Some(*self.palette.get(plate.ink)),
+            },
+            None => LevelPaint {
+                color: fallback,
+                plate_ink: None,
+            },
+        }
+    }
+
+    /// Words in `ink` on a plate, each signed figure in the plate's gain or
+    /// loss ink.
+    fn plate_text(&self, text: &str, ink: Color32) -> Arc<egui::Galley> {
+        let palette = &self.palette;
+        self.painter.layout_job(crate::paper_chrome::signed_text(
+            text,
+            palette.mono_font(11.0),
+            ink,
+            |value| match value.cmp(&rust_decimal::Decimal::ZERO) {
+                Ordering::Equal => ink,
+                sign => *palette.get(paper::on_plate(sign, Token::OrderPlateInk)),
+            },
+        ))
+    }
+
+    /// [`Self::gutter_chip`] for a level: its plate's ink where it has one.
+    pub(super) fn level_chip(&self, y: f32, paint: LevelPaint, text: &str) {
+        let ink = paint.plate_ink.unwrap_or_else(|| self.palette.chip_ink());
+        self.chip(y, paint.color, text, (paint.color, ink, egui::Stroke::NONE));
+    }
+
+    /// [`Self::chip_tag`] for a level: on a plated chart a resting tag is the
+    /// plate itself, its words in the level's ink. A ghost keeps its outline.
+    pub(super) fn level_tag(
+        &self,
+        y: f32,
+        paint: LevelPaint,
+        text: &str,
+        with_close: bool,
+        ghost: bool,
+    ) {
+        match paint.plate_ink {
+            Some(ink) if !ghost => {
+                let galley = self.plate_text(text, ink);
+                self.tag_body(y, galley, (paint.color, None), ink, with_close);
+            }
+            _ => self.chip_tag(y, paint.color, text, with_close, ghost),
+        }
+    }
+
     pub(super) fn in_range(&self, y: f32) -> bool {
         y >= self.chart_rect.top() && y <= self.chart_rect.bottom()
     }
@@ -207,6 +275,25 @@ impl PaintCtx<'_> {
             self.painter
                 .layout_no_wrap(text.to_owned(), palette.mono_font(11.0), ink)
         };
+        let body = if ghost || financial {
+            (palette.inset(), Some(fill))
+        } else {
+            (fill, None)
+        };
+        self.tag_body(y, galley, body, ink, with_close);
+    }
+
+    /// A tag's body, words and ✕, right-anchored inside the plot: `body` is
+    /// its fill and the outline it wears, if any.
+    fn tag_body(
+        &self,
+        y: f32,
+        galley: Arc<egui::Galley>,
+        (fill, outline): (Color32, Option<Color32>),
+        ink: Color32,
+        with_close: bool,
+    ) {
+        let palette = &self.palette;
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -216,17 +303,14 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
-        if ghost || financial {
-            self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
+        self.painter
+            .rect_filled(full, egui::Rounding::same(3.0), fill);
+        if let Some(outline) = outline {
             self.painter.rect_stroke(
                 full,
                 egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, fill),
+                egui::Stroke::new(1.0_f32, outline),
             );
-        } else {
-            self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), fill);
         }
         self.painter.galley(
             egui::pos2(full.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
@@ -268,17 +352,22 @@ impl PaintCtx<'_> {
     ) -> egui::Rect {
         let palette = &self.palette;
         let font = palette.mono_font(11.0);
+        // A plated chart writes the label on the order plate; Dark keeps the
+        // card, its words in the side colour.
+        let plate = paper::position_label(&palette.resolved)
+            .map(|plate| (*palette.get(plate.fill), *palette.get(plate.ink)));
         let side_galley = self.painter.layout_no_wrap(
             side_text.to_owned(),
             font.clone(),
-            if palette.resolved.dark {
-                side_color
-            } else {
-                palette.text_primary()
+            match plate {
+                Some((_, ink)) => ink,
+                None if palette.resolved.dark => side_color,
+                None => palette.text_primary(),
             },
         );
-        let points_galley = points.map(|(text, color)| {
-            (
+        let points_galley = points.map(|(text, color)| match plate {
+            Some((_, ink)) => (self.plate_text(&text, ink), ink),
+            None => (
                 self.painter.layout_job(crate::paper_chrome::financial_text(
                     palette,
                     &text,
@@ -286,7 +375,7 @@ impl PaintCtx<'_> {
                     color,
                 )),
                 color,
-            )
+            ),
         });
         let rail = 3.0;
         let mut content_w = rail + TAG_PAD_X + side_galley.size().x + TAG_PAD_X + TAG_BUTTON_PX;
@@ -300,12 +389,15 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
+        let (body, edge) = plate.map_or((palette.inset(), palette.border()), |(fill, _)| {
+            (fill, fill)
+        });
         self.painter
-            .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
+            .rect_filled(full, egui::Rounding::same(3.0), body);
         self.painter.rect_stroke(
             full,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, palette.border()),
+            egui::Stroke::new(1.0_f32, edge),
         );
         // The side rail rides the card's left edge.
         self.painter.rect_filled(
@@ -323,10 +415,11 @@ impl PaintCtx<'_> {
         );
         let mut x = full.left() + rail + TAG_PAD_X;
         let side_size = side_galley.size();
+        let side_ink = plate.map_or(side_color, |(_, ink)| ink);
         self.painter.galley(
             egui::pos2(x, center_y - side_size.y / 2.0),
             side_galley,
-            side_color,
+            side_ink,
         );
         x += side_size.x + TAG_PAD_X;
         if let Some((galley, color)) = points_galley {
@@ -341,10 +434,10 @@ impl PaintCtx<'_> {
             egui::Align2::CENTER_CENTER,
             "×",
             palette.mono_font(11.0),
-            if over_button {
-                palette.text_primary()
-            } else {
-                palette.text_muted()
+            match plate {
+                Some((_, ink)) => ink,
+                None if over_button => palette.text_primary(),
+                None => palette.text_muted(),
             },
         );
         // A hairline between the words and the ✕ zone.
@@ -353,7 +446,12 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 3.0),
                 egui::pos2(button.left(), full.bottom() - 3.0),
             ],
-            egui::Stroke::new(1.0_f32, palette.border()),
+            egui::Stroke::new(
+                1.0_f32,
+                plate.map_or(palette.border(), |(_, ink)| {
+                    theme::with_opacity(ink, CLOSE_DIVIDER_ALPHA)
+                }),
+            ),
         );
         full
     }

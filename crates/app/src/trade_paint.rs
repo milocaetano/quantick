@@ -121,13 +121,10 @@ pub(crate) fn draw(
         }
         drawn += 1;
         let is_selected = selected == Some(index);
-        // Win, loss or scratch — the one hue the whole round trip wears;
-        // direction is carried by the entry mark's shape instead.
-        let color = match trade.pnl_points.cmp(&rust_decimal::Decimal::ZERO) {
-            std::cmp::Ordering::Greater => palette.buy(),
-            std::cmp::Ordering::Less => palette.sell(),
-            std::cmp::Ordering::Equal => palette.text_muted(),
-        };
+        // Win, loss or scratch — the one hue the whole round trip wears,
+        // the same verdict every signed P&L reads; direction is carried by
+        // the entry mark's shape instead.
+        let color = crate::paper_chrome::points_color(&palette, trade.pnl_points);
         let connector = if is_selected {
             egui::Stroke::new(SELECTED_CONNECTOR_WIDTH_PX, color)
         } else {

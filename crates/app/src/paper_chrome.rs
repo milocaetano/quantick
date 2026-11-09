@@ -83,21 +83,30 @@ pub(crate) fn fmt_duration_ms(ms: i64) -> String {
     }
 }
 
-/// Green gains, red losses, muted zero — shared with the HUD.
+/// Green gains, red losses, muted zero — shared with the HUD. Light writes
+/// its gains in the readable buy ink.
 pub(crate) fn points_color(palette: &crate::theme::Palette, points: Decimal) -> egui::Color32 {
+    sign_color(palette, points.cmp(&Decimal::ZERO))
+}
+
+/// [`points_color`] for an outcome already reduced to its sign.
+pub(crate) fn sign_color(
+    palette: &crate::theme::Palette,
+    sign: std::cmp::Ordering,
+) -> egui::Color32 {
     if !palette.resolved.dark {
         let surface =
             quantick_appearance::PremultipliedRgba::from_premultiplied(palette.inset().to_array());
         let light = quantick_appearance::contrast::relative_luminance(surface) > 0.5;
-        return match points.cmp(&Decimal::ZERO) {
-            std::cmp::Ordering::Greater if light => egui::Color32::from_rgb(18, 80, 33),
+        return match sign {
+            std::cmp::Ordering::Greater if light => palette.buy_ink(),
             std::cmp::Ordering::Less if light => egui::Color32::from_rgb(136, 24, 30),
             std::cmp::Ordering::Greater => egui::Color32::from_rgb(100, 220, 160),
             std::cmp::Ordering::Less => egui::Color32::from_rgb(255, 145, 145),
             std::cmp::Ordering::Equal => palette.text_primary(),
         };
     }
-    match points.cmp(&Decimal::ZERO) {
+    match sign {
         std::cmp::Ordering::Greater => palette.buy(),
         std::cmp::Ordering::Less => palette.sell(),
         std::cmp::Ordering::Equal => palette.text_muted(),
@@ -112,17 +121,29 @@ pub(crate) fn financial_text(
     font: egui::FontId,
     color: egui::Color32,
 ) -> egui::text::LayoutJob {
+    if palette.resolved.dark {
+        return signed_text(text, font, color, |_| color);
+    }
+    signed_text(text, font, palette.text_primary(), |value| {
+        points_color(palette, value)
+    })
+}
+
+/// `text` in `ink`, each signed number in `signed`'s ink for its value: the
+/// spelling of a figure on a surface whose inks are its own, such as a plate.
+pub(crate) fn signed_text(
+    text: &str,
+    font: egui::FontId,
+    ink: egui::Color32,
+    signed: impl Fn(Decimal) -> egui::Color32,
+) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for word in text.split_inclusive(char::is_whitespace) {
         let number = word.trim();
-        let ink = if palette.resolved.dark {
-            color
-        } else if number.starts_with(['+', '-']) {
-            number
-                .parse::<Decimal>()
-                .map_or(palette.text_primary(), |value| points_color(palette, value))
+        let ink = if number.starts_with(['+', '-']) {
+            number.parse::<Decimal>().map_or(ink, &signed)
         } else {
-            palette.text_primary()
+            ink
         };
         job.append(
             word,
@@ -205,11 +226,14 @@ mod tests {
             for side in [quantick_engine::Side::Buy, quantick_engine::Side::Sell] {
                 for value in [Decimal::ONE, -Decimal::ONE, Decimal::ZERO] {
                     let ink = points_color(&light, value);
+                    // The border is a control's edge, never a surface a
+                    // figure is written on; a hovered row lifts onto the tag
+                    // grey instead (`widget::hover_fill`).
                     for background in [
                         light.chrome(),
                         light.inset(),
                         light.control(),
-                        light.border(),
+                        light.tag_bg(),
                         light.canvas(),
                     ] {
                         let a = theme::relative_luminance(ink);
@@ -223,6 +247,7 @@ mod tests {
             }
         }
         let text = "+24.77 USDT move × 2 · -49.54 USDT · +0 pts @ 75916.41";
+        assert_eq!(points_color(&light, Decimal::ONE), light.buy_ink());
         let job = financial_text(&light, text, light.mono_font(12.0), light.buy());
         assert_eq!(
             job.text, text,

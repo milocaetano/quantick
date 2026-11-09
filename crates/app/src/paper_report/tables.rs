@@ -272,8 +272,9 @@ pub(super) fn draw_trade_list(
                     let row = &view.rows[ordinal];
                     let trade = &row.trade;
                     if response.hovered() {
+                        let hover = quantick_appearance::widget::hover_fill(palette.resolved.dark);
                         ui.painter()
-                            .rect_filled(rect, egui::Rounding::ZERO, palette.border());
+                            .rect_filled(rect, egui::Rounding::ZERO, *palette.get(hover));
                     } else if ordinal % 2 == 1 {
                         ui.painter()
                             .rect_filled(rect, egui::Rounding::ZERO, palette.inset());
