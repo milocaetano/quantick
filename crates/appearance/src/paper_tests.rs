@@ -95,24 +95,52 @@ fn dark_surfaces_keep_their_accent_and_side_colours() {
 #[test]
 fn signed_amounts_take_each_surface_s_readable_ink() {
     let dark = ResolvedTheme::default();
-    assert_eq!(pnl_ink(&dark, Ordering::Greater), dark.color(Token::Buy));
-    assert_eq!(pnl_ink(&dark, Ordering::Less), dark.color(Token::Sell));
-    assert_eq!(
-        pnl_ink(&dark, Ordering::Equal),
-        dark.color(Token::TextMuted)
-    );
+    for surface in [Token::Inset, Token::ChartCanvas] {
+        assert_eq!(pnl_ink(&dark, surface, Ordering::Greater), Token::Buy);
+        assert_eq!(pnl_ink(&dark, surface, Ordering::Less), Token::Sell);
+        assert_eq!(pnl_ink(&dark, surface, Ordering::Equal), Token::TextMuted);
+    }
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     assert_eq!(
-        pnl_ink(&light, Ordering::Greater),
-        light.color(Token::BuyInk)
+        pnl_ink(&light, Token::Inset, Ordering::Greater),
+        Token::BuyInk
     );
+    // The inks the Rust constants used to hold, now tokens a derived theme
+    // can retheme: the same pixels.
+    for (token, rgb) in [
+        (Token::LossInk, (136, 24, 30)),
+        (Token::BrightGainInk, (100, 220, 160)),
+        (Token::BrightLossInk, (255, 145, 145)),
+    ] {
+        let expected = PremultipliedRgba::from_rgb(rgb.0, rgb.1, rgb.2);
+        assert_eq!(light.color(token), expected, "{}", token.key());
+    }
     for surface in [&light, light.bookmap()] {
         for sign in [Ordering::Greater, Ordering::Less, Ordering::Equal] {
-            let ink = pnl_ink(surface, sign);
+            let ink = surface.color(pnl_ink(surface, Token::Inset, sign));
             for under in [Token::Chrome, Token::Inset, Token::Control, Token::TagBg] {
                 let ratio = contrast_ratio(ink, surface.color(under));
                 assert!(ratio >= 4.5, "{sign:?} on {}: {ratio}", under.key());
             }
+        }
+    }
+}
+
+/// The ink follows the surface the figure is written on, not the panel's:
+/// a light theme with a dark inset over its white chart writes the panel's
+/// figures bright and the chart's dark.
+#[test]
+fn signed_amounts_follow_the_surface_they_are_written_on() {
+    let source = LIGHT.replacen("inset = \"#F7F7F7\"", "inset = \"#10141D\"", 1);
+    let theme = ResolvedTheme::parse(&source).unwrap();
+    for (sign, panel, chart) in [
+        (Ordering::Greater, Token::BrightGainInk, Token::BuyInk),
+        (Ordering::Less, Token::BrightLossInk, Token::LossInk),
+    ] {
+        assert_eq!(pnl_ink(&theme, Token::Inset, sign), panel);
+        assert_eq!(pnl_ink(&theme, Token::ChartCanvas, sign), chart);
+        for surface in [Token::Inset, Token::ChartCanvas] {
+            assert_reads(&theme, pnl_ink(&theme, surface, sign), surface, 4.5);
         }
     }
 }
@@ -143,7 +171,7 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
                 look.edge.map(|token| theme.color(token)),
             )
         };
-        let day = paint(RowKind::Day);
+        let day = paint(RowKind::Day { folded: false });
         let session = paint(RowKind::Session);
         let trade = paint(RowKind::Trade { long: true });
         assert_ne!(day, session, "{}", theme.name);
@@ -152,7 +180,8 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
         let short = paint(RowKind::Trade { long: false });
         assert_ne!(trade.1, short.1, "the side rail tells the sides apart");
         for row in [
-            RowKind::Day,
+            RowKind::Day { folded: false },
+            RowKind::Day { folded: true },
             RowKind::Session,
             RowKind::Trade { long: true },
         ] {
@@ -164,7 +193,7 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
         }
     }
     let light = ResolvedTheme::parse(LIGHT).unwrap();
-    let day = ledger_row(false, RowKind::Day);
+    let day = ledger_row(false, RowKind::Day { folded: false });
     assert_eq!(light.color(day.fill.unwrap()), crate::color::WHITE);
     assert_eq!(day.edge, Some(Token::TextPrimary));
     let session = ledger_row(false, RowKind::Session);
@@ -178,4 +207,25 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
     assert_eq!(dark_session.mark, None, "Dark keeps the amber play glyph");
     assert_eq!(dark_session.fill, Some(Token::Control));
     assert_eq!(dark_session.pnl, Some([Token::BuyInk, Token::SellInk]));
+}
+
+/// A folded day dims its words, an open one writes them in the primary ink,
+/// on the same band, in both themes; the band and rule never change.
+#[test]
+fn a_folded_day_reads_apart_from_an_open_one() {
+    for theme in themes() {
+        let open = ledger_row(theme.dark, RowKind::Day { folded: false });
+        let folded = ledger_row(theme.dark, RowKind::Day { folded: true });
+        assert_ne!(
+            theme.color(open.ink),
+            theme.color(folded.ink),
+            "{}",
+            theme.name
+        );
+        assert_eq!(open.ink, Token::TextPrimary);
+        assert_eq!((open.fill, open.edge), (folded.fill, folded.edge));
+        for lit in [false, true] {
+            assert_eq!(open.fill_at(lit), folded.fill_at(lit));
+        }
+    }
 }

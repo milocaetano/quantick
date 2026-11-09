@@ -29,7 +29,8 @@
 //! points one of these modules back at another, which is what stops the
 //! third cycle from being found by hand like the first two.
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
+use quantick_appearance::{Token, paper};
 use rust_decimal::Decimal;
 
 use crate::theme;
@@ -39,7 +40,7 @@ use crate::theme;
 // the one vocabulary every paper surface imports.
 pub(crate) use quantick_paper::format::{
     PositionSummary, fmt_decimal, fmt_duration_ms, fmt_exact, fmt_points, fmt_signed_points,
-    position_word,
+    has_signed_figure, position_word, signed_figure,
 };
 pub(crate) use quantick_paper::report::list_symbol_folders;
 
@@ -71,12 +72,16 @@ pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str)
     .on_hover_text(hover)
 }
 
-/// Green gains, red losses, muted zero — shared with the HUD
+/// Green gains, red losses, muted zero on a panel — shared with the HUD
 /// (`paper::pnl_ink`).
-pub(crate) fn points_color(palette: &crate::theme::Palette, points: Decimal) -> egui::Color32 {
-    let ink = quantick_appearance::paper::pnl_ink(&palette.resolved, points.cmp(&Decimal::ZERO));
-    let [r, g, b, a] = ink.to_array();
-    egui::Color32::from_rgba_premultiplied(r, g, b, a)
+pub(crate) fn points_color(palette: &theme::Palette, points: Decimal) -> Color32 {
+    points_color_on(palette, Token::Inset, points)
+}
+
+/// The same verdict for a figure written straight `on` a surface.
+pub(crate) fn points_color_on(palette: &theme::Palette, on: Token, points: Decimal) -> Color32 {
+    let sign = points.cmp(&Decimal::ZERO);
+    *palette.get(paper::pnl_ink(&palette.resolved, on, sign))
 }
 
 /// Financial text keeps its original words; only signed numbers carry outcome
@@ -120,12 +125,7 @@ pub(crate) fn signed_text(
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for word in text.split_inclusive(char::is_whitespace) {
-        let number = word.trim();
-        let ink = if number.starts_with(['+', '-']) {
-            number.parse::<Decimal>().map_or(ink, &signed)
-        } else {
-            ink
-        };
+        let ink = signed_figure(word).map_or(ink, &signed);
         job.append(
             word,
             0.0,

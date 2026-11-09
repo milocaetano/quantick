@@ -335,7 +335,11 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                 let palette = tab.lead_pane().palette(&ctx);
                 for (_, text) in text {
                     for section in &text.galley.job.sections {
-                        let color = section.format.color;
+                        // A placeholder section paints in the shape's own ink.
+                        let color = match section.format.color {
+                            egui::Color32::PLACEHOLDER => text.fallback_color,
+                            color => color,
+                        };
                         if color.a() > 0 {
                             assert!(
                                 color == palette.loading_title()

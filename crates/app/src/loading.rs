@@ -226,7 +226,7 @@ fn lay_out_overlay(
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
                     palette.body_font(CONTROL_PT),
-                    palette.connection_action(),
+                    egui::Color32::PLACEHOLDER,
                 )
             }),
         )
@@ -303,7 +303,7 @@ pub fn draw_overlay(
         let ink = if lit {
             palette.loading_title()
         } else {
-            palette.loading_meta()
+            palette.connection_action()
         };
         if !palette.resolved.dark {
             painter.galley(at + egui::vec2(BOLD_STRIKE_PX, 0.0), control.clone(), ink);
@@ -639,6 +639,69 @@ mod tests {
         );
         for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
             assert!(!press_at(source, Some(egui::pos2(20.0, 20.0))).1);
+        }
+    }
+
+    /// Reconnect's ink is chosen at paint time, so a hover reaches the pixels:
+    /// the tessellated words change colour, resting in `connection_action`
+    /// and lit in `loading_title`, in both themes.
+    #[test]
+    fn the_reconnect_hover_ink_reaches_the_pixels() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let frame = |events: Vec<egui::Event>| {
+                let mut control = None;
+                let raw = egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                };
+                let output = ctx.run(raw, |ctx| {
+                    let panel = egui::CentralPanel::default().frame(egui::Frame::none());
+                    panel.show(ctx, |ui| {
+                        control = draw_overlay(ui, screen, "X", &words(true), (0, 1)).0;
+                    });
+                });
+                let words: Vec<_> = output
+                    .shapes
+                    .into_iter()
+                    .filter(|clipped| {
+                        matches!(&clipped.shape,
+                        egui::Shape::Text(text) if text.galley.text() == RECONNECT_LABEL)
+                    })
+                    .collect();
+                assert!(!words.is_empty(), "Reconnect is painted");
+                let control = control.expect("laid out");
+                let mut inks = std::collections::BTreeSet::new();
+                for primitive in ctx.tessellate(words, 1.0) {
+                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
+                        inks.extend(mesh.vertices.iter().map(|vertex| vertex.color.to_array()));
+                    }
+                }
+                (inks, control)
+            };
+            let (rest, control) = frame(Vec::new());
+            let _ = frame(vec![egui::Event::PointerMoved(control.center())]);
+            let (lit, _) = frame(Vec::new());
+            let palette = crate::theme::get(&ctx);
+            let only = |color: egui::Color32| std::collections::BTreeSet::from([color.to_array()]);
+            assert_eq!(
+                rest,
+                only(palette.connection_action()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_eq!(
+                lit,
+                only(palette.loading_title()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_ne!(rest, lit);
         }
     }
 

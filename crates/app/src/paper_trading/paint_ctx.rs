@@ -21,6 +21,7 @@ use super::{
     LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
+use crate::paper_chrome::has_signed_figure;
 use crate::theme;
 
 /// The frame geometry every paper paint helper reads: one struct so a tag,
@@ -45,7 +46,7 @@ pub(super) struct PaintCtx<'a> {
 impl PaintCtx<'_> {
     /// The plate (fill, ink) a light chart lays under a level drawn in
     /// `color`; `None` keeps the accent and side colours (`paper::plate_for`).
-    fn plate(&self, color: Color32) -> Option<(Color32, Color32)> {
+    pub(super) fn plate(&self, color: Color32) -> Option<(Color32, Color32)> {
         let line = PremultipliedRgba::from_premultiplied(color.to_array());
         let plate = paper::plate_for(&self.palette.resolved, line)?;
         Some((*self.palette.get(plate.fill), *self.palette.get(plate.ink)))
@@ -192,15 +193,13 @@ impl PaintCtx<'_> {
         ghost: bool,
     ) {
         let palette = &self.palette;
-        // A light chart's tag is its plate; a ghost keeps only its outline.
+        // A light chart's tag is its plate; a ghost keeps only its outline,
+        // in the plate's gain or loss ink so a pending TP and SL differ.
         let plated = self.plate(fill);
+        let outline = plated.filter(|_| ghost).map_or(fill, |(_, ink)| ink);
         let fill = plated.map_or(fill, |(plate, _)| plate);
         let plate_ink = plated.filter(|_| !ghost).map(|(_, ink)| ink);
-        let financial = plate_ink.is_none()
-            && !palette.resolved.dark
-            && text.split_whitespace().any(|word| {
-                word.starts_with(['+', '-']) && word.parse::<rust_decimal::Decimal>().is_ok()
-            });
+        let financial = plate_ink.is_none() && !palette.resolved.dark && has_signed_figure(text);
         let ink = if let Some(ink) = plate_ink {
             ink
         } else if financial {
@@ -240,7 +239,7 @@ impl PaintCtx<'_> {
             self.painter.rect_stroke(
                 full,
                 egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, fill),
+                egui::Stroke::new(1.0_f32, outline),
             );
         } else {
             self.painter
@@ -255,12 +254,14 @@ impl PaintCtx<'_> {
             return;
         }
         let button = close_button_rect(self.tag_right, center_y);
+        // Only a plate's glyph dims at rest; the others keep their one ink.
+        let lit = plate_ink.is_none() || self.pointer.is_some_and(|at| button.contains(at));
         self.painter.text(
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
             palette.mono_font(11.0),
-            ink,
+            theme::with_opacity(ink, paper::close_glyph_alpha(lit)),
         );
         // A hairline of ink between the words and the ✕, so the zone reads
         // as a button rather than a longer label.
@@ -362,7 +363,7 @@ impl PaintCtx<'_> {
             "×",
             palette.mono_font(11.0),
             match ink {
-                Some(ink) => ink,
+                Some(ink) => theme::with_opacity(ink, paper::close_glyph_alpha(over_button)),
                 None if over_button => palette.text_primary(),
                 None => palette.text_muted(),
             },

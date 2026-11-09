@@ -210,9 +210,19 @@ pub enum Token {
     /// The connection screen's action (`Reconnect`): Dark keeps it in the
     /// loading meta grey, a light theme writes it in its primary ink.
     ConnectionAction,
+    /// A light theme's loss on its pale panels. Its `sell_ink` is the sell
+    /// side's ink, near-black like its sell candles, so a loss reads this
+    /// separate red. A dark theme writes losses in `sell`; Dark's value
+    /// mirrors it.
+    LossInk,
+    /// A light theme's gain on a dark surface such as its slate flow pane.
+    /// A dark theme writes gains in `buy`; Dark's value mirrors it.
+    BrightGainInk,
+    /// A light theme's loss on a dark surface. Dark's value mirrors `sell`.
+    BrightLossInk,
 }
 impl Token {
-    pub const ALL: [Self; 122] = [
+    pub const ALL: [Self; 125] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -335,6 +345,9 @@ impl Token {
         Self::HoverFill,
         Self::ControlEdge,
         Self::ConnectionAction,
+        Self::LossInk,
+        Self::BrightGainInk,
+        Self::BrightLossInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -367,6 +380,9 @@ impl Token {
             Self::HoverFill => "hover_fill",
             Self::ControlEdge => "control_edge",
             Self::ConnectionAction => "connection_action",
+            Self::LossInk => "loss_ink",
+            Self::BrightGainInk => "bright_gain_ink",
+            Self::BrightLossInk => "bright_loss_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

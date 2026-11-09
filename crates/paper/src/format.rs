@@ -92,6 +92,21 @@ pub fn fmt_signed_points(value: Decimal) -> String {
 
 pub use quantick_replay::deals::sanitize_symbol;
 
+/// The value of `word` when it is a signed figure (`+24.77`, `-3`), the only
+/// words a financial text writes in an outcome ink.
+pub fn signed_figure(word: &str) -> Option<Decimal> {
+    let word = word.trim();
+    word.starts_with(['+', '-'])
+        .then(|| word.parse().ok())
+        .flatten()
+}
+
+/// Whether `text` writes any [`signed_figure`].
+pub fn has_signed_figure(text: &str) -> bool {
+    text.split_whitespace()
+        .any(|word| signed_figure(word).is_some())
+}
+
 /// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
 pub fn fmt_duration_ms(ms: i64) -> String {
     let seconds = (ms / 1000).max(0);
@@ -114,6 +129,17 @@ mod tests {
         assert_eq!(fmt_duration_ms(258_000), "4m 18s");
         assert_eq!(fmt_duration_ms(3_720_000), "1h 02m");
         assert_eq!(fmt_duration_ms(-5), "0s", "clock skew never explodes");
+    }
+
+    #[test]
+    fn only_a_signed_number_is_a_signed_figure() {
+        assert_eq!(signed_figure("+24.77 "), Some(Decimal::new(2477, 2)));
+        assert_eq!(signed_figure("-3"), Some(Decimal::from(-3)));
+        for word in ["24.77", "+", "-pts", "x", ""] {
+            assert_eq!(signed_figure(word), None, "{word:?}");
+        }
+        assert!(has_signed_figure("TP 2 +45.00 BRL"));
+        assert!(!has_signed_figure("BUY LMT 2 @ 75916.41"));
     }
 
     #[test]

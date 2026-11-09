@@ -43,39 +43,41 @@ pub fn plate_for(theme: &ResolvedTheme, line: PremultipliedRgba) -> Option<Plate
     })
 }
 
-/// A light theme's loss ink on its pale panels.
-const LIGHT_LOSS_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(136, 24, 30);
-/// A light theme's gain and loss inks where its surface is dark.
-const BRIGHT_GAIN_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(100, 220, 160);
-const BRIGHT_LOSS_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(255, 145, 145);
-
-/// The ink of a signed amount on `theme`'s panels: Dark's candle colours and
-/// a muted zero; a light theme's buy ink and dark red on its pale panels, and
-/// bright ones on a dark surface such as its slate flow pane.
+/// The ink of a signed amount written on `surface` (a panel's inset, the
+/// chart canvas): Dark's candle colours and a muted zero; a light theme's
+/// buy ink and loss ink where the surface is pale, and its bright inks where
+/// it is dark, such as its slate flow pane.
 #[must_use]
-pub fn pnl_ink(theme: &ResolvedTheme, sign: Ordering) -> PremultipliedRgba {
+pub fn pnl_ink(theme: &ResolvedTheme, surface: Token, sign: Ordering) -> Token {
     if theme.dark {
-        return theme.color(match sign {
+        return match sign {
             Ordering::Greater => Token::Buy,
             Ordering::Less => Token::Sell,
             Ordering::Equal => Token::TextMuted,
-        });
+        };
     }
-    let pale = relative_luminance(theme.color(Token::Inset)) > 0.5;
+    let pale = relative_luminance(theme.color(surface)) > 0.5;
     match sign {
-        Ordering::Greater if pale => theme.color(Token::BuyInk),
-        Ordering::Less if pale => LIGHT_LOSS_INK,
-        Ordering::Greater => BRIGHT_GAIN_INK,
-        Ordering::Less => BRIGHT_LOSS_INK,
-        Ordering::Equal => theme.color(Token::TextPrimary),
+        Ordering::Greater if pale => Token::BuyInk,
+        Ordering::Less if pale => Token::LossInk,
+        Ordering::Greater => Token::BrightGainInk,
+        Ordering::Less => Token::BrightLossInk,
+        Ordering::Equal => Token::TextPrimary,
     }
+}
+
+/// The opacity of a plate's close glyph: dimmed at rest, the plate's full
+/// ink under the pointer, so the glyph still answers a hover.
+#[must_use]
+pub const fn close_glyph_alpha(hovered: bool) -> u8 {
+    if hovered { 255 } else { 150 }
 }
 
 /// One of the trade ledger's row kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// A civil day's band.
-    Day,
+    /// A civil day's band; a folded one dims its words.
+    Day { folded: bool },
     /// A Live or Replay session inside its day.
     Session,
     /// A closed or open trade.
@@ -109,10 +111,14 @@ pub const DAY_EDGE_PX: f32 = 3.0;
 pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
     let hover = Token::HoverFill;
     match row {
-        RowKind::Day => RowLook {
+        RowKind::Day { folded } => RowLook {
             fill: Some(Token::Control),
             edge: Some(Token::TextPrimary),
-            ink: Token::TextPrimary,
+            ink: if folded {
+                Token::TextMuted
+            } else {
+                Token::TextPrimary
+            },
             pnl: None,
             hover_fill: Some(hover),
             hover_edge: None,
@@ -152,6 +158,24 @@ pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
 }
 
 impl RowLook {
+    /// The band under the row: the hover fill while `lit`, when it has one.
+    #[must_use]
+    pub fn fill_at(&self, lit: bool) -> Option<Token> {
+        self.hover_fill.filter(|_| lit).or(self.fill)
+    }
+
+    /// The outline a `lit` row adds.
+    #[must_use]
+    pub fn outline_at(&self, lit: bool) -> Option<Token> {
+        self.hover_edge.filter(|_| lit)
+    }
+
+    /// The corner radius: a ruled row is square, a plate rounded.
+    #[must_use]
+    pub fn rounding(&self) -> f32 {
+        if self.edge.is_some() { 0.0 } else { 3.0 }
+    }
+
     /// The ink of a signed amount on this row, when the row writes its own.
     #[must_use]
     pub const fn pnl_ink(&self, sign: Ordering) -> Option<Token> {

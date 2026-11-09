@@ -28,12 +28,13 @@
 //! nothing is forgotten either — the trades stay in the ledger and on disk.
 
 use eframe::egui;
+use quantick_appearance::Token;
 use quantick_engine::Side;
 use quantick_sim::ClosedTrade;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_chrome::{fmt_decimal, fmt_duration_ms, position_word};
+use crate::paper_chrome::{fmt_decimal, fmt_duration_ms, points_color_on, position_word};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -124,7 +125,7 @@ pub(crate) fn draw(
         // Win, loss or scratch — the one hue the whole round trip wears,
         // the same verdict every signed P&L reads; direction is carried by
         // the entry mark's shape instead.
-        let color = crate::paper_chrome::points_color(&palette, trade.pnl_points);
+        let color = points_color_on(&palette, Token::ChartCanvas, trade.pnl_points);
         let connector = if is_selected {
             egui::Stroke::new(SELECTED_CONNECTOR_WIDTH_PX, color)
         } else {

@@ -66,7 +66,7 @@ pub(super) fn draw_day_header(
     folded: bool,
 ) -> bool {
     let palette = theme::get(ui.ctx());
-    let look = ledger_row(palette.resolved.dark, RowKind::Day);
+    let look = ledger_row(palette.resolved.dark, RowKind::Day { folded });
     let ink = *palette.get(look.ink);
     let mut job = egui::text::LayoutJob::default();
     for (text, font_id) in [
@@ -102,7 +102,7 @@ pub(super) fn draw_day_header(
         egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
-        paint_look(ui, rect, &look, response.hovered(), DAY_EDGE_PX);
+        paint_look(ui, &palette, rect, &look, response.hovered(), DAY_EDGE_PX);
         let at = rect.min + egui::vec2(6.0 + DAY_EDGE_PX, 6.0);
         // egui bundles one weight: the band struck twice reads bold.
         let strike = at + egui::vec2(BOLD_STRIKE_PX, 0.0);
@@ -121,23 +121,24 @@ pub(super) fn draw_day_header(
 
 /// A ledger row's `look` over `rect`: its fill (the hover fill while `lit`),
 /// its left rule `edge_px` wide, and a lit plate's outline.
-pub(super) fn paint_look(ui: &egui::Ui, rect: egui::Rect, look: &RowLook, lit: bool, edge_px: f32) {
-    let (palette, painter) = (theme::get(ui.ctx()), ui.painter());
-    let fill = if lit {
-        look.hover_fill.or(look.fill)
-    } else {
-        look.fill
-    };
-    let rounding = if look.edge.is_some() { 0.0 } else { 3.0 };
+pub(super) fn paint_look(
+    ui: &egui::Ui,
+    palette: &theme::Palette,
+    rect: egui::Rect,
+    look: &RowLook,
+    lit: bool,
+    edge_px: f32,
+) {
+    let (painter, rounding) = (ui.painter(), look.rounding());
     for (token, area) in [
-        (fill, rect),
+        (look.fill_at(lit), rect),
         (look.edge, rect.with_max_x(rect.left() + edge_px)),
     ] {
         if let Some(token) = token {
             painter.rect_filled(area, rounding, *palette.get(token));
         }
     }
-    if let Some(edge) = look.hover_edge.filter(|_| lit) {
+    if let Some(edge) = look.outline_at(lit) {
         let stroke = egui::Stroke::new(1.0_f32, *palette.get(edge));
         painter.rect_stroke(rect.shrink(0.5), rounding, stroke);
     }
@@ -323,13 +324,8 @@ fn paint_trade(
             let tint = theme::active_tint(palette.accent());
             ui.painter().rect_filled(rect, egui::Rounding::ZERO, tint);
         }
-        paint_look(
-            ui,
-            rect,
-            &look,
-            response.hovered() && !selected,
-            SIDE_RAIL_WIDTH_PX,
-        );
+        let lit = response.hovered() && !selected;
+        paint_look(ui, &palette, rect, &look, lit, SIDE_RAIL_WIDTH_PX);
         ui.painter().galley(
             rect.min + egui::vec2(SIDE_RAIL_WIDTH_PX + 6.0, 6.0),
             galley,

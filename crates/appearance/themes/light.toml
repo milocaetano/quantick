@@ -151,6 +151,11 @@ plate_loss = "#FF8080"
 hover_fill = "#E2E2E2"
 control_edge = "#7C7C7C"
 connection_action = "#202020"
+# A loss on the pale panels, apart from sell_ink (the sell side's near-black);
+# gains and losses on a dark surface such as the slate flow pane.
+loss_ink = "#88181E"
+bright_gain_ink = "#64DCA0"
+bright_loss_ink = "#FF9191"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.

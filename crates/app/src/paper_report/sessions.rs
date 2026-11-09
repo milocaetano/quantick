@@ -312,7 +312,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
     if ui.is_rect_visible(rect) {
         let plate = rect.with_min_x(rect.left() + SESSION_INDENT_PX);
         let lit = head.focused || response.hovered();
-        super::rows::paint_look(ui, plate, &look, lit, 0.0);
+        super::rows::paint_look(ui, &palette, plate, &look, lit, 0.0);
         ui.painter()
             .galley(plate.min + egui::vec2(6.0, 6.0), galley, ink);
     }
