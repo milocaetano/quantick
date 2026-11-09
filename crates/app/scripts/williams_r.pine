@@ -1,0 +1,7 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Williams %R", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+upper = ta.highest(high, len)
+lower = ta.lowest(low, len)
+plot(upper == lower ? na : -100 * (upper - close) / (upper - lower), title="Williams %R", color=color.purple)

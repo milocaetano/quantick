@@ -1,0 +1,6 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Simple Moving Average", overlay=true)
+len = input.int(20, "Length", minval=1, maxval=500)
+src = input.source(close, "Source")
+plot(ta.sma(src, len), title="Simple Moving Average", color=color.orange)
