@@ -4989,6 +4989,27 @@ fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
     assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
 }
 
+/// Another chart's write does not cost a chart the undo of its own edit to a
+/// mark every chart shows: a level placed on the flow chart still undoes
+/// there after the context chart adds one, and leaves every chart.
+#[test]
+fn a_level_placed_on_one_chart_undoes_after_another_chart_draws() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
+
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let undo = key_press_with(egui::Key::Z, egui::Modifiers::COMMAND);
+    run_frame_with_modifiers(&mut app, &ctx, vec![undo], egui::Modifiers::COMMAND);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+}
+
 /// A mark kept to the flow chart stays with the bars it was kept at: a re-cut
 /// hides it and the way back restores it.
 #[test]

@@ -72,3 +72,21 @@ fn an_id_the_pane_does_not_hold_is_refused() {
     .unwrap_err();
     assert!(error.message.contains("holds no drawing with id 9"));
 }
+
+/// A copy of a mark on all timeframes waits on its chart until dated; the call
+/// keeping it there is a decision that holds once it is dated.
+#[test]
+fn this_chart_on_an_undated_copy_holds_once_it_is_dated() {
+    let mut drawings = Drawings::default();
+    let _ = level(&mut drawings, Some(1_700_000_000_000));
+    let source = drawings.items()[0].clone();
+    let copy = drawings.paste(&source, 2.0);
+    let ask = input(copy, ScopeName::ThisChart);
+    let set = set_scope(&mut drawings, &ask, "tick:100").unwrap();
+    assert!(set.changed, "the call decided where the copy shows");
+    assert_eq!(set.pinned_bars.as_deref(), Some("tick:100"));
+
+    let index = drawings.index_of(copy).unwrap();
+    drawings.set_times(index, &[Some(1_700_000_060_000)]);
+    assert!(!drawings.items()[index].all_timeframes());
+}

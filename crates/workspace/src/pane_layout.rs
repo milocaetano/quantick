@@ -120,22 +120,23 @@ mod tests {
             ..PaneLayout::default()
         };
         let mut flow = keyed(PaneRole::Flow);
-        assert!(!flow.recut_in_place(2, |_, _, _| false), "a pinned mark");
+        assert!(!flow.recut_in_place(2, 0, |_, _, _| false), "a pinned mark");
         assert_eq!(flow.drawings_spec, Some(1));
-        assert!(flow.recut_in_place(3, |_, held, now| (*held, *now) == (1, 3)));
+        assert!(flow.recut_in_place(3, 0, |_, held, now| (*held, *now) == (1, 3)));
         assert_eq!(flow.drawings_spec, Some(3));
-        assert!(!flow.recut_in_place(3, |_, _, _| true), "nothing moved");
+        assert!(!flow.recut_in_place(3, 0, |_, _, _| true), "nothing moved");
 
         let bars = "time:1m".to_owned();
         let mut context = keyed(PaneRole::Context { bars });
         assert!(
-            !context.recut_in_place(2, |_, _, _| true),
+            !context.recut_in_place(2, 0, |_, _, _| true),
             "a context chart's key names its bars"
         );
     }
 
     /// A chart held at its old bars (a strategy keeps it) asks the store once
-    /// per cut, not every frame: the answer costs a formatted rule.
+    /// per cut and store revision, not every frame: the answer costs a
+    /// formatted rule, and only a write to the store can change it.
     #[test]
     fn a_recut_that_cannot_move_in_place_is_asked_once() {
         let mut flow = PaneLayout::<u32> {
@@ -145,13 +146,17 @@ mod tests {
         };
         let mut asked = 0;
         for _ in 0..3 {
-            assert!(!flow.recut_in_place(2, |_, _, _| {
+            assert!(!flow.recut_in_place(2, 7, |_, _, _| {
                 asked += 1;
                 false
             }));
         }
         assert_eq!(asked, 1);
-        assert!(flow.recut_in_place(3, |_, _, _| true), "a new cut is asked");
+        assert!(
+            flow.recut_in_place(2, 8, |_, _, _| true),
+            "the store moved: asked again"
+        );
+        assert!(flow.recut_in_place(3, 8, |_, _, _| true), "a new cut is asked");
     }
 
     #[test]
