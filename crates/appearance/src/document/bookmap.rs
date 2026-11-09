@@ -68,9 +68,10 @@ mod tests {
                 Token::Canvas | Token::ChartCanvas | Token::CandlePreviewBackground => {
                     [37, 47, 55, 255]
                 }
-                Token::DrawingDefault | Token::DrawingVwap => [181, 131, 43, 255],
-                Token::DrawingBuy => [8, 153, 129, 255],
-                Token::DrawingSell => [242, 54, 69, 255],
+                // The flow pane's drawings read on its slate: a near-white
+                // default, Dark's side colours and Dark's accent for VWAP.
+                Token::DrawingDefault => [232, 236, 242, 255],
+                Token::DrawingVwap => [138, 180, 248, 255],
                 Token::DrawingProfile => [122, 142, 194, 255],
                 Token::TextPrimary => [243, 244, 246, 255],
                 Token::TextMuted | Token::TextSupport | Token::TapeLabel => [208, 215, 223, 255],
@@ -86,7 +87,12 @@ mod tests {
                 // Light's axes read the root palette, never the slate plot's.
                 | Token::AxisInk
                 | Token::PriceAxisRule
-                | Token::TimeAxisRule => light.color(token).to_array(),
+                | Token::TimeAxisRule
+                // A light theme's own signed-amount inks: its slate pane
+                // writes in the bright pair (`paper::pnl_ink`).
+                | Token::LossInk
+                | Token::BrightGainInk
+                | Token::BrightLossInk => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

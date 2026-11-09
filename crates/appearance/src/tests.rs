@@ -662,13 +662,16 @@ fn preview_and_selection_keep_exact_dark_and_complete_light_values() {
 }
 
 #[test]
-fn light_uses_beige_whisper_surfaces_green_bulls_and_black_bears_without_typography_changes() {
+fn light_uses_a_warm_canvas_neutral_panels_green_bulls_and_black_bears_without_typography_changes()
+{
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     let dark = ResolvedTheme::default();
     for (token, rgba) in [
         (Token::Canvas, [255, 252, 247, 255]),
-        (Token::Chrome, [236, 233, 228, 255]),
-        (Token::Control, [222, 219, 215, 255]),
+        (Token::Chrome, [237, 237, 237, 255]),
+        (Token::Inset, [247, 247, 247, 255]),
+        (Token::Control, [255, 255, 255, 255]),
+        (Token::Border, [124, 124, 124, 255]),
         (Token::TextPrimary, [32, 32, 32, 255]),
         (Token::Buy, [76, 175, 80, 255]),
         (Token::Sell, [0, 0, 0, 255]),
@@ -779,4 +782,98 @@ fn legibility_falls_back_only_below_the_threshold_and_only_to_a_better_ink() {
     assert_eq!(contrast::legible(invisible, white, worse), invisible);
     let transparent = PremultipliedRgba::from_premultiplied([0, 0, 0, 0]);
     assert_eq!(contrast::legible(transparent, white, ink), transparent);
+}
+
+fn assert_contrast(theme: &ResolvedTheme, ink: Token, under: Token, least: f32) {
+    let ratio = contrast::contrast_ratio(theme.color(ink), theme.color(under));
+    assert!(
+        ratio >= least,
+        "{}: {} on {}: {ratio}",
+        theme.name,
+        ink.key(),
+        under.key()
+    );
+}
+
+/// The words a panel writes - amber provenance, gains, and the primary and
+/// secondary text - read at 4.5:1 on every surface Light paints a panel
+/// with, and its control edge at 3:1 on the chrome.
+#[test]
+fn light_panel_words_and_edges_keep_their_contrast() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let dark = ResolvedTheme::default();
+    for theme in [&dark, &light] {
+        for under in [Token::Canvas, Token::Chrome] {
+            assert_contrast(theme, Token::Amber, under, 4.5);
+        }
+        for under in [Token::Chrome, Token::Control] {
+            assert_contrast(theme, Token::BuyInk, under, 4.5);
+        }
+    }
+    for under in [Token::Chrome, Token::Inset, Token::Control, Token::TagBg] {
+        for text in [Token::TextPrimary, Token::TextMuted] {
+            assert_contrast(&light, text, under, 4.5);
+        }
+    }
+    assert_contrast(&light, Token::Border, Token::Chrome, 3.0);
+}
+
+/// Every drawing colour a fresh object can be born in stands at 3:1 on the
+/// chart it is drawn over: the white time chart, and the slate flow pane.
+#[test]
+fn every_light_drawing_colour_reads_on_its_own_chart() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let drawing = [
+        Token::DrawingDefault,
+        Token::DrawingBuy,
+        Token::DrawingSell,
+        Token::DrawingVwap,
+        Token::DrawingProfile,
+        Token::DrawViolet,
+        Token::DrawCyan,
+    ];
+    for surface in [&light, light.bookmap()] {
+        for token in drawing {
+            assert_contrast(surface, token, Token::ChartCanvas, 3.0);
+        }
+    }
+    let flow = light.bookmap();
+    let dark = ResolvedTheme::default();
+    for token in [
+        Token::DrawingBuy,
+        Token::DrawingSell,
+        Token::DrawViolet,
+        Token::DrawCyan,
+    ] {
+        assert_eq!(flow.color(token), dark.color(token), "{}", token.key());
+    }
+    assert_eq!(
+        flow.color(Token::DrawingVwap),
+        dark.color(Token::Accent),
+        "the flow pane's VWAP is Dark's accent blue"
+    );
+}
+
+/// Light's white controls stand off the chrome by their edge, a hovered one
+/// reads apart from its rest with its words at 4.5:1, and the connection
+/// screen's action reads on the chart; Dark keeps its border hover, unedged
+/// controls and meta-grey action.
+#[test]
+fn light_controls_are_edged_and_their_hover_keeps_the_words_readable() {
+    let dark = ResolvedTheme::default();
+    assert_eq!(dark.color(Token::HoverFill), dark.color(Token::Border));
+    assert_eq!(dark.color(Token::ControlEdge).a(), 0);
+    assert_eq!(
+        dark.color(Token::ConnectionAction),
+        dark.color(Token::LoadingMeta)
+    );
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    assert_contrast(&light, Token::ControlEdge, Token::Chrome, 3.0);
+    assert!(
+        contrast::contrast_ratio(light.color(Token::HoverFill), light.color(Token::Control)) >= 1.1
+    );
+    for ink in [Token::TextPrimary, Token::TextMuted, Token::BuyInk] {
+        assert_contrast(&light, ink, Token::HoverFill, 4.5);
+    }
+    assert_contrast(&light, Token::ConnectionAction, Token::ChartCanvas, 4.5);
 }

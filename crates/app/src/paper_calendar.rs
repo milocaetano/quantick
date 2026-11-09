@@ -18,7 +18,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::paper_chrome::fmt_signed_points;
+use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -187,15 +187,10 @@ fn draw_day_cell(
         // a single number is. A day that netted exactly zero is neither —
         // the same verdict `points_color` gives it everywhere else, and
         // painting a scratch green would be the optimistic lie.
-        let base = match stat.net.cmp(&rust_decimal::Decimal::ZERO) {
-            std::cmp::Ordering::Greater => palette.buy(),
-            std::cmp::Ordering::Less => palette.sell(),
-            std::cmp::Ordering::Equal => palette.text_muted(),
-        };
         ui.painter().rect_filled(
             body,
             egui::Rounding::same(3.0),
-            theme::with_opacity(base, DAY_TINT_ALPHA),
+            day_tint(&palette, stat.net),
         );
     } else if response.hovered() {
         ui.painter()
@@ -266,6 +261,10 @@ fn draw_day_cell(
 
 /// How strongly a day with trades is washed with its outcome colour.
 const DAY_TINT_ALPHA: u8 = 46;
+/// A day's wash: the ledger's own signed ink for its net (`points_color`).
+fn day_tint(palette: &theme::Palette, net: rust_decimal::Decimal) -> egui::Color32 {
+    theme::with_opacity(points_color(palette, net), DAY_TINT_ALPHA)
+}
 /// Where the day number sits inside its cell.
 const DAY_NUMBER_BASELINE_PX: f32 = 11.0;
 /// Where the trade count sits, measured up from the cell's bottom.
@@ -273,3 +272,31 @@ const DAY_COUNT_BASELINE_PX: f32 = 7.0;
 
 #[cfg(test)]
 pub(crate) use quantick_civil::DateRange;
+
+#[cfg(test)]
+mod day_tint_tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    /// A day cell reads the ledger's ink for its net: Light's readable buy
+    /// ink and loss red, not the candle colours; Dark's candle colours.
+    #[test]
+    fn a_day_is_tinted_with_the_ledger_s_ink() {
+        let ctx = egui::Context::default();
+        let dark = theme::get(&ctx);
+        let wash = |color| theme::with_opacity(color, DAY_TINT_ALPHA);
+        assert_eq!(day_tint(&dark, Decimal::ONE), wash(dark.buy()));
+        assert_eq!(day_tint(&dark, -Decimal::ONE), wash(dark.sell()));
+        assert_eq!(day_tint(&dark, Decimal::ZERO), wash(dark.text_muted()));
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        theme::sync(&ctx, &appearance);
+        let light = theme::get(&ctx);
+        for value in [Decimal::ONE, -Decimal::ONE, Decimal::ZERO] {
+            let ink = crate::paper_chrome::points_color(&light, value);
+            assert_eq!(day_tint(&light, value), wash(ink), "{value}");
+        }
+        assert_ne!(day_tint(&light, Decimal::ONE), wash(light.buy()));
+        assert_ne!(day_tint(&light, -Decimal::ONE), wash(light.sell()));
+    }
+}

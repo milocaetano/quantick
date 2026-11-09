@@ -45,8 +45,9 @@ pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette, typography_c
     visuals.widgets.inactive.bg_fill = palette.control();
     visuals.widgets.inactive.weak_bg_fill = palette.control();
     visuals.widgets.inactive.fg_stroke.color = palette.text_primary();
-    visuals.widgets.hovered.bg_fill = palette.border();
-    visuals.widgets.hovered.weak_bg_fill = palette.border();
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, palette.control_edge());
+    visuals.widgets.hovered.bg_fill = palette.hover_fill();
+    visuals.widgets.hovered.weak_bg_fill = palette.hover_fill();
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, palette.border());
     visuals.widgets.hovered.fg_stroke.color = palette.text_primary();
     visuals.widgets.active.bg_fill = active_tint(palette.accent());

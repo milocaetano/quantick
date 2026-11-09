@@ -1012,9 +1012,9 @@ impl ReplayView {
                 }
                 let ready = self.selected_entry().is_some();
                 let button = egui::Button::new(
-                    egui::RichText::new("Play session").color(palette.chip_ink()),
+                    egui::RichText::new("Play session").color(palette.replay_plate_ink()),
                 )
-                .fill(palette.amber());
+                .fill(palette.replay_plate());
                 if ui
                     .add_enabled(ready, button)
                     .on_disabled_hover_text("Pick a session from the list first")
@@ -1171,26 +1171,26 @@ fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
     };
     let mut rich = egui::RichText::new(text).monospace().small();
     if selected {
-        rich = rich.color(palette.chip_ink()).strong();
+        rich = rich.color(palette.replay_plate_ink()).strong();
     }
     let mut button = egui::Button::new(rich).min_size(egui::vec2(30.0, 18.0));
     if selected {
-        button = button.fill(palette.amber());
+        button = button.fill(palette.replay_plate());
     }
     ui.add(button)
 }
 
-/// The amber `REPLAY` tag: the one loud thing on the bar.
+/// The `REPLAY` tag on its replay plate: the one loud thing on the bar.
 fn badge(ui: &mut egui::Ui, text: &str) {
     let palette = theme::get(ui.ctx());
     egui::Frame::none()
-        .fill(palette.amber())
+        .fill(palette.replay_plate())
         .inner_margin(egui::Margin::symmetric(6.0, 1.0))
         .rounding(3.0)
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .color(palette.chip_ink())
+                    .color(palette.replay_plate_ink())
                     .small()
                     .strong(),
             );
@@ -1231,7 +1231,7 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
     let painter = ui.painter();
     painter.rect_filled(track, 3.0, palette.control());
     let filled = egui::Rect::from_min_size(track.min, egui::vec2(width * shown, TRACK_HEIGHT));
-    painter.rect_filled(filled, 3.0, palette.amber());
+    painter.rect_filled(filled, 3.0, palette.replay_plate());
     painter.circle_filled(
         egui::pos2(filled.right(), track.center().y),
         if response.hovered() || held {
@@ -1239,7 +1239,7 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
         } else {
             HANDLE_RADIUS
         },
-        palette.amber(),
+        palette.replay_plate(),
     );
 
     if response.drag_stopped() || response.clicked() {

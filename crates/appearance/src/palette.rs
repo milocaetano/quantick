@@ -189,9 +189,40 @@ pub enum Token {
     LastPriceUp,
     /// A light theme's last-price chip over a falling bar.
     LastPriceDown,
+    /// The filled replay key: the REPLAY badge, the chosen speed and a replay
+    /// dialog's primary action. Dark's is its amber.
+    ReplayPlate,
+    /// Words on [`Token::ReplayPlate`].
+    ReplayPlateInk,
+    /// The plate a light theme lays under the chart's order and position
+    /// labels, and under the report's drawdown chip.
+    OrderPlate,
+    /// Words on [`Token::OrderPlate`].
+    OrderPlateInk,
+    /// A gain written on a dark plate in a light theme.
+    PlateGain,
+    /// A loss written on a dark plate in a light theme.
+    PlateLoss,
+    /// The fill under a hovered control or row. Dark's is its border.
+    HoverFill,
+    /// The edge of a framed control at rest; Dark's is transparent.
+    ControlEdge,
+    /// The connection screen's action (`Reconnect`): Dark keeps it in the
+    /// loading meta grey, a light theme writes it in its primary ink.
+    ConnectionAction,
+    /// A light theme's loss on its pale panels. Its `sell_ink` is the sell
+    /// side's ink, near-black like its sell candles, so a loss reads this
+    /// separate red. A dark theme writes losses in `sell`; Dark's value
+    /// mirrors it.
+    LossInk,
+    /// A light theme's gain on a dark surface such as its slate flow pane.
+    /// A dark theme writes gains in `buy`; Dark's value mirrors it.
+    BrightGainInk,
+    /// A light theme's loss on a dark surface. Dark's value mirrors `sell`.
+    BrightLossInk,
 }
 impl Token {
-    pub const ALL: [Self; 113] = [
+    pub const ALL: [Self; 125] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -305,6 +336,18 @@ impl Token {
         Self::ChartCanvas,
         Self::LastPriceUp,
         Self::LastPriceDown,
+        Self::ReplayPlate,
+        Self::ReplayPlateInk,
+        Self::OrderPlate,
+        Self::OrderPlateInk,
+        Self::PlateGain,
+        Self::PlateLoss,
+        Self::HoverFill,
+        Self::ControlEdge,
+        Self::ConnectionAction,
+        Self::LossInk,
+        Self::BrightGainInk,
+        Self::BrightLossInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -328,6 +371,18 @@ impl Token {
             Self::ChartCanvas => "chart_canvas",
             Self::LastPriceUp => "last_price_up",
             Self::LastPriceDown => "last_price_down",
+            Self::ReplayPlate => "replay_plate",
+            Self::ReplayPlateInk => "replay_plate_ink",
+            Self::OrderPlate => "order_plate",
+            Self::OrderPlateInk => "order_plate_ink",
+            Self::PlateGain => "plate_gain",
+            Self::PlateLoss => "plate_loss",
+            Self::HoverFill => "hover_fill",
+            Self::ControlEdge => "control_edge",
+            Self::ConnectionAction => "connection_action",
+            Self::LossInk => "loss_ink",
+            Self::BrightGainInk => "bright_gain_ink",
+            Self::BrightLossInk => "bright_loss_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

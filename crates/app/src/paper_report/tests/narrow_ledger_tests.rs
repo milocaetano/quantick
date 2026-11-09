@@ -97,11 +97,18 @@ fn assert_apart(texts: &[(String, egui::Rect)], width: f32) {
         for (b, b_rect) in &texts[i + 1..] {
             let overlap = a_rect.intersect(*b_rect);
             assert!(
-                overlap.width() <= 0.0 || overlap.height() <= 0.0,
+                overlap.width() <= 0.0 || overlap.height() <= 0.0 || struck(a, a_rect, b, b_rect),
                 "{a:?} at {a_rect:?} paints over {b:?} at {b_rect:?}"
             );
         }
     }
+}
+
+/// A bold word is the same text painted again under a pixel to its right.
+fn struck(a: &str, a_rect: &egui::Rect, b: &str, b_rect: &egui::Rect) -> bool {
+    a == b
+        && (a_rect.size() - b_rect.size()).length() < 0.01
+        && (a_rect.min - b_rect.min).length() < 1.0
 }
 
 fn has(texts: &[(String, egui::Rect)], wanted: &str) -> bool {

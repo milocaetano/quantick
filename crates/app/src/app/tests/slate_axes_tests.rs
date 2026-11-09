@@ -299,7 +299,7 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                     .unwrap();
                 assert_eq!(words.reconnect, reconnect);
                 let title = format!("{}{}", words.verb, tab.symbol);
-                let text: Vec<_> = output
+                let mut text: Vec<_> = output
                     .shapes
                     .iter()
                     .enumerate()
@@ -314,6 +314,8 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                             .then_some((index, text))
                     })
                     .collect();
+                // A bold action is struck twice; the strike is one word.
+                text.dedup_by(|(_, a), (_, b)| a.galley.job.text == b.galley.job.text);
                 assert_eq!(
                     text.len(),
                     2 + usize::from(reconnect),
@@ -333,10 +335,16 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                 let palette = tab.lead_pane().palette(&ctx);
                 for (_, text) in text {
                     for section in &text.galley.job.sections {
-                        let color = section.format.color;
+                        // A placeholder section paints in the shape's own ink.
+                        let color = match section.format.color {
+                            egui::Color32::PLACEHOLDER => text.fallback_color,
+                            color => color,
+                        };
                         if color.a() > 0 {
                             assert!(
-                                color == palette.loading_title() || color == palette.loading_meta()
+                                color == palette.loading_title()
+                                    || color == palette.loading_meta()
+                                    || color == palette.connection_action()
                             );
                         }
                     }

@@ -10,6 +10,8 @@ use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWord
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
+use crate::theme::BOLD_STRIKE_PX;
+
 /// `menu > tooltip > loading-slot, overlay > chart`; keep the chart below this
 /// layer, and suppress chip tooltips while a popup is open ([`dot_hover`]).
 const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
@@ -224,7 +226,7 @@ fn lay_out_overlay(
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
                     palette.body_font(CONTROL_PT),
-                    palette.loading_meta(),
+                    egui::Color32::PLACEHOLDER,
                 )
             }),
         )
@@ -301,8 +303,11 @@ pub fn draw_overlay(
         let ink = if lit {
             palette.loading_title()
         } else {
-            palette.loading_meta()
+            palette.connection_action()
         };
+        if !palette.resolved.dark {
+            painter.galley(at + egui::vec2(BOLD_STRIKE_PX, 0.0), control.clone(), ink);
+        }
         painter.galley(at, control, ink);
         if lit {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -637,6 +642,69 @@ mod tests {
         }
     }
 
+    /// Reconnect's ink is chosen at paint time, so a hover reaches the pixels:
+    /// the tessellated words change colour, resting in `connection_action`
+    /// and lit in `loading_title`, in both themes.
+    #[test]
+    fn the_reconnect_hover_ink_reaches_the_pixels() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let frame = |events: Vec<egui::Event>| {
+                let mut control = None;
+                let raw = egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                };
+                let output = ctx.run(raw, |ctx| {
+                    let panel = egui::CentralPanel::default().frame(egui::Frame::none());
+                    panel.show(ctx, |ui| {
+                        control = draw_overlay(ui, screen, "X", &words(true), (0, 1)).0;
+                    });
+                });
+                let words: Vec<_> = output
+                    .shapes
+                    .into_iter()
+                    .filter(|clipped| {
+                        matches!(&clipped.shape,
+                        egui::Shape::Text(text) if text.galley.text() == RECONNECT_LABEL)
+                    })
+                    .collect();
+                assert!(!words.is_empty(), "Reconnect is painted");
+                let control = control.expect("laid out");
+                let mut inks = std::collections::BTreeSet::new();
+                for primitive in ctx.tessellate(words, 1.0) {
+                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
+                        inks.extend(mesh.vertices.iter().map(|vertex| vertex.color.to_array()));
+                    }
+                }
+                (inks, control)
+            };
+            let (rest, control) = frame(Vec::new());
+            let _ = frame(vec![egui::Event::PointerMoved(control.center())]);
+            let (lit, _) = frame(Vec::new());
+            let palette = crate::theme::get(&ctx);
+            let only = |color: egui::Color32| std::collections::BTreeSet::from([color.to_array()]);
+            assert_eq!(
+                rest,
+                only(palette.connection_action()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_eq!(
+                lit,
+                only(palette.loading_title()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_ne!(rest, lit);
+        }
+    }
+
     /// The overlay paints a drag through: only its one control takes a press,
     /// and without the control nothing does.
     #[test]
@@ -700,9 +768,14 @@ mod tests {
                 .iter()
                 .rposition(|shape| matches!(shape, egui::Shape::Mesh(_)))
                 .expect("the logo");
-            let text: Vec<_> = (0..shapes.len())
+            let mut text: Vec<_> = (0..shapes.len())
                 .filter(|&index| matches!(shapes[index], egui::Shape::Text(_)))
                 .collect();
+            // A bold action is struck twice; the strike is one word.
+            text.dedup_by(|a, b| match (shapes[*a], shapes[*b]) {
+                (egui::Shape::Text(a), egui::Shape::Text(b)) => a.galley.text() == b.galley.text(),
+                _ => false,
+            });
             assert_eq!(text.len(), 3, "title, metadata and Reconnect");
             assert!(text.iter().all(|&index| index < logo), "{text:?} {logo}");
             assert!(
