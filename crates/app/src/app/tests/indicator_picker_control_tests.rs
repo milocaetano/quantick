@@ -44,13 +44,35 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
         &mut client,
         json!({"action":"search", "query":"eMa", "category":"all"}),
     ));
-    assert!(
-        searched["entries"]
-            .as_array()
+    let entries = searched["entries"].as_array().unwrap();
+    assert!(!entries.is_empty());
+    assert!(entries.iter().all(|entry| {
+        let name_matches = entry["name"]
+            .as_str()
             .unwrap()
-            .iter()
-            .all(|e| e["name"].as_str().unwrap().to_lowercase().contains("ema"))
-    );
+            .to_lowercase()
+            .contains("ema");
+        let filename_matches = entry["id"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("script.")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| app.runtime.indicators.script_library.entries().get(index))
+            .is_some_and(|script| script.name.to_lowercase().contains("ema"));
+        name_matches || filename_matches
+    }));
+    let ema_index = app
+        .runtime
+        .indicators
+        .script_library
+        .entries()
+        .iter()
+        .position(|script| script.name == "ema.pine")
+        .unwrap();
+    assert!(entries.iter().any(|entry| {
+        entry["id"] == format!("script.{ema_index}")
+            && entry["name"] == "Exponential Moving Average"
+    }));
     let invalid = call(
         &mut app,
         &mut client,
