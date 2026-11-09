@@ -308,3 +308,70 @@ fn a_held_lead_before_the_retained_book_is_marked() {
         );
     }
 }
+
+/// A level first seen inside the window, on a book over the cell cap so
+/// the lead is averaged on fine bins: its bins start after the lead ends,
+/// and the book worker must read past it rather than panic on an inverted
+/// range.
+#[test]
+fn a_level_first_seen_inside_the_window_never_stops_the_averaged_lead() {
+    let config = config(MAX_BUBBLE_MAX_RADIUS, 20);
+    let mut history = history_from(0, config);
+    // Enough churn inside the window to overflow the cap, little enough
+    // that the fold keeps its finest bins.
+    let mut id = 13;
+    for step in 1..=30_i64 {
+        history
+            .apply_delta(
+                LATEST_BOOK_MS + step,
+                &quantick_orderbook::BookDelta::new(
+                    id,
+                    id,
+                    vec![level(95, if step % 2 == 0 { 10 } else { 500 })],
+                    vec![],
+                ),
+            )
+            .unwrap();
+        id += 1;
+    }
+    // Seen inside the window, then changed: a closed run whose first bin
+    // starts well after the lead ends.
+    for (time_ms, quantity) in [(NOW_MS - 60, 40), (NOW_MS - 40, 400)] {
+        history
+            .apply_delta(
+                time_ms,
+                &quantick_orderbook::BookDelta::new(id, id, vec![level(97, quantity)], vec![]),
+            )
+            .unwrap();
+        id += 1;
+    }
+    let timeline = timeline(1_000);
+    let (cells, _, _) = project_lane_heat(&history, &timeline, prices(), grouping(), 130.into());
+    assert!(
+        cells.iter().any(|cell| cell.time_averaged),
+        "the cap averages"
+    );
+}
+
+/// Before capture reads as a filled gap in a tape inset, never as a bare
+/// strip of canvas; across the chart it keeps its boundary-only mark.
+#[test]
+fn before_capture_in_an_inset_is_filled() {
+    let chart = GapPrimitive {
+        from_generation: None,
+        to_generation: Some(1),
+        x0: 0.0,
+        x1: 0.4,
+        reason: crate::projection::BEFORE_CAPTURE.to_owned(),
+        lead_span: None,
+    };
+    assert!(chart.marks_boundary_only());
+    let inset = GapPrimitive {
+        lead_span: Some((f64::NEG_INFINITY, -0.5)),
+        ..chart.clone()
+    };
+    assert!(!inset.marks_boundary_only());
+    let marks =
+        crate::projection::gap_marks_bounds(0.0, 40.0, 0.0, 300.0, inset.marks_boundary_only());
+    assert!(marks.fill, "the inset strip is painted as a gap");
+}

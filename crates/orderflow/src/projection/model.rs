@@ -354,6 +354,15 @@ impl GapPrimitive {
     pub fn precedes_capture(&self) -> bool {
         self.reason == BEFORE_CAPTURE
     }
+
+    /// Whether the painter marks only this gap's capture boundary, as it
+    /// marks the stretch before capture across the chart. In a native
+    /// tape's inset the same stretch is filled: the inset is a strip beside
+    /// the book, and an unfilled one would read as an empty book.
+    #[must_use]
+    pub fn marks_boundary_only(&self) -> bool {
+        self.precedes_capture() && self.lead_span.is_none()
+    }
 }
 
 /// Complete pure output for one chart frame.
