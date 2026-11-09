@@ -174,13 +174,39 @@ impl PastHeat {
             );
         }
         if self.lead_capped {
-            for (from, to) in [
-                (f64::NEG_INFINITY, -place.lead),
-                (1.0 + place.lead, f64::INFINITY),
+            // Beyond the read, a book never recorded is still not one left
+            // unread: before capture on the left where the read began
+            // before it, not current on the right past the newest book.
+            let before_read = self
+                .gaps
+                .iter()
+                .any(|gap| gap.precedes_capture() && gap.x0 <= 0.0);
+            let lane_end = place.lane_x0 + place.lane_width;
+            for (from, to, x, reason) in [
+                (
+                    f64::NEG_INFINITY,
+                    -place.lead,
+                    place.lane_x0,
+                    if before_read {
+                        BEFORE_CAPTURE
+                    } else {
+                        BOOK_BEYOND_LEAD
+                    },
+                ),
+                (
+                    1.0 + place.lead,
+                    f64::INFINITY,
+                    lane_end,
+                    if self.recorded_until_ms < self.until_ms {
+                        BOOK_NOT_CURRENT
+                    } else {
+                        BOOK_BEYOND_LEAD
+                    },
+                ),
             ] {
                 gaps.push(GapPrimitive {
                     lead_span: Some((from, to)),
-                    ..reason_gap(place.lane_x0, place.lane_x0, BOOK_BEYOND_LEAD)
+                    ..reason_gap(x, x, reason)
                 });
             }
         }

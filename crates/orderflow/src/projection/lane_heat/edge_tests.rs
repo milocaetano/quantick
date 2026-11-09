@@ -264,19 +264,31 @@ fn a_held_lead_before_the_retained_book_is_marked() {
         )
         .unwrap();
     assert_eq!(history.retention_start_ms(), Some(1_450));
-    let width = 310.0;
-    let geometry = TapeHorizontalGeometry::from_config(&config, width, LANE_HEIGHT_PX).unwrap();
-    let end_ms = 1_900;
-    let placed = project_past_heat(
-        &history,
-        (end_ms - WINDOW_MS, end_ms),
-        lead_at(&config, width),
-        prices(),
-        grouping(),
-    )
-    .placed(end_ms, WINDOW_MS, 1);
-    let mut marks = book(painted(geometry, &placed.cells, 1, false));
-    marks.extend(gap_px(geometry, &placed.gaps, 1));
-    let (left, _) = edges(&marks, width);
-    assert_eq!(left, Some(Some(BEFORE_CAPTURE.to_owned())));
+    // Read to the pane's edge, and stopped at the cap short of it: either
+    // way the never-recorded stretch reads before capture, never unread.
+    for width in [400.0, 290.0] {
+        let geometry = TapeHorizontalGeometry::from_config(&config, width, LANE_HEIGHT_PX).unwrap();
+        let end_ms = 1_900;
+        let lead = lead_at(&config, width);
+        assert_eq!(lead.1, width < 300.0, "{width} px");
+        let placed = project_past_heat(
+            &history,
+            (end_ms - WINDOW_MS, end_ms),
+            lead,
+            prices(),
+            grouping(),
+        )
+        .placed(end_ms, WINDOW_MS, 1);
+        let mut marks = book(painted(geometry, &placed.cells, 1, false));
+        marks.extend(gap_px(geometry, &placed.gaps, 1));
+        let (left, _) = edges(&marks, width);
+        assert_eq!(left, Some(Some(BEFORE_CAPTURE.to_owned())), "{width} px");
+        assert!(
+            placed
+                .gaps
+                .iter()
+                .all(|gap| gap.reason != BOOK_BEYOND_LEAD || gap.lead_span.unwrap().0 > 0.0),
+            "{width} px: nothing before capture reads as unread"
+        );
+    }
 }
