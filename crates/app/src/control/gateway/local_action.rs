@@ -44,9 +44,12 @@ impl ControlAccess {
     /// enabled: replay determinism does not depend on a client being
     /// connected.
     pub(crate) fn service_replay_trace(&mut self, app: &mut ControlWindow) {
-        let due = self
-            .trace_reinjection
-            .collect_due(app.tab_reads().tabs(), &mut self.next_trace_sequence);
+        let tabs = app.tab_reads().tabs();
+        let due = self.trace_reinjection.collect_due(
+            || super::trace_replay::playing(tabs),
+            &mut self.next_trace_sequence,
+            super::trace_replay::load_trace_for_reinjection,
+        );
         for entry in due {
             if let Err(error) = self.invoke_local_action(
                 app,
