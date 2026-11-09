@@ -352,3 +352,26 @@ fn a_level_first_seen_inside_the_window_never_stops_the_averaged_lead() {
         "the cap averages"
     );
 }
+
+/// Before capture reads as a filled gap in a tape inset, never as a bare
+/// strip of canvas; across the chart it keeps its boundary-only mark.
+#[test]
+fn before_capture_in_an_inset_is_filled() {
+    let chart = GapPrimitive {
+        from_generation: None,
+        to_generation: Some(1),
+        x0: 0.0,
+        x1: 0.4,
+        reason: crate::projection::BEFORE_CAPTURE.to_owned(),
+        lead_span: None,
+    };
+    assert!(chart.marks_boundary_only());
+    let inset = GapPrimitive {
+        lead_span: Some((f64::NEG_INFINITY, -0.5)),
+        ..chart.clone()
+    };
+    assert!(!inset.marks_boundary_only());
+    let marks =
+        crate::projection::gap_marks_bounds(0.0, 40.0, 0.0, 300.0, inset.marks_boundary_only());
+    assert!(marks.fill, "the inset strip is painted as a gap");
+}

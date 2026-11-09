@@ -138,7 +138,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         if !rect.is_positive() {
             continue;
         }
-        let leading = gap.precedes_capture();
+        let leading = gap.marks_boundary_only();
         // Against its own pane, not the chart: a gap cut short by the divider
         // ends there because the pane does, and a boundary mark would claim the
         // coverage resumed at a moment it did not.
