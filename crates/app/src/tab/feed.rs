@@ -1032,7 +1032,11 @@ impl Tab {
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
         self.tape_mut().set_enabled(false, generation);
-        self.stash_deal_readings();
+        // A replay is another day's prints, and the reset that clears the
+        // panes for it drops the readings with the series: the live market's
+        // are put aside, to come back with it.
+        self.deal_recorder
+            .stash(self.flow_pane.state.deal_samples().to_vec());
         self.reset_market_state(false);
     }
 
@@ -1073,7 +1077,10 @@ impl Tab {
         let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(false);
-        self.restore_deal_readings();
+        // The live market's readings return to every pane, ahead of the
+        // backfill about to arrive.
+        let readings = self.deal_recorder.take_stash();
+        self.retain_deal_samples(&readings);
     }
 
     /// Respawn the transport and keep everything the chart has built:
