@@ -49,6 +49,8 @@ The adapter location and `$name` spelling follow the
 | `ui-harness` | The contract that makes visual work possible — every user-visible surface reachable from a fresh launch by environment hooks alone, zero clicks — and the autonomous QA pass built on it: it drives every affected surface, **asks the live control plane what the application believes is on screen**, captures a state matrix and reads the images against a defect checklist. It absorbed `visual-qa`. |
 | `issue` | Turns an idea into a well-formed issue with scope, acceptance criteria, labels and board placement — or redirects it to Discussions when there is no concrete deliverable yet. `/issue start <N>` picks one up: reads it, names the branch from its labels, moves the board card, and hands the worktree to `mission`. It absorbed `new-task`. |
 | `ship` | The delivery: the four-check loop, the commit, the push, the PR with `Closes #N`, and CI watched until green. |
+| `implement` | The default path today. It writes a plan of about 200 tokens and a `/goal` line, and does nothing else. The goal then builds, takes one independent review at a level set by risk, gets a test agent for anything user-visible, and delivers a ready PR with green CI. It replaces `mission` and the three pre-PR reviews for ordinary work; see [The lean path](#the-lean-path). |
+| `feature` | `implement` for work too large for one PR. It splits the work into the fewest child goals, cutting only at a crate or port boundary, fixes their shared design up front, and judges the combined result as one PR. |
 
 `ui-harness` deserves the emphasis. It is the same rule as the product's
 fourth design principle — *operable without a hand* — applied to the
@@ -174,6 +176,37 @@ door out that is not "argue with it again next run". The corollary is the
 sharpest of the rules: a WEAK whose breaking variant the reviewer cannot name
 is not a WEAK, it is a PASS. A worry is not a finding.
 
+## The lean path
+
+Two phases fixed the loop, but the ceremony stayed: a tiered mission, three
+independent pre-PR reviews and a delivery grade for every change. That was
+sized for a funded team. quantick is one maintainer paying for their own
+tokens, and the measurement below showed where the tokens went: almost all of
+them were spent after the PR had opened.
+
+`implement` (#592) is the result, and it is now how ordinary work lands:
+
+- **Planning is a separate, tiny step.** `/implement` reads only what it needs
+  and writes a plan of about 200 tokens: outcome, base SHA, paths, acceptance
+  and checks. It never builds. The maintainer starts the build with the
+  `/goal` line it prints, so the build runs against a written condition
+  instead of a conversation.
+- **One review, sized by risk.** Hooks, guards, trading, concurrency, public
+  contracts and diffs over 600 lines get `high`. A local change of 150 lines
+  or fewer with no contract change gets `low`. Everything else gets `medium`.
+  There are at most two rounds; anything left over goes into the PR as a
+  follow-up rather than starting a third round.
+- **A test agent stands in for the user.** For any user-visible or
+  agent-facing change, an agent with no chat context drives the built app
+  through `ui-harness` or the control plane, and its failure blocks.
+- **Where the code lands is the default, not a gate.** New state and decisions
+  go to a headless crate outside `crates/app`. The app keeps a field, one-line
+  calls and painting. The guards above still decide what merges.
+
+The walls did not move: worktrees, review receipts, the guards and green CI
+are still enforced. What went away is the review a change was not risky
+enough to need.
+
 ## The hooks that make the gates real
 
 Three of those rules — work in a worktree, run arch-review before the PR, and
@@ -224,6 +257,11 @@ catch classes of failure — drift, unreviewed commits, untested surfaces,
 mouse-only capabilities — not all failure. And the process is only as good as
 the acceptance criteria a mission writes down, which is a human judgement at
 the start of every session.
+
+The lean path is judged on use, not yet on a controlled measurement. The
+maintainer reports no rework from it, and main stays green under the guards.
+A paired cost comparison against the old chain is still open
+([#563](https://github.com/milocaetano/quantick/issues/563)).
 
 ## Why the rules read the way they do
 

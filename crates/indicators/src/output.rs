@@ -200,6 +200,8 @@ pub struct PlotSpec {
 #[derive(Debug, Clone, Default)]
 pub struct PlotBuffer {
     columns: Vec<Vec<f64>>,
+    candle_specs: Vec<CandlePlotSpec>,
+    candle_columns: Vec<Vec<Option<CandleSample>>>,
     /// Packed `0xRRGGBBAA` paint per bar, `0` = this bar asked for none.
     ///
     /// Kept only as far as the last *painted* bar: an indicator that never
@@ -225,6 +227,8 @@ impl PlotBuffer {
     pub fn new(plot_count: usize) -> Self {
         Self {
             columns: vec![Vec::new(); plot_count],
+            candle_specs: Vec::new(),
+            candle_columns: Vec::new(),
             bar_paint: Vec::new(),
             rows: 0,
         }
@@ -293,6 +297,9 @@ impl PlotBuffer {
         for (column, &value) in self.columns.iter_mut().zip(row) {
             column.push(value);
         }
+        for column in &mut self.candle_columns {
+            column.push(None);
+        }
         self.rows += 1;
     }
 
@@ -359,6 +366,9 @@ impl PlotBuffer {
         for column in &mut self.columns {
             column.clear();
         }
+        for column in &mut self.candle_columns {
+            column.clear();
+        }
         self.bar_paint.clear();
         self.rows = 0;
     }
@@ -372,6 +382,8 @@ pub struct PreviewFrame {
     /// One value per declared plot, in [`PlotId`] order; NaN = nothing to
     /// draw.
     pub values: Vec<f64>,
+    /// Headless OHLC samples in candle registry order.
+    pub candles: Vec<Option<CandleSample>>,
     /// The forming bar's draw objects (the full transient set), when the
     /// indicator draws any: replaces the committed set while the bar forms,
     /// exactly like plot previews (latest-wins).
@@ -393,6 +405,7 @@ impl PreviewFrame {
     pub fn new(values: Vec<f64>) -> Self {
         Self {
             values,
+            candles: Vec::new(),
             objects: None,
             paint: None,
         }
@@ -547,5 +560,83 @@ mod tests {
         assert_eq!(c.to_u32(), 0x1234_5678);
         assert_eq!(Rgba8::from_u32(0x1234_5678), c);
         assert_eq!(Rgba8::opaque(1, 2, 3).a, 255);
+    }
+}
+
+/// One fixed headless candle/bar output, separate from scalar line plots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandlePlotSpec {
+    /// Constant title declared by the script.
+    pub title: String,
+    /// True for OHLC bars, false for candles.
+    pub is_bar: bool,
+}
+
+/// One complete OHLC sample. Missing any price is represented by `None`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CandleSample {
+    /// Opening price.
+    pub open: f64,
+    /// Maximum of the supplied OHLC components.
+    pub high: f64,
+    /// Minimum of the supplied OHLC components.
+    pub low: f64,
+    /// Closing price.
+    pub close: f64,
+    /// Body/bar color; explicit na remains absent.
+    pub color: Option<Rgba8>,
+    /// Wick color; absent for plotbar.
+    pub wick_color: Option<Rgba8>,
+    /// Border color; absent for plotbar.
+    pub border_color: Option<Rgba8>,
+}
+
+impl PlotBuffer {
+    /// Configure headless OHLC columns before any rows have been committed.
+    ///
+    /// # Panics
+    /// Panics if rows already exist.
+    #[must_use]
+    pub fn with_candle_plots(mut self, specs: Vec<CandlePlotSpec>) -> Self {
+        assert!(
+            self.is_empty(),
+            "configure candle columns before committing"
+        );
+        self.candle_columns = vec![Vec::new(); specs.len()];
+        self.candle_specs = specs;
+        self
+    }
+
+    /// Headless OHLC declarations in their own declaration order.
+    #[must_use]
+    pub fn candle_specs(&self) -> &[CandlePlotSpec] {
+        &self.candle_specs
+    }
+
+    /// A committed headless OHLC column; None for an unknown column.
+    #[must_use]
+    pub fn candle_column(&self, index: usize) -> Option<&[Option<CandleSample>]> {
+        self.candle_columns.get(index).map(Vec::as_slice)
+    }
+
+    /// Append scalar and OHLC output atomically after a successful evaluation.
+    ///
+    /// # Panics
+    /// Panics when either row does not match its declared column count.
+    pub fn push_row_with_candles(
+        &mut self,
+        row: &[f64],
+        paint: Option<Rgba8>,
+        candles: &[Option<CandleSample>],
+    ) {
+        assert_eq!(
+            candles.len(),
+            self.candle_columns.len(),
+            "candle row must match its declarations"
+        );
+        self.push_row_painted(row, paint);
+        for (column, sample) in self.candle_columns.iter_mut().zip(candles) {
+            column[self.rows - 1] = *sample;
+        }
     }
 }

@@ -138,8 +138,8 @@ impl ControlAccess {
         // what is left is a fraction of the wrong rectangle — it made the
         // panel a third of its own content tall.
         let max_height = ctx.screen_rect().height() * CONTROL_PANEL_MAX_SCREEN_FRACTION;
-        eframe::egui::Window::new("Local agent access")
-            .id(eframe::egui::Id::new("control_access_panel"))
+        let id = eframe::egui::Id::new("control_access_panel");
+        crate::popup::centred(eframe::egui::Window::new("Local agent access"), id, ctx)
             .open(&mut open)
             .default_width(CONTROL_PANEL_DEFAULT_WIDTH_PX)
             .resizable(true)
@@ -425,7 +425,8 @@ mod readability_tests {
                 for frame in 0..120 {
                     let events = if frame > 5 && frame % 6 == 0 {
                         vec![
-                            egui::Event::PointerMoved(egui::pos2(200.0, 300.0)),
+                            // The panel opens centred (`crate::popup`).
+                            egui::Event::PointerMoved(egui::pos2(width / 2.0, 390.0)),
                             egui::Event::MouseWheel {
                                 unit: egui::MouseWheelUnit::Point,
                                 delta: egui::vec2(0.0, -120.0),

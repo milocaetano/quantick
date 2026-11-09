@@ -114,6 +114,7 @@ impl ProviderKind {
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: true,
+                native_candle_intervals: true,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -134,6 +135,7 @@ impl ProviderKind {
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
+                native_candle_intervals: true,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -158,6 +160,7 @@ impl ProviderKind {
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
+                native_candle_intervals: false,
             },
         }
     }
@@ -263,6 +266,12 @@ pub struct FeedCapabilities {
     /// MetaTrader, Hyperliquid — or where the split is not known, so a bar
     /// summarising candles says its buy, sell and delta were not measured.
     pub ohlcv_aggressor_split: bool,
+    /// Serves its own candles at every interval a time pane is cut at,
+    /// paged by a request's right-hand edge: the session keeps one series per
+    /// interval and reaches back as the pane scrolls, instead of folding one
+    /// base. Binance and Hyperliquid; never MetaTrader, whose bridge pushes
+    /// one block, nor a recording.
+    pub native_candle_intervals: bool,
     /// There is a transport behind it to be up or down, and to reconnect. False
     /// on a recording: its silence is data, and "no connection" a false word.
     pub transport: bool,
@@ -372,6 +381,7 @@ impl FeedCapabilities {
             ohlcv_generation: 0,
             ohlcv_daily_generation: 0,
             ohlcv_aggressor_split: false,
+            native_candle_intervals: false,
         }
     }
 

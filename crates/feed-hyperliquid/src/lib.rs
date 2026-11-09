@@ -29,7 +29,7 @@ pub mod wire;
 
 pub use candles::{
     CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, Candle, CandleError, CandleHistory, ONE_MINUTE_MS,
-    fetch_history as fetch_candle_history,
+    candle_interval_for, fetch_history as fetch_candle_history,
 };
 pub use reconnect::Backoff;
 pub use stream::{

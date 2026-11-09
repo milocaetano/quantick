@@ -317,6 +317,8 @@ fn session_capabilities(
         ohlcv_daily_generation,
         // A MetaTrader candle has one volume and no side: half each.
         ohlcv_aggressor_split: false,
+        // The bridge pushes one block; it cannot be asked for an interval.
+        native_candle_intervals: false,
     }
 }
 

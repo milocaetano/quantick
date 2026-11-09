@@ -1,0 +1,8 @@
+//@version=5
+// SPDX-License-Identifier: MIT
+// Authored for Quantick oracle measurements.
+indicator("macd")
+[m, s, h] = ta.macd(close, 3, 7, 4)
+plot(m, "macd")
+plot(s, "signal")
+plot(h, "histogram")

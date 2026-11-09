@@ -1018,6 +1018,7 @@ mod tests {
                             ohlcv_generation: 0,
                             ohlcv_daily_generation: 0,
                             ohlcv_aggressor_split: false,
+                            native_candle_intervals: false,
                         },
                         dock_visible: true,
                         paper: flat_trade(true),
@@ -1067,6 +1068,7 @@ mod tests {
                         ohlcv_generation: 0,
                         ohlcv_daily_generation: 0,
                         ohlcv_aggressor_split: false,
+                        native_candle_intervals: false,
                     },
                     dock_visible: true,
                     // Not yet ready: the TRADE pair must lay out in its
@@ -1166,6 +1168,7 @@ mod tests {
                         ohlcv_generation: 0,
                         ohlcv_daily_generation: 0,
                         ohlcv_aggressor_split: false,
+                        native_candle_intervals: false,
                     },
                     dock_visible: true,
                     paper: paper.clone(),

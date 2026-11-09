@@ -104,18 +104,9 @@ fn a_reassigned_length_no_longer_folds() {
 }
 
 #[test]
-fn stateful_kernels_inside_loops_are_refused() {
-    // Inline \n + real spaces: `\`-continued literals strip leading
-    // whitespace, which would erase the loop body's indentation.
-    let errors = compile_err(
-        "//@version=5\nindicator(\"t\")\ns = 0.0\nfor i = 0 to 4\n    s := s + ta.ema(close, 9)\nplot(s)\n",
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.code == ErrorCode::PineStatefulInLoop),
-        "{errors:?}"
-    );
+fn invariant_stateful_kernels_inside_loops_compile() {
+    let source = "//@version=5\nindicator(\"t\")\ns = 0.0\nfor i = 0 to 4\n    s := s + ta.ema(close, 9)\nplot(s)\n";
+    assert!(compile(source, "loop").is_ok());
 }
 
 #[test]
@@ -152,7 +143,7 @@ fn the_reject_list_names_its_reasons() {
     assert!(errors.iter().any(|e| e.code == ErrorCode::PineNoStrategy));
 
     let errors =
-        compile_err("//@version=5\nindicator(\"t\")\na = array.new_float(3)\nplot(close)\n");
+        compile_err("//@version=5\nindicator(\"t\")\na = matrix.new_float(3)\nplot(close)\n");
     assert!(
         errors
             .iter()
@@ -216,7 +207,7 @@ fn history_offsets_size_max_bars_back() {
 }
 
 #[test]
-fn version_other_than_5_is_refused_and_missing_is_a_warning() {
+fn unsupported_version_is_refused_and_missing_is_a_warning() {
     let errors = compile_err("//@version=4\nindicator(\"t\")\nplot(close)\n");
     assert!(errors.iter().any(|e| e.code == ErrorCode::PineVersion));
 
@@ -396,12 +387,12 @@ fn a_dynamic_offset_raises_the_floor_instead_of_replacing_it() {
 
 #[test]
 fn a_refused_family_keeps_its_reason_as_a_bare_name() {
-    // `dayofweek` is a variable in Pine, so it reaches the name arm rather
+    // `second` is a variable in Pine, so it reaches the name arm rather
     // than the call or member arms; "unknown name" would be the wrong reason
     // for a name the dialect knows and refuses.
-    let errors = compile_err("//@version=5\nindicator(\"t\")\nplot(dayofweek)\n");
+    let errors = compile_err("//@version=5\nindicator(\"t\")\nplot(second)\n");
     assert!(
-        errors.iter().any(|e| e.code == ErrorCode::PineNoCalendar),
+        errors.iter().any(|e| e.code == ErrorCode::PineUnsupported),
         "{errors:?}"
     );
 }

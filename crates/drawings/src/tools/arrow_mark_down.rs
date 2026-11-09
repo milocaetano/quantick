@@ -1,14 +1,15 @@
-//! The sell mark: one click, one filled arrow above the bar's high.
+//! The sell mark: one click, one filled arrow; the magnet hangs it above the
+//! bar's high.
 
-use crate::{MarkScene, Px, PxRect};
+use crate::icons;
 #[cfg(test)]
 use crate::pos2;
+use crate::{MarkScene, Px, PxRect};
 use quantick_chart::style::PremultipliedRgba;
-use crate::icons;
 
 use super::mark_core::{Direction, MARKS_FAMILY, MarkPayload};
 use super::{
-    AnchorSnap, DrawContext, DrawingPayload, DrawingStyle, MarkTool, GlyphSize, ToolFamily,
+    AnchorSnap, DrawContext, DrawingPayload, DrawingStyle, GlyphSize, MarkTool, ToolFamily,
     ToolShortcut, mark_core,
 };
 use crate::palette as theme;
@@ -31,7 +32,7 @@ impl MarkTool for ArrowMarkDown {
         icons::ARROW_FAT_DOWN
     }
     fn hover_text(&self) -> &'static str {
-        "Arrow mark down - one click marks a sell above the bar's high (S)"
+        "Arrow mark down - one click marks a sell; the magnet hangs it above the bar's high (S)"
     }
     fn required_points(&self) -> usize {
         1
@@ -69,7 +70,9 @@ impl MarkTool for ArrowMarkDown {
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(MarkPayload::default())
     }
-    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::DrawingSell }
+    fn default_color_token(&self) -> quantick_appearance::Token {
+        quantick_appearance::Token::DrawingSell
+    }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         Some(theme::SELL)
     }

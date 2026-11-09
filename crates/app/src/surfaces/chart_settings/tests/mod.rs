@@ -218,7 +218,8 @@ fn settings_persistence_endpoints_are_reachable_through_the_real_scroll_area() {
                     let mut events = vec![];
                     if frame > 5 && frame % 6 == 0 {
                         events.extend([
-                            egui::Event::PointerMoved(egui::pos2(180.0, 350.0)),
+                            // Settings windows open centred (`crate::popup`).
+                            egui::Event::PointerMoved(egui::pos2(width / 2.0, 390.0)),
                             egui::Event::MouseWheel {
                                 unit: egui::MouseWheelUnit::Point,
                                 delta: egui::vec2(0.0, -120.0),

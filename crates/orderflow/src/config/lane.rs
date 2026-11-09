@@ -450,6 +450,11 @@ pub struct LiveLaneStyle {
     /// before the switch existed, so a saved averaging look keeps its strip
     /// and a pane without averaging (the approved WIN tape) keeps it empty.
     pub forward_book_preview: bool,
+    /// The tape draws the best ask and the best bid as bold stepped lines
+    /// over its book, from the history's recorded top of the book
+    /// ([`BboTrail`](crate::history::BboTrail)). On by default; off, the tape
+    /// draws exactly what it drew before the lines existed.
+    pub bbo_lines: bool,
     /// Keep the configured native radius instead of resizing settled marks
     /// for new collisions. Use with a pinned volume reference.
     pub stable_size: bool,
@@ -485,6 +490,7 @@ impl Default for LiveLaneStyle {
             native_tape: false,
             depth_time_averaging: false,
             forward_book_preview: false,
+            bbo_lines: true,
             stable_size: false,
             tape_only: false,
             fold_market_closed: true,
@@ -535,6 +541,9 @@ struct LiveLaneStyleRepr {
     /// differs from that, so a look saved before the switch keeps its file.
     #[serde(skip_serializing_if = "Option::is_none")]
     forward_book_preview: Option<bool>,
+    /// Written only when off, so a file from before the lines reads on.
+    #[serde(skip_serializing_if = "std::clone::Clone::clone")]
+    bbo_lines: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     stable_size: bool,
     /// Written only when on, like `native_tape`.
@@ -580,6 +589,7 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             forward_book_preview: repr
                 .forward_book_preview
                 .unwrap_or(repr.depth_time_averaging),
+            bbo_lines: repr.bbo_lines,
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
             fold_market_closed: repr.fold_market_closed,
@@ -615,6 +625,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             depth_time_averaging: style.depth_time_averaging,
             forward_book_preview: (style.forward_book_preview != style.depth_time_averaging)
                 .then_some(style.forward_book_preview),
+            bbo_lines: style.bbo_lines,
             stable_size: style.stable_size,
             tape_only: style.tape_only,
             fold: LaneFold::Open,

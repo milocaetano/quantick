@@ -1,0 +1,8 @@
+//@version=6
+indicator("Collection boundary policy")
+a = array.from(2.0, 2.0)
+plot(na(a.standardize().first()) ? 1 : 0)
+plot(array.new_float(3).standardize().size())
+plot(na(array.from(2.0).variance(false)) ? 1 : 0)
+plot(na(a.min(2)) ? 1 : 0)
+plot(array.from(1.234567891, na).join(":") == "1.23456789:NaN" ? 1 : 0)

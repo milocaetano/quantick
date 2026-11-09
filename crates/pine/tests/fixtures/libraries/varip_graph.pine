@@ -1,0 +1,17 @@
+//@version=6
+indicator("Persistent mixed cycle")
+type Node
+    array<Node> links
+    map<string, Node> names
+    varip float value = 0.0
+varip root = Node.new(array.new<Node>(), map.new<string, Node>())
+if root.links.size() == 0
+    root.links.push(root)
+    root.names.put("self", root)
+var alias = root
+root.value := root.value + 1
+child = root.links.get(0)
+named = root.names.get("self")
+plot(child.value)
+plot(named == root ? 1 : 0)
+plot(alias == root ? 1 : 0)

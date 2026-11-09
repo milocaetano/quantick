@@ -344,7 +344,7 @@ fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
     std::fs::remove_dir_all(directory).ok();
 }
 
-/// A mark that snaps by its own rule shows no magnet slot, and the call
+/// A tool that snaps by its own rule (the anchored VWAP) shows no magnet slot, and the call
 /// refuses to turn one on, saying why in a field a client can branch on;
 /// turning it off is always accepted, so a stale flag can be cleared.
 #[test]
@@ -352,7 +352,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(20);
     run_frame(&mut app, &ctx);
-    let index = place_drawing(&mut app, &ctx, "arrow-mark-up", &[egui::pos2(700.0, 300.0)]);
+    let index = place_drawing(&mut app, &ctx, "anchored-vwap", &[egui::pos2(700.0, 300.0)]);
     let pane = app.active_tab().drawing_pane();
     let input = json!({
         "tab_id": app.runtime.tabs.active_id().to_string(),
@@ -371,7 +371,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
     assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
     assert_eq!(
         response_error(&refused).context.details,
-        Some(json!({"reason": "tool_snaps_by_its_own_rule", "tool_id": "arrow-mark-up"}))
+        Some(json!({"reason": "tool_snaps_by_its_own_rule", "tool_id": "anchored-vwap"}))
     );
     assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
     assert!(

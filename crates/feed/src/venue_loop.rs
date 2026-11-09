@@ -51,7 +51,10 @@ pub(crate) enum CommandPlan {
     },
     /// Answer a candle request with `Refused`: one fetch at a time, and the
     /// one in flight already answers.
+    /// Tagged with the interval asked for, so the reply finds the series
+    /// that is waiting on it.
     RefuseOhlcv {
+        interval_ms: i64,
         span_ms: i64,
         before_ms: Option<i64>,
     },
@@ -84,7 +87,11 @@ pub(crate) fn plan_command(cmd: Option<FeedCommand>, book: Slot, ohlcv: Slot) ->
             slice_ms,
             before_ms,
         }) => match ohlcv {
-            Slot::Busy => CommandPlan::RefuseOhlcv { span_ms, before_ms },
+            Slot::Busy => CommandPlan::RefuseOhlcv {
+                interval_ms,
+                span_ms,
+                before_ms,
+            },
             Slot::Free => CommandPlan::StartOhlcv {
                 interval_ms,
                 span_ms,
@@ -142,6 +149,32 @@ pub(crate) async fn send_or_break<T>(
     }
 }
 
+/// The reply to a candle request at an interval the venue serves no candles
+/// at. Answered, never silent: the caller's spinner keys on the closing reply.
+/// Empty and short — the venue was not asked, so nothing is claimed about its
+/// record, and the caller asks again later rather than calling it exhausted.
+pub(crate) fn answer_unsupported_interval(
+    venue: &'static str,
+    symbol: String,
+    interval_ms: i64,
+    reply: tokio::sync::mpsc::Sender<(i64, Vec<quantick_engine::Bar>, super::OhlcvSlice)>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "OHLCV_UNSUPPORTED_INTERVAL",
+            venue,
+            symbol,
+            interval_ms,
+            action = "answer_empty",
+            "the venue serves no candles at this interval"
+        );
+        let unsupported = super::OhlcvSlice::Last { complete: false };
+        let _ = reply.send((interval_ms, Vec::new(), unsupported)).await;
+    })
+}
+
 #[cfg(test)]
 mod venue_loop_tests {
     use super::*;
@@ -156,6 +189,20 @@ mod venue_loop_tests {
         }
     }
 
+    #[test]
+    fn every_interval_the_session_asks_for_is_served_by_both_venues() {
+        use quantick_sources::candle_series::NATIVE_CANDLE_INTERVALS_MS;
+        for interval_ms in NATIVE_CANDLE_INTERVALS_MS {
+            assert!(
+                quantick_feed_binance::kline_interval_for(interval_ms).is_some(),
+                "Binance serves no kline at {interval_ms} ms"
+            );
+            assert!(
+                quantick_feed_hyperliquid::candle_interval_for(interval_ms).is_some(),
+                "Hyperliquid serves no candle at {interval_ms} ms"
+            );
+        }
+    }
     #[test]
     fn a_slot_is_busy_only_while_its_task_runs() {
         assert_eq!(Slot::observe(None), Slot::Free);
@@ -185,6 +232,7 @@ mod venue_loop_tests {
         assert_eq!(
             plan_command(Some(fetch(None)), Slot::Free, Slot::Busy),
             CommandPlan::RefuseOhlcv {
+                interval_ms: crate::OHLCV_DAILY_INTERVAL_MS,
                 span_ms: 60_000,
                 before_ms: None,
             }

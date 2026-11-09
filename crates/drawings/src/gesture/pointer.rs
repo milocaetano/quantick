@@ -540,9 +540,9 @@ fn move_handle(
     let total = frame.pointer.total;
     // One read of the grabbed object. Its own band, not the one under the
     // pointer: dragging a CVD anchor up into the candles stretches it to the
-    // top of its pane, and never writes a price into a CVD anchor. Moving a
-    // mark keeps it glued to a bar's extreme: the rule that placed it is the
-    // rule that holds it. The magnet is the rail's, or the object's own.
+    // top of its pane, and never writes a price into a CVD anchor. A
+    // magnetic mark stays glued to a bar's extreme: the rule that placed it
+    // is the rule that holds it. The magnet is the rail's, or the object's own.
     let dragged = drawings.items().get(drawing_index).and_then(|drawing| {
         let magnet = frame.pointer.magnet || drawing.own_magnet();
         Some((
@@ -622,7 +622,9 @@ fn translate_body(
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
-            snap if snap.takes_magnet() => {
+            // A free mark keeps the hand's travel, like any unsnapped body.
+            snap if snap.is_bar_extreme() && !magnet => {}
+            snap if snap.takes_magnet() && !snap.is_bar_extreme() => {
                 if magnet {
                     projection.snap_body(
                         &mut moved,
@@ -637,7 +639,7 @@ fn translate_body(
                 for point in &mut moved {
                     let at = projection.drawing_screen_point(*point, right, total, &scale);
                     if let Some(snapped) =
-                        projection.drawing_point_at(at, right, total, false, snap, band)
+                        projection.drawing_point_at(at, right, total, magnet, snap, band)
                     {
                         *point = snapped;
                     }

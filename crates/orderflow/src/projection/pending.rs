@@ -441,6 +441,7 @@ fn without_live_aggressions(frame: &HeatmapProjection) -> HeatmapProjection {
         volume_dots: frame.volume_dots,
         liquidity_events: frame.liquidity_events.clone(),
         gaps: Arc::clone(&frame.gaps),
+        bbo_lines: Arc::clone(&frame.bbo_lines),
         live_now_x: frame.live_now_x,
         effective_grouping: frame.effective_grouping,
         liquidity_reference: frame.liquidity_reference,

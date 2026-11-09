@@ -1,5 +1,5 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{BubbleColors, SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
+use super::bubbles::{SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
 use super::{bubbles, constants, premultiplied};
 use crate::orderflow_render::constants::{
     FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX,

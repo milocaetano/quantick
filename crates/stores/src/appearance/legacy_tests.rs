@@ -88,7 +88,8 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
         let store = AppearanceStore::open(path.clone());
         assert_eq!(store.source(), Some(known));
         assert_eq!(store.builtin(), None);
-        // Sources older than the grid token keep their control as the grid.
+        // A source from before `chart_grid` existed draws its grid in the
+        // control color; a later one authors its own.
         if !known.contains("chart_grid") {
             assert_eq!(
                 store.resolved().color(Token::ChartGrid),

@@ -7,7 +7,7 @@ use quantick_orderflow::HeatmapConfig;
 /// How one switch reads its owner and writes through it: `(read, write)`.
 struct Switch(fn(&V) -> bool, fn(&mut V, bool));
 /// Indexed by [`OrderflowSwitch`], in its declaration order.
-const SWITCHES: [Switch; 11] = [
+const SWITCHES: [Switch; 12] = [
     Switch(V::lane_enabled, V::set_lane_enabled),
     Switch(V::lane_depth_switched_on, V::set_lane_depth_visible),
     Switch(V::lane_bubbles_enabled, V::set_lane_bubbles_enabled),
@@ -30,6 +30,10 @@ const SWITCHES: [Switch; 11] = [
     Switch(
         |view| view.cached_config().live_lane.native_tape,
         |view, on| commit(view, |config| config.live_lane.native_tape = on),
+    ),
+    Switch(
+        |view| view.cached_config().live_lane.bbo_lines,
+        |view, on| commit(view, |config| config.live_lane.bbo_lines = on),
     ),
 ];
 fn commit(view: &mut V, change: impl FnOnce(&mut HeatmapConfig)) {
@@ -60,4 +64,13 @@ pub(crate) fn layer_facts(config: &HeatmapConfig) -> LayerFacts {
 /// Why the native tape switch cannot move for `config`, as the layer call says.
 pub(crate) fn native_tape_block(config: &HeatmapConfig) -> Option<LayerBlock> {
     LayerState::blocked(ChartLayer::NativeTape, layer_facts(config))
+}
+/// Why the best bid/ask lines switch cannot move for `config`.
+pub(crate) fn bbo_lines_block(config: &HeatmapConfig) -> Option<LayerBlock> {
+    LayerState::blocked(ChartLayer::TapeBboLines, layer_facts(config))
+}
+/// Whether the best bid/ask lines draw for `config`, as the layer call reads back.
+pub(crate) fn bbo_lines_drawn(config: &HeatmapConfig) -> bool {
+    let layer = ChartLayer::TapeBboLines;
+    LayerState::effective(layer, config.live_lane.bbo_lines, layer_facts(config))
 }

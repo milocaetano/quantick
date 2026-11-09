@@ -254,13 +254,21 @@ fn kernel_previews_roll_back_like_natives() {
 }
 
 #[test]
-fn runtime_errors_render_with_line_and_column() {
-    // Calling a number: a type error only the runtime can see.
+fn type_errors_render_with_line_and_column_at_load() {
     let source = "//@version=5\nindicator(\"t\")\nx = 1\ny = x + true\nplot(y)\n";
-    let mut h = Harness::load(source);
-    let error = h.close(&bar(0, 1.0)).expect_err("type error");
-    assert!(error.message.contains("4:"), "{}", error.message);
-    assert!(error.message.contains("PINE_TYPE"), "{}", error.message);
+    let Err(errors) = compile(source, "test.pine") else {
+        panic!("type error must fail at load");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineType)
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.render("test.pine", source).contains("4:"))
+    );
 }
 
 #[test]
@@ -336,22 +344,16 @@ fn switch_matches_subjects_conditions_and_defaults() {
 
 #[test]
 fn a_kernel_length_that_changes_between_bars_is_refused() {
-    // The kernel is built once and keeps its window forever, so a length
-    // that moves used to be silently pinned to bar zero's value while the
-    // script read as if it changed.
-    let mut h = Harness::load(
-        "//@version=5
-indicator(\"t\")
-f(n) => ta.sma(close, n)
-plot(f(bar_index + 1))
-",
+    let source =
+        "//@version=5\nindicator(\"t\")\nf(n) => ta.sma(close, n)\nplot(f(bar_index + 1))\n";
+    let Err(errors) = compile(source, "test.pine") else {
+        panic!("series length must fail at load");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineType)
     );
-    h.close(&bar(0, 3.0))
-        .expect("the first bar builds the kernel");
-    let err = h
-        .close(&bar(1, 6.0))
-        .expect_err("a changed length must be refused, not silently ignored");
-    assert!(err.message.contains("cannot change"), "{err}");
 }
 
 #[test]

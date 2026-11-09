@@ -68,10 +68,9 @@ mod tests {
                 Token::Canvas | Token::ChartCanvas | Token::CandlePreviewBackground => {
                     [37, 47, 55, 255]
                 }
-                Token::DrawingDefault
-                | Token::DrawingBuy
-                | Token::DrawingSell
-                | Token::DrawingVwap => [181, 131, 43, 255],
+                Token::DrawingDefault | Token::DrawingVwap => [181, 131, 43, 255],
+                Token::DrawingBuy => [8, 153, 129, 255],
+                Token::DrawingSell => [242, 54, 69, 255],
                 Token::DrawingProfile => [122, 142, 194, 255],
                 Token::TextPrimary => [243, 244, 246, 255],
                 Token::TextMuted | Token::TextSupport | Token::TapeLabel => [208, 215, 223, 255],

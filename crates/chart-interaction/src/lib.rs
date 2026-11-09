@@ -8,6 +8,7 @@ pub mod drawing_model;
 pub mod frame_stats;
 pub mod input_probe;
 pub mod live_trade_plan;
+pub mod panel_placement;
 pub mod quick_range;
 pub mod scripted_hand;
 pub mod scripted_menu;

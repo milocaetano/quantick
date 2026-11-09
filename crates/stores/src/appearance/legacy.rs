@@ -14,7 +14,7 @@
 //! f32407a0: Light b9f2ee41b626ec8418b580b5b3f2e7f102f92076 and Dark
 //! 66bc4a047727c5ee42d67b138d61001b084dfbef (before the TradingView light chart).
 
-const LIGHT_SOURCES: [&str; 10] = [
+const LIGHT_SOURCES: [&str; 11] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
@@ -25,6 +25,7 @@ const LIGHT_SOURCES: [&str; 10] = [
     include_str!("legacy-light-ab24b5e3.toml"),
     include_str!("legacy-light-ee7ea6b5.toml"),
     include_str!("legacy-light-f32407a0.toml"),
+    include_str!("legacy-light-f7dc7644.toml"),
 ];
 const DARK_SOURCES: [&str; 5] = [
     include_str!("legacy-dark-66aa9abc.toml"),

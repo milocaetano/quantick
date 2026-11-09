@@ -148,6 +148,10 @@ pub(crate) fn draw(
         settings_available: !chrome.shared.pinned,
         confirming_delete: chrome.shared.delete_confirm && locked,
         tool_name: tool.name(),
+        draw_again: tool.freehand().then(|| drawings::context_bar::DrawAgain {
+            glyph: tool.icon(),
+            hover: tool.hover_text(),
+        }),
     };
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
         drawings::context_bar::capabilities(&object),
@@ -193,6 +197,9 @@ pub(crate) fn draw(
         chrome.shared.last_selection = None;
     }
     ask.duplicate |= intent.duplicate;
+    if intent.draw_again {
+        ask.draw_again = Some(tool);
+    }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
 }

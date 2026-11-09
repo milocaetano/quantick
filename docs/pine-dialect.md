@@ -1,15 +1,15 @@
 # Quantick Pine — dialect reference
 
-Quantick Pine is a **Pine v5 subset** for scripting indicators on quantick's
+Quantick Pine is a **Pine v5/v6 subset** for scripting indicators on quantick's
 activity-sampled charts (tick / volume / dollar / imbalance bars). A
-well-formed Pine v5 indicator script inside this subset runs unmodified:
+well-formed Pine v5 or v6 indicator script inside this subset runs unmodified:
 drop a `*.pine` file in the indicators folder (default `./indicators`,
 override with `QUANTICK_INDICATORS_DIR`) and add it from the INDICATORS
 toolbar menu.
 
 The enabling insight: Pine's x-axis is `bar_index`, not time, which maps
 1:1 onto alternative bars. What is meaningless off a clock —
-`request.security`, `timeframe.*`, sessions, calendar math — is exactly
+`request.security`, `timeframe.*`, sessions — is exactly
 what the dialect cuts, and every cut is a **load-time error with a stable
 code and a line number**, never a silently wrong plot.
 
@@ -25,24 +25,41 @@ by golden tests.
   partial bar from a snapshot of committed state and is rolled back
   afterwards. An EMA never advances twice inside one bar. `varip` variables
   are the deliberate exception: they persist across preview runs.
-- A runtime error (type mismatch, loop budget) disables that indicator —
+- A runtime error (invalid data-dependent value, loop budget) disables that indicator —
   shown with bar index, line and code — and never touches its neighbours.
 
 ## Language
 
-- `//@version=5` (missing → assumed 5 with a warning; other versions are
-  errors).
+- `//@version=5` and `//@version=6` are supported (missing → assumed 5 with
+  a warning; other versions are errors).
 - Declarations `=`, reassignment `:=`, `var`, `varip`, tuple destructuring
-  `[a, b] = f()`. Type annotations (`var float x = na`) are accepted and
-  ignored — the dialect is dynamically typed with compile-time checks on
-  builtins.
+  `[a, b] = f()`. Scalar types are `int`, `float`, `bool`, `string`, and
+  `color`. Annotations (`var float x = na`) are enforced at load, including
+  `const < input < simple < series` qualifiers. Expressions take the strongest
+  input/control-flow qualifier; assignments cannot narrow it. Incompatible
+  types, annotations, argument counts and overloads report `PINE_TYPE`.
+  Numeric storage remains f64; scalar identity is checked before execution.
+  Integer-to-float and v5 numeric-to-bool conversions are supported, as are
+  explicit `int()`, `float()`, `bool()`, `string()` and `color()` casts (the
+  latter two accept their own type or `na`, not formatting conversions).
+  Strings support `+`. Typed missing values retain bool/color defaults in
+  `nz()`, and missing booleans are false in conditions.
+- **Compatibility divergence:** an unannotated `x = na` may infer one
+  unambiguous scalar/handle type from later assignments, including branches.
+  Conflicting or unresolved types fail at load. This deterministic inference
+  preserves the shipped indicators; strict Pine requires an explicit type.
+- User functions infer each call separately, resolve typed overloads by exact
+  match before numeric promotion, and lower named arguments to parameter
+  order. Function parameters are at least `simple`; series arguments and
+  control flow propagate through their returns. Drawing and plot handles
+  remain distinct from scalar types.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
-  **Divergence:** because `and`/`or` short-circuit and `ta.*` kernels have
-  call-site identity, a stateful call on the right side only advances on
-  bars where the left side lets it evaluate — it warms up late and reads a
-  gapped series. Hoist stateful calls to top-level assignments and combine
-  the resulting values instead.
+  In v5, stateful calls in skipped `and`/`or`, ternary and `if` arms advance on
+  every bar, using a temporary variable view; assignments and drawing effects
+  remain conditional. This eager policy is intentional, not a claim of
+  TradingView equivalence. The PineTS proxy differs on conditional cumulative
+  sums; see [the measured policy](pine-parity.md#semantic-policy-measurement).
 - `if` / `for … to … by` / `while` / `switch` are **expressions**; an
   indented block's value is its last statement's value. Loops are capped at
   10 000 iterations per bar (`PINE_LOOP_BUDGET`). `switch` takes both forms:
@@ -51,7 +68,12 @@ by golden tests.
   is the default.
 - User functions: `f(x) => expr` or an indented block; tuples for multi-
   returns; no recursion (`PINE_RECURSION`); no nested definitions.
-- Division (and `%`) by zero yields `na`, never ±infinity.
+- Division (and `%`) by zero yields `na`, never infinity. In v5,
+  `const int / const int` truncates toward zero; division with a float or
+  non-const integer produces a float. This intentionally distinguishes
+  `5 / 2` (2), `5.0 / 2` (2.5), and `input.int(5) / 2` (2.5).
+  See TradingView's [v5-to-v6 division and boolean migration rules](https://www.tradingview.com/pine-script-docs/migration-guides/to-pine-version-6/)
+  and [v5 type system](https://www.tradingview.com/pine-script-docs/v5/language/type-system/).
 - Line continuation: a line ending in a binary operator or comma, or with
   unclosed brackets, continues. **Divergence:** a line ending in `=>` does
   *not* continue — it opens a multi-line function body. Tabs indent 4
@@ -70,21 +92,25 @@ by every indicator), `trade_count`.
 
 ## History `[n]`
 
-`x[n]` reads the value `x` had `n` bars ago; out of range reads `na`.
+`x[n]` reads the value `x` had `n` bars ago; out of range reads `na`
+(or false for a v6 bool).
 History works on any expression (`ta.ema(close, 9)[1]`). Constant offsets
 size storage exactly; dynamic offsets are capped at 500 bars — deeper reads
-yield `na`. **Divergence:** an expression's history only records on bars
-where the expression actually evaluates; history across untaken `if`
-branches reads `na`. A dynamic offset that evaluates to `na` also skips the
-site's recording for that bar — a site whose offset only becomes real after
-a warmup wakes up with an empty ring. Guard dynamic offsets with
-`nz(offset, 0)`: offset 0 reads the current value *and* records.
+yield `na`. Every known expression-history ring records one entry per committed
+bar, including `na` for skipped branches or an invalid dynamic offset. Skipped
+bars therefore remain gaps at their actual bar distance rather than compressing
+the ring. Preview runs do not commit these entries.
 
 ## `ta.*` — stateful kernels
 
 Each *textual call* owns its own state; a user function called from two
-places owns two instances (call-path identity). Stateful calls inside loop
-bodies are a compile error (`PINE_STATEFUL_IN_LOOP`). Warmup returns `na`
+places owns two instances (call-path identity). Stateful calls in loops share
+one textual site: each visit starts from the committed pre-bar kernel state,
+and the final visit becomes this bar's state. Identical arguments reuse the
+current result; varying sources replace it without advancing time again.
+An unexecuted loop body advances once using its entry variable view (`for`
+uses its initial index). Loop-dependent lengths remain subject to the fixed
+kernel-length rule. Warmup returns `na`
 until `length` inputs have been seen unless noted. NaN policy: windowed
 kernels return `na` while a NaN sits in the window and recover exactly when
 it leaves; recursive kernels (`ta.ema`, `ta.rma`, `ta.rsi`, `ta.atr`) skip
@@ -92,6 +118,7 @@ NaN inputs and hold their state; `ta.cum` is poisoned permanently by NaN.
 
 | Builtin | Semantics |
 |---|---|
+| `ta.macd(src, fast, slow, signal)` | tuple of fast EMA minus slow EMA, its signal EMA, and their difference |
 | `ta.sma(src, len)` | arithmetic mean of the last `len` |
 | `ta.ema(src, len)` | α = 2/(len+1), **seed = SMA of the first `len` values** |
 | `ta.rma(src, len)` | α = 1/len, seed = SMA |
@@ -189,9 +216,8 @@ Every rejection is a load-time error naming its reason:
 | `request.*` | `PINE_NO_SECURITY` — activity-sampled charts have no timeframes |
 | `timeframe.*` | `PINE_NO_TIMEFRAME` |
 | `strategy.*` | `PINE_NO_STRATEGY` — backtesting consumes plots through the host |
-| `array.* matrix.* map.* table.*` | `PINE_NO_COLLECTIONS` |
-| calendar builtins (`year`, `month`, `dayofweek`, …) | `PINE_NO_CALENDAR` |
-| `plotcandle` / `plotbar`, `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
+| unsupported `array.*`/`map.*`, all `matrix.* table.*` | `PINE_NO_COLLECTIONS` |
+| `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
 
 ## Error codes
 
@@ -199,8 +225,283 @@ Every rejection is a load-time error naming its reason:
 `PINE_UNKNOWN_NAME` (with a did-you-mean hint), `PINE_ARITY`,
 `PINE_INPUT_NOT_CONST`, `PINE_SERIES_LENGTH`, `PINE_STATEFUL_IN_LOOP`,
 `PINE_RECURSION`, `PINE_NO_SECURITY`, `PINE_NO_TIMEFRAME`,
-`PINE_NO_STRATEGY`, `PINE_NO_COLLECTIONS`, `PINE_NO_CALENDAR`,
+`PINE_NO_STRATEGY`, `PINE_NO_COLLECTIONS`,
 `PINE_UNSUPPORTED`, `PINE_TYPE` (runtime), `PINE_LOOP_BUDGET` (runtime).
 
 Errors render as `file.pine:line:col: message (CODE)`; loading reports
 *every* problem at once, not just the first.
+
+## Measured PineTS proxy baseline
+
+The isolated oracle described in [pine-parity.md](pine-parity.md) pins PineTS
+0.13.1 and compares fixed authored fixtures, not a verified TradingView run.
+SMA, EMA, RSI, ATR, standard deviation, crossover and pivot-high match all 1,344
+compared cells at `1e-8` absolute plus `1e-8` relative tolerance. All eight cases
+now match 1,920/1,920 requested cells; the original baseline
+report remains immutable and the current assertion includes native `ta.macd`.
+App snapshots prove reproducibility only;
+they are not oracle equivalence. Current timezone, typing, collection, library,
+candle-output and version restrictions remain in force.
+
+### Calendar fields
+
+`year`, `month`, `dayofmonth`, `dayofweek`, `hour`, and `minute` read the supplied
+bar open timestamp in epoch milliseconds. Sunday is 1 and Saturday is 7.
+The same names accept `(timestamp)` or `(timestamp, timezone)` positional calls;
+`na` timestamps yield `na`. Function timestamps must be exact integer milliseconds
+within +/-9007199254740991; invalid values report `PINE_TYPE`.
+
+`ScriptIndicator` constructors default to UTC. Hosts can use `with_timezone` with
+`calendar::CalendarTimezone` parsed from `UTC` or `UTC+HH:MM` / `UTC-HH:MM`.
+Hours range 00-23 and minutes 00-59. Rebinding preserves this configuration.
+Function timezone arguments use the same grammar and override that configuration.
+Malformed offsets and IANA names are rejected explicitly (API `TimezoneError`,
+script `PINE_TYPE`). Fixed offsets have no DST transitions. No machine timezone
+or clock is consulted. Dates use the proleptic Gregorian calendar, including
+negative epoch timestamps. This is fixed-offset calendar support, not IANA parity.
+
+
+### Headless candle and bar plots
+
+`plotcandle(open, high, low, close, title, color, wickcolor, bordercolor=...)`
+and `plotbar(open, high, low, close, title, color)` declare separate headless
+OHLC columns. Positional bordercolor retains its Pine position (9); use the
+named argument when omitting intervening options. Prices and colors may vary
+per bar; titles must be constant. Any `na` price suppresses the entire sample.
+High and low are the maximum and minimum of all four supplied prices.
+Explicit `na` colors remain absent; omitted colors default to blue.
+
+Consumers read declarations and committed samples through
+`Indicator::plots().candle_specs()` / `candle_column(index)`, and forming
+samples through `PreviewFrame::candles`. Reset clears rows while preserving
+declarations. These columns do not enter scalar plot rendering or fill handles;
+this release adds no app renderer. Calls must be at top level. `editable`,
+`show_last`, and `display` are rejected explicitly in this headless subset.
+
+## Version 6 policy
+
+The [primary migration guide](https://www.tradingview.com/pine-script-docs/migration-guides/to-pine-version-6/)
+defines the supported differences; paired original fixtures live in
+`crates/pine/tests/fixtures/version`, with manually calculated goldens.
+
+- Numeric conditions require an explicit `bool()` cast, including typed bool
+  arguments and assignments. Bool values have two states: missing history,
+  omitted conditional branches and `bool(na)` produce false. A bool declaration
+  or assignment cannot take `na`; `na`, `nz` and `fixnan` reject bool arguments.
+- Integer division always produces a fractional float. V5 const integer
+  division retains truncation; nonconst integer division is fractional in both.
+  The existing f64 integer precision/range limitation remains. PineTS 0.13.1
+  simple-int division differs from the primary reference; existing proxy
+  artifacts are unchanged and do not redefine these expectations.
+- `and` and `or` skip the unselected operand, including stateful calls.
+  Other conditional/loop eager advancement retains Quantick's documented
+  dialect policy. This is scoped v6 support, not full execution-model parity.
+- `for` reevaluates its upper bound after each iteration; the per-loop 10,000
+  iteration budget still applies, including a continually growing bound.
+- Direct history on literals and builtin constants is rejected; history on
+  variables and calls remains supported. Duplicate named arguments are errors.
+- Supported plot styles cannot take `na` or incomplete conditional values;
+  constant `linewidth` must be at least 1. Plot `transp` and plot `offset` were
+  never implemented; neither is added by this version work. `color.new` and
+  `color.rgb` retain their separate transparency arguments.
+- V6 red/teal/yellow are #F23645/#089981/#FDD835. Legacy v5 red and yellow
+  already use those v6 colors and retain them to preserve shipped snapshots;
+  this differs from upstream v5 #FF5252/#FFEB3B. Legacy v5 teal stays #00897B.
+
+Calendar support is unchanged. Request, timeframe and strategy namespaces
+remain rejected; version selection does not expand drawing or table support.
+Collections and UDT field history are handled by their respective feature owners.
+
+
+## Scalar collections (v5 and v6)
+
+Arrays and maps use typed scalar elements (`int`, `float`, `bool`, `string`,
+`color`). Explicit `array<T>` and `map<K,V>` declarations and generic constructors
+and typed function parameters are accepted, including legacy `T[]` annotations.
+Assignment aliases the same collection; `copy` allocates an
+independent collection. `map.keys` and `map.values` allocate independent arrays in
+insertion order. Overwriting a key retains its position; removing and reinserting
+it appends it. Iteration never uses sorted-key order.
+
+The following operations are implemented through both namespace calls and
+receiver methods (constructors and `array.from` are namespace-only):
+
+| Array operation | Arguments after the receiver |
+| --- | --- |
+| `array.size`, `array.clear`, `array.copy` | none |
+| `array.get`, `array.remove` | index |
+| `array.set`, `array.insert` | index, value |
+| `array.push`, `array.unshift` | value |
+| `array.pop`, `array.shift`, `array.first`, `array.last` | none |
+| `array.reverse` | none |
+| `array.concat` | second array; mutates and returns the first |
+| `array.fill` | value, optional index_from and exclusive index_to |
+| `array.includes`, `array.indexof`, `array.lastindexof` | value |
+| `array.sum`, `array.avg`, `array.median`, `array.mode`, `array.range` | none; numeric arrays only |
+| `array.min`, `array.max` | optional zero-based nth rank |
+| `array.abs`, `array.standardize` | none; returns an independent numeric array |
+| `array.stdev`, `array.variance` | optional biased flag (default true) |
+| `array.covariance` | second numeric array, optional biased flag (default true) |
+| `array.percentile_linear_interpolation`, `array.percentile_nearest_rank` | percentage in 0..100 |
+| `array.percentrank` | nonnegative element index |
+| `array.sort`, `array.sort_indices` | optional order.ascending (default) or order.descending |
+| `array.slice` | index_from, exclusive index_to; shared parent view |
+| `array.binary_search`, `array.binary_search_leftmost`, `array.binary_search_rightmost` | numeric value; requires ascending order |
+| `array.join` | optional separator, default comma |
+| `array.from` | positional scalar values with a common element type |
+
+| Map operation | Arguments after the receiver |
+| --- | --- |
+| `map.size`, `map.clear`, `map.copy`, `map.keys`, `map.values` | none |
+| `map.get`, `map.remove`, `map.contains` | key |
+| `map.put` | key, value; returns the previous value or missing |
+| `map.put_all` | second map; updates in that map's insertion order |
+
+`array.new<T>(size = 0, initial_value = na)` also accepts the scalar aliases
+`array.new_int`, `array.new_float`, `array.new_bool`, `array.new_string`, and
+`array.new_color`. v6 missing bool elements and map results are false.
+`map.new<K,V>()` creates an empty map. Internal constructor registry spellings
+are listed below solely so the documentation guard can track typed lowering:
+
+`map.new_int_int`
+`map.new_int_float`
+`map.new_int_bool`
+`map.new_int_string`
+`map.new_int_color`
+`map.new_float_int`
+`map.new_float_float`
+`map.new_float_bool`
+`map.new_float_string`
+`map.new_float_color`
+`map.new_bool_int`
+`map.new_bool_float`
+`map.new_bool_bool`
+`map.new_bool_string`
+`map.new_bool_color`
+`map.new_string_int`
+`map.new_string_float`
+`map.new_string_bool`
+`map.new_string_string`
+`map.new_string_color`
+`map.new_color_int`
+`map.new_color_float`
+`map.new_color_bool`
+`map.new_color_string`
+`map.new_color_color`
+
+
+For `get`, `set`, `insert`, and `remove`, v6 negative indices count backward
+from the array size before the operation. v5 rejects negative indices. Bounds,
+empty removals, invalid sizes and missing map keys used in insertion report a
+structured `PINE_TYPE` runtime error. Collections are capped at 100,000 elements
+or 50,000 map pairs. `fill` uses nonnegative half-open bounds in both versions.
+
+Snapshots share the authoritative contiguous word image until the first write.
+Aliases retain identity through copy-on-write; preview rolls back ordinary `var`
+collections, while `varip` mutations persist, including aliases held by ordinary
+`var`. History retains collection identities. Deterministic tracing reclaims
+unreachable collection records after commit; it does no tracing for scripts
+without collections.
+
+Sorting accepts numeric and string arrays. Empty strings and missing values sort
+last ascending and first descending; equal elements retain their original order.
+`sort_indices` returns an independent index array. A slice keeps its parent alive,
+including through history and rollback. Updating, sorting, inserting or removing
+through a slice updates its parent. Parent resizing can shrink the visible slice,
+then restore it; only edits through the slice change its maximum range. Growing a
+slice while its start is beyond the parent's current size reports `PINE_TYPE`.
+
+Numeric reductions skip missing samples; covariance skips pairs containing a
+missing value and requires equal array lengths. Empty/all-missing reductions
+return `na`, while standardization returns an empty array. Standardization keeps
+missing positions when numeric samples exist and uses population deviation.
+The integer overloads of `avg`, `median`, `stdev`, `variance`, linear percentile,
+and `percentrank` truncate results toward zero; integer standardization truncates
+each result. The [function reference](https://www.tradingview.com/pine-script-reference/v5/)
+lists int/float overloads for each of these functions and int/float-array overloads
+for `standardize`; `covariance` always returns float. Numeric `join` uses eight
+optional fractional digits, matching the default `str.tostring` format, and accepts
+only numeric or string arrays. v6 rejects explicit `na` boolean elements.
+
+The following edge policies are explicit dialect decisions, not verified
+TradingView observations. The function reference's `array.mode` entry says to
+choose the smallest value for a frequency tie or all-unique input; we follow that
+specific rule despite the arrays overview saying no mode returns `na`. A rank
+beyond the available numeric samples returns `na`. A zero-deviation standardized
+sample returns `na` from the mathematical normalization formula. Binary left/right
+searches return the first/last equal index, or the preceding/following insertion
+neighbor when absent. Thus left below the minimum is -1, right above the maximum
+is size; an empty array returns -1/0 respectively. Ordinary binary search returns
+the first equal index or -1. Primary documentation does not settle every extreme
+boundary. Read-only PineTS 0.13.1 probes (not TradingView) returned 0 for left below
+the minimum and 1 for constant standardization, differing from these policies.
+Those proxy observations are not acceptance goldens. Collection goldens are
+independently authored calculations and use the established 1e-8 absolute plus
+1e-8 relative tolerance for fractional statistics.
+
+Direct nested collection elements and drawing elements are not implemented.
+User-object elements are supported as described below. Unsupported namespace operations fail at compile time;
+they never silently return a substitute. `array.from` requires positional arguments.
+The independent original fixtures follow the primary
+[array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
+[map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.
+## Local libraries and user objects
+
+`varip` collection declarations validate the complete element field graph,
+including UDT fields containing collections. Drawing handles (`line`, `box`,
+`label`) cannot occur in those graphs or directly in a `varip` field. Ordinary
+UDT fields may retain drawing handles, including on a `varip` object reference.
+This follows the distinction in TradingView's
+[variable declarations](https://www.tradingview.com/pine-script-docs/language/variable-declarations/)
+between persistent references and permitted collection contents.
+Quantick retains its existing top-level `varip` drawing-handle behavior for
+compatibility. The new checks cover collection roots and object fields; they
+do not claim unrestricted TradingView validation for legacy declarations.
+
+`libraries::compile_with_libraries(source, title, resolver)` accepts a pure
+caller-supplied `Fn(&str) -> Option<String>` source resolver. Imports use exact
+`local/name/version` keys and explicit aliases. No filesystem or network lookup
+occurs in Pine. Missing keys, import cycles, remote keys and depth beyond 32 fail
+with deterministic diagnostics. The original two-argument `compile` remains
+available for scripts without imports.
+
+`type`, typed fields, literal and builtin-variable field defaults, `Type.new(...)`, field reads and
+`:=` writes, `method` definitions and receiver calls use checked object references.
+Assignment aliases references; `object.copy()` creates a shallow copy. Object
+history preserves references. In v6 `object.field[1]` is rejected: use
+`previous = object[1]` followed by `previous.field`, or a temporary field series.
+The v5 field-history form remains supported. User-object mutable fields live in
+the runtime word arena and participate in preview rollback. A `varip` object
+variable preserves the reference, not every field mutation. Fields declared
+`varip` persist intrabar even through an ordinary `var` object reference; other
+fields of existing objects roll back. Enums, remote libraries and computed field
+defaults are not implemented. Supported builtin defaults include `bar_index`,
+`close` and `volume`, evaluated when the constructor executes.
+
+Arrays and scalar-keyed maps can hold user objects. Object fields may hold arrays
+and maps, including shared slices. Copies are shallow; mixed aliases, cycles and
+history roots are traced together. Object-only snapshots also share the arena
+until the first write. Unreachable object and collection records are reclaimed.
+
+First-ever preview allocation has no prior object image. When a `varip` reference
+retains such a new object, Quantick preserves its constructed graph as the baseline
+for subsequent rollback. This boundary is an explicit Quantick policy, not a
+verified TradingView parity claim. Existing instances always obey field modes.
+The primary [object documentation](https://www.tradingview.com/pine-script-docs/language/objects/)
+distinguishes reference persistence from field persistence.
+
+Local library sources currently use the importing script's Pine version;
+version mismatches are rejected explicitly. Linking is bounded to 128 sources,
+32 nested imports and four million bytes of expanded source.
+
+Local library linking reserves identifiers beginning with `qlib` for generated
+names. Library globals and private methods are isolated from the importing
+script; only exported declarations are available through the import alias.
+Repeated imports of the same exact key share exported type identities, including
+through transitive dependencies. This follows our interpretation of import
+aliases as namespaces for the library's declarations in the primary
+[library documentation](https://www.tradingview.com/pine-script-docs/concepts/libraries/);
+the cross-alias case is authored coverage, not a TradingView oracle observation.
+Method receivers require explicit types. User-object field defaults are checked
+against their declared types even when the type is unused; an omitted v6 bool
+field defaults to false, while an explicit `na` bool default is rejected.

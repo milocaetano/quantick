@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use rust_decimal::Decimal;
 
+use super::bbo_lines::{BboLine, StepPoint};
 use super::heat_cells::{DraftCell, book_gaps, bucket_rows, finish_cells, liquidity_reference};
 use super::model::{
     BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BOOK_NOT_CURRENT, BOOK_PENDING, GapPrimitive, HeatmapCell,
@@ -49,6 +50,9 @@ pub struct PastHeat {
     pub cells: Vec<HeatmapCell>,
     /// Where no book was recorded; `x` likewise.
     pub gaps: Vec<GapPrimitive>,
+    /// The best bid and ask over the blocks, in market time and price
+    /// ([`super::past_bbo_lines`]), placed with the bands.
+    pub bbo_lines: Vec<BboLine<StepPoint>>,
 }
 
 impl PastHeat {
@@ -71,6 +75,7 @@ impl PastHeat {
             effective_grouping,
             cells: Vec::new(),
             gaps: Vec::new(),
+            bbo_lines: Vec::new(),
         }
     }
 
@@ -150,6 +155,17 @@ impl PastHeat {
                 )
             })
             .collect();
+        let start_ms = end_ms.saturating_sub(window_ms.max(1));
+        projection.bbo_lines = Arc::new(
+            self.bbo_lines
+                .iter()
+                .filter_map(|line| {
+                    line.clipped(start_ms, end_ms)?.map(|&(time_ms, price)| {
+                        Some([place.at(time_ms as f64), self.prices.y_unclamped(price)?])
+                    })
+                })
+                .collect(),
+        );
         let read_from = place.time_unit(self.from_ms.min(end_ms) as f64);
         let read_until = place.time_unit(self.until_ms.max(self.from_ms) as f64);
         // The trail past the newest recorded book: no book was there to
@@ -314,6 +330,11 @@ impl Placement {
         (time_ms - self.window_start_ms) / self.window_ms
     }
 
+    /// Where `time_ms` lands on the lane, clamped to the window.
+    fn at(&self, time_ms: f64) -> f64 {
+        self.lane_x0 + self.time_unit(time_ms).clamp(0.0, 1.0) * self.lane_width
+    }
+
     /// [`Self::time_unit`] of a fraction of the blocks.
     fn unit(&self, x: f64) -> f64 {
         self.time_unit(self.from_ms + x * self.span_ms)
@@ -369,6 +390,7 @@ pub fn project_past_heat(
     );
     let mut heat = PastHeat::empty(from_ms, until_ms, prices, grouping);
     (heat.lead_ms, heat.lead_capped) = (lead_ms, lead_capped);
+    heat.bbo_lines = super::past_bbo_lines(history, from_ms, until_ms);
     let config = history.config();
     let span_ms = until_ms - from_ms;
     if !config.lane_depth_drawn() || span_ms <= 0 {

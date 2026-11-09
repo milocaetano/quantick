@@ -1,0 +1,29 @@
+ok/copilot.pine: loaded plots=6
+ok/cvd.pine: loaded plots=1
+ok/delta_histogram.pine: loaded plots=1
+ok/ema.pine: loaded plots=1
+ok/exhaustion_reversal.pine: loaded plots=2
+ok/force_bar.pine: loaded plots=0
+ok/functions_and_tuples.pine: loaded plots=2
+ok/range_box.pine: loaded plots=0
+ok/shapes_and_fill.pine: loaded plots=4
+ok/switch.pine: loaded plots=1
+ok/var_state_and_ifs.pine: loaded plots=2
+ok/vwap_cumulative.pine: loaded plots=1
+ok/zigzag.pine: loaded plots=0
+err/bad_dedent.pine: PINE_INDENT
+err/fill_non_plots.pine: PINE_UNSUPPORTED
+err/non_ascii.pine: PINE_LEX
+err/stray_token.pine: PINE_SYNTAX
+err/switch_default_not_last.pine: PINE_SYNTAX
+err/three_problems.pine: PINE_SYNTAX,PINE_SYNTAX,PINE_SYNTAX
+err/unterminated_string.pine: PINE_LEX
+mixed_corpus_loads=13/20
+positive_load_rate=13/13
+negative_rejections=7/7
+loaded_plot_columns=21
+corpus_oracle_verified_columns=0/21
+error PINE_INDENT=1
+error PINE_LEX=2
+error PINE_SYNTAX=5
+error PINE_UNSUPPORTED=1

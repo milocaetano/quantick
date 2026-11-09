@@ -841,6 +841,20 @@ pr_gate() {
             "an implement branch opens its PR only after code-review" \
             "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
         if [ "$gate_action" = merge ]; then
+            # The trader may grant agent merges into a named non-main target by
+            # listing it, one branch per line, in the common git dir's
+            # `agent-merge-grant`. `main` is never grantable. A granted merge
+            # still needs every PR check passing or skipped.
+            implement_grant="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/agent-merge-grant"
+            if [ "$implement_target" != "$MAIN_BRANCH" ] && [ -f "$implement_grant" ] &&
+                grep -qxF "$implement_target" "$implement_grant"; then
+                implement_pr=$(pr_number "$(gh_statement "$command" "gh pr merge")")
+                implement_checks=$(cd "$dir" && gh pr checks "$implement_pr" --json bucket --jq '.[].bucket' 2>/dev/null) ||
+                    deny '"Cannot read the PR checks for the granted merge."'
+                [ -n "$implement_checks" ] && [ -z "$(printf '%s\n' "$implement_checks" | grep -v -e '^pass$' -e '^skipping$')" ] ||
+                    deny '"Granted merge waits for every PR check to pass."'
+                exit 0
+            fi
             deny "\"Merge to $implement_target is reserved exclusively for the user; do not enable auto-merge or enqueue it.\""
         fi
         # A reused worktree may hold a PR into another base, and this review

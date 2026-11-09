@@ -596,13 +596,7 @@ impl PaneGestures {
                 (magnet, pick.snap),
             );
             outcome.shared.begin_gesture = true;
-            self.shared_drag = match pick.anchor {
-                Some(anchor) => SharedDrag::Anchor {
-                    index: pick.index,
-                    anchor,
-                },
-                None => SharedDrag::Body { index: pick.index },
-            };
+            self.shared_drag = shared_drag_of(&pick, magnet);
             return true;
         }
         false
@@ -661,10 +655,23 @@ impl PaneGestures {
     }
 }
 
+/// The gesture a press on a mirrored object starts. A magnetic mark has one
+/// anchor, and a drag of its body hangs it from the bar under the hand, as
+/// its own pane does — a translate would carry its offset from the old
+/// bar's extreme onto the new one.
+pub(super) fn shared_drag_of(pick: &SharedPick, magnet: bool) -> SharedDrag {
+    let index = pick.index;
+    match pick.anchor {
+        Some(anchor) => SharedDrag::Anchor { index, anchor },
+        None if magnet && pick.snap.is_bar_extreme() => SharedDrag::Anchor { index, anchor: 0 },
+        None => SharedDrag::Body { index },
+    }
+}
+
 /// The market instant and price the pointer is on, the magnet read as the
-/// held object's own pane reads it: a level's over every visible candle,
-/// anything else's over the candle under the pointer — a mark's own rule
-/// stays on its own pane.
+/// held object's own pane reads it: a level's over every visible candle, a
+/// mark's at the bar's low or high, anything else's over the candle under
+/// the pointer.
 fn shared_mark_at(
     projection: &DrawingProjection<'_>,
     cached_bands: &[Band],
@@ -674,7 +681,7 @@ fn shared_mark_at(
 ) -> Option<(i64, f64)> {
     let band = band::band_at(cached_bands, position)?;
     let snap = match snap {
-        AnchorSnap::VisibleLevels => snap,
+        AnchorSnap::VisibleLevels | AnchorSnap::BarLow | AnchorSnap::BarHigh => snap,
         _ => AnchorSnap::Pointer,
     };
     projection

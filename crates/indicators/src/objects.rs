@@ -112,6 +112,39 @@ pub struct ObjectStore {
 }
 
 impl ObjectStore {
+    /// Build an immutable output projection from an authoritative external store.
+    /// Records retain their creation order and identifiers; no mutation is replayed.
+    ///
+    /// # Panics
+    /// Panics when a kind exceeds the native cap or an identifier is not allocated.
+    #[must_use]
+    pub fn from_records(
+        lines: Vec<(u32, LineObj)>,
+        boxes: Vec<(u32, BoxObj)>,
+        labels: Vec<(u32, LabelObj)>,
+        next_id: u32,
+        revision: u64,
+    ) -> Self {
+        assert!(lines.len() <= MAX_OBJECTS_PER_KIND);
+        assert!(boxes.len() <= MAX_OBJECTS_PER_KIND);
+        assert!(labels.len() <= MAX_OBJECTS_PER_KIND);
+        assert!(
+            lines
+                .iter()
+                .map(|(id, _)| id)
+                .chain(boxes.iter().map(|(id, _)| id))
+                .chain(labels.iter().map(|(id, _)| id))
+                .all(|id| *id < next_id)
+        );
+        Self {
+            lines,
+            boxes,
+            labels,
+            next_id,
+            revision,
+        }
+    }
+
     /// An empty store.
     #[must_use]
     pub fn new() -> Self {

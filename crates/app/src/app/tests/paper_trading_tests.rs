@@ -1946,21 +1946,48 @@ fn no_drawing_shortcut_shares_a_chord_with_an_order() {
     }
 }
 
-/// The trader's third veto, end to end: a mark that lands at the price
-/// under the cursor floats inside the candle body, disappears at a
-/// glance and vanishes entirely with the footprint open. It has to grab
-/// the bar's extreme, and it has to do so with the magnet *off* —
-/// snapping is this tool's own rule, not a setting it borrows.
+/// A mark lands where the trader puts it: with the magnet off, two clicks
+/// 90 px apart on one bar give two prices. Switched on, the magnet hangs the
+/// buy mark from the bar's low, whatever the pointer's height.
 #[test]
-fn a_buy_mark_grabs_the_bars_low_with_the_magnet_off() {
+fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    assert!(!app.toolrail.magnet(), "this proof needs the magnet off");
+    assert!(
+        !app.toolrail.magnet(),
+        "this proof starts with the magnet off"
+    );
 
-    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
+    let place = |app: &mut QuantickApp, y: f32| {
+        let before = app.active_tab().flow_pane.drawings.items().len();
+        arm_drawing_from_toolbox(app, &ctx, "arrow-mark-up");
+        click_chart(app, &ctx, egui::pos2(700.0, y));
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            before + 1,
+            "the click at {y} placed a new mark"
+        );
+        *app.active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the mark was placed")
+            .points
+            .first()
+            .expect("one anchor")
+    };
+    let low_free = place(&mut app, 300.0);
+    let high_free = place(&mut app, 210.0);
+    assert!(
+        high_free.price - low_free.price > 1e-6,
+        "without the magnet two clicks 90 px apart give two prices"
+    );
+
+    // Clear of the two free marks, so these clicks place rather than select.
+    app.toolrail.set_magnet(true);
+    let anchor = place(&mut app, 380.0);
     let candle = app
         .active_tab()
         .flow_pane
@@ -1970,28 +1997,23 @@ fn a_buy_mark_grabs_the_bars_low_with_the_magnet_off() {
     let low = rust_decimal::prelude::ToPrimitive::to_f64(&candle.low).unwrap();
     assert!(
         (anchor.price - low).abs() < 1e-9,
-        "the buy mark hangs from the low ({low}), not from the pointer ({})",
+        "the magnetic buy mark hangs from the low ({low}), not from the pointer ({})",
         anchor.price
     );
-
-    // And the pointer's height is genuinely ignored, not merely equal to
-    // the low by luck of this fixture: a second mark 90 px up the same
-    // bar lands on the same price.
-    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 210.0));
-    let second = app.active_tab().flow_pane.drawings.items()[1].points[0];
+    let second = place(&mut app, 270.0);
     assert!(
         (second.price - anchor.price).abs() < 1e-9,
-        "two clicks on one bar, 90 px apart, must give one price"
+        "with the magnet, two clicks on one bar 110 px apart give one price"
     );
     assert_eq!(slot_of(second.bar), slot_of(anchor.bar));
 }
 
 #[test]
-fn a_sell_mark_grabs_the_bars_high() {
+fn a_magnetic_sell_mark_grabs_the_bars_high() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
+    app.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-down");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];

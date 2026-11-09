@@ -183,6 +183,7 @@ fn freeze_past(view: &OrderflowView, shown: &VisibleOrderflow) -> usize {
             effective_grouping: shown.projection.effective_grouping,
             cells: Vec::new(),
             gaps: Vec::new(),
+            bbo_lines: Vec::new(),
         }),
     };
     let scale = shown.volume_dots.as_ref().unwrap();

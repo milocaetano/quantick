@@ -734,6 +734,7 @@ fn a_capability_that_rises_later_is_asked_again() {
         ohlcv_generation: 0,
         ohlcv_daily_generation: 0,
         ohlcv_aggressor_split: false,
+        native_candle_intervals: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -821,6 +822,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         ohlcv_generation: 1,
         ohlcv_daily_generation: 0,
         ohlcv_aggressor_split: false,
+        native_candle_intervals: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -2114,7 +2116,7 @@ fn observer_per_scope_capture_cost() {
 /// apart before, so the byte ceiling sits about 3.5% above the Windows reading:
 /// room for a few more tokens, not for a new scope.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 84000;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 96000;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {

@@ -16,7 +16,7 @@ use quantick_chart::flow_execution::flow_chrome_layout;
 
 use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
-use super::bubbles::BubbleColors;
+use super::bubbles::bubble_colors;
 use super::layout::RenderContext;
 use super::{OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba};
 
@@ -46,7 +46,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
     let mut palette = style.colors(super::premultiplied);
-    let colors = BubbleColors::resolve(&palette, &style.bubbles);
+    let colors = bubble_colors(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
     let clip = painter.with_clip_rect(context.layout.chart_rect);
