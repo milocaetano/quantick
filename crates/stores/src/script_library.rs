@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 
 mod catalog;
-pub use catalog::EMBEDDED_SCRIPTS;
+pub use catalog::{EMBEDDED_SCRIPTS, POPULAR_INDICATORS, ScriptMetadata, script_title};
 
 /// One loadable script.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +204,7 @@ impl ScriptLibraryPort for ScriptLibrary {
         let entry = &self.entries[index];
         Ok(ScriptDocument {
             id: entry.name.clone(),
-            title: entry.name.clone(),
+            title: script_title(&entry.name).to_owned(),
             source: self.read(index).expect("the entry exists")?,
             read_only: matches!(entry.origin, ScriptOrigin::Embedded(_)),
         })

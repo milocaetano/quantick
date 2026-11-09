@@ -1,0 +1,8 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Hull Moving Average", overlay=true)
+len = input.int(9, "Length", minval=1, maxval=500)
+src = input.source(close, "Source")
+half = math.max(1, int(math.floor(len / 2.0)))
+root = math.max(1, int(math.round(math.sqrt(len))))
+plot(ta.wma(2 * ta.wma(src, half) - ta.wma(src, len), root), title="HMA", color=color.orange)

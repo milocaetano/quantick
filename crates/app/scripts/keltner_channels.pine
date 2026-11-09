@@ -1,0 +1,11 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Keltner Channels", overlay=true)
+len = input.int(20, "Length", minval=1, maxval=500)
+range_length = input.int(10, "ATR length", minval=1, maxval=500)
+multiplier = input.float(2.0, "ATR multiplier", minval=0.0, maxval=20.0)
+basis = ta.ema(close, len)
+width = multiplier * ta.atr(range_length)
+plot(basis, title="Basis", color=color.orange)
+plot(basis + width, title="Upper", color=color.blue)
+plot(basis - width, title="Lower", color=color.blue)

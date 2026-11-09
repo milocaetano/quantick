@@ -36,6 +36,7 @@ use crate::parser;
 mod candle_lower;
 mod declarations;
 mod fold;
+mod indicator_lengths;
 mod resolve;
 #[path = "semantics/compile.rs"]
 mod semantic_compile;

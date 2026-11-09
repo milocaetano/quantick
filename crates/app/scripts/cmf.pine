@@ -1,0 +1,8 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Chaikin Money Flow", overlay=false)
+len = input.int(20, "Length", minval=1, maxval=500)
+multiplier = high == low ? 0 : (2 * close - high - low) / (high - low)
+flow = math.sum(multiplier * volume, len)
+total = math.sum(volume, len)
+plot(total == 0 ? na : flow / total, title="CMF", color=color.green)

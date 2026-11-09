@@ -1,0 +1,14 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Stochastic RSI", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+window = input.int(14, "Stochastic length", minval=1, maxval=500)
+smooth = input.int(3, "K smoothing", minval=1, maxval=500)
+signal = input.int(3, "D smoothing", minval=1, maxval=500)
+rsi = ta.rsi(close, len)
+upper = ta.highest(rsi, window)
+lower = ta.lowest(rsi, window)
+raw = upper == lower ? na : 100 * (rsi - lower) / (upper - lower)
+k = ta.sma(raw, smooth)
+plot(k, title="K", color=color.blue)
+plot(ta.sma(k, signal), title="D", color=color.orange)

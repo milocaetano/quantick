@@ -1,0 +1,10 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("MACD", overlay=false)
+fast = input.int(12, "Fast length", minval=1, maxval=500)
+slow = input.int(26, "Slow length", minval=1, maxval=500)
+signal = input.int(9, "Signal length", minval=1, maxval=500)
+[line, average, histogram] = ta.macd(close, fast, slow, signal)
+plot(line, title="MACD", color=color.blue)
+plot(average, title="Signal", color=color.orange)
+plot(histogram, title="Histogram", color=color.gray, style=plot.style_histogram)
