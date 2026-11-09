@@ -1,6 +1,6 @@
 # quantick
 
-Real-time alternative bar charts (tick/volume/dollar/imbalance) for order flow trading; one deterministic Rust engine feeds chart, backtest and bot.
+Open-source desktop order-flow trading platform on one deterministic Rust engine.
 
 Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gates: `.claude/hooks/README.md`.
 
@@ -22,7 +22,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 - **Determinism** — same trades in, same bars out. In the engine: no wall clock, no randomness, no iteration-order-dependent output (`BTreeMap`/`Vec` over `HashMap`). Golden tests over fixed fixtures.
 - **One engine, three consumers** — chart, backtest and bot share the aggregator. Never fork bar-building per consumer.
 - **Data honesty** — inferred or incomplete data is labelled, never silently patched: a depth reduction is an "unattributed L2 reduction", never a cancellation.
-- **Small and focused** — not a trading platform. Build, show and expose bars.
+- **Desktop and local** — no web app, mobile or cloud. A real-broker venue stays off until enabled in config.
 - **Operable without a hand** — no capability ships reachable by mouse alone: a named call, a readable result, a registry entry. Gate: `arch-review`'s *The second operator*.
 - **English is the repository's language** — identifiers, comments, doc comments, log/error/panic messages, UI strings, test names, assertion text, `.pine` scripts, config comments, everything under `docs/`, and branch names, commit messages and PR titles and bodies. Sessions with the trader happen in any language; the rule starts where something lands in the repo. Four exemptions, each where the foreign text *is* the data or the name: proper names of real people and products (`López de Prado`; B3's *mini índice* / *mini dólar*); localisation resources and language-detector word lists; a fixture reproducing text a real system emits; a marked, attributed quotation. The code, comment and test name around one stay English. Pre-existing lines are grandfathered — the finding is a line a diff *authors*. This bullet is the rule's single owner: `arch-review` dimension 8 grades it, `crates/guards/src/language.rs` enforces the mechanical half.
 
