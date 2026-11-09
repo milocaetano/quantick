@@ -41,7 +41,7 @@ pub(crate) struct FakeWindow {
     dock: Dock,
     drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeSurface,
     health: super::super::super::health::HealthCounters,
-    history: super::super::super::tabs::HistorySettings,
+    history: quantick_session::HistorySettings,
     /// The assistant's popup lane, read back by the test.
     pub(crate) agent_popup: crate::surfaces::AgentPopupSurface,
     /// The acknowledgement toast, read back by the test.
@@ -113,7 +113,7 @@ impl FakeWindow {
             dock: Dock::new(),
             drawing_chrome: Default::default(),
             health: super::super::super::health::HealthCounters::new(),
-            history: super::super::super::tabs::HistorySettings {
+            history: quantick_session::HistorySettings {
                 progressive_history: true,
                 history_reach: Default::default(),
                 history_reach_span_minutes: 60,
