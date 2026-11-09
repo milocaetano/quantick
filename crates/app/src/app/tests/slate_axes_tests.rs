@@ -333,7 +333,6 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                 });
                 assert_eq!(plates.count(), 0, "no loading backing");
                 let palette = tab.lead_pane().palette(&ctx);
-                let (action, _) = quantick_appearance::widget::text_action(palette.resolved.dark);
                 for (_, text) in text {
                     for section in &text.galley.job.sections {
                         let color = section.format.color;
@@ -341,7 +340,7 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                             assert!(
                                 color == palette.loading_title()
                                     || color == palette.loading_meta()
-                                    || color == *palette.get(action)
+                                    || color == palette.connection_action()
                             );
                         }
                     }

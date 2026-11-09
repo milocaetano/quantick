@@ -341,4 +341,13 @@ impl<T: Copy> RenderPalette<T> {
     pub fn plate_loss(&self) -> T {
         *self.get(Token::PlateLoss)
     }
+    pub fn hover_fill(&self) -> T {
+        *self.get(Token::HoverFill)
+    }
+    pub fn control_edge(&self) -> T {
+        *self.get(Token::ControlEdge)
+    }
+    pub fn connection_action(&self) -> T {
+        *self.get(Token::ConnectionAction)
+    }
 }

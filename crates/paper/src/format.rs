@@ -92,9 +92,29 @@ pub fn fmt_signed_points(value: Decimal) -> String {
 
 pub use quantick_replay::deals::sanitize_symbol;
 
+/// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
+pub fn fmt_duration_ms(ms: i64) -> String {
+    let seconds = (ms / 1000).max(0);
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durations_format_by_magnitude() {
+        assert_eq!(fmt_duration_ms(38_000), "38s");
+        assert_eq!(fmt_duration_ms(258_000), "4m 18s");
+        assert_eq!(fmt_duration_ms(3_720_000), "1h 02m");
+        assert_eq!(fmt_duration_ms(-5), "0s", "clock skew never explodes");
+    }
 
     #[test]
     fn signed_points_always_carry_their_sign() {

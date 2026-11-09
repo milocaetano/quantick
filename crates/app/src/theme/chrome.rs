@@ -45,13 +45,9 @@ pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette, typography_c
     visuals.widgets.inactive.bg_fill = palette.control();
     visuals.widgets.inactive.weak_bg_fill = palette.control();
     visuals.widgets.inactive.fg_stroke.color = palette.text_primary();
-    let dark = palette.resolved.dark;
-    if let Some(edge) = quantick_appearance::widget::resting_edge(dark) {
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, *palette.get(edge));
-    }
-    let hover = *palette.get(quantick_appearance::widget::hover_fill(dark));
-    visuals.widgets.hovered.bg_fill = hover;
-    visuals.widgets.hovered.weak_bg_fill = hover;
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, palette.control_edge());
+    visuals.widgets.hovered.bg_fill = palette.hover_fill();
+    visuals.widgets.hovered.weak_bg_fill = palette.hover_fill();
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, palette.border());
     visuals.widgets.hovered.fg_stroke.color = palette.text_primary();
     visuals.widgets.active.bg_fill = active_tint(palette.accent());

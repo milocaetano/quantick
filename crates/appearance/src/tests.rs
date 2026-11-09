@@ -853,3 +853,27 @@ fn every_light_drawing_colour_reads_on_its_own_chart() {
         "the flow pane's VWAP is Dark's accent blue"
     );
 }
+
+/// Light's white controls stand off the chrome by their edge, a hovered one
+/// reads apart from its rest with its words at 4.5:1, and the connection
+/// screen's action reads on the chart; Dark keeps its border hover, unedged
+/// controls and meta-grey action.
+#[test]
+fn light_controls_are_edged_and_their_hover_keeps_the_words_readable() {
+    let dark = ResolvedTheme::default();
+    assert_eq!(dark.color(Token::HoverFill), dark.color(Token::Border));
+    assert_eq!(dark.color(Token::ControlEdge).a(), 0);
+    assert_eq!(
+        dark.color(Token::ConnectionAction),
+        dark.color(Token::LoadingMeta)
+    );
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    assert_contrast(&light, Token::ControlEdge, Token::Chrome, 3.0);
+    assert!(
+        contrast::contrast_ratio(light.color(Token::HoverFill), light.color(Token::Control)) >= 1.1
+    );
+    for ink in [Token::TextPrimary, Token::TextMuted, Token::BuyInk] {
+        assert_contrast(&light, ink, Token::HoverFill, 4.5);
+    }
+    assert_contrast(&light, Token::ConnectionAction, Token::ChartCanvas, 4.5);
+}

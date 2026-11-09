@@ -8,7 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_appearance::FontRole;
-use quantick_appearance::paper::{DAY_EDGE_PX, RowKind, ledger_row};
+use quantick_appearance::paper::{DAY_EDGE_PX, RowKind, RowLook, ledger_row};
 use quantick_engine::Side;
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
@@ -19,15 +19,12 @@ use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{
     financial_text, fmt_decimal, fmt_duration_ms, points_color, position_word,
 };
-use crate::theme;
+use crate::theme::{self, BOLD_STRIKE_PX};
 use crate::timezone::TzOffset;
 
 pub(super) use quantick_paper::report::ledger_rows::{
     GroupView, Item, LedgerRow, TradeMeta, push_groups,
 };
-
-/// egui bundles one weight; text struck again this far right reads bold.
-pub(super) const BOLD_STRIKE_PX: f32 = 0.4;
 
 /// What one painted ledger row reported back.
 #[derive(Default)]
@@ -60,7 +57,7 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
 
 /// A folding civil-day band: a bold caret and date over its complete count
 /// and net, on the control fill with a rule down its left edge
-/// (`paper::RowKind::Day`). The two lines wrap independently.
+/// (`paper::RowKind::Day`). The measured height lets both lines wrap.
 pub(super) fn draw_day_header(
     ui: &mut egui::Ui,
     date: CivilDate,
@@ -71,14 +68,12 @@ pub(super) fn draw_day_header(
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Day);
     let ink = *palette.get(look.ink);
-    let text_left = 6.0 + DAY_EDGE_PX;
-    let width = (ui.available_width() - text_left - 6.0).max(1.0);
-    let mut title = egui::text::LayoutJob::default();
+    let mut job = egui::text::LayoutJob::default();
     for (text, font_id) in [
         (format!("{} ", caret(folded)), palette.font(FontRole::Body)),
-        (date.long(), palette.mono_font(10.0)),
+        (format!("{}\n", date.long()), palette.mono_font(10.0)),
     ] {
-        title.append(
+        job.append(
             &text,
             0.0,
             egui::TextFormat {
@@ -89,49 +84,30 @@ pub(super) fn draw_day_header(
             },
         );
     }
-    title.wrap.max_width = width;
-    let mut numbers = financial_text(
+    let numbers = financial_text(
         &palette,
         &format!("{count} \u{00b7} {}", net.1),
         palette.mono_font(10.0),
         points_color(&palette, net.0),
     );
-    numbers.wrap.max_width = width;
-    let (title, numbers) = (
-        ui.painter().layout_job(title),
-        ui.painter().layout_job(numbers),
-    );
+    for section in numbers.sections {
+        job.append(&numbers.text[section.byte_range], 0.0, section.format);
+    }
+    job.break_on_newline = true;
+    job.wrap.max_rows = usize::MAX;
+    job.wrap.max_width = (ui.available_width() - 12.0 - DAY_EDGE_PX).max(1.0);
+    let galley = ui.painter().layout_job(job);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(
-            ui.available_width(),
-            title.size().y + numbers.size().y + 12.0,
-        ),
+        egui::vec2(ui.available_width(), galley.size().y + 12.0),
         egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
-        let fill = if response.hovered() {
-            look.hover_fill.or(look.fill)
-        } else {
-            look.fill
-        };
-        if let Some(fill) = fill {
-            ui.painter()
-                .rect_filled(rect, egui::Rounding::ZERO, *palette.get(fill));
-        }
-        if let Some(edge) = look.edge {
-            ui.painter().rect_filled(
-                rect.with_max_x(rect.left() + DAY_EDGE_PX),
-                egui::Rounding::ZERO,
-                *palette.get(edge),
-            );
-        }
-        let at = rect.min + egui::vec2(text_left, 6.0);
-        let below = at + egui::vec2(0.0, title.size().y);
-        // egui bundles one weight: the date struck twice reads bold.
-        ui.painter()
-            .galley(at + egui::vec2(BOLD_STRIKE_PX, 0.0), title.clone(), ink);
-        ui.painter().galley(at, title, ink);
-        ui.painter().galley(below, numbers, ink);
+        paint_look(ui, rect, &look, response.hovered(), DAY_EDGE_PX);
+        let at = rect.min + egui::vec2(6.0 + DAY_EDGE_PX, 6.0);
+        // egui bundles one weight: the band struck twice reads bold.
+        let strike = at + egui::vec2(BOLD_STRIKE_PX, 0.0);
+        ui.painter().galley(strike, galley.clone(), ink);
+        ui.painter().galley(at, galley, ink);
     }
     response
         .on_hover_text(format!(
@@ -141,6 +117,30 @@ pub(super) fn draw_day_header(
             if folded { "open it" } else { "fold it shut" },
         ))
         .clicked()
+}
+
+/// A ledger row's `look` over `rect`: its fill (the hover fill while `lit`),
+/// its left rule `edge_px` wide, and a lit plate's outline.
+pub(super) fn paint_look(ui: &egui::Ui, rect: egui::Rect, look: &RowLook, lit: bool, edge_px: f32) {
+    let (palette, painter) = (theme::get(ui.ctx()), ui.painter());
+    let fill = if lit {
+        look.hover_fill.or(look.fill)
+    } else {
+        look.fill
+    };
+    let rounding = if look.edge.is_some() { 0.0 } else { 3.0 };
+    for (token, area) in [
+        (fill, rect),
+        (look.edge, rect.with_max_x(rect.left() + edge_px)),
+    ] {
+        if let Some(token) = token {
+            painter.rect_filled(area, rounding, *palette.get(token));
+        }
+    }
+    if let Some(edge) = look.hover_edge.filter(|_| lit) {
+        let stroke = egui::Stroke::new(1.0_f32, *palette.get(edge));
+        painter.rect_stroke(rect.shrink(0.5), rounding, stroke);
+    }
 }
 
 /// The fold caret a day or session row leads with.
@@ -170,9 +170,7 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
         body,
         egui::Rounding::same(4.0),
         if response.hovered() {
-            *palette.get(quantick_appearance::widget::hover_fill(
-                palette.resolved.dark,
-            ))
+            palette.hover_fill()
         } else {
             palette.control()
         },
@@ -321,23 +319,17 @@ fn paint_trade(
         sense,
     );
     if ui.is_rect_visible(rect) {
-        let fill = if selected {
-            Some(theme::active_tint(palette.accent()))
-        } else if response.hovered() {
-            look.hover_fill.map(|token| *palette.get(token))
-        } else {
-            look.fill.map(|token| *palette.get(token))
-        };
-        if let Some(fill) = fill {
-            ui.painter().rect_filled(rect, egui::Rounding::ZERO, fill);
+        if selected {
+            let tint = theme::active_tint(palette.accent());
+            ui.painter().rect_filled(rect, egui::Rounding::ZERO, tint);
         }
-        if let Some(edge) = look.edge {
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(rect.min, egui::vec2(SIDE_RAIL_WIDTH_PX, rect.height())),
-                egui::Rounding::ZERO,
-                *palette.get(edge),
-            );
-        }
+        paint_look(
+            ui,
+            rect,
+            &look,
+            response.hovered() && !selected,
+            SIDE_RAIL_WIDTH_PX,
+        );
         ui.painter().galley(
             rect.min + egui::vec2(SIDE_RAIL_WIDTH_PX + 6.0, 6.0),
             galley,
@@ -406,15 +398,7 @@ pub(super) fn draw_ledger_row(
     // An accent text action, not a pill: the row is the thing, this a link.
     let navigate = session
         && ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("{} Center on chart", icons::ARROW_UP_RIGHT))
-                        .small()
-                        .color(palette.accent()),
-                )
-                .frame(false),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .link(egui::RichText::new(format!("{} Center on chart", icons::ARROW_UP_RIGHT)).small())
             .clicked();
     LedgerRowResponse {
         clicked: response.clicked() && !navigate,

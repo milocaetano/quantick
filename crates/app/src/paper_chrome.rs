@@ -29,8 +29,6 @@
 //! points one of these modules back at another, which is what stops the
 //! third cycle from being found by hand like the first two.
 
-use std::path::Path;
-
 use eframe::egui;
 use rust_decimal::Decimal;
 
@@ -40,8 +38,10 @@ use crate::theme;
 // journal moved into `quantick_paper::format`; re-exported so this module stays
 // the one vocabulary every paper surface imports.
 pub(crate) use quantick_paper::format::{
-    PositionSummary, fmt_decimal, fmt_exact, fmt_points, fmt_signed_points, position_word,
+    PositionSummary, fmt_decimal, fmt_duration_ms, fmt_exact, fmt_points, fmt_signed_points,
+    position_word,
 };
+pub(crate) use quantick_paper::report::list_symbol_folders;
 
 /// Uppercase section caption — the ledger's group labels and column header.
 pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::RichText {
@@ -71,46 +71,12 @@ pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str)
     .on_hover_text(hover)
 }
 
-/// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
-pub(crate) fn fmt_duration_ms(ms: i64) -> String {
-    let seconds = (ms / 1000).max(0);
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else if seconds < 3600 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
-    }
-}
-
-/// Green gains, red losses, muted zero — shared with the HUD. Light writes
-/// its gains in the readable buy ink.
+/// Green gains, red losses, muted zero — shared with the HUD
+/// (`paper::pnl_ink`).
 pub(crate) fn points_color(palette: &crate::theme::Palette, points: Decimal) -> egui::Color32 {
-    sign_color(palette, points.cmp(&Decimal::ZERO))
-}
-
-/// [`points_color`] for an outcome already reduced to its sign.
-pub(crate) fn sign_color(
-    palette: &crate::theme::Palette,
-    sign: std::cmp::Ordering,
-) -> egui::Color32 {
-    if !palette.resolved.dark {
-        let surface =
-            quantick_appearance::PremultipliedRgba::from_premultiplied(palette.inset().to_array());
-        let light = quantick_appearance::contrast::relative_luminance(surface) > 0.5;
-        return match sign {
-            std::cmp::Ordering::Greater if light => palette.buy_ink(),
-            std::cmp::Ordering::Less if light => egui::Color32::from_rgb(136, 24, 30),
-            std::cmp::Ordering::Greater => egui::Color32::from_rgb(100, 220, 160),
-            std::cmp::Ordering::Less => egui::Color32::from_rgb(255, 145, 145),
-            std::cmp::Ordering::Equal => palette.text_primary(),
-        };
-    }
-    match sign {
-        std::cmp::Ordering::Greater => palette.buy(),
-        std::cmp::Ordering::Less => palette.sell(),
-        std::cmp::Ordering::Equal => palette.text_muted(),
-    }
+    let ink = quantick_appearance::paper::pnl_ink(&palette.resolved, points.cmp(&Decimal::ZERO));
+    let [r, g, b, a] = ink.to_array();
+    egui::Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
 /// Financial text keeps its original words; only signed numbers carry outcome
@@ -126,6 +92,21 @@ pub(crate) fn financial_text(
     }
     signed_text(text, font, palette.text_primary(), |value| {
         points_color(palette, value)
+    })
+}
+
+/// `text` on a dark plate: words in `ink`, signed figures in the plate's gain
+/// and loss inks.
+pub(crate) fn plate_text(
+    palette: &theme::Palette,
+    text: &str,
+    font: egui::FontId,
+    ink: egui::Color32,
+) -> egui::text::LayoutJob {
+    signed_text(text, font, ink, |value| match value.cmp(&Decimal::ZERO) {
+        std::cmp::Ordering::Greater => palette.plate_gain(),
+        std::cmp::Ordering::Less => palette.plate_loss(),
+        std::cmp::Ordering::Equal => ink,
     })
 }
 
@@ -193,20 +174,6 @@ pub(crate) fn disabled_action_label(
     );
 }
 
-/// The symbol folders under the history dir, for the report's combo box.
-pub(crate) fn list_symbol_folders(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut folders: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-        .collect();
-    folders.sort();
-    folders
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,7 +195,7 @@ mod tests {
                     let ink = points_color(&light, value);
                     // The border is a control's edge, never a surface a
                     // figure is written on; a hovered row lifts onto the tag
-                    // grey instead (`widget::hover_fill`).
+                    // grey instead (`hover_fill`).
                     for background in [
                         light.chrome(),
                         light.inset(),
@@ -271,13 +238,5 @@ mod tests {
                 .iter()
                 .all(|section| section.format.color == dark.sell())
         );
-    }
-
-    #[test]
-    fn durations_format_by_magnitude() {
-        assert_eq!(fmt_duration_ms(38_000), "38s");
-        assert_eq!(fmt_duration_ms(258_000), "4m 18s");
-        assert_eq!(fmt_duration_ms(3_720_000), "1h 02m");
-        assert_eq!(fmt_duration_ms(-5), "0s", "clock skew never explodes");
     }
 }

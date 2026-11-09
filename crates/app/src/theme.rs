@@ -33,6 +33,9 @@ pub use quantick_appearance::palette::CASING_EXTRA_PX;
 /// The toolbar's market button: bare at rest (border and fill on hover) when
 /// true, bordered like History when false. Kept for a side-by-side look.
 pub const MARKET_BUTTON_QUIET: bool = false;
+/// egui's bundled fonts have one weight; text painted again this far right
+/// reads bold.
+pub const BOLD_STRIKE_PX: f32 = 0.4;
 
 #[cfg(test)]
 use eframe::egui::Color32;

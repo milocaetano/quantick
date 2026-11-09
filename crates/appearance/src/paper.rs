@@ -7,7 +7,7 @@
 //! slate flow pane is a dark surface, so it keeps Dark's look too.
 use std::cmp::Ordering;
 
-use crate::{ResolvedTheme, Token, contrast::relative_luminance};
+use crate::{PremultipliedRgba, ResolvedTheme, Token, contrast::relative_luminance};
 
 /// A filled shape and the words written on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,27 +23,19 @@ pub fn plates_on_chart(theme: &ResolvedTheme) -> bool {
     !theme.dark && relative_luminance(theme.color(Token::ChartCanvas)) > 0.5
 }
 
-/// A priced level the chart draws a line, a price chip and a tag for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChartLevel {
-    /// A working order waiting to open or add to a position.
-    Entry,
-    StopLoss,
-    TakeProfit,
-    /// The open position's average entry.
-    Position {
-        long: bool,
-    },
-}
-
-/// The plate under a level's line and price chip; `None` keeps the
-/// surface's accent and side colours. The line is drawn in the plate's fill.
+/// The plate a light chart lays under a level whose line Dark draws in
+/// `line` (the accent for an entry order, the side colour for a stop, a
+/// target or the position), its words in the plate's white and its stop,
+/// target and position prices in the loss or gain ink. `None` keeps the
+/// surface's own colours. The line itself is drawn in the plate's fill.
 #[must_use]
-pub fn level_plate(theme: &ResolvedTheme, level: ChartLevel) -> Option<Plate> {
-    let ink = match level {
-        ChartLevel::Entry => Token::OrderPlateInk,
-        ChartLevel::StopLoss | ChartLevel::Position { long: false } => Token::PlateLoss,
-        ChartLevel::TakeProfit | ChartLevel::Position { long: true } => Token::PlateGain,
+pub fn plate_for(theme: &ResolvedTheme, line: PremultipliedRgba) -> Option<Plate> {
+    let ink = if line == theme.color(Token::Buy) {
+        Token::PlateGain
+    } else if line == theme.color(Token::Sell) {
+        Token::PlateLoss
+    } else {
+        Token::OrderPlateInk
     };
     plates_on_chart(theme).then_some(Plate {
         fill: Token::OrderPlate,
@@ -51,23 +43,31 @@ pub fn level_plate(theme: &ResolvedTheme, level: ChartLevel) -> Option<Plate> {
     })
 }
 
-/// The plate under the position's own label (`SIM LONG 2 -90.60 BRL ×`);
-/// `None` keeps the card that wears the side colour.
-#[must_use]
-pub fn position_label(theme: &ResolvedTheme) -> Option<Plate> {
-    plates_on_chart(theme).then_some(Plate {
-        fill: Token::OrderPlate,
-        ink: Token::OrderPlateInk,
-    })
-}
+/// A light theme's loss ink on its pale panels.
+const LIGHT_LOSS_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(136, 24, 30);
+/// A light theme's gain and loss inks where its surface is dark.
+const BRIGHT_GAIN_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(100, 220, 160);
+const BRIGHT_LOSS_INK: PremultipliedRgba = PremultipliedRgba::from_rgb(255, 145, 145);
 
-/// A signed amount written on a dark plate whose other words are `ink`.
+/// The ink of a signed amount on `theme`'s panels: Dark's candle colours and
+/// a muted zero; a light theme's buy ink and dark red on its pale panels, and
+/// bright ones on a dark surface such as its slate flow pane.
 #[must_use]
-pub const fn on_plate(sign: Ordering, ink: Token) -> Token {
+pub fn pnl_ink(theme: &ResolvedTheme, sign: Ordering) -> PremultipliedRgba {
+    if theme.dark {
+        return theme.color(match sign {
+            Ordering::Greater => Token::Buy,
+            Ordering::Less => Token::Sell,
+            Ordering::Equal => Token::TextMuted,
+        });
+    }
+    let pale = relative_luminance(theme.color(Token::Inset)) > 0.5;
     match sign {
-        Ordering::Greater => Token::PlateGain,
-        Ordering::Less => Token::PlateLoss,
-        Ordering::Equal => ink,
+        Ordering::Greater if pale => theme.color(Token::BuyInk),
+        Ordering::Less if pale => LIGHT_LOSS_INK,
+        Ordering::Greater => BRIGHT_GAIN_INK,
+        Ordering::Less => BRIGHT_LOSS_INK,
+        Ordering::Equal => theme.color(Token::TextPrimary),
     }
 }
 
@@ -107,7 +107,7 @@ pub const DAY_EDGE_PX: f32 = 3.0;
 /// The look of one ledger row kind in a theme of the given mode.
 #[must_use]
 pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
-    let hover = crate::widget::hover_fill(dark);
+    let hover = Token::HoverFill;
     match row {
         RowKind::Day => RowLook {
             fill: Some(Token::Control),

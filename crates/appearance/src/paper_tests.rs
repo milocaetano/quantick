@@ -45,27 +45,20 @@ fn plate_inks_read_on_their_plates_in_both_themes() {
 fn light_writes_every_chart_level_on_the_order_plate_and_only_the_ink_changes() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     assert!(plates_on_chart(&light));
-    for (level, ink) in [
-        (ChartLevel::Entry, Token::OrderPlateInk),
-        (ChartLevel::StopLoss, Token::PlateLoss),
-        (ChartLevel::TakeProfit, Token::PlateGain),
-        (ChartLevel::Position { long: true }, Token::PlateGain),
-        (ChartLevel::Position { long: false }, Token::PlateLoss),
+    for (line, ink) in [
+        (Token::Accent, Token::OrderPlateInk),
+        (Token::Sell, Token::PlateLoss),
+        (Token::Buy, Token::PlateGain),
     ] {
-        let plate = level_plate(&light, level).unwrap();
-        assert_eq!(plate.fill, Token::OrderPlate, "{level:?}");
-        assert_eq!(plate.ink, ink, "{level:?}");
+        let plate = plate_for(&light, light.color(line)).unwrap();
+        assert_eq!(plate.fill, Token::OrderPlate, "{}", line.key());
+        assert_eq!(plate.ink, ink, "{}", line.key());
         assert_reads(&light, plate.ink, plate.fill, 4.5);
     }
     assert_eq!(
         light.color(Token::OrderPlate),
         PremultipliedRgba::from_rgb(0x15, 0x19, 0x1E)
     );
-    let label = position_label(&light).unwrap();
-    assert_eq!(label.ink, Token::OrderPlateInk);
-    assert_eq!(on_plate(Ordering::Greater, label.ink), Token::PlateGain);
-    assert_eq!(on_plate(Ordering::Less, label.ink), Token::PlateLoss);
-    assert_eq!(on_plate(Ordering::Equal, label.ink), label.ink);
     // The plate is the line too: it has to stand off the white chart.
     assert!(
         contrast_ratio(
@@ -82,15 +75,9 @@ fn dark_surfaces_keep_their_accent_and_side_colours() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     for surface in [&dark, light.bookmap()] {
         assert!(!plates_on_chart(surface), "{}", surface.name);
-        for level in [
-            ChartLevel::Entry,
-            ChartLevel::StopLoss,
-            ChartLevel::TakeProfit,
-            ChartLevel::Position { long: true },
-        ] {
-            assert_eq!(level_plate(surface, level), None);
+        for line in [Token::Accent, Token::Buy, Token::Sell] {
+            assert_eq!(plate_for(surface, surface.color(line)), None);
         }
-        assert_eq!(position_label(surface), None);
     }
     assert_eq!(equity_area(true, true), Token::Buy);
     assert_eq!(equity_area(true, false), Token::Sell);
@@ -101,6 +88,33 @@ fn dark_surfaces_keep_their_accent_and_side_colours() {
             ink: Token::ChipInk
         }
     );
+}
+
+/// Dark writes P&L in its candle colours; Light in its buy ink and a dark
+/// red at 4.5:1 on every pale panel, bright on its slate flow pane.
+#[test]
+fn signed_amounts_take_each_surface_s_readable_ink() {
+    let dark = ResolvedTheme::default();
+    assert_eq!(pnl_ink(&dark, Ordering::Greater), dark.color(Token::Buy));
+    assert_eq!(pnl_ink(&dark, Ordering::Less), dark.color(Token::Sell));
+    assert_eq!(
+        pnl_ink(&dark, Ordering::Equal),
+        dark.color(Token::TextMuted)
+    );
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    assert_eq!(
+        pnl_ink(&light, Ordering::Greater),
+        light.color(Token::BuyInk)
+    );
+    for surface in [&light, light.bookmap()] {
+        for sign in [Ordering::Greater, Ordering::Less, Ordering::Equal] {
+            let ink = pnl_ink(surface, sign);
+            for under in [Token::Chrome, Token::Inset, Token::Control, Token::TagBg] {
+                let ratio = contrast_ratio(ink, surface.color(under));
+                assert!(ratio >= 4.5, "{sign:?} on {}: {ratio}", under.key());
+            }
+        }
+    }
 }
 
 #[test]

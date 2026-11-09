@@ -143,6 +143,11 @@ order_plate = "#10141D"
 order_plate_ink = "#D2DAE2"
 plate_gain = "#88CEC7"
 plate_loss = "#F6A09F"
+# A hovered control lifts onto the border colour; a resting one is unedged;
+# the connection screen's Reconnect is in the loading meta grey.
+hover_fill = "#2E3648"
+control_edge = "#00000000"
+connection_action = "#7C8799"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

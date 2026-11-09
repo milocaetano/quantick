@@ -233,9 +233,7 @@ impl ToolRail {
                 ui.painter().rect_filled(
                     rect,
                     egui::Rounding::same(FLYOUT_ROW_RADIUS_PX),
-                    *palette.get(quantick_appearance::widget::hover_fill(
-                        palette.resolved.dark,
-                    )),
+                    palette.hover_fill(),
                 );
             }
             let glyph_color = if armed {

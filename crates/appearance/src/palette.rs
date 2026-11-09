@@ -203,9 +203,16 @@ pub enum Token {
     PlateGain,
     /// A loss written on a dark plate in a light theme.
     PlateLoss,
+    /// The fill under a hovered control or row. Dark's is its border.
+    HoverFill,
+    /// The edge of a framed control at rest; Dark's is transparent.
+    ControlEdge,
+    /// The connection screen's action (`Reconnect`): Dark keeps it in the
+    /// loading meta grey, a light theme writes it in its primary ink.
+    ConnectionAction,
 }
 impl Token {
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 122] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -325,6 +332,9 @@ impl Token {
         Self::OrderPlateInk,
         Self::PlateGain,
         Self::PlateLoss,
+        Self::HoverFill,
+        Self::ControlEdge,
+        Self::ConnectionAction,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -354,6 +364,9 @@ impl Token {
             Self::OrderPlateInk => "order_plate_ink",
             Self::PlateGain => "plate_gain",
             Self::PlateLoss => "plate_loss",
+            Self::HoverFill => "hover_fill",
+            Self::ControlEdge => "control_edge",
+            Self::ConnectionAction => "connection_action",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

@@ -8,7 +8,6 @@
 //! the same question.
 
 use eframe::egui;
-use quantick_appearance::paper::ChartLevel;
 use quantick_engine::Side;
 use quantick_sim::{Bracket, BracketTarget, OrderRole, signed_points};
 use rust_decimal::Decimal;
@@ -118,12 +117,9 @@ impl PaperTrading {
             // trades. Four accent-dashed `SELL LMT 1` rows over a long the
             // trader is already holding is the misreading this surface
             // cannot afford.
-            let look = ctx.level(
-                order_level(order.role),
-                order_line_color(&palette, order.role),
-            );
-            ctx.level_line(y, look.color, true, LINE_WIDTH_PX, hovered, dragged);
-            ctx.level_chip(y, look, &fmt_decimal(shown));
+            let color = order_line_color(&palette, order.role);
+            ctx.level_line(y, color, true, LINE_WIDTH_PX, hovered, dragged);
+            ctx.gutter_chip(y, color, &fmt_decimal(shown));
             // Resting, the pill states what the gutter chip cannot — which
             // side and what kind of order waits there. The price is the
             // chip's job, and the id only matters once you mean to act on
@@ -147,7 +143,7 @@ impl PaperTrading {
             }
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
-            ctx.level_tag(y, look, &text, open.is_some_and(|tag| tag.cancel), false);
+            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel), false);
 
             // The order's own protective legs, and the handles for the ones
             // it does not have yet. Dashed, because they are a promise: they
@@ -172,23 +168,11 @@ impl PaperTrading {
         // it, because the tag's rect is only known once it is drawn.
         let mut position_reveal = false;
         if let Some(position) = self.account.venue().position().cloned() {
-            let look = ctx.level(
-                ChartLevel::Position {
-                    long: position.side == Side::Buy,
-                },
-                palette.side_color(position.side),
-            );
+            let color = palette.side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
-                ctx.level_line(
-                    entry_y,
-                    look.color,
-                    false,
-                    POSITION_LINE_WIDTH_PX,
-                    false,
-                    false,
-                );
-                ctx.level_chip(entry_y, look, &fmt_decimal(position.avg_price));
+                ctx.level_line(entry_y, color, false, POSITION_LINE_WIDTH_PX, false, false);
+                ctx.gutter_chip(entry_y, color, &fmt_decimal(position.avg_price));
                 let side_text = format!(
                     "SIM {} {}",
                     position_word(position.side),
@@ -206,10 +190,7 @@ impl PaperTrading {
                         )
                     });
                 let line_hovered = ctx.hovers_line(entry_y);
-                // On a plate the rail takes the side's ink; Dark's card wears
-                // the side colour itself.
-                let rail = look.plate_ink.unwrap_or(look.color);
-                let tag_rect = ctx.position_tag(entry_y, rail, &side_text, points);
+                let tag_rect = ctx.position_tag(entry_y, color, &side_text, points);
                 // The handles are revealed by the entry line or its tag —
                 // the affordance behind "drag from the position line to
                 // create".
@@ -318,7 +299,7 @@ impl PaperTrading {
                 (part.take_profit, Leg::TakeProfit),
             ] {
                 let Some(level) = level else { continue };
-                let look = ctx.level(leg_level(leg), leg_color(palette, leg));
+                let color = leg_color(palette, leg);
                 // The rung being hauled follows the pointer, exactly as a
                 // whole bracket's leg does: what the trader sees moving is
                 // what the release will submit.
@@ -343,16 +324,16 @@ impl PaperTrading {
                     continue;
                 }
                 let hovered = ctx.hovers_line(y);
-                ctx.level_line(y, look.color, true, LINE_WIDTH_PX, hovered, dragging);
-                ctx.level_chip(y, look, &fmt_decimal(shown));
+                ctx.level_line(y, color, true, LINE_WIDTH_PX, hovered, dragging);
+                ctx.gutter_chip(y, color, &fmt_decimal(shown));
                 let share = part.quantity.unwrap_or(Decimal::ONE);
                 let points = signed_points(side, reference, shown, share);
                 // The cross only where a press would take it: a rung of a
                 // resting entry. A position's rungs are working orders by
                 // then and carry their own.
-                ctx.level_tag(
+                ctx.chip_tag(
                     y,
-                    look,
+                    color,
                     &format!(
                         "{} {} · {} · {}",
                         leg.word(),
@@ -476,28 +457,28 @@ impl PaperTrading {
         } else {
             paint.level.unwrap_or_else(|| self.account.snap(price))
         };
-        let look = ctx.level(leg_level(paint.leg), leg_color(palette, paint.leg));
+        let color = leg_color(palette, paint.leg);
         // Dashed while it is being created (it is not placed yet) and while
         // it rides an unfilled order (it is a promise that arms on the
         // fill). Solid only once it is a live exit on an open position.
         ctx.level_line(
             y,
-            look.color,
+            color,
             creating || paint.pending,
             LINE_WIDTH_PX,
             hovered,
             dragging,
         );
-        ctx.level_chip(y, look, &fmt_decimal(shown));
+        ctx.gutter_chip(y, color, &fmt_decimal(shown));
         let open = self
             .desk
             .gesture
             .open_tag(TagKey::Leg(paint.owner, paint.leg));
         let pnl = self.account.symbol_pnl();
         let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging, pnl);
-        ctx.level_tag(
+        ctx.chip_tag(
             y,
-            look,
+            color,
             &text,
             open.is_some_and(|tag| tag.cancel),
             paint.pending,
@@ -620,23 +601,6 @@ fn order_line_color(palette: &crate::theme::Palette, role: OrderRole) -> egui::C
         OrderRole::Entry => palette.accent(),
         OrderRole::StopLoss => palette.sell(),
         OrderRole::TakeProfit => palette.buy(),
-    }
-}
-
-/// Which chart level a working order of `role` is.
-fn order_level(role: OrderRole) -> ChartLevel {
-    match role {
-        OrderRole::Entry => ChartLevel::Entry,
-        OrderRole::StopLoss => ChartLevel::StopLoss,
-        OrderRole::TakeProfit => ChartLevel::TakeProfit,
-    }
-}
-
-/// Which chart level a protective leg is.
-fn leg_level(leg: Leg) -> ChartLevel {
-    match leg {
-        Leg::StopLoss => ChartLevel::StopLoss,
-        Leg::TakeProfit => ChartLevel::TakeProfit,
     }
 }
 

@@ -146,6 +146,11 @@ order_plate = "#15191E"
 order_plate_ink = "#FFFFFF"
 plate_gain = "#22C55E"
 plate_loss = "#FF8080"
+# White controls on the pale chrome: edged in the border, hovered on the tag
+# grey so their words keep 4.5:1; Reconnect in the primary ink.
+hover_fill = "#E2E2E2"
+control_edge = "#7C7C7C"
+connection_action = "#202020"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.
@@ -305,6 +310,9 @@ order_plate = "#10141D"
 order_plate_ink = "#D2DAE2"
 plate_gain = "#88CEC7"
 plate_loss = "#F6A09F"
+hover_fill = "#2E3648"
+control_edge = "#00000000"
+connection_action = "#7C8799"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 

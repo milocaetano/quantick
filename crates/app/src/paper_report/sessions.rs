@@ -292,12 +292,9 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         &format!("{} \u{00b7} {}", head.count, head.net.1),
         palette.mono_font(10.0),
         ink,
-        |value| {
-            look.pnl_ink(value.cmp(&rust_decimal::Decimal::ZERO))
-                .map_or_else(
-                    || points_color(&palette, value),
-                    |token| *palette.get(token),
-                )
+        |value| match look.pnl_ink(value.cmp(&rust_decimal::Decimal::ZERO)) {
+            Some(token) => *palette.get(token),
+            None => points_color(&palette, value),
         },
     );
     for section in numbers.sections {
@@ -315,22 +312,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
     if ui.is_rect_visible(rect) {
         let plate = rect.with_min_x(rect.left() + SESSION_INDENT_PX);
         let lit = head.focused || response.hovered();
-        let fill = if lit {
-            look.hover_fill.or(look.fill)
-        } else {
-            look.fill
-        };
-        if let Some(fill) = fill {
-            ui.painter()
-                .rect_filled(plate, egui::Rounding::same(3.0), *palette.get(fill));
-        }
-        if lit && let Some(edge) = look.hover_edge {
-            ui.painter().rect_stroke(
-                plate.shrink(0.5),
-                egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, *palette.get(edge)),
-            );
-        }
+        super::rows::paint_look(ui, plate, &look, lit, 0.0);
         ui.painter()
             .galley(plate.min + egui::vec2(6.0, 6.0), galley, ink);
     }
