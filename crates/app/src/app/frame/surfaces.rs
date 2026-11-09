@@ -45,7 +45,7 @@ pub(super) fn open_requested_strategy_popups(
 
 /// What the surfaces' environment is read from.
 pub(super) struct SurfaceOwners<'a> {
-    pub indicators: &'a IndicatorState,
+    pub indicators: &'a mut IndicatorState,
     pub alert_failure: Option<&'a str>,
     pub workspace: &'a WorkspaceStore,
     pub style: &'a ChartStyle,
@@ -209,6 +209,13 @@ pub(super) fn draw_surfaces(
             .editor
             .observe(target, Some(editor_pane.presentation.candles.context()));
     }
+    super::super::script_editor_wiring::frame(
+        registry,
+        indicators,
+        tabs,
+        std::mem::take(&mut asks.script_editor_actions),
+        now,
+    );
     if let Some(request) = asks.bar_switch.take() {
         apply_bar_switch(tabs, &mut registry.toast, request);
     }
@@ -255,18 +262,5 @@ fn indicator_preview_area(
 
 /// Hand every script file that changed on disk to the pane that runs it.
 pub(super) fn reload_changed_scripts(indicators: &mut IndicatorState, tabs: &mut ArrangementHost) {
-    for (owner, name, text) in indicators.poll_script_files() {
-        if owner.workspace == tabs.owner()
-            && let Some(tab) = tabs.by_id_mut(owner.tab)
-            && let Some(pane) = tab.pane_at_mut(owner.side.index())
-            && pane.id == owner.pane
-        {
-            IndicatorState::log_reload(owner, &name);
-            pane.indicator_worker
-                .send(crate::indicator_worker::IndicatorCommand::Reload {
-                    slot: owner.slot,
-                    source: crate::indicator_worker::IndicatorSource::Script { name, text },
-                });
-        }
-    }
+    super::super::script_reload::reload_changed_scripts(indicators, tabs);
 }

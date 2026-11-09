@@ -13,37 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// Embedded starter scripts: (menu name, source). Each doubles as a
-/// conformance fixture in the pine crate's corpus.
-pub const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
-    ("ema.pine", include_str!("../../app/scripts/ema.pine")),
-    ("cvd.pine", include_str!("../../app/scripts/cvd.pine")),
-    (
-        "delta_histogram.pine",
-        include_str!("../../app/scripts/delta_histogram.pine"),
-    ),
-    (
-        "vwap_cumulative.pine",
-        include_str!("../../app/scripts/vwap_cumulative.pine"),
-    ),
-    ("zigzag.pine", include_str!("../../app/scripts/zigzag.pine")),
-    (
-        "range_box.pine",
-        include_str!("../../app/scripts/range_box.pine"),
-    ),
-    (
-        "copilot.pine",
-        include_str!("../../app/scripts/copilot.pine"),
-    ),
-    (
-        "force_bar.pine",
-        include_str!("../../app/scripts/force_bar.pine"),
-    ),
-    (
-        "exhaustion_reversal.pine",
-        include_str!("../../app/scripts/exhaustion_reversal.pine"),
-    ),
-];
+mod catalog;
+pub use catalog::EMBEDDED_SCRIPTS;
 
 /// One loadable script.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +32,37 @@ pub enum ScriptOrigin {
     Embedded(&'static str),
     /// A `.pine` file in the indicators directory.
     File(PathBuf),
+}
+
+/// A script source owned by the store. The file name is its stable identity.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScriptDocument {
+    pub id: String,
+    pub title: String,
+    pub source: String,
+    /// Embedded originals are read-only; editing starts from a named copy.
+    pub read_only: bool,
+}
+
+/// Library operations shared by the editor and its control adapter.
+/// Calls may perform file I/O and belong to explicit library actions, never paint.
+pub trait ScriptLibraryPort {
+    fn list(&self) -> &[ScriptEntry];
+    fn read(&self, id: &str) -> Result<ScriptDocument, String>;
+    fn copy(&mut self, id: &str, new_id: &str) -> Result<ScriptDocument, String>;
+    fn save(&mut self, document: &ScriptDocument) -> Result<(), String>;
+}
+
+/// Value requests from either the editor surface or an admitted control call.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ScriptEditorAction {
+    Inspect,
+    Open { id: String },
+    Copy { id: String, new_id: String },
+    ReplaceSource { source: String },
+    Save,
+    Close,
 }
 
 /// The scanned library.
@@ -185,6 +187,35 @@ impl ScriptLibrary {
             ScriptOrigin::File(path) => std::fs::read_to_string(path)
                 .map_err(|e| format!("cannot read {}: {e}", path.display())),
         })
+    }
+}
+
+impl ScriptLibraryPort for ScriptLibrary {
+    fn list(&self) -> &[ScriptEntry] {
+        self.entries()
+    }
+
+    fn read(&self, id: &str) -> Result<ScriptDocument, String> {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.name == id)
+            .ok_or_else(|| format!("unknown script: {id}"))?;
+        let entry = &self.entries[index];
+        Ok(ScriptDocument {
+            id: entry.name.clone(),
+            title: entry.name.clone(),
+            source: self.read(index).expect("the entry exists")?,
+            read_only: matches!(entry.origin, ScriptOrigin::Embedded(_)),
+        })
+    }
+
+    fn copy(&mut self, _id: &str, _new_id: &str) -> Result<ScriptDocument, String> {
+        Err("script copying is not available in this build".into())
+    }
+
+    fn save(&mut self, _document: &ScriptDocument) -> Result<(), String> {
+        Err("script saving is not available in this build".into())
     }
 }
 

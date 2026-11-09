@@ -39,7 +39,7 @@ use crate::workspace::WorkspaceSnapshot;
 /// Each document's file name and its schema.
 #[must_use]
 pub fn documents() -> Vec<(&'static str, Value)> {
-    vec![
+    let mut documents = vec![
         document::<crate::indicator_picker::PickerInput>("indicator-picker-input-v1.schema.json"),
         document::<crate::indicator_picker::PickerResult>("indicator-picker-result-v1.schema.json"),
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
@@ -152,7 +152,9 @@ pub fn documents() -> Vec<(&'static str, Value)> {
         document::<LayersSnapshot>("observer-layers-visibility-v1.schema.json"),
         document::<SetVisibilityInput>("layers-visibility-set-input-v1.schema.json"),
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
-    ]
+    ];
+    documents.extend(crate::script_editor::documents());
+    documents
 }
 
 fn document<T: schemars::JsonSchema>(file_name: &'static str) -> (&'static str, Value) {
