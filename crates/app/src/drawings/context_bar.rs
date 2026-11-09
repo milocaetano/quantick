@@ -999,13 +999,10 @@ fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) 
 /// one. That is one frame of a surface the trader just clicked open, and the
 /// alternative is measuring a panel before laying it out.
 ///
-/// egui keeps the last word, and against the *window* rather than `bounds`:
-/// `Area` constrains by default, and its constraint rectangle doubles as the
-/// clip rectangle, so handing it the pane would make a popover taller than
-/// the pane lose its lower rows silently — and rows a trader cannot reach
-/// read as rows that do not exist. Covering the bar is the better failure of
-/// the two, and it is the one this rule spends its effort avoiding rather
-/// than the one it falls back to.
+/// egui keeps the last word, against the *window*: its constraint rectangle
+/// is also the clip rectangle, so handing it the pane would silently cut the
+/// lower rows of a popover taller than the pane. Covering the bar is the
+/// better failure, and the one this rule tries hardest to avoid.
 fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) -> egui::Pos2 {
     let below = anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX);
     let y = if below.y + size.y > bounds.bottom()
@@ -1035,19 +1032,11 @@ fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) ->
 
 /// The Area id a popover is laid out under.
 ///
-/// Keyed on everything that changes its measured size, because that size is
-/// read back from egui a frame late and decides which way it opens. The kind
-/// is the obvious half; `fill` is the other one — the colour palette carries
-/// an extra row for a tool that has an interior, so the same kind is two
-/// different heights depending on the object. A shared id hands the shorter
-/// one the taller one's height, flips a popover that had room below, and
-/// snaps it back a frame later in front of a trader who has just clicked.
-///
-/// Keyed on *only* that, though: the width and size popovers do not read
-/// `supports_fill`, and splitting them on it would hand a fresh Area — and
-/// with it egui's invisible sizing pass, one frame of nothing where the
-/// trader clicked — every time the selection alternates between a tool with
-/// an interior and one without.
+/// Keyed on everything that changes its measured size — the kind, the colour
+/// palette's fill row and its inline picker — because egui reads that size
+/// back a frame late and it decides which way the popover opens: a shared id
+/// flips a popover that had room below. Keyed on *only* that, since a fresh
+/// id costs a frame of egui's invisible sizing pass where the trader clicked.
 fn popover_id(popover: Popover, fill: bool, custom: bool) -> egui::Id {
     let color = matches!(popover, Popover::Color);
     egui::Id::new((
@@ -1074,11 +1063,6 @@ fn draw_popover(
         }
         (popover, Some(anchor)) => (popover, anchor),
     };
-    // One Area id per kind, not one for all three. egui keeps an Area's rect
-    // after it stops being shown, so a shared id would hand the width list the
-    // colour palette's height and flip a short popover that had room below —
-    // then correct itself on the next frame, in front of a trader who has just
-    // clicked. Each kind now remembers only its own size.
     let id = popover_id(popover, object.supports_fill, bar.custom_open);
     // The size egui measured last time this kind was open. Zero the first
     // time, which is what makes the default answer the downward one.
