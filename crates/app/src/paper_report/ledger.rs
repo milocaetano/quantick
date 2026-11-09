@@ -582,8 +582,8 @@ impl RowList<'_, '_> {
                         top + offsets[start]..=top + offsets[end],
                     );
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-                        for index in start..end {
-                            ui.push_id(index, |ui| self.row(ui, index, nests[index], &mut presses));
+                        for (index, nest) in nests.iter().enumerate().take(end).skip(start) {
+                            ui.push_id(index, |ui| self.row(ui, index, *nest, &mut presses));
                         }
                     });
                 } else {
@@ -594,9 +594,9 @@ impl RowList<'_, '_> {
                             let top = ui.cursor().top();
                             let mut offsets = Vec::with_capacity(self.rows.len() + 1);
                             offsets.push(0.0);
-                            for index in 0..self.rows.len() {
+                            for (index, nest) in nests.iter().enumerate() {
                                 ui.push_id(index, |ui| {
-                                    self.row(ui, index, nests[index], &mut presses);
+                                    self.row(ui, index, *nest, &mut presses);
                                 });
                                 offsets.push(ui.cursor().top() - top);
                             }

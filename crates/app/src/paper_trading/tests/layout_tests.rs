@@ -70,10 +70,12 @@ fn paper_values_and_actions_fit_narrow_panels() {
                     paper.market(side);
                     paper.on_trade(&print(3, 123456799));
                     let open_text = paper.account.open_pnl_text().unwrap();
-                    let closed_text = paper
+                    // A trade row writes its leading figure on line one and
+                    // the one that keeps it honest on line two.
+                    let (closed_lead, closed_check) = paper
                         .account
                         .symbol_pnl()
-                        .closed(&paper.session_trades()[0]);
+                        .closed_split(&paper.session_trades()[0]);
                     for ledger in [false, true] {
                         let mut words = String::new();
                         for _ in 0..3 {
@@ -108,10 +110,12 @@ fn paper_values_and_actions_fit_narrow_panels() {
                             "complete open calculation: {words}"
                         );
                         if ledger {
-                            assert!(
-                                words.contains(&closed_text),
-                                "complete closed calculation: {words}"
-                            );
+                            for half in [&closed_lead, &closed_check] {
+                                assert!(
+                                    words.contains(half.as_str()),
+                                    "complete closed calculation {half}: {words}"
+                                );
+                            }
                         }
                         assert!(words.contains("123456799"), "entry stays complete: {words}");
                         assert!(!words.contains("1234567…"), "no price elision");
