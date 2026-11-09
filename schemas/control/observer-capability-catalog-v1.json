@@ -10709,7 +10709,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
+      "description": "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, add a library identity to the focused chart, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10785,6 +10785,23 @@
                   "action",
                   "id",
                   "new_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "add_to_chart",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "id"
                 ],
                 "type": "object"
               },
@@ -10974,7 +10991,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Inspect/list reconcile current state. No action attaches a duplicate chart indicator.",
+      "stale_input_safety": "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Add-to-chart uses the existing library attachment path and is a no-op if that identity is already on the focused pane. Inspect/list reconcile current state. Editing never attaches a duplicate chart indicator.",
       "title": "Read, copy and edit Pine indicator source",
       "version": 1
     },

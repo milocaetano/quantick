@@ -1,5 +1,5 @@
 # #841 app-only Pine source painting, keyboard capture, and bounded compiler runtime.
 # Editor policy/persistence live in stores; paged projections live in control-schema.
 # The adapter owns Instant, thread/channel handles and live pane-worker routing.
-crates/app +128
-!budget +128
+crates/app +150
+!budget +150

@@ -16,6 +16,7 @@ pub enum EditorOperation {
     Inspect,
     Open { id: String },
     Copy { id: String, new_id: String },
+    AddToChart { id: String },
     ReplaceSource { source: String },
     Save,
     Close,
@@ -23,7 +24,7 @@ pub enum EditorOperation {
 impl EditorOperation {
     pub fn action(self) -> Option<ScriptEditorAction> {
         Some(match self {
-            Self::List => return None,
+            Self::List | Self::AddToChart { .. } => return None,
             Self::Inspect => ScriptEditorAction::Inspect,
             Self::Open { id } => ScriptEditorAction::Open { id },
             Self::Copy { id, new_id } => ScriptEditorAction::Copy { id, new_id },
@@ -85,8 +86,8 @@ pub fn descriptor() -> CapabilityDescriptor {
         CAPABILITY_ID,
         "indicator",
         "Read, copy and edit Pine indicator source",
-        "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
-        "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Inspect/list reconcile current state. No action attaches a duplicate chart indicator.",
+        "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, add a library identity to the focused chart, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
+        "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Add-to-chart uses the existing library attachment path and is a no-op if that identity is already on the focused pane. Inspect/list reconcile current state. Editing never attaches a duplicate chart indicator.",
     );
     descriptor.persistence = EffectPersistence::Durable;
     descriptor.required_permissions.insert(

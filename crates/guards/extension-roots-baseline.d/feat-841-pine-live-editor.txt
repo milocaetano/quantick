@@ -1,4 +1,4 @@
-# #841 adds only a paged script_library_state forwarding method to ScriptsPort.
+# #841 adds paged script_library_state and canonical library attachment forwarding.
 # Its state and projection remain behind dedicated stores/control-schema modules.
-QuantickApp +12
-!budget +12
+QuantickApp +15
+!budget +15

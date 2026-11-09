@@ -58,7 +58,7 @@ impl Surface for ScriptEditorSurface {
     fn id(&self) -> &'static str {
         "script-editor"
     }
-    fn draw(&mut self, ctx: &egui::Context, _env: &SurfaceEnv<'_>) -> SurfaceResponse {
+    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         let Some(document) = self.state.document.as_ref() else {
             return SurfaceResponse::default();
         };
@@ -69,6 +69,7 @@ impl Surface for ScriptEditorSurface {
         let mut source = document.source.clone();
         let mut open = true;
         let mut actions = Vec::new();
+        let mut indicator_actions = Vec::new();
         let screen = ctx.screen_rect().size();
         egui::Window::new(format!("{} - Pine source", document.title))
             .id(egui::Id::new(self.id()))
@@ -89,6 +90,15 @@ impl Surface for ScriptEditorSurface {
                     if !document.read_only && ui.button("Save").clicked() {
                         actions.push(ScriptEditorAction::Save);
                     }
+                    if ui.button("Add to chart").clicked()
+                        && let Some(index) = env
+                            .picker_scripts
+                            .iter()
+                            .position(|entry| entry.name == document.id)
+                    {
+                        indicator_actions
+                            .push(crate::toolbar::ToolbarAction::AddScriptIndicator(index));
+                    }
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Copy name");
@@ -105,8 +115,14 @@ impl Surface for ScriptEditorSurface {
                     }
                 });
                 ui.separator();
+                let footer_height = if self.state.diagnostics.is_some() {
+                    128.0
+                } else {
+                    46.0
+                };
                 egui::ScrollArea::both()
-                    .max_height(ui.available_height() - 46.0)
+                    .id_salt("script-editor-source")
+                    .max_height((ui.available_height() - footer_height).max(40.0))
                     .show(ui, |ui| {
                         let response = if document.read_only {
                             let mut text = document.source.as_str();
@@ -133,6 +149,7 @@ impl Surface for ScriptEditorSurface {
                 ui.separator();
                 if let Some(error) = &self.state.diagnostics {
                     egui::ScrollArea::vertical()
+                        .id_salt("script-editor-diagnostics")
                         .max_height(90.0)
                         .show(ui, |ui| {
                             ui.colored_label(crate::theme::get(ctx).sell(), error);
@@ -161,6 +178,7 @@ impl Surface for ScriptEditorSurface {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         SurfaceResponse {
+            indicator_actions,
             script_editor_actions: actions,
             ..Default::default()
         }

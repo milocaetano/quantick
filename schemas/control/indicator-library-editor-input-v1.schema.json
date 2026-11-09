@@ -70,6 +70,23 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "add_to_chart",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "replace_source",
               "type": "string"
             },

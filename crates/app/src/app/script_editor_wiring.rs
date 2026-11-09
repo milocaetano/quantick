@@ -7,6 +7,28 @@ use crate::{
 use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction, ScriptLibraryPort};
 use std::time::Instant;
 
+pub(super) fn add_to_chart(app: &mut super::QuantickApp, id: &str) -> Result<(), String> {
+    ScriptLibraryPort::read(&app.runtime.indicators.script_library, id)?;
+    let index = app
+        .runtime
+        .indicators
+        .script_library
+        .entries()
+        .iter()
+        .position(|entry| entry.name == id)
+        .ok_or("unknown library script")?;
+    let tab = app.runtime.tabs.active_id();
+    let side = app.active_tab().focused_side();
+    if app.runtime.indicators.registry.slot_kinds().iter().any(|(owner, kind)| {
+        owner.workspace == app.runtime.id() && owner.tab == tab && owner.side == side
+            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id)
+    }) {
+        return Ok(());
+    }
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::AddScriptIndicator(index));
+    Ok(())
+}
+
 pub(super) fn inspect(
     surfaces: &Surfaces,
     indicators: &IndicatorState,

@@ -7,6 +7,11 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     let sources = crate::scratch::ScratchDir::new("library-control-sources");
+    std::fs::write(
+        sources.join("oversized.pine"),
+        vec![b'x'; quantick_stores::script_library::MAX_SOURCE_BYTES + 1],
+    )
+    .unwrap();
     app.runtime.indicators.script_library = ScriptLibrary::open(&sources);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("library-control");
@@ -92,6 +97,45 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
         1
     );
     assert!(sources.join("control-copy.pine").exists());
+    let add = json!({"operation":{"action":"add_to_chart","id":"control-copy.pine"}});
+    let first_add = keyed_call(
+        &mut app,
+        &mut client,
+        "add-first",
+        capability,
+        add.clone(),
+        "library-add",
+    )
+    .0;
+    let retry_add = keyed_call(
+        &mut app,
+        &mut client,
+        "add-retry",
+        capability,
+        add.clone(),
+        "library-add",
+    )
+    .0;
+    assert_eq!(success_result(&first_add), success_result(&retry_add));
+    let _ = unkeyed_call(&mut app, &mut client, capability, add);
+    settle_indicators(&mut app);
+    assert_eq!(app.active_tab().focused_pane().indicators.all().len(), 1);
+    let refused = unkeyed_call(
+        &mut app,
+        &mut client,
+        capability,
+        json!({"operation":{"action":"open","id":"oversized.pine"}}),
+    )
+    .0;
+    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+    let oversized_add = unkeyed_call(
+        &mut app,
+        &mut client,
+        capability,
+        json!({"operation":{"action":"add_to_chart","id":"oversized.pine"}}),
+    )
+    .0;
+    assert_eq!(error_code(&oversized_add), Some(codes::INVALID_REQUEST));
     let private_source = "plot(private_signal)";
     let _ = unkeyed_call(
         &mut app,

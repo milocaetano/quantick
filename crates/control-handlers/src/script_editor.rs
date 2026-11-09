@@ -8,6 +8,9 @@ use quantick_control_schema::script_editor::{
 use serde_json::Value;
 
 pub trait ScriptEditorPort {
+    fn add_library_script(&mut self, _id: &str) -> Result<(), String> {
+        Err("library attachment is not available in this build".into())
+    }
     fn script_editor(
         &mut self,
         action: ScriptEditorAction,
@@ -33,8 +36,16 @@ fn edit<H: ScriptEditorPort + ?Sized, A: JournalAccess>(
     if input.limit == 0 || input.limit > MAX_PAGE {
         return Err(ControlError::invalid_request("limit must be in 1..=64"));
     }
-    if let Some(action) = input.operation.action() {
-        dispatch(host, action).map_err(ControlError::invalid_request)?;
+    match input.operation {
+        quantick_control_schema::script_editor::EditorOperation::AddToChart { id } => {
+            host.add_library_script(&id)
+                .map_err(ControlError::invalid_request)?;
+        }
+        operation => {
+            if let Some(action) = operation.action() {
+                dispatch(host, action).map_err(ControlError::invalid_request)?;
+            }
+        }
     }
     let result = host.script_library_state(input.offset, input.limit);
     access.record_event(NewEvent::by(

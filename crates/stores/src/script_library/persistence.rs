@@ -145,6 +145,15 @@ mod tests {
         ] {
             assert!(library.copy("rsi.pine", invalid).is_err(), "{invalid}");
         }
+        std::fs::write(directory.join("limit.pine"), vec![b'x'; MAX_SOURCE_BYTES]).unwrap();
+        let exact = ScriptLibrary::open(&directory);
+        assert_eq!(
+            ScriptLibraryPort::read(&exact, "limit.pine")
+                .unwrap()
+                .source
+                .len(),
+            MAX_SOURCE_BYTES
+        );
         std::fs::write(
             directory.join("large.pine"),
             vec![b'x'; MAX_SOURCE_BYTES + 1],

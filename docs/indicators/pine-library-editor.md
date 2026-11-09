@@ -2,7 +2,8 @@
 
 Open **Indicators**, choose **Scripts**, then **View source**. Bundled indicators
 are read-only. Enter a distinct name such as `my-rsi.pine` and choose **Create
-editable copy**. Copies appear in the script library and can be added to any chart.
+editable copy**. Choose **Add to chart** to attach it through the picker's existing
+path. Copies also appear in the script library and can be added to any chart.
 The name is a stable identity; menus and source windows show readable titles.
 Existing names, path separators and directory traversal are refused.
 
@@ -15,10 +16,13 @@ settings survive reopening the workspace. Save is also available explicitly; wai
 for pending validation to finish before closing the editor.
 
 For an agent, discover `indicator.library.edit`. Its `operation.action` accepts
-`list`, `open` (also reads source), `copy`, `replace_source`, `save`, `inspect` and
+`list`, `open` (also reads source), `copy`, `add_to_chart` (with stable `id`),
+`replace_source`, `save`, `inspect` and
 `close`. `list`/`inspect` return up to 64 library entries per page (`offset`, `limit`),
 the open document, revision, dirty/compiling state and diagnostics. Source is
 limited to 256 KiB. The call requires cockpit/layout and user-text permissions.
+Add-to-chart preserves library identity, file watching and workspace settings;
+repeating it for the same identity on the focused pane is a no-op.
 Use an idempotency key when creating a copy; the same key replays its first result.
 The journal records only editor status and revision, excluding private source.
 

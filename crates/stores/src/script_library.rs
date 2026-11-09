@@ -199,8 +199,7 @@ impl ScriptLibrary {
         let entry = self.entries.get(index)?;
         Some(match &entry.origin {
             ScriptOrigin::Embedded(source) => Ok((*source).to_owned()),
-            ScriptOrigin::File(path) => std::fs::read_to_string(path)
-                .map_err(|e| format!("cannot read {}: {e}", path.display())),
+            ScriptOrigin::File(path) => persistence::read_source(path),
         })
     }
 }
@@ -220,10 +219,7 @@ impl ScriptLibraryPort for ScriptLibrary {
         Ok(ScriptDocument {
             id: entry.name.clone(),
             title: script_title(&entry.name).to_owned(),
-            source: match &entry.origin {
-                ScriptOrigin::Embedded(source) => (*source).to_owned(),
-                ScriptOrigin::File(path) => persistence::read_source(path)?,
-            },
+            source: self.read(index).expect("the entry exists")?,
             read_only: matches!(entry.origin, ScriptOrigin::Embedded(_)),
         })
     }

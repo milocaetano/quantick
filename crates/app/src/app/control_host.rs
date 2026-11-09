@@ -140,6 +140,9 @@ pub(crate) trait IndicatorPickerPort {
 
 /// Indicator scripts an operator attaches and detaches.
 pub(crate) trait ScriptsPort {
+    fn add_library_script(&mut self, _id: &str) -> Result<(), String> {
+        Err("library attachment is not available in this build".into())
+    }
     fn script_library_state(
         &self,
         _offset: usize,
@@ -819,6 +822,9 @@ impl IndicatorPickerPort for QuantickApp {
 }
 
 impl ScriptsPort for QuantickApp {
+    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
+        super::script_editor_wiring::add_to_chart(self, id)
+    }
     fn script_library_state(
         &self,
         offset: usize,
@@ -1026,6 +1032,9 @@ impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
 }
 
 impl quantick_control_handlers::script_editor::ScriptEditorPort for ControlWindow {
+    fn add_library_script(&mut self, id: &str) -> Result<(), String> {
+        ScriptsPort::add_library_script(self, id)
+    }
     fn script_library_state(
         &self,
         offset: usize,

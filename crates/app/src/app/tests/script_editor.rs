@@ -206,6 +206,7 @@ fn script_editor_compile_recovery() {
 #[test]
 fn script_editor_manual_save_waits_for_validation() {
     let (mut app, _directory, _commands) = copy_fixture();
+    compile_edit(&mut app, "plot(close * 2)\n", 0);
     let good = values(&app);
     edit(
         &mut app,
@@ -214,14 +215,20 @@ fn script_editor_manual_save_waits_for_validation() {
         },
     );
     edit(&mut app, Action::Save);
+    edit(
+        &mut app,
+        Action::ReplaceSource {
+            source: "plot(other_unknown_value)\n".into(),
+        },
+    );
     app.runtime.indicators.last_script_poll = Instant::now() - Duration::from_secs(2);
     assert!(app.runtime.indicators.poll_script_files().is_empty());
     assert_eq!(values(&app), good);
-    editor_frame(&mut app, 0);
-    editor_frame(&mut app, 350);
+    editor_frame(&mut app, 1000);
+    editor_frame(&mut app, 1350);
     while app.surfaces.script_editor.compilation.is_some() {
         std::thread::yield_now();
-        editor_frame(&mut app, 351);
+        editor_frame(&mut app, 1351);
     }
     settle_indicators(&mut app);
     assert!(app.surfaces.script_editor.state.diagnostics.is_some());
