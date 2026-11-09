@@ -279,10 +279,10 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                 run_frame(&mut app, &ctx);
                 run_frame(&mut app, &ctx);
                 if reconnect {
-                    app.active_tab_mut().notice =
+                    app.active_tab_mut().link.notice =
                         FeedNotice::attention("Connection unavailable", "Reconnect.");
                 } else {
-                    app.active_tab_mut().feed_connection = FeedConnectionState::Connecting;
+                    app.active_tab_mut().link.feed_connection = FeedConnectionState::Connecting;
                 }
                 let config = app.config.clone();
                 let past = metrics::wall_clock_ms()

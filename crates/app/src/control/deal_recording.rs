@@ -46,7 +46,7 @@ fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(
         .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    if tab.replay.is_some() {
+    if tab.link.replay.is_some() {
         return Err(replaying(tab_id));
     }
     // Resolve every data-dependent refusal before changing the durable
@@ -66,13 +66,15 @@ fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if let Some(index) = day_index {
-        tab.load_recorded_day_checked(index)
-            .map_err(recording_error)?;
+        let loaded = tab.deal_recorder.load_day_checked(index);
+        tab.retain_deal_samples(&loaded.map_err(recording_error)?);
     }
     if let Some(enabled) = input.enabled {
         if enabled {
-            tab.start_deal_recording_checked(crate::metrics::wall_clock_ms())
-                .map_err(recording_error)?;
+            let resumed = tab
+                .deal_recorder
+                .start_checked(crate::metrics::wall_clock_ms());
+            tab.retain_deal_samples(&resumed.map_err(recording_error)?);
         } else {
             tab.apply_deal_recording(DealRecordingAction::Stop);
         }

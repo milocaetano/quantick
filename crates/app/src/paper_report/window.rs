@@ -217,7 +217,6 @@ impl ReportState {
         tz: TzOffset,
         env: &ReportEnv<'_>,
     ) -> ReportResponse {
-        let palette = theme::get(ctx);
         let mut asked = ReportResponse {
             // Anything the filter row posted before this frame leaves now,
             // whether or not the window is still open: a refusal the trader
@@ -322,89 +321,9 @@ impl ReportState {
                         #[cfg(any(feature = "scenario-harness", test))]
                         self.scroll_probe.rows(ui);
                     }
-                    _ => {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new("No saved trades for this filter.")
-                                .color(palette.text_primary()),
-                        );
-                        let scope = self
-                            .report_symbol
-                            .as_deref()
-                            .unwrap_or("any symbol")
-                            .to_owned();
-                        let hidden_by_source = self
-                            .report_view
-                            .as_ref()
-                            .map_or(0, |view| view.hidden_by_source);
-                        let picked = self.calendar.selection.range();
-                        let text = if let Some(range) = picked {
-                            // The dates are the user's own pick, so the
-                            // refusal names them and the way back out.
-                            format!(
-                                "{scope} closed no trades in {} - pick another day, or clear \
-                                 the date filter to go back to the period pills.",
-                                range.label(),
-                            )
-                        } else if hidden_by_source > 0 {
-                            // The trades exist; the one control that would
-                            // reveal them must be named, not implied.
-                            format!(
-                                "{scope} has {hidden_by_source} trade(s) behind the Source \
-                                 filter. Try Source \"Both\".",
-                            )
-                        } else {
-                            format!(
-                                "{scope} has no trades in {}. Try \"All\", or another symbol.",
-                                self.report_period.phrase(),
-                            )
-                        };
-                        ui.label(egui::RichText::new(text).color(palette.text_support()));
-                        let default_symbol =
-                            (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
-                        if (self.report_period != ReportPeriod::All
-                            || self.report_symbol != default_symbol
-                            || picked.is_some())
-                            && ui
-                                .button("Clear filters")
-                                .on_hover_text("back to this symbol, all time, no dates")
-                                .clicked()
-                        {
-                            self.report_symbol = default_symbol;
-                            self.report_period = ReportPeriod::All;
-                            self.report_source = SourceFilter::Real;
-                            self.pick_report_dates(DaySelection::None);
-                            reload = true;
-                        }
-                    }
+                    _ => reload |= self.draw_report_empty(ui, env),
                 }
-                ui.add_space(6.0);
-                if let Some(history) = &self.report {
-                    if history.unreadable_files > 0 || history.problem_rows > 0 {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} file(s) unreadable, {} row(s) skipped - counted, never \
-                                 silently dropped.",
-                                history.unreadable_files, history.problem_rows,
-                            ))
-                            .color(palette.warn())
-                            .small(),
-                        );
-                    }
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} trade(s) across {} file(s) in scope",
-                            history.rows.len(),
-                            history.files
-                        ))
-                        .color(palette.text_muted())
-                        .small(),
-                    );
-                }
-                let _footer =
-                    ui.label(egui::RichText::new(env.pnl.footnote()).color(palette.text_support()));
-                #[cfg(any(feature = "scenario-harness", test))]
-                self.scroll_probe.footer(ui, _footer.rect);
+                self.draw_report_footer(ui, env);
             });
         if toggle_list {
             self.report_list_open = !self.report_list_open;
@@ -420,6 +339,95 @@ impl ReportState {
             asked.toast = Some(message);
         }
         asked
+    }
+
+    /// Why nothing is listed and the way back; true when history must reload.
+    fn draw_report_empty(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> bool {
+        let palette = theme::get(ui.ctx());
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("No saved trades for this filter.").color(palette.text_primary()),
+        );
+        let scope = self
+            .report_symbol
+            .as_deref()
+            .unwrap_or("any symbol")
+            .to_owned();
+        let hidden_by_source = self
+            .report_view
+            .as_ref()
+            .map_or(0, |view| view.hidden_by_source);
+        let picked = self.calendar.selection.range();
+        let text = if let Some(range) = picked {
+            // The dates are the user's own pick, so the
+            // refusal names them and the way back out.
+            format!(
+                "{scope} closed no trades in {} - pick another day, or clear \
+                 the date filter to go back to the period pills.",
+                range.label(),
+            )
+        } else if hidden_by_source > 0 {
+            // The trades exist; the one control that would
+            // reveal them must be named, not implied.
+            format!(
+                "{scope} has {hidden_by_source} trade(s) behind the Source \
+                 filter. Try Source \"Both\".",
+            )
+        } else {
+            format!(
+                "{scope} has no trades in {}. Try \"All\", or another symbol.",
+                self.report_period.phrase(),
+            )
+        };
+        ui.label(egui::RichText::new(text).color(palette.text_support()));
+        let default_symbol = (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
+        if (self.report_period != ReportPeriod::All
+            || self.report_symbol != default_symbol
+            || picked.is_some())
+            && ui
+                .button("Clear filters")
+                .on_hover_text("back to this symbol, all time, no dates")
+                .clicked()
+        {
+            self.report_symbol = default_symbol;
+            self.report_period = ReportPeriod::All;
+            self.report_source = SourceFilter::Real;
+            self.pick_report_dates(DaySelection::None);
+            return true;
+        }
+        false
+    }
+
+    /// The unreadable-file count, the scope line and the P&L footnote.
+    fn draw_report_footer(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
+        let palette = theme::get(ui.ctx());
+        ui.add_space(6.0);
+        if let Some(history) = &self.report {
+            if history.unreadable_files > 0 || history.problem_rows > 0 {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} file(s) unreadable, {} row(s) skipped - counted, never \
+                         silently dropped.",
+                        history.unreadable_files, history.problem_rows,
+                    ))
+                    .color(palette.warn())
+                    .small(),
+                );
+            }
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} trade(s) across {} file(s) in scope",
+                    history.rows.len(),
+                    history.files
+                ))
+                .color(palette.text_muted())
+                .small(),
+            );
+        }
+        let _footer =
+            ui.label(egui::RichText::new(env.pnl.footnote()).color(palette.text_support()));
+        #[cfg(any(feature = "scenario-harness", test))]
+        self.scroll_probe.footer(ui, _footer.rect);
     }
 
     /// The filter row (symbol combo + period pills + refresh) and the

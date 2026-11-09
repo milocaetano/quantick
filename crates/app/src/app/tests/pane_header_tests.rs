@@ -636,7 +636,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
 }
 
 fn set_capabilities(app: &mut QuantickApp, capabilities: quantick_feed::config::FeedCapabilities) {
-    app.active_tab_mut().feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
+    app.active_tab_mut().link.feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
 }
 
 /// What the data blocks leaves the capsule and the scene with its sample; the
@@ -1901,7 +1901,7 @@ fn a_fold_follows_the_asset_and_open_follows_the_tab() {
 fn a_tab_without_its_flow_pane_has_no_gear_and_refuses_the_call() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(scene_selected(&app, GEAR), None);
@@ -2099,7 +2099,7 @@ fn the_settings_scope_reads_the_panel_without_a_paint() {
     let fold = json!({ "section": "bubbles", "open": false });
     settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
     assert_eq!(read(&app), (false, true, false));
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
     assert_eq!(read(&app), (false, true, false), "nothing of it painted");
 }
@@ -2941,10 +2941,10 @@ fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
         );
     };
     open(&mut app);
-    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    assert!(app.active_tab_mut().canvas.set_flow_collapsed(true));
     run_frame(&mut app, &ctx);
     assert!(!ctx.memory(|memory| memory.any_popup_open()), "collapsed");
-    app.active_tab_mut().set_flow_collapsed(false);
+    app.active_tab_mut().canvas.set_flow_collapsed(false);
     open(&mut app);
     let first = app.runtime.tabs.active_index();
     app.arrangement_adapter()

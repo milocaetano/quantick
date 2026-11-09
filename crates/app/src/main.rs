@@ -32,7 +32,6 @@ mod chart_layers;
 mod config;
 mod control;
 mod deal_recording;
-mod deal_recording_tab;
 mod deal_recording_ui;
 mod dock;
 mod drawings;

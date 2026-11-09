@@ -57,7 +57,7 @@ fn replay_clock_uses_applied_prints_to_bound_playhead_motion_and_pause() {
     let status = std::sync::Arc::clone(&link.status);
     let (mut app, _events, _commands, _book) = test_app();
     enable_tape_only(&mut app);
-    app.active_tab_mut().replay = Some(link);
+    app.active_tab_mut().link.replay = Some(link);
     app.active_tab_mut().flow_pane.ingest_backfill(&[first]);
 
     replay_support::set_position_ms(&status, start + 1_000);
@@ -178,7 +178,7 @@ fn the_time_countdown_reads_the_market_clock_live_and_replayed() {
     app.active_tab_mut()
         .flow_pane
         .set_spec(quantick_engine::BarSpec::Time(60_000));
-    app.active_tab_mut().replay = Some(link);
+    app.active_tab_mut().link.replay = Some(link);
     app.active_tab_mut()
         .flow_pane
         .ingest_backfill(std::slice::from_ref(&first));

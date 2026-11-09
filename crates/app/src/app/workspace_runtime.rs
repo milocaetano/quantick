@@ -19,7 +19,7 @@ pub(super) struct WorkspaceRuntime {
     pub(super) footprint_config: crate::footprint_config::FootprintConfig,
     pub(super) style: crate::style::ChartStyle,
     pub(super) style_revision: u64,
-    pub(super) history: super::tabs::HistorySettings,
+    pub(super) history: quantick_session::HistorySettings,
     pub(super) tz: crate::timezone::TzOffset,
     pub(super) workspace: crate::workspace_store::WorkspaceStore,
 }
@@ -53,7 +53,7 @@ impl WorkspaceRuntime {
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             style: crate::style::ChartStyle::default(),
             style_revision: 0,
-            history: super::tabs::HistorySettings {
+            history: quantick_session::HistorySettings {
                 progressive_history: true,
                 history_reach: quantick_feed::history_reach::HistoryReach::default(),
                 history_reach_span_minutes: reach_span_minutes,
@@ -101,16 +101,44 @@ impl WorkspaceRuntime {
         let active = self.tabs.active_id();
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
-            let before = tab.live_trades;
+            let before = tab.link.live_trades;
             let policy = self.history.policy(self.tz, tab_id == active);
             tab.drain_frame(tab_id, config, policy);
-            trades += tab.live_trades - before;
+            trades += tab.link.live_trades - before;
         }
         trades
     }
 
     pub(super) fn id(&self) -> WorkspaceId {
         self.lifetime.id()
+    }
+    /// This workspace as `view` reaches it; a view that no longer resolves is
+    /// a broken binding, so it panics rather than answering for another view.
+    pub(super) fn bound(&self, view: &WorkspaceView) -> &Self {
+        self.resolve(view).expect("bound workspace")
+    }
+    pub(super) fn bound_mut(&mut self, view: &WorkspaceView) -> &mut Self {
+        self.resolve_mut(view).expect("bound workspace")
+    }
+    pub(super) fn active_tab(&self) -> &crate::tab::Tab {
+        &self.tabs[self.tabs.active_index()]
+    }
+    pub(super) fn active_tab_mut(&mut self) -> &mut crate::tab::Tab {
+        self.tabs.runtime_mut(self.tabs.active_index())
+    }
+    /// The slot a command from the chrome addresses: the active tab, its
+    /// focused pane, that slot.
+    pub(super) fn target_slot(&self, slot: crate::indicator_worker::SlotId) -> super::TabSlot {
+        let tab = self.active_tab();
+        let (pane, side) = (tab.focused_pane().id, tab.focused_side());
+        let (workspace, tab) = (self.id(), self.tabs.active_id());
+        super::TabSlot {
+            workspace,
+            pane,
+            tab,
+            side,
+            slot,
+        }
     }
     pub(super) fn resolve(&self, view: &WorkspaceView) -> Result<&Self, LifetimeError> {
         self.lifetime.resolve(view)?;

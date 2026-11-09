@@ -96,8 +96,8 @@ pub(super) fn chips_of<'a>(
                 id,
                 label: tab.chip_label(),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
-                    tab.replay.is_some(),
-                    tab.feed_connection == quantick_feed::FeedConnectionState::Connected,
+                    tab.link.replay.is_some(),
+                    tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,
                     tab.needs_attention(),
                 ),
             }

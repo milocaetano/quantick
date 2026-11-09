@@ -6,12 +6,15 @@
 //! because the window menu is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
+use super::arrangement_adapter::StripAsk;
 use super::{GatewayPort, LayersPort, LayoutPort};
-use crate::chart_layers::shortcuts;
-use crate::{orderflow_panel as panel, surfaces::ChartSettingsTab::Candles};
+use crate::orderflow_panel as panel;
+use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
+use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
+use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
@@ -151,6 +154,35 @@ pub(super) const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
 const SETTINGS_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Comma);
 
+/// A live market a close took goes to Recent with its bar; `+` opens the palette.
+pub(super) fn settle_strip(
+    palette: &mut MarketPaletteSurface,
+    tz: TzOffset,
+    (open, closed): StripAsk,
+) {
+    if let Some(tab) = closed.filter(|tab| tab.link.replay.is_none()) {
+        let now = crate::metrics::wall_clock_ms();
+        let stamp = quantick_civil::fmt_offset_minute(now, tz);
+        let closed = quantick_workspace::market_list::ClosedMarket {
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            at: stamp.get(11..).unwrap_or_default().to_owned(),
+            price: last_price(&tab),
+            bar: tab.flow_pane.state.spec().to_config_string(),
+            context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
+        };
+        palette.recent.closed(closed);
+    }
+    if open {
+        palette.open("", None);
+    }
+}
+
+pub(super) fn last_price(tab: &crate::tab::Tab) -> Option<String> {
+    let bar = tab.flow_pane.state.bars().last()?;
+    Some(bar.close.to_string())
+}
+
 /// A shortcut as the chrome prints it, with the one key egui spells out.
 pub(super) fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
     ctx.format_shortcut(shortcut).replace("Comma", ",")
@@ -178,6 +210,31 @@ impl QuantickApp {
         }
     }
 
+    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle; none under the palette.
+    pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
+        self.read_view_keys(ctx);
+        let mut keys = super::home_wiring::read_tab_keys(ctx);
+        if !self.surfaces.market_palette.is_open() {
+            if std::mem::take(&mut keys.close_tab) && !self.chrome.title_bar.surface.is_home() {
+                self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
+            }
+            let asked = self.arrangement_adapter().apply_tab_keys(keys);
+            settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
+        }
+    }
+
+    /// Carry out what the tab strip asked for; a close asks first while the
+    /// tab holds unsaved workspace edits.
+    pub(super) fn apply_tab_action(&mut self, action: TabAction) {
+        if let TabAction::Close(index) = action {
+            let tab = (index < self.runtime.tabs.len()).then(|| self.runtime.tabs.id_at(index));
+            let close = WorkspaceCommand::Close(CloseScope::Tabs, Vec::from_iter(tab));
+            return super::tab_workspaces::apply_workspace_command(self, close);
+        }
+        let asked = self.arrangement_adapter().apply_tab_action(action);
+        settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
+    }
+
     /// The title strip and its `⋮` menu (§10): a shallow menu for discoverability
     /// and shortcuts, never the only path to anything.
     ///
@@ -186,8 +243,8 @@ impl QuantickApp {
     /// and the tab strip record is carried out once it is drawn.
     pub(super) fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         let mut commands = Vec::new();
-        let context_column =
-            self.active_tab().layout.shows_time() && self.active_tab().layout.shows_flow();
+        let layout = self.active_tab().canvas.layout;
+        let context_column = layout.shows_time() && layout.shows_flow();
         let chart_shown = !self.chrome.title_bar.surface.is_home();
         commands::read_shortcuts(ctx, context_column, chart_shown, &mut commands);
         for command in commands.drain(..) {
@@ -211,7 +268,14 @@ impl QuantickApp {
         draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
         workspace_rows::name_dialog(self, ctx, &mut commands);
-        super::native_windows::close_prompt(self, ctx);
+        // The close prompt: an answer settles its tab, an exit's last answer closes the app.
+        let focused = self.runtime.tabs.windows().focused();
+        let queue = &self.chrome.window_menu.tab_workspace.close;
+        if let Some(answer) = super::native_windows::close_answer(focused, queue, ctx) {
+            super::tab_workspaces::apply_workspace_command(self, answer);
+            let queue = &mut self.chrome.window_menu.tab_workspace.close;
+            self.presentation.native.exit_when_settled(queue, ctx);
+        }
         for command in commands {
             apply_menu_command_on(self, ctx, command);
         }
@@ -241,8 +305,8 @@ impl QuantickApp {
                 }
             }
             MenuCommand::ToggleContextCharts => {
-                let collapsed = self.active_tab().context_collapsed;
-                self.active_tab_mut().set_context_collapsed(!collapsed);
+                let canvas = &mut self.active_tab_mut().canvas;
+                canvas.set_context_collapsed(!canvas.context_collapsed);
             }
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {
@@ -325,7 +389,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
     menus::WindowMenu {
         workspace,
         chart_shown: !app.chrome.title_bar.surface.is_home(),
-        replaying: app.active_tab().replay.is_some(),
+        replaying: app.active_tab().link.replay.is_some(),
         layouts: app.layout_state(),
         tab: app.active_tab(),
         dock_visible: app.dock.visible(),

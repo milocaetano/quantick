@@ -12,7 +12,7 @@ fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().set_context_collapsed(true);
+    app.active_tab_mut().canvas.set_context_collapsed(true);
     run_frame(&mut app, &ctx);
 
     let context_ids = app
@@ -66,8 +66,9 @@ fn folded_flow_and_upper_context_have_no_stale_geometry_or_scene_canvases() {
     let visible_id = tab.time_panes[1].id;
 
     let tab = app.active_tab_mut();
-    tab.restore_context_heights(&[0.4, 0.6], &[true, false]);
-    tab.set_flow_collapsed(true);
+    tab.canvas
+        .restore_context_heights(&[0.4, 0.6], &[true, false]);
+    tab.canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
@@ -151,7 +152,7 @@ plot(close)
 fn the_scene_names_the_corner_and_what_operates_it() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
 
     let scene = observer_scene(&app);
@@ -288,7 +289,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     let dir = crate::scratch::ScratchDir::new("replay-restart-hook");
     let journal = dir.join("journal");
     app.active_tab_mut().paper.redirect_history_dir(journal);
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     while cmd_rx.try_recv().is_ok() {}
     app.chrome.harness.arm_replay_restart(1);
 
@@ -649,7 +650,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().split_fraction = 0.35;
+    app.active_tab_mut().canvas.split_fraction = 0.35;
     app.active_tab_mut().focus = PaneSide::Flow;
     app.runtime.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);
@@ -1765,7 +1766,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
     // zero for every tape, on every capture, forever.
     let (mut aged, _aged_commands) = app_with_history(8);
     let a_minute_ago = metrics::wall_clock_ms() - 60_000;
-    aged.active_tab_mut().latest_trade_ms = Some(a_minute_ago);
+    aged.active_tab_mut().link.latest_trade_ms = Some(a_minute_ago);
     let late = registry
         .capture(
             &aged,
@@ -1910,7 +1911,7 @@ fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
     assert!(live.scopes[&scope].value["tabs"][0]["session"].is_null());
 
     // The same tab, now playing a recording written to disk.
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let playing = registry
         .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
         .unwrap()
@@ -3920,15 +3921,15 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let ctx = egui::Context::default();
     let dir = crate::scratch::ScratchDir::new("control-trace-two-tabs");
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     hover_bar(&mut app, &ctx, 6);
     app.take_mark(Some("once".to_owned()));
     drop(app);
 
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    app.runtime.tabs.runtime_mut(1).replay =
+    app.runtime.tabs.runtime_mut(1).link.replay =
         Some(replay_test_support::detached_link(recording_at(&dir)));
     app.runtime.tabs.select(0);
     for _ in 0..3 {
@@ -4314,7 +4315,7 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
         .selected_mut()
         .expect("selected drawing")
         .scope = drawings::DrawingScope::AllCharts;
-    app.active_tab_mut().notice = FeedNotice::attention(CANARY, CANARY);
+    app.active_tab_mut().link.notice = FeedNotice::attention(CANARY, CANARY);
     run_frame(&mut app, &ctx);
 
     let time_chart = app
@@ -5748,7 +5749,7 @@ fn control_idle_dense_replay_benchmark() {
     let trades_per_second = MEASURED_FRAMES as f64 * TRADES_PER_FRAME as f64 / elapsed;
     println!(
         "CONTROL_IDLE_DENSE_REPLAY {{\"frame_cpu_ms\":{average:.6},\"frame_p99_ms\":{p99:.6},\"frame_worst_ms\":{worst:.6},\"feed_arrival_ms\":{:?},\"trades_per_s\":{trades_per_second:.3},\"frames\":{MEASURED_FRAMES},\"trades_per_frame\":{TRADES_PER_FRAME}}}",
-        app.active_tab().trade_arrival_ms()
+        app.active_tab().link.trade_arrival_ms()
     );
 }
 

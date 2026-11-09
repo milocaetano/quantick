@@ -10,7 +10,7 @@ fn configured_feed_selection_is_validated_retry_safe_and_reads_back() {
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let input = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
         "feed_id":app.active_tab().active.0, "symbol":app.active_tab().active.1});
-    let generation = app.active_tab().feed_generation();
+    let generation = app.active_tab().link.feed_generation();
     let mut observer = connect(&directory, &options("observer", &[]));
     let (denied, _) = unkeyed_call(&mut app, &mut observer, "feed.source.set", input.clone());
     assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
@@ -40,7 +40,7 @@ fn configured_feed_selection_is_validated_retry_safe_and_reads_back() {
     );
     assert_eq!(first.outcome, retry.outcome);
     assert_eq!(success_result(&first)["changed"], false);
-    assert_eq!(app.active_tab().feed_generation(), generation);
+    assert_eq!(app.active_tab().link.feed_generation(), generation);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 4);
     let (read, _) = unkeyed_call(
         &mut app,
@@ -90,7 +90,7 @@ fn a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position() 
         &directory,
         &options("cockpit", &["cockpit", "cockpit.recover"]),
     );
-    let generation = app.active_tab().feed_generation();
+    let generation = app.active_tab().link.feed_generation();
     let input = json!({"tab_id": tab_id.to_string(), "feed_id": "binance", "symbol": "ETHUSDT"});
     let (first, _) = keyed_call(
         &mut app,
@@ -107,7 +107,7 @@ fn a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position() 
         (&result["from_feed_id"], &result["from_symbol"]),
         (&json!("binance"), &json!("TESTUSDT"))
     );
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert!(
         app.active_tab().paper.is_flat(),
@@ -127,7 +127,7 @@ fn a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position() 
         "switch-key",
     );
     assert_eq!(first.outcome, retry.outcome);
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
     let (read, _) = unkeyed_call(
         &mut app,
         &mut cockpit,
@@ -189,13 +189,13 @@ fn a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.recover"]),
     );
-    let generation = app.active_tab().feed_generation();
+    let generation = app.active_tab().link.feed_generation();
     let (rolled, _) = unkeyed_call(&mut app, &mut cockpit, "feed.contract.roll", input.clone());
     let result = success_result(&rolled);
     assert_eq!(result["symbol"], "ETHUSDT");
     assert_eq!(result["changed"], true);
     assert_eq!(result["drawings_carried"], 1);
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
 
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
@@ -212,7 +212,7 @@ fn a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing() {
 
     let (repeat, _) = unkeyed_call(&mut app, &mut cockpit, "feed.contract.roll", input);
     assert_eq!(success_result(&repeat)["changed"], false);
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
 
     run_frame(&mut app, &ctx);
     app.active_tab_mut().symbol = "TESTUSDT".to_owned();
@@ -265,7 +265,7 @@ fn a_market_switch_moves_the_button_chip_and_status_cell_together() {
     );
     let tab = app.runtime.tabs.active_id().to_string();
     let input = json!({"tab": tab, "feed": "binance", "symbol": "ETHUSDT"});
-    let generation = app.active_tab().feed_generation();
+    let generation = app.active_tab().link.feed_generation();
     let (first, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", input.clone());
     let result = success_result(&first);
     assert_eq!(
@@ -276,13 +276,13 @@ fn a_market_switch_moves_the_button_chip_and_status_cell_together() {
         ),
         (&json!(true), &json!("TESTUSDT"), &json!("ETHUSDT"))
     );
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
     let after = surfaces_read(&mut app, &ctx, "ETHUSDT");
     assert_eq!(after, ["ETHUSDT \u{b7} Binance"; 3].map(str::to_owned));
 
     let (repeat, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", input);
     assert_eq!(success_result(&repeat)["changed"], false);
-    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    assert_eq!(app.active_tab().link.feed_generation(), generation + 1);
     let invalid = json!({"tab": tab, "feed": "binance", "symbol": "NOT_LISTED"});
     let (refused, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", invalid);
     assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));

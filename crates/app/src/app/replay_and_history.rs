@@ -140,7 +140,7 @@ pub(super) fn apply_replay_action(tab: &mut Tab, config: &AppConfig, action: Rep
             // A dropped transport click is not worth a retry queue: the
             // worker drains commands every 8 ms, so a full channel means
             // the click was already superseded.
-            if let Err(e) = tab.commands.try_send(FeedCommand::Replay(control)) {
+            if let Err(e) = tab.link.commands.try_send(FeedCommand::Replay(control)) {
                 tracing::debug!(
                     target: "quantick::app",
                     event_code = "REPLAY_COMMAND_DROPPED",
@@ -465,7 +465,7 @@ impl Harness {
             return;
         };
         let (_, tab) = active_with_id(tabs);
-        if tab.replay.is_none() || tab.paper.session_trades().len() < after {
+        if tab.link.replay.is_none() || tab.paper.session_trades().len() < after {
             return;
         }
         // Spent only once the transport took it. A hook that cleared itself

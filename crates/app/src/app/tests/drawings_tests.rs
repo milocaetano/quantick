@@ -1003,13 +1003,17 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
-    let floor = app.active_tab().latest_trade_ms.expect("a print landed");
+    let floor = app
+        .active_tab()
+        .link
+        .latest_trade_ms
+        .expect("a print landed");
     assert!(held > 0, "the timeline this test keeps has to exist");
 
     // What `reconnect_feed` sets before it swaps the handle. Set here
     // rather than by calling it, because respawning the feed would open a
     // real socket and this is a proof about the filter, not the transport.
-    app.active_tab_mut().resume_floor_ms = Some(floor);
+    app.active_tab_mut().link.resume_floor_ms = Some(floor);
 
     // The new session opens by replaying its recent window — the same
     // prints, plus one from after the silence.
@@ -1036,11 +1040,11 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
         "the replayed window is overlap, not three new prints"
     );
     assert_eq!(
-        tab.resume_floor_ms, None,
+        tab.link.resume_floor_ms, None,
         "one print past the floor is what retires it"
     );
     assert_eq!(
-        tab.feed_gaps,
+        tab.link.feed_gaps,
         vec![quantick_feed::FeedGap {
             from_ms: floor,
             to_ms: resumed.timestamp_ms,
@@ -1060,8 +1064,12 @@ fn a_reconnect_that_worked_leaves_no_mark() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let floor = app.active_tab().latest_trade_ms.expect("a print landed");
-    app.active_tab_mut().resume_floor_ms = Some(floor);
+    let floor = app
+        .active_tab()
+        .link
+        .latest_trade_ms
+        .expect("a print landed");
+    app.active_tab_mut().link.resume_floor_ms = Some(floor);
 
     let resumed = quantick_engine::Trade {
         agg_id: 2,
@@ -1075,7 +1083,7 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     app.active_tab_mut().drain_feed(tab_id);
 
     assert!(
-        app.active_tab().feed_gaps.is_empty(),
+        app.active_tab().link.feed_gaps.is_empty(),
         "a recovery that took under the threshold has nothing to declare"
     );
 }
@@ -1089,10 +1097,13 @@ fn short_gap_captions_stay_exact_and_clear_of_loading_and_footer_chrome() {
             app.active_tab_mut().tape_mut().set_enabled(true, 10);
             app.active_tab_mut().tape_mut().flush_for_test();
             let to_ms = trade(180).timestamp_ms;
-            app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
-                from_ms: to_ms - duration_ms,
-                to_ms,
-            });
+            app.active_tab_mut()
+                .link
+                .feed_gaps
+                .push(quantick_feed::FeedGap {
+                    from_ms: to_ms - duration_ms,
+                    to_ms,
+                });
             run_frame_at(&mut app, &ctx, size);
             let output = run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
             let rect_for = |label: &str| {
@@ -4626,8 +4637,9 @@ fn full_restart_channel_rolls_back_grouping_without_losing_history() {
         .tape_mut()
         .base_capture_grouping_for_test();
     let (full_tx, mut full_rx) = mpsc::channel(1);
-    app.active_tab_mut().commands = full_tx;
+    app.active_tab_mut().link.commands = full_tx;
     app.active_tab()
+        .link
         .commands
         .try_send(FeedCommand::LoadOlder { count: 1 })
         .unwrap();
@@ -4676,7 +4688,8 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
         *len = 21;
     }
     let change = app.runtime.indicators.apply_settings();
-    app.apply_indicator_settings_change(change);
+    app.indicator_wiring()
+        .apply_indicator_settings_change(change);
     assert!(
         app.runtime.indicators.indicator_settings.is_some(),
         "Apply keeps the dialog open for the next nudge"
@@ -5598,23 +5611,23 @@ fn the_attention_dot_marks_lost_connections_and_nothing_else() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let tab = app.active_tab_mut();
 
-    assert_eq!(tab.feed_connection, FeedConnectionState::Connecting);
+    assert_eq!(tab.link.feed_connection, FeedConnectionState::Connecting);
     assert!(
         !tab.needs_attention(),
         "still connecting is not yet trouble"
     );
 
-    tab.feed_connection = FeedConnectionState::Connected;
+    tab.link.feed_connection = FeedConnectionState::Connected;
     assert!(!tab.needs_attention(), "nor is a healthy feed");
 
-    tab.feed_connection = FeedConnectionState::Reconnecting;
+    tab.link.feed_connection = FeedConnectionState::Reconnecting;
     assert!(
         tab.needs_attention(),
         "a feed that had a connection and lost it is"
     );
 
-    tab.feed_connection = FeedConnectionState::Connected;
-    tab.notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
+    tab.link.feed_connection = FeedConnectionState::Connected;
+    tab.link.notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
     assert!(
         tab.needs_attention(),
         "so is one asking the user to fix something"
@@ -5643,7 +5656,7 @@ fn the_attention_dot_marks_lost_connections_and_nothing_else() {
         )
     });
     let tab = app.active_tab_mut();
-    tab.feed_connection = FeedConnectionState::Reconnecting;
+    tab.link.feed_connection = FeedConnectionState::Reconnecting;
     assert!(
         !tab.needs_attention(),
         "a replaying tab has no transport to report on"
@@ -5720,7 +5733,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
 
     // First run: a human takes a mark while the session is linked.
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(session));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(session));
     hover_bar(&mut app, &ctx, 6);
     app.take_mark(Some("traced".to_owned()));
     assert!(
@@ -5750,7 +5763,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     // re-injects the mark at its logical time with no human present, and
     // the replayed mark names the same bar.
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let replayed_events = app
@@ -5808,7 +5821,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
 
     // The playhead moves on, then restarts: the rerun injects the mark
     // again, at its logical time, and the sidecar still does not grow.
-    let status = std::sync::Arc::clone(&app.runtime.tabs[0].replay.as_ref().unwrap().status);
+    let status = std::sync::Arc::clone(&app.runtime.tabs[0].link.replay.as_ref().unwrap().status);
     replay_test_support::set_position_ms(&status, status.start_ms() + 5_000);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);

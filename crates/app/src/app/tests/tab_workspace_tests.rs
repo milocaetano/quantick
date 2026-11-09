@@ -34,6 +34,7 @@ fn edit_split(app: &mut QuantickApp, tab: u64, fraction: f32) {
         .tabs
         .by_id_mut(tab)
         .expect("an open tab")
+        .canvas
         .split_fraction = fraction;
     observe_tab(app, tab);
 }
@@ -186,7 +187,7 @@ fn an_edit_undone_by_hand_on_the_factory_default_reads_clean() {
         .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
     let third = app.runtime.tabs.active_id();
     frames(&mut app, 3);
-    let was = app.active_tab().split_fraction;
+    let was = app.active_tab().canvas.split_fraction;
     edit_split(&mut app, third, 0.27);
     assert_eq!(
         app.runtime.workspace.book.tab_row(third),
@@ -299,6 +300,7 @@ fn an_edit_a_command_reads_first_is_due_for_write_through() {
         .tabs
         .by_id_mut(first)
         .expect("an open tab")
+        .canvas
         .split_fraction = 0.27;
     let read_first = quantick_session::workspace_menu::WorkspaceCommand::BeginSaveAs;
     crate::app::tab_workspaces::apply_workspace_command(&mut app, read_first);
@@ -389,7 +391,7 @@ fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
     );
     let tab = app.runtime.tabs.by_id(third).expect("the new tab");
     assert_eq!(
-        tab.layout,
+        tab.canvas.layout,
         CanvasLayout::TimeAndFlow,
         "the feed's declaration"
     );
@@ -938,11 +940,11 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         app.active_tab().feed_id.clone(),
         app.active_tab().symbol.clone(),
     );
-    let snapshot = super::super::tabs::market_snapshot(&app);
+    let snapshot = MarketPaletteHost::market_snapshot(&app);
     let choice = snapshot.choice((&market.0, &market.1), None, None, false);
     let choice = choice.expect("the market is listed");
     assert_eq!(choice.context_bars, std::slice::from_ref(&shown));
-    super::super::tabs::open(&mut app, &choice, None);
+    let _ = MarketPaletteHost::open_tab(&mut app, &choice, None);
     frames(&mut app, 2);
     // The new tab opens on its feed's canvas; its first context chart, when
     // the trader adds one, stands on the market's timeframe.

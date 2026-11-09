@@ -392,7 +392,7 @@ fn journal_edits_are_never_recorded_into_or_replayed_from_a_control_trace() {
     let session = write_session(&trades, "20260316-130000.csv", &[1_773_666_000_000]);
     let replaying = |app: &mut QuantickApp| {
         let recording = recording_at(tape.path());
-        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording));
+        app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(recording));
         app.active_tab_mut()
             .paper
             .account_mut()
