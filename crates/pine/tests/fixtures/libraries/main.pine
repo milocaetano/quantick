@@ -1,0 +1,8 @@
+//@version=6
+indicator("Local library")
+import local/Stats/1 as stats
+var point = stats.Point.new()
+point.add(close)
+plot(point.value)
+plot(point.count)
+plot(stats.twice(close))

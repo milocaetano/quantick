@@ -13,6 +13,7 @@ pub use super::interaction::LiquidityEvidence;
 use super::interaction::{LiquidityEvent, correlate_liquidity, liquidity_events};
 use super::timeline::BarTimeline;
 
+mod bbo_lines;
 mod candle_dots;
 mod constants;
 mod depth_display;
@@ -42,6 +43,10 @@ mod tape_reuse;
 mod tape_seal;
 mod tiers;
 
+pub use bbo_lines::{
+    BboLine, BboPath, BboStroke, StepPoint, bbo_lines, bbo_outward_offset_px, bbo_strokes,
+    decimate_columns, past_bbo_lines, project_bbo_paths,
+};
 pub use candle_dots::{
     CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
     CandleFootprintSource, CandleGroupMemory, project_candle_dots,
@@ -148,7 +153,9 @@ pub fn project_with_dots(
 ) -> HeatmapProjection {
     let settled = project_settled(history, timeline, prices, dots);
     let live = project_live(history, timeline, prices, &settled, dots);
-    settled.with_live(live, history.config())
+    let mut frame = settled.with_live(live, history.config());
+    frame.bbo_lines = Arc::new(project_bbo_paths(history, timeline, prices));
+    frame
 }
 
 /// Build the half of the frame that is finished.

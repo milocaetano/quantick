@@ -529,6 +529,14 @@ mod tests {
     }
 
     #[test]
+    fn every_shipped_preset_draws_the_best_bid_and_ask_lines() {
+        assert!(HeatmapConfig::default().live_lane.bbo_lines);
+        for preset in &embedded().presets {
+            assert!(preset.live_lane.bbo_lines, "{}", preset.name);
+        }
+    }
+
+    #[test]
     fn only_btc_shipped_presets_opt_into_stable_size_and_depth_averaging() {
         let shipped = embedded();
         for preset in &shipped.presets {

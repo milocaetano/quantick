@@ -1,0 +1,13 @@
+//@version=6
+indicator("Builtin field defaults")
+type BarInfo
+    int index = bar_index
+    float price = close
+    float vol = volume
+var first = BarInfo.new()
+current = BarInfo.new()
+plot(first.index)
+plot(current.index)
+plot(first.price)
+plot(current.price)
+plot(current.vol)

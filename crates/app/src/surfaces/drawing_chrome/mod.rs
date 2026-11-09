@@ -586,6 +586,8 @@ pub(crate) struct DrawingChromeAsk {
     pub cancel_delete: bool,
     /// Copy the selection, offset so the copy is visibly a copy.
     pub duplicate: bool,
+    /// Arm this tool again — the selected stroke's own pencil.
+    pub draw_again: Option<crate::drawings::DrawingTool>,
     /// Place a text note in the middle of the pane and open its editor — the
     /// `QUANTICK_TEXT_NOTE` hook, which needs the placement rules the host
     /// owns.
@@ -653,6 +655,7 @@ impl DrawingChromeAsk {
         self.force_delete |= other.force_delete;
         self.cancel_delete |= other.cancel_delete;
         self.duplicate |= other.duplicate;
+        self.draw_again = self.draw_again.or(other.draw_again);
         #[cfg(any(feature = "drawing-harness", test))]
         {
             self.place_text_note |= other.place_text_note;

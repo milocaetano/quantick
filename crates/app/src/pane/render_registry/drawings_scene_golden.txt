@@ -254,24 +254,32 @@ clip=[[0.0 0.0] - [500.0 300.0]]
   Circle(CircleShape { center: [301.2 274.7], radius: 3.5, fill: #00_00_00_00, stroke: Stroke { width: 1.25, color: #8A_B4_F8_FF } })
 ## arrow-mark-up plain
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 96.0], [133.3 104.8], [137.4 104.8], [137.4 112.0], [142.6 112.0], [142.6 104.8], [146.7 104.8]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+  Path(PathShape { points: [[140.0 96.0], [126.0 110.0], [154.0 110.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+clip=[[0.0 0.0] - [500.0 300.0]]
+  Path(PathShape { points: [[134.4 103.0], [134.4 124.0], [145.6 124.0], [145.6 103.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
 ## arrow-mark-up selected
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 96.0], [133.3 104.8], [137.4 104.8], [137.4 112.0], [142.6 112.0], [142.6 104.8], [146.7 104.8]], closed: true, fill: #00_00_00_00, stroke: PathStroke { width: 3.5, color: Solid(#1C_1C_1C_1C), kind: Middle } })
+  Path(PathShape { points: [[140.0 96.0], [126.0 110.0], [134.4 110.0], [134.4 124.0], [145.6 124.0], [145.6 110.0], [154.0 110.0]], closed: true, fill: #00_00_00_00, stroke: PathStroke { width: 3.5, color: Solid(#1C_1C_1C_1C), kind: Middle } })
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 96.0], [133.3 104.8], [137.4 104.8], [137.4 112.0], [142.6 112.0], [142.6 104.8], [146.7 104.8]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+  Path(PathShape { points: [[140.0 96.0], [126.0 110.0], [154.0 110.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+clip=[[0.0 0.0] - [500.0 300.0]]
+  Path(PathShape { points: [[134.4 103.0], [134.4 124.0], [145.6 124.0], [145.6 103.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
 clip=[[0.0 0.0] - [500.0 300.0]]
   Circle(CircleShape { center: [140.0 90.0], radius: 3.5, fill: #13_17_22_FF, stroke: Stroke { width: 0.0, color: #00_00_00_00 } })
 clip=[[0.0 0.0] - [500.0 300.0]]
   Circle(CircleShape { center: [140.0 90.0], radius: 3.5, fill: #00_00_00_00, stroke: Stroke { width: 1.25, color: #8A_B4_F8_FF } })
 ## arrow-mark-down plain
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 84.0], [133.3 75.2], [137.4 75.2], [137.4 68.0], [142.6 68.0], [142.6 75.2], [146.7 75.2]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+  Path(PathShape { points: [[140.0 84.0], [126.0 70.0], [154.0 70.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+clip=[[0.0 0.0] - [500.0 300.0]]
+  Path(PathShape { points: [[134.4 77.0], [134.4 56.0], [145.6 56.0], [145.6 77.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
 ## arrow-mark-down selected
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 84.0], [133.3 75.2], [137.4 75.2], [137.4 68.0], [142.6 68.0], [142.6 75.2], [146.7 75.2]], closed: true, fill: #00_00_00_00, stroke: PathStroke { width: 3.5, color: Solid(#1C_1C_1C_1C), kind: Middle } })
+  Path(PathShape { points: [[140.0 84.0], [126.0 70.0], [134.4 70.0], [134.4 56.0], [145.6 56.0], [145.6 70.0], [154.0 70.0]], closed: true, fill: #00_00_00_00, stroke: PathStroke { width: 3.5, color: Solid(#1C_1C_1C_1C), kind: Middle } })
 clip=[[0.0 0.0] - [500.0 300.0]]
-  Path(PathShape { points: [[140.0 84.0], [133.3 75.2], [137.4 75.2], [137.4 68.0], [142.6 68.0], [142.6 75.2], [146.7 75.2]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+  Path(PathShape { points: [[140.0 84.0], [126.0 70.0], [154.0 70.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
+clip=[[0.0 0.0] - [500.0 300.0]]
+  Path(PathShape { points: [[134.4 77.0], [134.4 56.0], [145.6 56.0], [145.6 77.0]], closed: true, fill: #8A_B4_F8_FF, stroke: PathStroke { width: 0.0, color: Solid(#00_00_00_00), kind: Middle } })
 clip=[[0.0 0.0] - [500.0 300.0]]
   Circle(CircleShape { center: [140.0 90.0], radius: 3.5, fill: #13_17_22_FF, stroke: Stroke { width: 0.0, color: #00_00_00_00 } })
 clip=[[0.0 0.0] - [500.0 300.0]]

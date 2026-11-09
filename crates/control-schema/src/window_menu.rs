@@ -570,10 +570,10 @@ pub const ABOUT_WORKSPACES: &[&str] = &[
 ];
 
 /// A Settings switch's tooltip.
-pub const PROGRESSIVE_HISTORY_HOVER: &str = "Build the venue's candle history from now backwards, a week at \
-             a time, so the chart fills in while the rest arrives. Off asks \
-             for the whole span in one request: fewer calls, nothing on \
-             screen until all of it lands.";
+pub const PROGRESSIVE_HISTORY_HOVER: &str = "Feeds that fold minutes build candle history from now back, \
+             a week at a time, so the chart fills in as it arrives; off asks \
+             for the whole span at once. Feeds serving every interval ask \
+             one page at the chart's own interval either way.";
 
 /// A Settings switch's tooltip.
 pub const VENUE_LEAD_IN_HOVER: &str = "A tick, volume, dollar or imbalance chart cannot fold venue \

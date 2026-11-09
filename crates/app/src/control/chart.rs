@@ -123,7 +123,7 @@ impl ChartPaneSource for PaneRead<'_> {
         self.pane.slot_open_time(slot)
     }
     fn visible_slots(&self) -> Option<(usize, usize)> {
-        self.pane.frame.chart_area.map(|_| visible_slots(self.pane))
+        self.pane.visible_slots()
     }
     fn viewport(&self) -> ViewportSnapshot {
         viewport_snapshot(self.pane)
@@ -137,11 +137,14 @@ impl ChartPaneSource for PaneRead<'_> {
     fn provenance(&self) -> BarProvenanceContext {
         provenance_context(self.tab, self.config)
     }
+    fn venue_candles(&self) -> Option<quantick_session::SeriesStatus> {
+        (self.tab.session).candle_status(self.pane.state.spec().time_interval_ms())
+    }
 }
 
 pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
     let total = pane.slots();
-    let (start, end) = visible_slots(pane);
+    let (start, end) = pane.visible_slots().unwrap_or((0, 0));
     let price_range = pane.price_view.manual_range().or(pane.frame.auto_range);
     let chart_width_px = pane.frame.chart_area.map(|chart| {
         let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
@@ -173,16 +176,6 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
             .as_ref()
             .and_then(|tape| tape.tape_view_snapshot()),
     }
-}
-
-fn visible_slots(pane: &ChartPane) -> (usize, usize) {
-    let total = pane.slots();
-    let Some(chart) = pane.frame.chart_area else {
-        return (0, 0);
-    };
-    let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
-    pane.shown_viewport()
-        .visible_range((right - chart.left()).max(0.0), total)
 }
 
 fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {

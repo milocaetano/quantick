@@ -405,6 +405,10 @@ pub struct HeatmapProjection {
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
     pub gaps: Arc<Vec<GapPrimitive>>,
+    /// The tape's best bid and best ask as stepped lines
+    /// ([`super::project_bbo_paths`]), set by the engine on a live tape;
+    /// empty while their switch is off or the tape is held.
+    pub bbo_lines: Arc<Vec<super::BboPath>>,
     /// The one book every current row ([`HeatmapCell::current_book`]) was
     /// read from, so a reader checks their freshness once, in O(1)
     /// ([`super::book_is_current`]); `None` when the frame read none.
@@ -474,6 +478,7 @@ impl HeatmapProjection {
             volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
+            bbo_lines: Arc::new(Vec::new()),
             current_book: None,
             live_now_x: None,
             effective_grouping,
@@ -673,6 +678,7 @@ impl SettledProjection {
             } else {
                 Arc::new(self.gaps.iter().cloned().chain(live.gaps).collect())
             },
+            bbo_lines: Arc::new(Vec::new()),
             current_book: live.current_book,
             live_now_x: live.live_now_x,
             effective_grouping: self.effective_grouping,

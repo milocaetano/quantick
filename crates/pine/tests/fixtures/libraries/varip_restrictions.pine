@@ -1,0 +1,8 @@
+//@version=6
+indicator("Recursive varip collection restrictions")
+type Drawing
+    line mark
+type Envelope
+    array<Drawing> children
+varip values = map.new<string, Envelope>()
+plot(close)

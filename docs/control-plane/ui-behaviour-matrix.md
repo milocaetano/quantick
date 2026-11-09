@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 112 |
+| Reachable by capability | 113 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **166** |
+| **Total** | **167** |
 
-97 of the 166 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 69 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 167 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 70 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -106,6 +106,7 @@ The three exclusion classes are closed:
 | `layer.tape_heatmap.toggle` | Switch the book on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide trail) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
+| `layer.tape_bbo_lines.toggle` | Draw the best bid and best ask as bold stepped lines on the tape | pane right-click layer menu; Bubbles settings, Best bid/ask lines | `layers.visibility.set` | — |
 | `orderflow.tape.fold.set` | Close the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps | `orderflow.tape.fold.set` | — |
 | `orderflow.tape.market_fold.set` | Fold the tape while the market is closed | the checkbox in the tape section of the Bubbles settings | `orderflow.tape.market_fold.set` | — |
 | `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; window menu, Panels; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
@@ -242,7 +243,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 69 |
+| `authored` | 70 |
 
 ## Appendix: rows no registry stands behind
 
@@ -282,6 +283,7 @@ declares nothing here is a guard failure.
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
+| `layer.tape_bbo_lines.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `orderflow.tape.fold.set` | the tape lane's divider and rail the pane handles directly |
 | `orderflow.tape.market_fold.set` | the per-asset checkbox in the Bubbles settings is not a pane header control |
 | `orderflow.settings.close` | the panel's close button is drawn by the panel, not a pane header entry |

@@ -962,6 +962,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
+                native_candle_intervals: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,
@@ -2913,7 +2914,7 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
 
-    // Automatic placement now sends the panel to a chart corner (§D3),
+    // Automatic placement opens the panel beside the object (§D3),
     // deliberately clear of the object — so park it over the stroke by
     // hand. What this proves is pointer routing over an opaque panel, not
     // where the panel opens.
@@ -3591,7 +3592,7 @@ fn the_object_manager_opens_beside_the_rail() {
 /// failure the whole tool exists to avoid, in the only moment it is used
 /// under pressure.
 #[test]
-fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
+fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // tick(2) with an odd trade count: the last print leaves a bar open,
     // which `app_with_history`'s tick(1) never does.
     let (mut app, evt_tx, _commands, _book) = test_app();
@@ -3622,8 +3623,31 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     let right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
+    // Free by default: without the magnet the mark keeps the cursor's price.
+    let before = app.active_tab().flow_pane.drawings.items().len();
+    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+    click_chart(&mut app, &ctx, egui::pos2(x, 200.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 1,
+        "the free click placed a new mark"
+    );
+    let free = app
+        .active_tab()
+        .flow_pane
+        .drawings
+        .items()
+        .last()
+        .map(|mark| mark.points[0].price);
+
+    app.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        before + 2,
+        "the magnetic click placed a new mark"
+    );
     let placed = app.active_tab().flow_pane.drawings.items().last();
     let Some(placed) = placed else {
         panic!("the mark was not placed on the forming bar");
@@ -3645,6 +3669,11 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
         (anchor.price - low).abs() < 1e-9,
         "the mark must hang from the forming bar's low ({low}), not the cursor ({})",
         anchor.price
+    );
+    let free = free.expect("the free mark was placed");
+    assert!(
+        (free - low).abs() > 1e-6,
+        "without the magnet the mark stays at the cursor ({free}), off the low ({low})"
     );
 }
 
@@ -4028,6 +4057,70 @@ fn the_pencil_draws_a_path_from_one_held_drag() {
     );
 }
 
+/// The stroke the release just selected offers its own pencil back, so the
+/// next stroke starts from the bar under the eye instead of from the rail.
+#[test]
+fn the_bar_pencil_rearms_the_pencil_for_the_next_stroke() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(620.0, 300.0),
+        egui::pos2(760.0, 380.0),
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+
+    let pencil = app
+        .drawings
+        .chrome
+        .context_bar()
+        .draw_again_rect()
+        .expect("a finished stroke's bar offers the pencil");
+    // A hand reaches the bar before it presses it.
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(pencil.center())],
+    );
+    click_chart(&mut app, &ctx, pencil.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.toolrail.tool(), Tool::Drawing(drawing_tool("brush")));
+
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(640.0, 420.0),
+        egui::pos2(780.0, 460.0),
+    );
+    let items = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(items.len(), 2, "the second drag draws a second stroke");
+    assert!(items.iter().all(|item| item.tool.id() == "brush"));
+}
+
+/// Any other object's bar has no pencil: a level is not drawn twice by hand.
+#[test]
+fn a_level_bar_has_no_pencil() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+    assert!(app.drawings.chrome.context_bar_rect().is_some());
+    assert!(
+        app.drawings
+            .chrome
+            .context_bar()
+            .draw_again_rect()
+            .is_none()
+    );
+}
+
 /// A press that never moved is a click that missed, not a drawing. An
 /// invisible one-point object the trader can neither see nor select is
 /// worse than nothing happening.
@@ -4303,6 +4396,16 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
             .iter()
             .any(|text| text.contains("Rectangle settings")),
         "the settings window must be visible before the resize gesture"
+    );
+    // It opens beside the rectangle, never on it (§D3), even though its
+    // drawn width is not the one the first placement assumed.
+    let panel = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+        .expect("the inspector is open");
+    let drawn = egui::Rect::from_two_pos(first_anchor, second_anchor);
+    assert!(
+        !panel.intersects(drawn),
+        "the panel must not cover the drawing it configures: {panel:?} vs {drawn:?}"
     );
 
     drag_chart(&mut app, &ctx, first_anchor, egui::pos2(560.0, 240.0));

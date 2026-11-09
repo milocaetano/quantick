@@ -1,4 +1,4 @@
-//! The tree-walking interpreter.
+//! Builtin adapters and transactional state for the compiled register machine.
 //!
 //! Slot-indexed environments (globals + one flat reused frame stack), dense
 //! compile tables for every reference, kernel instances keyed by
@@ -14,229 +14,104 @@
 //! across untaken branches reads `na`, a documented divergence.
 //!
 //! `Value` stays ≤ 16 bytes (unit-tested): the per-bar path moves it by
-//! copy, and the environments are flat `Vec<Value>`s.
+//! temporary value. Persistent values, including text and tuples, live in the word arena.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use quantick_indicators::{
-    Ctx, IndicatorBar, InputValue, MarkerLocation, ObjectId, ObjectStore, Rgba8, SourceId, ta,
+    Ctx, IndicatorBar, InputValue, MarkerLocation, ObjectStore, Rgba8, SourceId,
 };
 
-use crate::ast::{BinOp, NodeId, NodeKind, UnOp, VarMode};
+use crate::ast::{NodeId, VarMode};
 use crate::builtins::Builtin;
 use crate::compile::{CompiledScript, Resolution};
 use crate::error::{ErrorCode, PineError, Span};
 
+#[path = "ir/arena.rs"]
+pub(crate) mod arena;
+#[path = "ir/loops.rs"]
+mod ir_loops;
+#[path = "ir/runtime.rs"]
+mod ir_runtime;
+use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
+#[path = "ir/kernel_state.rs"]
+mod kernel_state;
 mod kernels;
+#[path = "libraries/runtime.rs"]
+mod library_runtime;
+#[path = "ir/object_state.rs"]
+mod object_state;
 mod objects;
 mod pure;
+#[path = "semantics/runtime.rs"]
+mod semantic_runtime;
 
 /// Iteration budget per `for`/`while` per bar — a runaway loop errors the
 /// indicator instead of freezing the worker (§3.5).
 pub const LOOP_BUDGET: u32 = 10_000;
 
-/// A runtime value. `na` for numbers is NaN inside `Num`; the distinct `Na`
-/// covers non-numeric contexts.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// A number (NaN = na).
-    Num(f64),
-    /// A boolean.
-    Bool(bool),
-    /// A packed RGBA color.
-    Color(u32),
-    /// A string (thin Rc: fat pointers would push Value past 16 bytes,
-    /// and strings never ride the hot numeric path).
-    Str(Rc<String>),
-    /// A function's multi-return (thin Rc, same reasoning).
-    Tuple(Rc<Vec<Value>>),
-    /// A draw-object handle (`line.new` & co.).
-    Obj(ObjKind, u32),
-    /// `na` outside numeric context.
-    Na,
-}
-
-/// Which store a [`Value::Obj`] handle points into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjKind {
-    /// A `line` handle.
-    Line,
-    /// A `box` handle.
-    Box,
-    /// A `label` handle.
-    Label,
-}
-
-impl Value {
-    /// Numeric view: numbers pass through, `na` is NaN, anything else is a
-    /// type error at the caller.
-    fn as_num(&self) -> Option<f64> {
-        match self {
-            Value::Num(v) => Some(*v),
-            Value::Na => Some(f64::NAN),
-            _ => None,
-        }
-    }
-
-    /// Condition view: bools pass, `na` is false (Pine's rule).
-    fn as_cond(&self) -> Option<bool> {
-        match self {
-            Value::Bool(b) => Some(*b),
-            Value::Na => Some(false),
-            Value::Num(v) if v.is_nan() => Some(false),
-            _ => None,
-        }
-    }
-
-    fn is_na(&self) -> bool {
-        matches!(self, Value::Na) || matches!(self, Value::Num(v) if v.is_nan())
-    }
-}
-
-/// One kernel instance behind a `(call site, path)` key.
-#[derive(Clone)]
-pub(crate) enum Kernel {
-    Sma(ta::Sma),
-    Ema(ta::Ema),
-    Rma(ta::Rma),
-    Wma(ta::Wma),
-    Vwma(ta::Vwma),
-    Rsi(ta::Rsi),
-    Tr(ta::Tr),
-    Atr(ta::Atr),
-    Stdev(ta::Stdev),
-    Highest(ta::Highest),
-    Lowest(ta::Lowest),
-    HighestBars(ta::HighestBars),
-    LowestBars(ta::LowestBars),
-    Change(ta::Change),
-    Cum(ta::Cum),
-    CrossOver(ta::CrossOver),
-    CrossUnder(ta::CrossUnder),
-    Cross(ta::Cross),
-    BarsSince(ta::BarsSince),
-    ValueWhen(ta::ValueWhen),
-    PivotHigh(ta::PivotHigh),
-    PivotLow(ta::PivotLow),
-    WindowSum(ta::WindowSum),
-    /// `fixnan`: the last non-na value seen.
-    Fixnan(f64),
-}
-
-/// One implicit expression-history ring: committed values, newest last,
-/// bounded by the script's `max_bars_back`.
-///
-/// A `VecDeque` rather than a `Vec`: dropping the oldest value with
-/// `Vec::remove(0)` shifted the whole ring on every commit once it filled —
-/// up to 500 entries per history node per closed bar, and tick bars close
-/// many times a second under a dense tape.
-#[derive(Clone, Default)]
-pub(crate) struct HistRing {
-    values: std::collections::VecDeque<Value>,
-}
+pub use crate::types::{ObjKind, Value};
 
 /// Everything that persists across bars — the state a preview snapshots.
 #[derive(Default)]
 pub(crate) struct ScriptState {
-    /// Global slot values (current bar's view).
-    pub globals: Vec<Value>,
-    /// Whether a `var`/`varip` slot ran its initialiser.
-    pub var_done: Vec<bool>,
-    /// Kernel instances by (call site, interned path).
-    pub kernels: BTreeMap<(u32, u32), Kernel>,
-    /// The length each kernel was instantiated with, same key. A kernel is
-    /// built once and keeps its window forever, so a length that changes
-    /// between bars — `f(n) => ta.sma(close, n)` called with a moving `n` —
-    /// would silently keep bar zero's window while the plot title claimed
-    /// otherwise. Pine refuses a series length; so do we, honestly.
-    pub kernel_lengths: BTreeMap<(u32, u32), usize>,
-    /// Expression histories by (history id, interned path).
-    pub histories: BTreeMap<(u32, u32), HistRing>,
-    /// Values staged for the forming bar's histories, flushed on commit.
-    pub staged_histories: BTreeMap<(u32, u32), Value>,
+    /// The sole authoritative mutable runtime image.
+    pub arena: crate::collections::Image,
     /// Retained draw objects (lines/boxes/labels, §2.6 caps).
     pub objects: ObjectStore,
-    /// Path interning: (parent path, call node) → child path.
-    pub path_children: BTreeMap<(u32, u32), u32>,
-    /// Next fresh path id (0 = the root path).
-    pub next_path: u32,
-    /// The reused local-frame stack. It lives here, not in `Eval`, so its
-    /// capacity survives across bars: a fresh `Vec` per bar meant any script
-    /// with a user function paid a malloc/free every bar, in a walk
-    /// documented as allocation-free after the first one.
-    pub locals: Vec<Value>,
 }
 
 impl ScriptState {
     pub(crate) fn new(global_slots: usize) -> Self {
+        let mut arena = Arena::default();
+        arena.resize(GLOBALS, global_slots);
+        arena.resize(FLAGS, global_slots);
         Self {
-            locals: Vec::new(),
-            globals: vec![Value::Na; global_slots],
-            var_done: vec![false; global_slots],
-            next_path: 1,
+            arena: arena.into(),
             ..Self::default()
         }
     }
 
-    /// The clone-small-state part of a preview snapshot (§2.3): globals,
-    /// var flags, kernels and path table. Histories are committed-only, so
-    /// rollback for them is just dropping the staged map.
-    pub(crate) fn snapshot(&self) -> StateSnapshot {
+    /// One contiguous copy captures slots, payloads, kernels, histories and drawings.
+    pub(crate) fn snapshot(&mut self) -> StateSnapshot {
         StateSnapshot {
-            globals: self.globals.clone(),
-            var_done: self.var_done.clone(),
-            kernels: self.kernels.clone(),
-            objects: self.objects.clone(),
+            arena: self.arena.snapshot(),
         }
     }
 
     /// Restore after a preview. `varip` slots keep their preview mutations —
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
-        let StateSnapshot {
-            globals,
-            var_done,
-            kernels,
-            objects,
-        } = snapshot;
-        for (slot, (value, done)) in globals.into_iter().zip(var_done).enumerate() {
-            if slot_modes.get(slot) != Some(&VarMode::Varip) {
-                self.globals[slot] = value;
-                self.var_done[slot] = done;
+        let StateSnapshot { arena: mut image } = snapshot;
+        let arena = image.make_mut();
+        crate::collections::restore_varip(&self.arena, arena, slot_modes);
+        for (slot, mode) in slot_modes.iter().enumerate() {
+            if *mode == VarMode::Varip {
+                arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }
-        self.kernels = kernels;
-        // Not a plain assignment: `restore_from` keeps the object id counter
-        // moving forward, so a `varip` handle that survives this rollback
-        // cannot collide with an id the commit run is about to allocate.
-        self.objects.restore_from(objects);
-        self.staged_histories.clear();
+        arena.words[object_state::NEXT_ID] =
+            arena.words[object_state::NEXT_ID].max(self.arena.words[object_state::NEXT_ID]);
+        self.arena = image;
+        self.project_objects();
     }
 
     /// Commit the forming bar: flush staged history values into their rings.
-    pub(crate) fn commit_bar(&mut self, max_bars_back: usize) {
-        for ((series, path), value) in std::mem::take(&mut self.staged_histories) {
-            let ring = self.histories.entry((series, path)).or_default();
-            ring.values.push_back(value);
-            if ring.values.len() > max_bars_back {
-                ring.values.pop_front();
-            }
-        }
+    pub(crate) fn commit_bar(&mut self) {
+        let arena = self.arena.make_mut();
+        arena.commit_histories();
+        crate::collections::collect(arena);
     }
 
     pub(crate) fn reset(&mut self) {
-        let slots = self.globals.len();
+        let slots = self.arena.len(GLOBALS);
         *self = Self::new(slots);
     }
 }
 
 /// What [`ScriptState::snapshot`] captures.
 pub(crate) struct StateSnapshot {
-    globals: Vec<Value>,
-    var_done: Vec<bool>,
-    kernels: BTreeMap<(u32, u32), Kernel>,
-    objects: ObjectStore,
+    arena: crate::collections::Image,
 }
 
 /// What one run stages for its caller: this bar's plot cells and the candle
@@ -246,32 +121,49 @@ pub(crate) struct StateSnapshot {
 /// evaluation — and because the caller reads them together after a clean run:
 /// a row committed without its paint, or with a stale one, would put a colour
 /// on the wrong candle.
+#[path = "candle_plots/eval.rs"]
+mod candle_eval;
+#[path = "collections/eval.rs"]
+mod collection_eval;
+
 pub(crate) struct Staged<'a> {
     /// One cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
+    pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
     /// The paint `barcolor` asked for; `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
 }
 
 /// One run of the script over one bar (commit or preview).
+pub(crate) struct RunState<'a> {
+    pub arena: &'a mut Arena,
+}
+
 pub(crate) struct Eval<'a> {
     pub script: &'a CompiledScript,
     pub inputs: &'a [InputValue],
     pub bar: &'a IndicatorBar,
     pub ctx: &'a Ctx<'a>,
-    pub state: &'a mut ScriptState,
+    pub state: RunState<'a>,
     /// One staged cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
+    pub candles: &'a mut [Option<quantick_indicators::CandleSample>],
     /// The bar paint this run asked for (`barcolor`), staged like the row and
     /// read by the caller after a clean run. `None` = this bar asked for none.
     pub paint: &'a mut Option<Rgba8>,
     /// True on commit runs (`barstate.isconfirmed`).
     pub is_commit: bool,
+    pub timezone: crate::calendar::CalendarTimezone,
 
     /// Current interned call path (0 = top level).
     pub path: u32,
     /// Current frame base in `locals`.
     frame_base: usize,
+    type_context: u32,
+    prepared_arguments: bool,
+    register_base: usize,
+    global_base: usize,
+    semantic_run: crate::semantics::Run<Vec<u64>>,
 }
 
 impl<'a> Eval<'a> {
@@ -284,29 +176,49 @@ impl<'a> Eval<'a> {
         staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
+        let state = RunState {
+            arena: state.arena.make_mut(),
+        };
+        if state.arena.len(REGISTERS) != script.program.entries.len() {
+            state.arena.resize(REGISTERS, script.program.entries.len());
+            for (id, literal) in &script.program.constants {
+                use crate::ir::program::Literal;
+                let value = match literal {
+                    Literal::Num(n) => Value::Num(*n),
+                    Literal::Bool(b) => Value::Bool(*b),
+                    Literal::Color(c) => Value::Color(*c),
+                    Literal::Str(s) => Value::Str(s.clone()),
+                    Literal::Na => Value::Na,
+                };
+                state.arena.set(REGISTERS, id.index(), value);
+            }
+        }
+        let register_base = state.arena.offset(REGISTERS);
+        let global_base = state.arena.offset(GLOBALS);
         Self {
+            register_base,
+            global_base,
             script,
             inputs,
             bar,
             ctx,
             state,
             row: staged.row,
+            candles: staged.candles,
             paint: staged.paint,
             is_commit,
+            timezone: crate::calendar::CalendarTimezone::default(),
             path: 0,
             frame_base: 0,
+            type_context: 0,
+            prepared_arguments: false,
+            semantic_run: crate::semantics::Run::default(),
         }
     }
 
     /// Run the whole script top to bottom for this bar.
     pub(crate) fn run(&mut self) -> Result<(), PineError> {
-        let NodeKind::Script { statements } = &self.script.ast.node(self.script.root).kind else {
-            return Ok(());
-        };
-        for &statement in statements {
-            self.statement(statement)?;
-        }
-        Ok(())
+        self.eval(self.script.root).map(|_| ())
     }
 
     /// The node's kind, borrowed from the *script* rather than from `self`.
@@ -323,28 +235,16 @@ impl<'a> Eval<'a> {
         len: usize,
         id: NodeId,
     ) -> Result<(), PineError> {
-        match self.state.kernel_lengths.get(&key) {
-            Some(&pinned) if pinned != len => Err(self.err(
-                id,
-                ErrorCode::PineSeriesLength,
-                format!(
-                    "this kernel was built with length {pinned} and cannot change to                      {len} mid-stream; a kernel's window is fixed when it is created"
-                ),
-            )),
-            Some(_) => Ok(()),
-            None => {
-                self.state.kernel_lengths.insert(key, len);
-                Ok(())
-            }
+        let pinned = self.state.arena.pin_length(key, len);
+        if pinned != len {
+            Err(self.err(id, ErrorCode::PineSeriesLength, format!("this kernel was built with length {pinned} and cannot change to {len} mid-stream")))
+        } else {
+            Ok(())
         }
     }
 
-    fn kind(&self, id: NodeId) -> &'a NodeKind {
-        &self.script.ast.node(id).kind
-    }
-
     fn span(&self, id: NodeId) -> Span {
-        self.script.ast.node(id).span
+        self.script.program.spans[id.index()]
     }
 
     fn err(&self, id: NodeId, code: ErrorCode, message: impl Into<String>) -> PineError {
@@ -373,278 +273,19 @@ impl<'a> Eval<'a> {
             .ok_or_else(|| self.type_err(id, "a bool condition", &value))
     }
 
-    // ---- statements ------------------------------------------------------
-
-    fn statement(&mut self, id: NodeId) -> Result<Value, PineError> {
-        match self.kind(id) {
-            NodeKind::Declare { mode, value, .. } => {
-                let resolution = self.script.resolutions[id.index()];
-                match resolution {
-                    Resolution::Global(slot) => {
-                        let slot = slot as usize;
-                        // var/varip initialisers run once; later bars keep
-                        // the carried value (Pine's rule).
-                        if *mode != VarMode::Plain && self.state.var_done[slot] {
-                            return Ok(self.state.globals[slot].clone());
-                        }
-                        let v = self.eval(*value)?;
-                        self.state.globals[slot] = v.clone();
-                        if *mode != VarMode::Plain {
-                            self.state.var_done[slot] = true;
-                        }
-                        Ok(v)
-                    }
-                    Resolution::Local(slot) => {
-                        let v = self.eval(*value)?;
-                        let index = self.frame_base + slot as usize;
-                        self.state.locals[index] = v.clone();
-                        Ok(v)
-                    }
-                    _ => Ok(Value::Na),
-                }
-            }
-            NodeKind::TupleDeclare { names, value } => {
-                let v = self.eval(*value)?;
-                let Value::Tuple(items) = &v else {
-                    return Err(self.type_err(id, "a tuple", &v));
-                };
-                if items.len() != names.len() {
-                    return Err(self.err(
-                        id,
-                        ErrorCode::PineType,
-                        format!("expected {} tuple values, got {}", names.len(), items.len()),
-                    ));
-                }
-                match self.script.resolutions[id.index()] {
-                    Resolution::Global(first) => {
-                        for (offset, item) in items.iter().enumerate() {
-                            self.state.globals[first as usize + offset] = item.clone();
-                        }
-                    }
-                    Resolution::Local(first) => {
-                        for (offset, item) in items.iter().enumerate() {
-                            let index = self.frame_base + first as usize + offset;
-                            self.state.locals[index] = item.clone();
-                        }
-                    }
-                    _ => {}
-                }
-                Ok(v)
-            }
-            NodeKind::Reassign { value, .. } => {
-                let v = self.eval(*value)?;
-                match self.script.resolutions[id.index()] {
-                    Resolution::Global(slot) => self.state.globals[slot as usize] = v.clone(),
-                    Resolution::Local(slot) => {
-                        let index = self.frame_base + slot as usize;
-                        self.state.locals[index] = v.clone();
-                    }
-                    _ => {}
-                }
-                Ok(v)
-            }
-            // Definitions execute nothing by themselves.
-            NodeKind::FunctionDef { .. } => Ok(Value::Na),
-            NodeKind::ExprStmt { expr } => self.eval(*expr),
-            _ => self.eval(id),
-        }
-    }
-
-    // ---- expressions -----------------------------------------------------
-
-    #[allow(clippy::too_many_lines)]
     fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
-        match self.kind(id) {
-            NodeKind::Int(v) => Ok(Value::Num(*v as f64)),
-            NodeKind::Float(v) => Ok(Value::Num(*v)),
-            NodeKind::Str(v) => Ok(Value::Str(Rc::new(v.clone()))),
-            NodeKind::Bool(v) => Ok(Value::Bool(*v)),
-            NodeKind::Color(v) => Ok(Value::Color(*v)),
-            NodeKind::Na => Ok(Value::Na),
-            NodeKind::Tuple { items } => {
-                let mut values = Vec::with_capacity(items.len());
-                for item in items {
-                    values.push(self.eval(*item)?);
-                }
-                Ok(Value::Tuple(Rc::new(values)))
-            }
-            NodeKind::Name(_) => self.name_value(id),
-            NodeKind::Member { .. } => match self.script.resolutions[id.index()] {
-                Resolution::Builtin(builtin) => self.builtin_variable(id, builtin),
-                Resolution::ColorConst(rgba) => Ok(Value::Color(rgba)),
-                Resolution::EnumConst(tag) => Ok(Value::Str(Rc::new(tag.to_owned()))),
-                _ => Err(self.err(
-                    id,
-                    ErrorCode::PineType,
-                    "object members are not available yet (draw objects land later)",
-                )),
-            },
-            NodeKind::Unary { op, operand } => match op {
-                UnOp::Neg => {
-                    let v = self.num(*operand)?;
-                    Ok(Value::Num(-v))
-                }
-                UnOp::Not => {
-                    let v = self.cond(*operand)?;
-                    Ok(Value::Bool(!v))
-                }
-            },
-            NodeKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs),
-            NodeKind::Switch { subject, arms } => {
-                let subject = match subject {
-                    Some(node) => Some(self.eval(*node)?),
-                    None => None,
-                };
-                for (condition, body) in arms {
-                    let matched = match (&subject, condition) {
-                        // Subject form: arm value compared by equality
-                        // (same rules as `==`; na never matches).
-                        (Some(subject), Some(condition)) => {
-                            let arm = self.eval(*condition)?;
-                            values_equal(subject, &arm)
-                        }
-                        // Condition form: the arm is its own bool.
-                        (None, Some(condition)) => self.cond(*condition)?,
-                        // The bare `=>` default always matches.
-                        (_, None) => true,
-                    };
-                    if matched {
-                        return self.eval(*body);
-                    }
-                }
-                Ok(Value::Na)
-            }
-            NodeKind::Ternary {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                if self.cond(*condition)? {
-                    self.eval(*if_true)
-                } else {
-                    self.eval(*if_false)
-                }
-            }
-            NodeKind::If {
-                condition,
-                then_block,
-                otherwise,
-            } => {
-                if self.cond(*condition)? {
-                    self.eval(*then_block)
-                } else if let Some(otherwise) = otherwise {
-                    self.eval(*otherwise)
-                } else {
-                    Ok(Value::Na)
-                }
-            }
-            NodeKind::Block { statements } => {
-                let mut last = Value::Na;
-                for statement in statements {
-                    last = self.statement(*statement)?;
-                }
-                Ok(last)
-            }
-            NodeKind::For {
-                from, to, by, body, ..
-            } => {
-                let from = self.num(*from)?;
-                let to = self.num(*to)?;
-                let step = match by {
-                    Some(by) => self.num(*by)?,
-                    None => 1.0,
-                };
-                if !from.is_finite() || !to.is_finite() || step == 0.0 || !step.is_finite() {
-                    return Ok(Value::Na);
-                }
-                let mut i = from;
-                let mut last = Value::Na;
-                let mut budget = LOOP_BUDGET;
-                let ascending = step > 0.0;
-                while (ascending && i <= to) || (!ascending && i >= to) {
-                    if budget == 0 {
-                        return Err(self.err(
-                            id,
-                            ErrorCode::PineLoopBudget,
-                            format!("loop exceeded {LOOP_BUDGET} iterations in one bar"),
-                        ));
-                    }
-                    budget -= 1;
-                    self.write_resolved(id, Value::Num(i));
-                    last = self.eval(*body)?;
-                    i += step;
-                }
-                Ok(last)
-            }
-            NodeKind::While { condition, body } => {
-                let mut last = Value::Na;
-                let mut budget = LOOP_BUDGET;
-                while self.cond(*condition)? {
-                    if budget == 0 {
-                        return Err(self.err(
-                            id,
-                            ErrorCode::PineLoopBudget,
-                            format!("loop exceeded {LOOP_BUDGET} iterations in one bar"),
-                        ));
-                    }
-                    budget -= 1;
-                    last = self.eval(*body)?;
-                }
-                Ok(last)
-            }
-            NodeKind::History { subject, offset } => self.history(id, *subject, *offset),
-            NodeKind::Call { callee, args } => match self.script.resolutions[callee.index()] {
-                Resolution::Builtin(builtin) => self.builtin_call(id, builtin, args),
-                Resolution::Function(index) => self.user_call(id, index, args),
-                _ => {
-                    // A method call: the callee is a member expression whose
-                    // receiver evaluates to an object handle.
-                    if let NodeKind::Member { object, field } = self.kind(*callee) {
-                        let receiver = self.eval(*object)?;
-                        let Value::Obj(kind, raw) = receiver else {
-                            return Err(self.type_err(*callee, "an object handle", &receiver));
-                        };
-                        return self.method_call(id, kind, ObjectId(raw), field, args);
-                    }
-                    Err(self.err(id, ErrorCode::PineType, "only object handles have methods"))
-                }
-            },
-            // Statement kinds never reach eval directly.
-            other => Err(self.err(
-                id,
-                ErrorCode::PineType,
-                format!("cannot evaluate {other:?} as an expression"),
-            )),
-        }
+        self.execute(id)
     }
 
     /// Write a value through a node's resolution (the `for` loop variable).
     fn write_resolved(&mut self, id: NodeId, value: Value) {
         match self.script.resolutions[id.index()] {
-            Resolution::Global(slot) => self.state.globals[slot as usize] = value,
+            Resolution::Global(slot) => self.state.arena.set(GLOBALS, slot as usize, value),
             Resolution::Local(slot) => {
                 let index = self.frame_base + slot as usize;
-                self.state.locals[index] = value;
+                self.state.arena.set(LOCALS, index, value);
             }
             _ => {}
-        }
-    }
-
-    fn name_value(&mut self, id: NodeId) -> Result<Value, PineError> {
-        match self.script.resolutions[id.index()] {
-            Resolution::Global(slot) => Ok(self.state.globals[slot as usize].clone()),
-            Resolution::Local(slot) => {
-                Ok(self.state.locals[self.frame_base + slot as usize].clone())
-            }
-            Resolution::Builtin(builtin) => self.builtin_variable(id, builtin),
-            Resolution::Function(_) => Err(self.err(
-                id,
-                ErrorCode::PineType,
-                "a function needs arguments to be called",
-            )),
-            Resolution::ColorConst(rgba) => Ok(Value::Color(rgba)),
-            Resolution::EnumConst(tag) => Ok(Value::Str(Rc::new(tag.to_owned()))),
-            Resolution::None => Err(self.err(id, ErrorCode::PineUnknownName, "unresolved name")),
         }
     }
 
@@ -669,8 +310,9 @@ impl<'a> Eval<'a> {
             // The newest known bar: during any evaluation that is the bar
             // being evaluated (catch-up replays included) — documented.
             Builtin::LastBarIndex => self.ctx.bar_index as f64,
-            Builtin::Time => bar.open_time as f64,
-            Builtin::TimeClose => bar.close_time as f64,
+            Builtin::Time => crate::calendar::open_time(bar),
+            Builtin::TimeClose => crate::calendar::close_time(bar),
+            Builtin::Calendar(field) => field.at(bar.open_time, self.timezone),
             Builtin::BarstateIsConfirmed => return Ok(Value::Bool(self.is_commit)),
             Builtin::BarstateIsLast => return Ok(Value::Bool(!self.is_commit)),
             other => {
@@ -694,85 +336,13 @@ impl<'a> Eval<'a> {
         let back = offset_value as usize;
         let series = self.script.history_series[id.index()].expect("history node has a series");
         let key = (series, self.path);
-        // Stage this bar's value (last write wins within the bar).
-        self.state.staged_histories.insert(key, current.clone());
-        if back == 0 {
-            return Ok(current);
-        }
-        let ring = self.state.histories.get(&key);
-        let value = ring
-            .and_then(|r| {
-                r.values
-                    .len()
-                    .checked_sub(back)
-                    .and_then(|i| r.values.get(i).cloned())
-            })
-            .unwrap_or(Value::Na);
-        Ok(value)
-    }
-
-    fn binary(&mut self, op: BinOp, lhs: NodeId, rhs: NodeId) -> Result<Value, PineError> {
-        match op {
-            BinOp::And => {
-                // Short-circuit; na counts false (Pine).
-                if !self.cond(lhs)? {
-                    return Ok(Value::Bool(false));
-                }
-                Ok(Value::Bool(self.cond(rhs)?))
-            }
-            BinOp::Or => {
-                if self.cond(lhs)? {
-                    return Ok(Value::Bool(true));
-                }
-                Ok(Value::Bool(self.cond(rhs)?))
-            }
-            BinOp::Eq | BinOp::Ne => {
-                let l = self.eval(lhs)?;
-                let r = self.eval(rhs)?;
-                // NaN == anything is false (IEEE), and na == na is
-                // therefore false too — Pine agrees.
-                let equal = values_equal(&l, &r);
-                Ok(Value::Bool(if op == BinOp::Eq { equal } else { !equal }))
-            }
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                let l = self.num(lhs)?;
-                let r = self.num(rhs)?;
-                let result = match op {
-                    BinOp::Lt => l < r,
-                    BinOp::Le => l <= r,
-                    BinOp::Gt => l > r,
-                    _ => l >= r,
-                };
-                Ok(Value::Bool(result))
-            }
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                let l = self.num(lhs)?;
-                let r = self.num(rhs)?;
-                let result = match op {
-                    BinOp::Add => l + r,
-                    BinOp::Sub => l - r,
-                    BinOp::Mul => l * r,
-                    // Division by zero is na, not ±inf — a chart drawing an
-                    // infinite line is a lie (documented divergence
-                    // from IEEE, agreement with Pine).
-                    BinOp::Div => {
-                        if r == 0.0 {
-                            f64::NAN
-                        } else {
-                            l / r
-                        }
-                    }
-                    _ => {
-                        if r == 0.0 {
-                            f64::NAN
-                        } else {
-                            l % r
-                        }
-                    }
-                };
-                Ok(Value::Num(result))
-            }
-        }
+        Ok(self.state.arena.history(
+            key,
+            back,
+            current,
+            self.script.max_bars_back,
+            !self.semantic_run.skipped,
+        ))
     }
 
     fn user_call(
@@ -785,6 +355,13 @@ impl<'a> Eval<'a> {
         // included, which its own doc calls diagnostics-only — happened on
         // every user-function call on every bar. The name is taken by
         // reference on the error path alone.
+        let (child_context, index, order) = self
+            .script
+            .types
+            .dispatch
+            .get(&(self.type_context, id.index()))
+            .map(|(context, index, order)| (*context, *index, order.as_slice()))
+            .unwrap_or((self.type_context, index, &[]));
         let function = &self.script.functions[index as usize];
         let (param_count, local_slots, body) =
             (function.param_count, function.local_slots, function.body);
@@ -807,27 +384,23 @@ impl<'a> Eval<'a> {
             self.path,
             u32::try_from(id.index()).expect("arena fits u32"),
         );
-        let path = match self.state.path_children.get(&call_key) {
-            Some(&child) => child,
-            None => {
-                let child = self.state.next_path;
-                self.state.next_path += 1;
-                self.state.path_children.insert(call_key, child);
-                child
-            }
-        };
+        let path = self.state.arena.path(call_key.0, call_key.1);
         let saved_base = self.frame_base;
         let saved_path = self.path;
-        self.frame_base = self.state.locals.len();
+        self.frame_base = self.state.arena.len(LOCALS);
         self.state
-            .locals
-            .resize(self.frame_base + local_slots, Value::Na);
-        for (slot, value) in argv.into_iter().enumerate() {
-            self.state.locals[self.frame_base + slot] = value;
+            .arena
+            .resize(LOCALS, self.frame_base + local_slots);
+        for (slot, argument) in order.iter().enumerate() {
+            self.state
+                .arena
+                .set(LOCALS, self.frame_base + slot, argv[*argument].clone());
         }
         self.path = path;
+        let saved_context = std::mem::replace(&mut self.type_context, child_context);
         let result = self.eval(body);
-        self.state.locals.truncate(self.frame_base);
+        self.type_context = saved_context;
+        self.state.arena.resize(LOCALS, self.frame_base);
         self.frame_base = saved_base;
         self.path = saved_path;
         result
@@ -840,8 +413,20 @@ impl<'a> Eval<'a> {
         builtin: Builtin,
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
+        if self.semantic_run.skipped
+            && matches!(
+                builtin,
+                Builtin::LineNew | Builtin::BoxNew | Builtin::LabelNew | Builtin::Barcolor
+            )
+        {
+            self.advance_arguments(args)?;
+            return Ok(Value::Na);
+        }
         // Output calls first: they stage into the plot row.
         match builtin {
+            Builtin::Collection(op) => return self.collection_call(id, op, args),
+            Builtin::Indicator => return Ok(Value::Na),
+            Builtin::PlotCandle | Builtin::PlotBar => return self.candle_plot(id, args),
             Builtin::Plot | Builtin::Hline => {
                 let value = match args.first() {
                     Some(arg) => self.num(arg.value)?,
@@ -888,7 +473,7 @@ impl<'a> Eval<'a> {
                 };
                 *self.paint = match value {
                     Value::Color(rgba) => Some(Rgba8::from_u32(rgba)),
-                    Value::Na => None,
+                    value if value.is_na() => None,
                     other => return Err(self.type_err(id, "a color", &other)),
                 };
                 return Ok(Value::Na);
@@ -896,7 +481,7 @@ impl<'a> Eval<'a> {
             // fill() is fully resolved at load time; at eval it is a no-op.
             // Accepted-but-inert output calls still evaluate their first
             // argument (consistency: kernels inside advance every bar).
-            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition | Builtin::Indicator => {
+            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition => {
                 if let Some(arg) = args.first() {
                     let _ = self.eval(arg.value)?;
                 }
@@ -914,12 +499,27 @@ impl<'a> Eval<'a> {
             return Ok(input_value(&self.inputs[input_index], self.bar, self.ctx));
         }
         if let Some(site) = self.script.call_sites[id.index()] {
-            return self.kernel_call(id, builtin, site.0, args);
+            return self.cached_kernel(id, builtin, site.0, args);
         }
         self.pure_call(id, builtin, args)
     }
 
     fn arg_num(&mut self, args: &[crate::ast::Arg], position: usize) -> Result<f64, PineError> {
+        if let Some(values) = &self.semantic_run.arguments {
+            return values.get(position).map_or(Ok(f64::NAN), |value| {
+                value
+                    .as_num()
+                    .ok_or_else(|| self.type_err(args[position].value, "a number", value))
+            });
+        }
+        if self.prepared_arguments {
+            return args.get(position).map_or(Ok(f64::NAN), |arg| {
+                let value = self.register(arg.value);
+                value
+                    .as_num()
+                    .ok_or_else(|| self.type_err(arg.value, "a number", &value))
+            });
+        }
         match args.get(position) {
             Some(arg) => self.num(arg.value),
             None => Ok(f64::NAN),
@@ -952,6 +552,7 @@ fn source_value(source: SourceId, bar: &IndicatorBar, ctx: &Ctx<'_>) -> f64 {
 /// else false.
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        (Value::UserObject(a), Value::UserObject(b)) => a == b,
         (Value::Num(a), Value::Num(b)) => a == b,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Color(a), Value::Color(b)) => a == b,
@@ -962,13 +563,15 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 
 fn describe(value: &Value) -> &'static str {
     match value {
+        Value::UserObject(_) => "user object",
         Value::Obj(..) => "an object handle",
+        Value::Collection(..) => "a collection handle",
         Value::Num(_) => "a number",
         Value::Bool(_) => "a bool",
         Value::Color(_) => "a color",
         Value::Str(_) => "a string",
         Value::Tuple(_) => "a tuple",
-        Value::Na => "na",
+        Value::Na | Value::NaBool | Value::NaColor | Value::NaString => "na",
     }
 }
 

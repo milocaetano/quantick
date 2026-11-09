@@ -107,3 +107,4 @@ a bound.
 | 772 | 2026-11-06 | fix/layout-book-upkeep | feat/quantick-new-layout | 21605 | 16 | `crates/stores/src/config.rs` (659) |
 | 774 | 2026-11-06 | feat/workspace-autosave | feat/quantick-new-layout | 31729 | 53 | `crates/app/src/control/gateway/server.rs` (1205) |
 | 776 | 2026-11-06 | fix/drawing-contrast-on-light | feat/quantick-new-layout | 1926 | 5 | `crates/app/src/surfaces/drawing_chrome/mod.rs` (397) |
+| 786 | 2026-11-07 | feat/venue-candles-per-interval | main | 27169 | 28 | `crates/app/src/tab/feed.rs` (1015) |

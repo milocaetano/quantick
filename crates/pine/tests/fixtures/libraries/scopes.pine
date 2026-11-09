@@ -1,0 +1,9 @@
+//@version=6
+library("Field scopes")
+values = 9
+ticks = 8
+export type Item
+    varip int ticks = 1
+    array<float> values
+export make() => Item.new(values = array.new<float>())
+export read(Item item) => item.ticks + array.size(item.values)

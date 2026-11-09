@@ -243,7 +243,8 @@ impl ReportState {
             - frame.total_margin().sum().y
             - frame.inner_margin.sum().y)
             .max(0.0);
-        egui::Window::new("Simulated performance")
+        let id = egui::Id::new("Simulated performance");
+        crate::popup::centred(egui::Window::new("Simulated performance"), id, ctx)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)

@@ -79,6 +79,15 @@ impl Compiler {
                     self.pending_plots
                         .push((expr, args.clone(), PendingPlot::Plot));
                 }
+                Some(kind @ (Builtin::PlotCandle | Builtin::PlotBar)) => {
+                    self.pending_plots.push((
+                        expr,
+                        args.clone(),
+                        PendingPlot::Candle {
+                            is_bar: kind == Builtin::PlotBar,
+                        },
+                    ));
+                }
                 Some(Builtin::Hline) => {
                     self.pending_plots
                         .push((expr, args.clone(), PendingPlot::Hline));
@@ -167,6 +176,7 @@ impl Compiler {
     pub(super) fn register_pending_plots(&mut self) {
         for (call, args, kind) in std::mem::take(&mut self.pending_plots) {
             match kind {
+                PendingPlot::Candle { is_bar } => self.candle_call(call, &args, is_bar),
                 PendingPlot::Plot => self.plot_call(call, &args, false),
                 PendingPlot::Hline => self.plot_call(call, &args, true),
                 PendingPlot::Shape { is_char } => self.shape_call(call, &args, is_char),
@@ -351,6 +361,14 @@ impl Compiler {
     /// name whose initialiser is one.
     fn plot_ref_of(&self, node: NodeId) -> Option<usize> {
         if let Some(index) = self.plot_of_call[node.index()] {
+            if let NodeKind::Call { callee, .. } = self.kind(node)
+                && matches!(
+                    self.resolutions[callee.index()],
+                    Resolution::Builtin(Builtin::PlotCandle | Builtin::PlotBar)
+                )
+            {
+                return None;
+            }
             return Some(index);
         }
         if let NodeKind::Name(_) = self.kind(node)
@@ -358,7 +376,7 @@ impl Compiler {
             && !self.reassigned.get(slot as usize).copied().unwrap_or(true)
             && let Some(init) = self.global_init.get(slot as usize).copied().flatten()
         {
-            return self.plot_of_call[init.index()];
+            return self.plot_ref_of(init);
         }
         None
     }

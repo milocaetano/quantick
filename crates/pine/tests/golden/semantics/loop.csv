@@ -1,0 +1,7 @@
+# pinets=0.13.1; independent probe; close=1,2,3,4,5; not TradingView verified
+sma,cum,varying_bound
+na,6,na
+9,18,3.5
+12,33,10.5
+15,51,4.5
+18,72,9.5

@@ -1,17 +1,27 @@
-//! Where a floating window first opens.
+//! Where a settings window first opens.
 //!
-//! One rule, named once, for every popup the chart puts on screen: the
-//! settings dialogs, the drawing inspector, the object manager. They used to
-//! carry a hardcoded `pos2(90, 120)` each, a few pixels apart, all of them in
-//! the top-left — which is to say *over the chart*, and over the drawings and
-//! volume profiles whose settings the popup was opened to change. A window
-//! that covers the thing it configures makes its own live preview useless.
+//! One rule, named once, for every settings-style window the app puts on
+//! screen: indicator settings, chart settings, exit strategies, the market
+//! picker, agent access and the performance report. They open **centred** in
+//! the room the panels leave, and stay draggable.
 //!
-//! The corner is the bottom-left, and it is the least-bad corner rather than
-//! an arbitrary one: the top-left is claimed by the indicator legend, the
-//! position HUD and the order-flow key, the top-right by the book status badge,
-//! and the right edge by the price axis. What is left is the bottom-left, where
-//! the chart carries a time axis and little else.
+//! The previous rule sent them to the bottom-left corner so they would not
+//! cover the chart. In use that read as a window appearing somewhere
+//! unrelated to the click, far from where the eye was, and the trader asked
+//! for the centre instead (2026-11-08). A settings window is a short,
+//! deliberate visit, not a live overlay; the centre is where a dialog is
+//! looked for. A trader who wants it elsewhere drags it once and it reopens
+//! there.
+//!
+//! The window is centred from its drawn size while that settles, then held by its
+//! top-left corner like any window. Pivoting on its centre instead would make
+//! it grow up and down at once whenever its content changes height — a tab
+//! switch would move the tab strip out from under the pointer. egui's first
+//! frame of a window is an invisible sizing pass, so the centred spot is the
+//! first one seen.
+//!
+//! Drawing settings are the exception and keep their own rule: they open
+//! beside the drawing they configure (`quantick_chart_interaction::panel_placement`).
 //!
 //! Measured from [`egui::Context::available_rect`] rather than from the window,
 //! so the toolbar and the status bar — both panels — are excluded by
@@ -19,57 +29,154 @@
 
 use eframe::egui;
 
-/// Gap between a popup and the edges of the area it opens in, in pixels.
-const MARGIN_PX: f32 = 12.0;
-
-/// Where a popup should first appear, to be used with
-/// [`Align2::LEFT_BOTTOM`](egui::Align2::LEFT_BOTTOM) as the window's pivot.
-///
-/// The pivot matters: anchored by its top-left a window placed here would grow
-/// *downward*, off the bottom of the screen, taking its buttons with it. See
-/// [`anchor`] for the pair.
-#[must_use]
-pub(crate) fn position(ctx: &egui::Context) -> egui::Pos2 {
-    ctx.available_rect().left_bottom() + egui::vec2(MARGIN_PX, -MARGIN_PX)
+/// Give `window` the settings placement under `id`: centred on first open,
+/// draggable, and reopened wherever it was left.
+pub(crate) fn centred<'open>(
+    window: egui::Window<'open>,
+    id: egui::Id,
+    ctx: &egui::Context,
+) -> egui::Window<'open> {
+    let window = window.id(id).pivot(egui::Align2::LEFT_TOP);
+    let Some(drawn) = ctx.memory(|memory| memory.area_rect(id)) else {
+        return window;
+    };
+    // (frames of settling left, where it was last put). A window's size can
+    // take a few frames to settle, so it is re-centred while it does — and
+    // left alone the moment a hand has moved it.
+    let state = id.with("centring");
+    let (left, placed) = ctx
+        .data(|data| data.get_temp(state))
+        .unwrap_or((SETTLE_FRAMES, drawn.min));
+    if left == 0 || drawn.min.distance(placed) > 0.5 {
+        ctx.data_mut(|data| data.insert_temp(state, (0_u8, placed)));
+        return window;
+    }
+    let at = ctx.available_rect().center() - drawn.size() / 2.0;
+    ctx.data_mut(|data| data.insert_temp(state, (left - 1, at)));
+    window.current_pos(at)
 }
 
-/// The pivot [`position`] is expressed in. Always paired with it, so no caller
-/// can place a window by the wrong corner and push its controls off screen.
-pub(crate) const fn anchor() -> egui::Align2 {
-    egui::Align2::LEFT_BOTTOM
-}
+/// How many frames a settings window is re-centred for while its size
+/// settles after it first appears.
+const SETTLE_FRAMES: u8 = 4;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The rule, at every window size the app allows: inside the available
-    /// area, in its bottom-left, and clear of the edges by the margin. A fixed
-    /// `y` would be the bottom of exactly one window.
+    fn frame(ctx: &egui::Context, size: egui::Vec2, run: impl FnMut(&egui::Context)) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), size)),
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run(input, run);
+    }
+
+    const ID: &str = "settings-under-test";
+
+    /// A settings window `height` tall, centred, with an optional top panel
+    /// and an optional position a drag left behind.
+    fn show(ctx: &egui::Context, height: f32, toolbar: bool, dragged: Option<egui::Pos2>) {
+        if toolbar {
+            egui::TopBottomPanel::top("toolbar")
+                .exact_height(100.0)
+                .show(ctx, |_| {});
+        }
+        let mut window = centred(egui::Window::new("Settings"), egui::Id::new(ID), ctx);
+        if let Some(at) = dragged {
+            window = window.current_pos(at);
+        }
+        window.show(ctx, |ui| {
+            ui.set_min_size(egui::vec2(320.0, height));
+        });
+    }
+
+    fn rect(ctx: &egui::Context) -> egui::Rect {
+        ctx.memory(|memory| memory.area_rect(egui::Id::new(ID)))
+            .expect("the window was laid out")
+    }
+
+    /// The rule, at every window size the app allows: centred and fully on
+    /// screen. A fixed point would be the centre of exactly one window.
     #[test]
-    fn popups_open_in_the_bottom_left_of_whatever_room_there_is() {
+    fn settings_windows_open_centred_and_on_screen() {
         for size in [
             egui::vec2(1920.0, 1080.0),
             egui::vec2(1500.0, 900.0),
             egui::vec2(900.0, 560.0),
         ] {
             let ctx = egui::Context::default();
-            let input = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), size)),
-                ..egui::RawInput::default()
-            };
-            let mut at = egui::Pos2::ZERO;
-            let _ = ctx.run(input, |ctx| at = position(ctx));
-
+            for _ in 0..3 {
+                frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+            }
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let opened = rect(&ctx);
+            assert!(screen.contains_rect(opened), "{size:?}: {opened:?}");
             assert!(
-                (at.x - MARGIN_PX).abs() < f32::EPSILON,
-                "{size:?}: a margin off the left edge, not centred ({at:?})"
+                opened.center().distance(screen.center()) < 2.0,
+                "{size:?}: centred, not cornered {opened:?}"
             );
-            assert!(
-                at.y > size.y / 2.0 && at.y <= size.y,
-                "{size:?}: in the bottom half and on screen ({at:?})"
-            );
-            assert_eq!(anchor(), egui::Align2::LEFT_BOTTOM, "grows upward");
         }
+    }
+
+    /// The panels are excluded: a top panel pushes the centre down by half
+    /// its height, so the window centres in the room actually left.
+    #[test]
+    fn the_centre_is_measured_in_the_room_the_panels_leave() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(1200.0, 800.0);
+        for _ in 0..3 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, true, None));
+        }
+        let room = egui::Rect::from_min_max(egui::pos2(0.0, 100.0), size.to_pos2());
+        assert!(
+            rect(&ctx).center().distance(room.center()) < 2.0,
+            "{:?}",
+            rect(&ctx)
+        );
+    }
+
+    /// Content that grows — a taller tab — extends the window downward: the
+    /// title bar and tab strip stay under the pointer.
+    #[test]
+    fn a_taller_tab_grows_the_window_downward_without_moving_its_top() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(1500.0, 900.0);
+        // Past the frames in which a new window is still being centred.
+        for _ in 0..=SETTLE_FRAMES + 1 {
+            frame(&ctx, size, |ctx| show(ctx, 200.0, false, None));
+        }
+        let before = rect(&ctx);
+        for _ in 0..2 {
+            frame(&ctx, size, |ctx| show(ctx, 400.0, false, None));
+        }
+        let after = rect(&ctx);
+        assert!(
+            after.height() > before.height() + 150.0,
+            "{before:?} {after:?}"
+        );
+        assert!(
+            (after.top() - before.top()).abs() < 0.5,
+            "{before:?} {after:?}"
+        );
+    }
+
+    /// Once dragged, closed and opened again, it is where the hand left it,
+    /// not snapped back to the centre.
+    #[test]
+    fn a_dragged_window_reopens_where_it_was_left() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(1500.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+        }
+        let dragged = egui::pos2(40.0, 60.0);
+        frame(&ctx, size, |ctx| show(ctx, 240.0, false, Some(dragged)));
+        // Closed for a frame, then opened again.
+        frame(&ctx, size, |_| {});
+        for _ in 0..2 {
+            frame(&ctx, size, |ctx| show(ctx, 240.0, false, None));
+        }
+        assert!(rect(&ctx).min.distance(dragged) < 0.5, "{:?}", rect(&ctx));
     }
 }

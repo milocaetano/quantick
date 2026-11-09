@@ -401,7 +401,8 @@ impl Tab {
     fn attach_with(&mut self, handle: FeedHandle, keep_timeline: bool) {
         // The old market's candles, and how far back it reached, describe the
         // old market; anything in flight belongs to the channel about to be
-        // dropped, and the run to the old session's tape.
+        // dropped, and the run to the old session's tape. New capabilities first.
+        self.link.feed_capabilities = handle.capabilities.clone();
         self.run_session(None, quantick_session::Act::Attach { keep_timeline });
         if !keep_timeline {
             // A seam and a resume floor both belong to the timeline being

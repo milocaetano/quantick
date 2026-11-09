@@ -332,6 +332,7 @@ impl DrawingController {
         if ask.duplicate {
             self.duplicate_selected_drawing(host, effects, alerts);
         }
+        effects.arm = effects.arm.or(ask.draw_again);
         if let Some(saved) = ask.saved_default {
             // Nothing to undo: this changed a preference, not the chart.
             effects.note(saved.message(), now);

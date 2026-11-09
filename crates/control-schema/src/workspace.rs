@@ -42,6 +42,9 @@ pub struct WorkspaceSnapshot {
     #[serde(default = "auto_save_default")]
     pub auto_save: bool,
     pub performance_readings_visible: bool,
+    /// Whether a feed that folds minutes builds its candle history a week
+    /// at a time. A feed serving every interval asks one page at the pane's
+    /// own interval either way, so the setting does not reach it.
     pub progressive_venue_history: bool,
     /// How far one press of *load older* reaches, in the v1 vocabulary this
     /// field has always used: `span` (an hours target; its length is

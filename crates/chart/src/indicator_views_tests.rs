@@ -166,6 +166,7 @@ fn the_forming_bar_outranks_every_committed_bar_in_its_slot() {
     views.apply(IndicatorEvent::Preview {
         slot,
         frame: Some(PreviewFrame {
+            candles: Vec::new(),
             paint: Some(BLUE),
             ..PreviewFrame::new(Vec::new())
         }),
@@ -195,6 +196,7 @@ fn a_hidden_indicator_paints_nothing() {
     views.apply(IndicatorEvent::Preview {
         slot,
         frame: Some(PreviewFrame {
+            candles: Vec::new(),
             paint: Some(RED),
             ..PreviewFrame::new(Vec::new())
         }),

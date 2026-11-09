@@ -88,6 +88,7 @@ impl Shell {
                 partial: None,
                 rebuild_pending: false,
                 rebuild_failed: false,
+                first_visible_slot: None,
             })
             .collect();
         let view = TabView {
@@ -351,6 +352,7 @@ fn load_older_candles_says_why_it_cannot_and_reaches_behind_the_oldest_when_it_c
         partial: None,
         rebuild_pending: false,
         rebuild_failed: false,
+        first_visible_slot: None,
     }];
     assert_eq!(
         session.older_candles(shell.capabilities, &panes),

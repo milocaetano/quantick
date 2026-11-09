@@ -11,6 +11,8 @@
 /// Every accepted builtin, by dialect name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    /// Typed collection operation.
+    Collection(crate::collections::Op),
     // ---- series variables (host/bar-provided) ----
     /// `open`
     Open,
@@ -48,6 +50,8 @@ pub enum Builtin {
     Time,
     /// `time_close`
     TimeClose,
+    /// Calendar variable or function.
+    Calendar(crate::calendar::CalendarField),
     /// `barstate.isconfirmed`
     BarstateIsConfirmed,
     /// `barstate.islast`
@@ -58,6 +62,8 @@ pub enum Builtin {
     TaSma,
     /// `ta.ema`
     TaEma,
+    /// `ta.macd`
+    TaMacd,
     /// `ta.rma`
     TaRma,
     /// `ta.wma`
@@ -131,6 +137,17 @@ pub enum Builtin {
     /// `math.log10`
     MathLog10,
 
+    /// `int(x)` conversion.
+    IntCast,
+    /// `float(x)` conversion.
+    FloatCast,
+    /// `bool(x)` conversion.
+    BoolCast,
+    /// `string(na)` typed missing string.
+    StringCast,
+    /// `color(na)` typed missing color.
+    ColorCast,
+
     // ---- value helpers ----
     /// `na(x)` as a predicate call; the bare `na` literal is lexed apart.
     NaCall,
@@ -150,6 +167,10 @@ pub enum Builtin {
     Indicator,
     /// `plot(...)`
     Plot,
+    /// Headless OHLC candle output.
+    PlotCandle,
+    /// Headless OHLC bar output.
+    PlotBar,
     /// `plotshape(...)`
     PlotShape,
     /// `plotchar(...)`
@@ -214,10 +235,35 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("last_bar_index", Builtin::LastBarIndex),
     ("time", Builtin::Time),
     ("time_close", Builtin::TimeClose),
+    (
+        "year",
+        Builtin::Calendar(crate::calendar::CalendarField::Year),
+    ),
+    (
+        "month",
+        Builtin::Calendar(crate::calendar::CalendarField::Month),
+    ),
+    (
+        "dayofmonth",
+        Builtin::Calendar(crate::calendar::CalendarField::DayOfMonth),
+    ),
+    (
+        "dayofweek",
+        Builtin::Calendar(crate::calendar::CalendarField::DayOfWeek),
+    ),
+    (
+        "hour",
+        Builtin::Calendar(crate::calendar::CalendarField::Hour),
+    ),
+    (
+        "minute",
+        Builtin::Calendar(crate::calendar::CalendarField::Minute),
+    ),
     ("barstate.isconfirmed", Builtin::BarstateIsConfirmed),
     ("barstate.islast", Builtin::BarstateIsLast),
     ("ta.sma", Builtin::TaSma),
     ("ta.ema", Builtin::TaEma),
+    ("ta.macd", Builtin::TaMacd),
     ("ta.rma", Builtin::TaRma),
     ("ta.wma", Builtin::TaWma),
     ("ta.vwma", Builtin::TaVwma),
@@ -260,6 +306,8 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("color.rgb", Builtin::ColorRgb),
     ("indicator", Builtin::Indicator),
     ("plot", Builtin::Plot),
+    ("plotcandle", Builtin::PlotCandle),
+    ("plotbar", Builtin::PlotBar),
     ("plotshape", Builtin::PlotShape),
     ("plotchar", Builtin::PlotChar),
     ("hline", Builtin::Hline),
@@ -276,18 +324,23 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("input.color", Builtin::InputColor),
     ("input.string", Builtin::InputString),
     ("input.source", Builtin::InputSource),
+    ("int", Builtin::IntCast),
+    ("float", Builtin::FloatCast),
+    ("bool", Builtin::BoolCast),
+    ("string", Builtin::StringCast),
+    ("color", Builtin::ColorCast),
 ];
 
 impl Builtin {
     /// Whether a *call* of this builtin owns per-call-site kernel state —
-    /// the calls that get a `CallSiteId` and are illegal inside loop bodies
-    /// (`PINE_STATEFUL_IN_LOOP`).
+    /// the calls that get a `CallSiteId` and advance from pre-bar state.
     #[must_use]
     pub fn is_stateful_call(self) -> bool {
         matches!(
             self,
             Builtin::TaSma
                 | Builtin::TaEma
+                | Builtin::TaMacd
                 | Builtin::TaRma
                 | Builtin::TaWma
                 | Builtin::TaVwma
@@ -323,6 +376,8 @@ impl Builtin {
             self,
             Builtin::Indicator
                 | Builtin::Plot
+                | Builtin::PlotCandle
+                | Builtin::PlotBar
                 | Builtin::PlotShape
                 | Builtin::PlotChar
                 | Builtin::Hline
@@ -340,6 +395,9 @@ impl Builtin {
     /// Resolve a dialect name (`close`, `ta.ema`, `barstate.islast`, …).
     #[must_use]
     pub fn lookup(name: &str) -> Option<Builtin> {
+        if let Some(op) = crate::collections::lookup(name) {
+            return Some(Self::Collection(op));
+        }
         BUILTINS
             .iter()
             .find(|(candidate, _)| *candidate == name)
@@ -350,7 +408,11 @@ impl Builtin {
     /// doc-drift test's source of truth.
     #[must_use]
     pub fn all_names() -> Vec<&'static str> {
-        BUILTINS.iter().map(|(name, _)| *name).collect()
+        BUILTINS
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(crate::collections::names())
+            .collect()
     }
 }
 
@@ -375,17 +437,10 @@ pub fn rejection_of(name: &str) -> Option<(crate::error::ErrorCode, &'static str
             "strategy.* is not supported: this dialect scripts indicators; backtesting \
              consumes their plots through the host instead",
         ),
-        "array" | "matrix" | "map" | "table" => (
-            ErrorCode::PineNoCollections,
-            "collection namespaces (array/matrix/map/table) are not in the v1 dialect",
-        ),
-        "year" | "month" | "dayofmonth" | "dayofweek" | "hour" | "minute" | "second" => (
-            ErrorCode::PineNoCalendar,
-            "calendar builtins are not supported: activity-sampled bars are not on a clock",
-        ),
-        "plotcandle" | "plotbar" => (
+        "array" | "matrix" | "map" | "table" => crate::collections::rejection(),
+        "second" => (
             ErrorCode::PineUnsupported,
-            "plotcandle/plotbar are not supported: the chart already draws the bars",
+            "second is not supported by this calendar subset",
         ),
         "max_bars_back" => (
             ErrorCode::PineUnsupported,
@@ -463,7 +518,7 @@ mod tests {
         assert!(message.contains("activity-sampled"));
         assert!(rejection_of("strategy.entry").is_some());
         assert!(rejection_of("array.new_float").is_some());
-        assert!(rejection_of("dayofweek").is_some());
+        assert!(rejection_of("dayofweek").is_none());
         assert!(rejection_of("close").is_none());
     }
 
