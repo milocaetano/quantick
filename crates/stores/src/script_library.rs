@@ -14,7 +14,9 @@
 use std::path::{Path, PathBuf};
 
 mod catalog;
+mod persistence;
 pub use catalog::{EMBEDDED_SCRIPTS, POPULAR_INDICATORS, ScriptMetadata, script_title};
+pub const MAX_SOURCE_BYTES: usize = 256 * 1024;
 
 /// One loadable script.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +71,7 @@ pub enum ScriptEditorAction {
 #[derive(Debug, Default)]
 pub struct ScriptLibrary {
     entries: Vec<ScriptEntry>,
+    directory: PathBuf,
 }
 
 impl ScriptLibrary {
@@ -88,6 +91,7 @@ impl ScriptLibrary {
             );
             return Self {
                 entries: Self::embedded(),
+                directory: dir.to_owned(),
             };
         }
         Self::scan_dir(dir)
@@ -125,7 +129,10 @@ impl ScriptLibrary {
                     action = "embedded_scripts_only",
                     "cannot read the indicators directory; using embedded scripts only"
                 );
-                return Self { entries };
+                return Self {
+                    entries,
+                    directory: dir.to_owned(),
+                };
             }
         };
         let mut files: Vec<PathBuf> = read
@@ -150,15 +157,23 @@ impl ScriptLibrary {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
-            // A file shadows an embedded script of the same name — the user's
-            // copy wins, and the menu never shows two identical labels.
-            entries.retain(|e| e.name != name);
+            // A bundled identity stays immutable even if a same-named file is
+            // dropped into the user directory. Editable copies need distinct ids.
+            if entries
+                .iter()
+                .any(|entry| entry.name.eq_ignore_ascii_case(&name))
+            {
+                continue;
+            }
             entries.push(ScriptEntry {
                 name,
                 origin: ScriptOrigin::File(path),
             });
         }
-        Self { entries }
+        Self {
+            entries,
+            directory: dir.to_owned(),
+        }
     }
 
     /// Every loadable script, embedded first, then files (sorted).
@@ -184,8 +199,7 @@ impl ScriptLibrary {
         let entry = self.entries.get(index)?;
         Some(match &entry.origin {
             ScriptOrigin::Embedded(source) => Ok((*source).to_owned()),
-            ScriptOrigin::File(path) => std::fs::read_to_string(path)
-                .map_err(|e| format!("cannot read {}: {e}", path.display())),
+            ScriptOrigin::File(path) => persistence::read_source(path),
         })
     }
 }
@@ -210,12 +224,12 @@ impl ScriptLibraryPort for ScriptLibrary {
         })
     }
 
-    fn copy(&mut self, _id: &str, _new_id: &str) -> Result<ScriptDocument, String> {
-        Err("script copying is not available in this build".into())
+    fn copy(&mut self, id: &str, new_id: &str) -> Result<ScriptDocument, String> {
+        self.copy_document(id, new_id)
     }
 
-    fn save(&mut self, _document: &ScriptDocument) -> Result<(), String> {
-        Err("script saving is not available in this build".into())
+    fn save(&mut self, document: &ScriptDocument) -> Result<(), String> {
+        self.save_document(document)
     }
 }
 
@@ -315,7 +329,7 @@ plot(open)
     }
 
     #[test]
-    fn a_user_file_shadows_the_embedded_script_of_the_same_name() {
+    fn a_user_file_cannot_shadow_the_embedded_script_of_the_same_name() {
         let dir = scratch("shadow");
         let (embedded_name, _) = EMBEDDED_SCRIPTS[0];
         std::fs::write(
@@ -334,8 +348,8 @@ plot(high)
             .collect();
         assert_eq!(matching.len(), 1, "never two rows with the same label");
         assert!(
-            matches!(matching[0].origin, ScriptOrigin::File(_)),
-            "the user's copy wins"
+            matches!(matching[0].origin, ScriptOrigin::Embedded(_)),
+            "built-in identities remain immutable"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

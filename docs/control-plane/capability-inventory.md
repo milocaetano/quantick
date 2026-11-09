@@ -57,6 +57,7 @@ capability that cannot change application state.
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `feed.source.set` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
+| `indicator.library.edit` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.picker.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -114,4 +115,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-89 capabilities registered.
+90 capabilities registered.

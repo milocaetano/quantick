@@ -213,6 +213,7 @@ pub(super) fn draw_surfaces(
         registry,
         indicators,
         tabs,
+        workspace.layouts(),
         std::mem::take(&mut asks.script_editor_actions),
         now,
     );
@@ -261,6 +262,10 @@ fn indicator_preview_area(
 }
 
 /// Hand every script file that changed on disk to the pane that runs it.
-pub(super) fn reload_changed_scripts(indicators: &mut IndicatorState, tabs: &mut ArrangementHost) {
-    super::super::script_reload::reload_changed_scripts(indicators, tabs);
+pub(super) fn reload_changed_scripts(
+    indicators: &mut IndicatorState,
+    tabs: &mut ArrangementHost,
+    store: &crate::workspace_store::LayoutStore,
+) {
+    super::super::script_reload::reload_changed_scripts(indicators, tabs, store);
 }

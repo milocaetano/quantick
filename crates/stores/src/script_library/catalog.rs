@@ -223,11 +223,29 @@ pub const POPULAR_INDICATORS: &[ScriptMetadata] = &[
 ];
 
 /// Display title for a stable identity, also valid for user files.
-pub fn script_title(id: &str) -> &str {
+pub fn script_title(id: &str) -> String {
     POPULAR_INDICATORS
         .iter()
         .find(|entry| entry.id == id)
-        .map_or(id, |entry| entry.title)
+        .map_or_else(
+            || {
+                if let Some((_, source)) = EMBEDDED_SCRIPTS.iter().find(|(name, _)| *name == id)
+                    && let Some(title) = source.lines().find_map(|line| {
+                        line.trim()
+                            .strip_prefix("indicator(\"")
+                            .and_then(|rest| rest.split('"').next())
+                    })
+                {
+                    return title.to_owned();
+                }
+                if id.to_ascii_lowercase().ends_with(".pine") {
+                    id[..id.len() - 5].replace(['_', '-'], " ")
+                } else {
+                    id.to_owned()
+                }
+            },
+            |entry| entry.title.to_owned(),
+        )
 }
 
 #[cfg(test)]
@@ -249,6 +267,6 @@ mod tests {
             30,
             "nine originals plus 21 new assets"
         );
-        assert_eq!(script_title("my-indicator.pine"), "my-indicator.pine");
+        assert_eq!(script_title("my-indicator.pine"), "my indicator");
     }
 }

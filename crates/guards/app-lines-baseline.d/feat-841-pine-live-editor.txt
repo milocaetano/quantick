@@ -1,0 +1,5 @@
+# Numeric control delegates settings Apply; durable-input reload reads app-owned pane/layout identity.
+# #841 source window and picker buttons dock through the existing surface port.
+# Remaining additions bind the bounded compiler and store actions to app-owned panes.
+crates/app +557
+!budget +557
