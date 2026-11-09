@@ -12,6 +12,7 @@
 use eframe::egui;
 use eframe::egui::{Color32, Pos2, Rect, Shape, Stroke, pos2};
 use egui_phosphor::regular as icons;
+use quantick_appearance::ResolvedTheme;
 use quantick_indicators::{PlotStyle, Rgba8};
 
 use crate::chart::PriceScale;
@@ -178,10 +179,12 @@ pub(crate) fn draw_overlays<'a>(
     partial_slot: Option<usize>,
     bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
+    let surface = theme::get(painter.ctx());
     for view in overlays {
         draw_view_plots(
             painter,
             view,
+            &surface.resolved,
             x,
             |v| scale.y(v),
             start,
@@ -357,6 +360,7 @@ pub(crate) fn draw_pane(
     draw_view_plots(
         &clipped,
         view,
+        &palette.resolved,
         x,
         |v| scale.y(v),
         start,
@@ -365,7 +369,7 @@ pub(crate) fn draw_pane(
         &pane_extents,
     );
     if let Some(lane) = &frame.lane {
-        draw_lane_plots(&clipped, view, lane, &|v| scale.y(v));
+        draw_lane_plots(&clipped, view, lane, &|v| scale.y(v), &palette.resolved);
     }
     draw_objects(
         &clipped,
@@ -446,8 +450,8 @@ fn draw_lane_plots(
     view: &IndicatorView,
     lane: &LaneFrame<'_>,
     y_of: &impl Fn(f64) -> f32,
+    surface: &ResolvedTheme,
 ) {
-    let surface = theme::get(painter.ctx());
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         if spec.marker.is_some()
             || !matches!(
@@ -462,7 +466,7 @@ fn draw_lane_plots(
         };
         // Same resolution the history pane uses, so a restyled plot cannot
         // look like one series on the chart and another in the live lane.
-        let Some(resolved) = view.plot_style(index, &surface.resolved) else {
+        let Some(resolved) = view.plot_style(index, surface) else {
             continue;
         };
         if !resolved.visible {
@@ -613,6 +617,7 @@ fn value_range(view: &IndicatorView, start: usize, end: usize) -> Option<(f64, f
 fn draw_view_plots(
     painter: &egui::Painter,
     view: &IndicatorView,
+    surface: &ResolvedTheme,
     x: &PlotX<'_>,
     y_of: impl Fn(f64) -> f32,
     start: usize,
@@ -624,7 +629,6 @@ fn draw_view_plots(
     for fill in &view.descriptor.fills {
         draw_fill(painter, view, fill, x, &y_of, start, end, partial_slot);
     }
-    let surface = theme::get(painter.ctx());
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         let Some(column) = view.columns.get(index) else {
             continue;
@@ -649,7 +653,7 @@ fn draw_view_plots(
         // The trader's style layer over the author's declaration. A plot they
         // switched off draws nothing at all — the eye in the legend hides the
         // whole indicator, this hides one series of several.
-        let Some(resolved) = view.plot_style(index, &surface.resolved) else {
+        let Some(resolved) = view.plot_style(index, surface) else {
             continue;
         };
         if !resolved.visible {
@@ -1337,7 +1341,14 @@ mod tests {
         ];
 
         let shapes = painted(|painter| {
-            draw_lane_plots(painter, &with_lane, &lane_of(&[]), &|v| 50.0 - v as f32);
+            let dark = ResolvedTheme::bundled_dark();
+            draw_lane_plots(
+                painter,
+                &with_lane,
+                &lane_of(&[]),
+                &|v| 50.0 - v as f32,
+                dark,
+            );
         });
         assert!(
             shapes.contains("Path"),
@@ -1351,7 +1362,8 @@ mod tests {
 
         let bare = view(vec![vec![1.0, 2.0]], Some(vec![3.0]));
         let nothing = painted(|painter| {
-            draw_lane_plots(painter, &bare, &lane_of(&[]), &|v| 50.0 - v as f32);
+            let dark = ResolvedTheme::bundled_dark();
+            draw_lane_plots(painter, &bare, &lane_of(&[]), &|v| 50.0 - v as f32, dark);
         });
         assert!(!nothing.contains("Path"), "no rungs, no curve: {nothing}");
     }
@@ -1364,9 +1376,13 @@ mod tests {
     fn committed_values_step_across_the_lane_instead_of_interpolating() {
         let pane = view(vec![vec![10.0, 20.0]], None);
         let shapes = painted(|painter| {
-            draw_lane_plots(painter, &pane, &lane_of(&[(1_200, 0), (1_600, 1)]), &|v| {
-                100.0 - v as f32
-            });
+            draw_lane_plots(
+                painter,
+                &pane,
+                &lane_of(&[(1_200, 0), (1_600, 1)]),
+                &|v| 100.0 - v as f32,
+                ResolvedTheme::bundled_dark(),
+            );
         });
         // Rows 0 and 1 sit at y 90 and 80; the hold means y 90 appears at the
         // second close's x before the step down to 80.
@@ -1393,9 +1409,13 @@ mod tests {
             values: vec![2.5],
         }];
         let shapes = painted(|painter| {
-            draw_lane_plots(painter, &pane, &lane_of(&[(1_200, 0)]), &|v| {
-                50.0 - v as f32
-            });
+            draw_lane_plots(
+                painter,
+                &pane,
+                &lane_of(&[(1_200, 0)]),
+                &|v| 50.0 - v as f32,
+                ResolvedTheme::bundled_dark(),
+            );
         });
         assert_eq!(
             shapes, "[]",

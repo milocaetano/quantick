@@ -79,9 +79,9 @@ pub struct ThemeDocument {
     pub chart_axes: Option<ChartAxes>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
-    /// Indicator plot inks, `"<indicator title>.<plot title>" = colour`.
+    /// Indicator plot inks: `[plot_ink."<indicator title>"]`, `<plot> = colour`.
     #[serde(default)]
-    pub plot_ink: BTreeMap<String, ColorValue>,
+    pub plot_ink: BTreeMap<String, BTreeMap<String, ColorValue>>,
     #[serde(default)]
     pub typography: BTreeMap<String, FontOverride>,
     #[serde(default)]
@@ -249,14 +249,19 @@ impl ThemeDocument {
             bookmap: None,
             title_strip: None,
         };
+        // A surface the document leaves out is the root itself, unless the
+        // root authors plot ink: then it is the root resolved apart, ink-free.
+        let root_inks = resolved.has_plot_ink();
         resolved.bookmap = self
             .bookmap
-            .as_ref()
+            .clone()
+            .or_else(|| root_inks.then(BookmapOverride::default))
             .map(|surface| surface.resolve(&resolved).map(Box::new))
             .transpose()?;
         resolved.title_strip = self
             .title_strip
-            .as_ref()
+            .clone()
+            .or_else(|| root_inks.then(TitleStripOverride::default))
             .map(|surface| surface.resolve(&resolved).map(Box::new))
             .transpose()?;
         Ok(resolved)
@@ -305,7 +310,7 @@ pub struct ResolvedTheme {
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
-    plot_ink: Vec<plot_ink::PlotInk>,
+    plot_ink: plot_ink::PlotInks,
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,

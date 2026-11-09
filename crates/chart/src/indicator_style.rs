@@ -101,6 +101,11 @@ impl StyleOverride {
         self.plots.iter().all(|plot| plot.is_default())
     }
 
+    /// Whether plot `index` is drawn: no theme decides that, only the trader.
+    pub fn visible(&self, index: usize) -> bool {
+        self.get(index).visible.unwrap_or(true)
+    }
+
     /// The layer as stored, for persistence.
     pub fn plots(&self) -> &[PlotOverride] {
         &self.plots
@@ -112,7 +117,7 @@ impl StyleOverride {
     pub fn resolve(&self, index: usize, spec: &PlotSpec, ink: Option<Rgba8>) -> ResolvedPlot {
         let over = self.get(index);
         ResolvedPlot {
-            visible: over.visible.unwrap_or(true),
+            visible: self.visible(index),
             color: over.color.or(ink).unwrap_or(spec.base_color),
             width: over.width.map_or(spec.width, |px| {
                 px.clamp(MIN_PLOT_WIDTH_PX, MAX_PLOT_WIDTH_PX)

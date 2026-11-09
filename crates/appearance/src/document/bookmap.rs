@@ -14,7 +14,7 @@ pub struct BookmapOverride {
     pub colors: BTreeMap<String, ColorValue>,
     /// The pane's own plot inks; the root theme's are never inherited here.
     #[serde(default)]
-    pub plot_ink: BTreeMap<String, ColorValue>,
+    pub plot_ink: BTreeMap<String, BTreeMap<String, ColorValue>>,
     #[serde(default)]
     pub footprint_heat: crate::heat::HeatOverride,
 }

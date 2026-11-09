@@ -353,13 +353,14 @@ fn draw_style(
     // The way back. The Inputs tab has one — the `Default` preset restores the
     // declared values — and without this the Style tab had none: a trader who
     // tuned a palette into something unreadable could only guess their way back
-    // to the colours the indicator's author chose. Disabled when there is
-    // nothing to undo, so it never offers to change what it would not.
+    // to the defaults: the theme's ink for a plot, else the colour its author
+    // chose. Disabled when there is nothing to undo, so it never offers to
+    // change what it would not.
     ui.add_space(4.0);
     if ui
         .add_enabled(!style.is_default(), egui::Button::new("Reset style"))
-        .on_hover_text("back to the colours and widths the indicator declares")
-        .on_disabled_hover_text("already showing what the indicator declares")
+        .on_hover_text("back to the default colours (the theme's, else the script's) and widths")
+        .on_disabled_hover_text("already showing the defaults")
         .clicked()
     {
         style.clear();

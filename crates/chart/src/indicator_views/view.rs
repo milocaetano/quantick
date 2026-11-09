@@ -158,12 +158,20 @@ impl IndicatorView {
     ///
     /// The one door between the style layer and the renderer — every plot the
     /// chart draws is resolved through here, so a colour changed in the dialog
-    /// cannot reach one drawing path and miss another. Two `Vec` lookups and a
-    /// few `Option`s: it runs once per plot per frame and allocates nothing.
+    /// cannot reach one drawing path and miss another. Two `Vec` lookups, two
+    /// lookups in the theme's tiny ink table and a few `Option`s: it runs once
+    /// per plot per frame and allocates nothing.
     pub fn plot_style(&self, index: usize, theme: &ResolvedTheme) -> Option<ResolvedPlot> {
         let spec = self.descriptor.plots.get(index)?;
         let ink = theme_ink(theme, &self.descriptor.title, &spec.title);
         Some(self.style.resolve(index, spec, ink))
+    }
+
+    /// Whether plot `index` is drawn, or `None` when there is no such plot:
+    /// what a hit test needs, which no theme's colours change.
+    pub fn plot_visible(&self, index: usize) -> Option<bool> {
+        self.descriptor.plots.get(index)?;
+        Some(self.style.visible(index))
     }
 
     /// The label the UI shows for this indicator.

@@ -257,12 +257,7 @@ impl PaneHitTest<'_> {
         let mut best: Option<(f32, SlotId)> = None;
         for view in self.projection.indicators.visible_overlays() {
             for index in 0..view.descriptor.plots.len() {
-                // Only visibility and width decide a hit; no theme ink does.
-                let surface = quantick_appearance::ResolvedTheme::bundled_dark();
-                let Some(resolved) = view.plot_style(index, surface) else {
-                    continue;
-                };
-                if !resolved.visible {
+                if view.plot_visible(index) != Some(true) {
                     continue;
                 }
                 let Some(column) = view.columns.get(index) else {

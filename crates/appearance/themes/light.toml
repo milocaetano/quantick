@@ -198,8 +198,8 @@ preview_grid = { premultiplied = [16, 16, 16, 16] }
 preview_path = { premultiplied = [145, 145, 145, 145] }
 
 # The bundled VWAP draws in the drawing slate on paper; the flow pane keeps purple.
-[plot_ink]
-"VWAP (cumulative).vwap" = "#2B3640"
+[plot_ink."VWAP (cumulative)"]
+vwap = "#2B3640"
 
 # Bookmap uses the approved slate plot independently of the Light Time canvas.
 [bookmap]
