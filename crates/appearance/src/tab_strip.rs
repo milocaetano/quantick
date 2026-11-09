@@ -240,7 +240,7 @@ mod tests {
             (Token::TabIdleFill, [[0x1B, 0x20, 0x2D], [0xCF, 0xCC, 0xC7]]),
             (
                 Token::ToolbarSheet,
-                [[0x17, 0x1B, 0x26], [0xFF, 0xFC, 0xF7]],
+                [[0x17, 0x1B, 0x26], [0xED, 0xED, 0xED]],
             ),
         ] {
             for (theme, rgb) in [(&dark, want[0]), (&light, want[1])] {

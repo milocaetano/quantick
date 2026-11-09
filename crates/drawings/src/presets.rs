@@ -519,11 +519,10 @@ mod appearance_tests {
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
             let fresh = new_drawing_from_defaults(&store, tool);
             // Every tool is born in the slate default but those whose colour
-            // is their meaning: the buy and sell marks, the VWAP and the
-            // profile.
+            // is their meaning: the buy and sell marks and the profile. The
+            // VWAP shares the slate, the trader's pick for the paper canvas.
             let expected = match tool.id() {
                 "fixed-range-profile" => [122, 142, 194, 255],
-                "anchored-vwap" => [36, 93, 177, 255],
                 "arrow-mark-up" => [31, 122, 52, 255],
                 "arrow-mark-down" => [17, 17, 17, 255],
                 _ => [43, 54, 64, 255],

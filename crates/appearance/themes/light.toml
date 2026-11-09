@@ -15,7 +15,7 @@ chart_time_grid = true
 drawing_default = "#2B3640"
 drawing_buy = "#1F7A34"
 drawing_sell = "#111111"
-drawing_vwap = "#245DB1"
+drawing_vwap = "#2B3640"
 # The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
 drawing_profile = "#7A8EC2"
 flow_surface = "#EEEBE7"
@@ -85,9 +85,10 @@ tab_strip = "#D9D6D2"
 brand = "#12C68C"
 # Dark enough that a replaying idle tab keeps 4.5:1 on its warm grey.
 replay_ink = "#7832AA"
-# The active tab flows into the toolbar row on the canvas white; idle tabs are
-# warm grey blocks with no edge, on the title strip's slate (see [title_strip]).
-toolbar_sheet = "#FFFCF7"
+# The active tab flows into the toolbar row, which wears the same grey as the
+# layout strip and status bar below; idle tabs are warm grey blocks with no
+# edge, on the title strip's slate (see [title_strip]).
+toolbar_sheet = "#EDEDED"
 tab_idle_fill = "#CFCCC7"
 tab_idle_outline = "#CFCCC700"
 tab_band = "#12C68C"
