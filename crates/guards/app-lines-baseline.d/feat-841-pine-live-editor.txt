@@ -1,4 +1,4 @@
 # #841 source window and picker buttons dock through the existing surface port.
 # Remaining additions bind the bounded compiler and store actions to app-owned panes.
-crates/app +310
-!budget +310
+crates/app +319
+!budget +319

@@ -10709,6 +10709,280 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.library.edit",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "EditorOperation": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "list",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "inspect",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "open",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "copy",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "new_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "id",
+                  "new_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "replace_source",
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "source"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "save",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "close",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 64,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation": {
+            "$ref": "#/$defs/EditorOperation"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "title": "EditorInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "Document": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "source",
+              "read_only"
+            ],
+            "type": "object"
+          },
+          "LibraryEntry": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "read_only"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "compiling": {
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dirty": {
+            "type": "boolean"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Document"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/LibraryEntry"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "type": "string"
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dirty",
+          "compiling",
+          "revision",
+          "entries",
+          "total"
+        ],
+        "title": "EditorResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout",
+        "observe.user_text"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Inspect/list reconcile current state. No action attaches a duplicate chart indicator.",
+      "title": "Read, copy and edit Pine indicator source",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Shows or hides a subtle dashed vertical line in one non-price indicator pane at the x coordinate hovered in its price chart. The choice is stored in the pane's workspace layout.",
       "destructive": false,
       "dry_run_supported": false,

@@ -92,5 +92,31 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
         1
     );
     assert!(sources.join("control-copy.pine").exists());
+    let private_source = "plot(private_signal)";
+    let _ = unkeyed_call(
+        &mut app,
+        &mut client,
+        capability,
+        json!({"operation":{"action":"replace_source","source": private_source}}),
+    );
+    let events = app
+        .control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 256, 1 << 22);
+    let editor_events: Vec<_> = events
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "indicator.library.changed")
+        .collect();
+    assert!(!editor_events.is_empty());
+    for event in editor_events {
+        let payload = event.payload.to_string();
+        assert!(!payload.contains(private_source));
+        assert!(!payload.contains("control-copy"));
+        assert!(!payload.contains("diagnostics"));
+    }
     disable_test_gateway(&mut app, &ctx);
 }

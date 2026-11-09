@@ -27,10 +27,15 @@ pub(super) fn apply(
     _tabs: &mut ArrangementHost,
     action: ScriptEditorAction,
 ) -> Result<Option<ScriptDocument>, String> {
-    surfaces
+    let saved = matches!(action, ScriptEditorAction::Save);
+    let document = surfaces
         .script_editor
         .state
-        .dispatch(&mut indicators.script_library, action)
+        .dispatch(&mut indicators.script_library, action)?;
+    if saved && let Some(document) = &document {
+        observe_saved(indicators, document);
+    }
+    Ok(document)
 }
 
 pub(super) fn frame(
@@ -78,26 +83,7 @@ pub(super) fn frame(
         editor.state.dirty = true;
         return;
     }
-    // Suppress the external-file poll for this save: only the revision-checked
-    // completion may publish an editor edit.
-    if let Some(index) = indicators
-        .script_library
-        .entries()
-        .iter()
-        .position(|e| e.name == document.id)
-        && let Some((_, modified)) = indicators.script_library.file_info(index)
-    {
-        let owners: Vec<_> = indicators
-            .registry
-            .script_files()
-            .iter()
-            .filter(|(_, watched, _)| *watched == index)
-            .map(|(owner, ..)| *owner)
-            .collect();
-        for owner in owners {
-            indicators.registry.observe_script(owner, modified);
-        }
-    }
+    observe_saved(indicators, &document);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     match std::thread::Builder::new()
         .name("quantick-script-validator".into())
@@ -119,6 +105,29 @@ pub(super) fn frame(
             editor
                 .state
                 .complete(revision, Some(format!("cannot validate source: {error}")));
+        }
+    }
+}
+
+fn observe_saved(indicators: &mut IndicatorState, document: &ScriptDocument) {
+    // Manual and idle saves share the watcher suppression: only a current
+    // validation completion may publish an editor edit.
+    if let Some(index) = indicators
+        .script_library
+        .entries()
+        .iter()
+        .position(|e| e.name == document.id)
+        && let Some((_, modified)) = indicators.script_library.file_info(index)
+    {
+        let owners: Vec<_> = indicators
+            .registry
+            .script_files()
+            .iter()
+            .filter(|(_, watched, _)| *watched == index)
+            .map(|(owner, ..)| *owner)
+            .collect();
+        for owner in owners {
+            indicators.registry.observe_script(owner, modified);
         }
     }
 }

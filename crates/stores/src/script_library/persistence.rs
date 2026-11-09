@@ -1,8 +1,24 @@
 //! Validated, exclusive copy creation and atomic source replacement.
 use super::{ScriptDocument, ScriptEntry, ScriptLibrary, ScriptLibraryPort, ScriptOrigin};
-use std::{io::Write, path::Path};
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
 
-const MAX_SOURCE_BYTES: usize = 256 * 1024;
+use super::MAX_SOURCE_BYTES;
+
+pub(super) fn read_source(path: &Path) -> Result<String, String> {
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take((MAX_SOURCE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err("source exceeds 256 KiB".into());
+    }
+    String::from_utf8(bytes).map_err(|e| format!("script source is not UTF-8: {e}"))
+}
 
 fn validate_id(id: &str) -> Result<(), String> {
     let stem = id
@@ -129,5 +145,18 @@ mod tests {
         ] {
             assert!(library.copy("rsi.pine", invalid).is_err(), "{invalid}");
         }
+        std::fs::write(
+            directory.join("large.pine"),
+            vec![b'x'; MAX_SOURCE_BYTES + 1],
+        )
+        .unwrap();
+        let mut reopened = ScriptLibrary::open(&directory);
+        assert!(
+            ScriptLibraryPort::read(&reopened, "large.pine")
+                .unwrap_err()
+                .contains("256 KiB")
+        );
+        assert!(reopened.copy("large.pine", "large-copy.pine").is_err());
+        assert!(!directory.join("large-copy.pine").exists());
     }
 }

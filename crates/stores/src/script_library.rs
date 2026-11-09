@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 mod catalog;
 mod persistence;
 pub use catalog::{EMBEDDED_SCRIPTS, POPULAR_INDICATORS, ScriptMetadata, script_title};
+pub const MAX_SOURCE_BYTES: usize = 256 * 1024;
 
 /// One loadable script.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,7 +220,10 @@ impl ScriptLibraryPort for ScriptLibrary {
         Ok(ScriptDocument {
             id: entry.name.clone(),
             title: script_title(&entry.name).to_owned(),
-            source: self.read(index).expect("the entry exists")?,
+            source: match &entry.origin {
+                ScriptOrigin::Embedded(source) => (*source).to_owned(),
+                ScriptOrigin::File(path) => persistence::read_source(path)?,
+            },
             read_only: matches!(entry.origin, ScriptOrigin::Embedded(_)),
         })
     }

@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "Document": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "source",
+        "read_only"
+      ],
+      "type": "object"
+    },
+    "LibraryEntry": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "read_only"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "compiling": {
+      "type": "boolean"
+    },
+    "diagnostics": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dirty": {
+      "type": "boolean"
+    },
+    "document": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Document"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/LibraryEntry"
+      },
+      "type": "array"
+    },
+    "next_offset": {
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "revision": {
+      "type": "string"
+    },
+    "total": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "dirty",
+    "compiling",
+    "revision",
+    "entries",
+    "total"
+  ],
+  "title": "EditorResult",
+  "type": "object"
+}

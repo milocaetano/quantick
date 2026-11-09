@@ -1,8 +1,9 @@
 //! Editor decisions are deterministic; its adapter supplies elapsed milliseconds.
-use crate::script_library::{ScriptDocument, ScriptEditorAction, ScriptLibraryPort};
+use crate::script_library::{
+    MAX_SOURCE_BYTES, ScriptDocument, ScriptEditorAction, ScriptLibraryPort,
+};
 
 pub const DEBOUNCE_MS: u64 = 350;
-pub const MAX_SOURCE_BYTES: usize = 256 * 1024;
 
 #[derive(Default, Debug)]
 pub struct ScriptEditor {

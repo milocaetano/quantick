@@ -204,6 +204,30 @@ fn script_editor_compile_recovery() {
     assert_ne!(values(&app), good);
 }
 #[test]
+fn script_editor_manual_save_waits_for_validation() {
+    let (mut app, _directory, _commands) = copy_fixture();
+    let good = values(&app);
+    edit(
+        &mut app,
+        Action::ReplaceSource {
+            source: "plot(unknown_value)\n".into(),
+        },
+    );
+    edit(&mut app, Action::Save);
+    app.runtime.indicators.last_script_poll = Instant::now() - Duration::from_secs(2);
+    assert!(app.runtime.indicators.poll_script_files().is_empty());
+    assert_eq!(values(&app), good);
+    editor_frame(&mut app, 0);
+    editor_frame(&mut app, 350);
+    while app.surfaces.script_editor.compilation.is_some() {
+        std::thread::yield_now();
+        editor_frame(&mut app, 351);
+    }
+    settle_indicators(&mut app);
+    assert!(app.surfaces.script_editor.state.diagnostics.is_some());
+    assert_eq!(values(&app), good);
+}
+#[test]
 fn script_library_end_to_end() {
     let (mut app, directory, _commands) = copy_fixture();
     let original =
