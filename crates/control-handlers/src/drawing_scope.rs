@@ -32,13 +32,15 @@ pub fn set_scope(
     if input.scope == ScopeName::AllCharts && !drawing.shareable() {
         return Err(no_market_time(drawing.tool.id()));
     }
-    let changed = crate::analysis::scope_name(drawing) != input.scope.as_str();
+    let scope = match input.scope {
+        ScopeName::AllCharts => DrawingScope::AllCharts,
+        ScopeName::ThisChart => DrawingScope::ThisChart,
+    };
+    // The pick, not what shows: an undated copy of a mark on every timeframe
+    // shows on its chart alone until dated, and a call keeping it there holds.
+    let changed = drawing.scope != scope;
     if changed {
         let before = drawing.clone();
-        let scope = match input.scope {
-            ScopeName::AllCharts => DrawingScope::AllCharts,
-            ScopeName::ThisChart => DrawingScope::ThisChart,
-        };
         drawings.items_mut()[index].set_scope(scope);
         drawings.record_edit_of(index, before);
     }

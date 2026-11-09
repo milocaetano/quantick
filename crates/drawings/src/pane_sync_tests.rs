@@ -303,6 +303,9 @@ fn this_charts_placement_still_undoes_after_another_chart_writes() {
     assert_eq!(prices(&pane.drawings), [100.0, 200.0]);
 }
 
+/// A move and a delete undo too, and a mark that comes back keeps clear of the
+/// other chart's: opened after the delete, it issued the deleted mark's id
+/// again.
 #[test]
 fn this_charts_move_and_delete_still_undo_after_another_chart_writes() {
     let mut settings = MarketSettings::default();
@@ -478,7 +481,11 @@ fn a_recut_blocked_by_a_pinned_mark_moves_once_the_mark_is_gone() {
     chart.now = 2;
     chart.marks().follow_store(&store);
     chart.marks().follow_store(&store);
-    assert_eq!(chart.layout.drawings_spec, Some(1), "pinned to the held bars");
+    assert_eq!(
+        chart.layout.drawings_spec,
+        Some(1),
+        "pinned to the held bars"
+    );
 
     chart.drawings.select(Some(0));
     let _ = chart.drawings.delete_selected(true);

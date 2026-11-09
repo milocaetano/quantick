@@ -86,6 +86,7 @@ impl MarketSettingsStore {
         };
         let (from, to) = (of(self.asset(venue, from)), of(self.asset(venue, to)));
         let carried = self.settings.carry_market(&from, &to);
+        self.revision += 1;
         (to, carried)
     }
 

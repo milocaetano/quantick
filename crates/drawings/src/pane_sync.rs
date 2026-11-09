@@ -8,14 +8,16 @@
 //! holds, so a mark one chart adds never takes an id another chart's mark has.
 //!
 //! The set is written against what the pane last loaded (its base): a chart
-//! that missed a refresh, a drag being in flight on it, writes only what it
-//! changed, and catches up with the rest.
+//! that missed a refresh, a gesture being in flight on it or an edit not yet
+//! written, writes only what it changed, and catches up with the rest
+//! ([`PaneMarks::follow_write`]).
 //!
 //! Known limitation: a pane shows its market's all-timeframes marks under its
 //! own chart-only marks, whatever order they were drawn in.
 use crate::{Drawing, DrawingId, DrawingTool, Drawings, SavedDrawingExt, UndoEntry};
 use quantick_workspace::layout_document::SavedDrawing;
 use quantick_workspace::market_settings::{DrawingKey, MarketSettings, PaneWrite};
+use quantick_workspace::market_settings_store::MarketSettingsStore;
 use quantick_workspace::pane_layout::PaneLayout;
 
 #[cfg(test)]
@@ -31,49 +33,43 @@ impl<T: Clone + PartialEq> Drawings<T> {
 
     /// Put `shared` (the market's all-timeframes marks) in place of this
     /// store's copy of them, keeping its own: chart-only marks and their ids,
-    /// the selection, and the undo and redo history, rewritten to hold the new
-    /// set. A step that only touched marks another chart has since replaced
-    /// changes nothing here any more and is dropped.
+    /// the selection, and the undo and redo history. Each step keeps what this
+    /// chart changed of the set laid over the new set ([`rebase`]), so Ctrl+Z
+    /// here still undoes a placement, move or delete made here; a step that
+    /// changes nothing any more is dropped.
     ///
-    /// A chart-only mark under an id the set now uses (two charts drew in one
-    /// frame) takes a fresh id; nothing else is renumbered.
+    /// A mark of this chart's own under an id the set gives another chart's
+    /// mark takes a fresh id, here and in every step: a chart-only mark (two
+    /// charts drew in one frame), or one only a step still holds (an id that
+    /// left the market, issued again by a chart that never saw it). Nothing
+    /// else is renumbered.
     pub fn replace_shared(&mut self, shared: Vec<Drawing<T>>) {
         let set: Vec<DrawingId> = shared.iter().map(|drawing| drawing.id).collect();
         self.reserve_ids(set.iter().map(|id| id.0).max().unwrap_or(0));
-        let mut renamed = Vec::new();
-        for index in 0..self.items.len() {
-            let (id, shared) = (self.items[index].id, self.items[index].all_timeframes());
-            if !shared && set.contains(&id) {
-                let fresh = self.alloc_id();
-                renamed.push((id, fresh));
-                self.items[index].id = fresh;
-            }
+        let renamed = self.clashes_with(&set);
+        let fresh = |id: DrawingId| {
+            renamed
+                .iter()
+                .find(|(old, _)| *old == id)
+                .map(|pair| pair.1)
+        };
+        let steps = self.undo.iter_mut().chain(self.redo.iter_mut());
+        let marks = steps.flat_map(|entry| entry.items.iter_mut());
+        for drawing in marks.chain(self.items.iter_mut()) {
+            drawing.id = fresh(drawing.id).unwrap_or(drawing.id);
         }
-        let own: Vec<DrawingId> = self
+        let held: Vec<Drawing<T>> = self
             .items
             .iter()
-            .filter(|drawing| !drawing.all_timeframes())
-            .map(|drawing| drawing.id)
+            .filter(|drawing| drawing.all_timeframes())
+            .cloned()
             .collect();
         let rewrite = |items: &[Drawing<T>]| -> Vec<Drawing<T>> {
-            let mut kept: Vec<Drawing<T>> = Vec::with_capacity(items.len());
-            for drawing in items {
-                let mut drawing = drawing.clone();
-                let fresh = renamed.iter().find(|(old, _)| *old == drawing.id);
-                if let Some((_, fresh)) = fresh
-                    && !drawing.all_timeframes()
-                {
-                    drawing.id = *fresh;
-                }
-                // This chart's own, or one it took off every chart since.
-                let mine = !drawing.all_timeframes() || own.contains(&drawing.id);
-                if mine && (!drawing.all_timeframes() || !set.contains(&drawing.id)) {
-                    kept.push(drawing);
-                }
-            }
-            let taken: Vec<DrawingId> = kept.iter().map(|drawing| drawing.id).collect();
-            let from_set = shared.iter().filter(|drawing| !taken.contains(&drawing.id));
-            from_set.cloned().chain(kept).collect()
+            let then: Vec<&Drawing<T>> = items.iter().filter(|d| d.all_timeframes()).collect();
+            let mut next = rebase(&shared, &held, &then);
+            let own = items.iter().filter(|drawing| !drawing.all_timeframes());
+            next.extend(own.cloned());
+            next
         };
         self.items = rewrite(&self.items);
         for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
@@ -90,6 +86,59 @@ impl<T: Clone + PartialEq> Drawings<T> {
         let index = selected.and_then(|id| self.index_of(id));
         self.select(index);
     }
+
+    /// The ids `set` holds that name another mark than this chart's under
+    /// them, each paired with a fresh id: see [`Self::replace_shared`].
+    fn clashes_with(&mut self, set: &[DrawingId]) -> Vec<(DrawingId, DrawingId)> {
+        let live: Vec<DrawingId> = self.items.iter().map(|drawing| drawing.id).collect();
+        let chart_only = self
+            .items
+            .iter()
+            .filter(|drawing| !drawing.all_timeframes());
+        let steps = self.undo.iter().chain(self.redo.iter());
+        let gone = steps
+            .flat_map(|entry| entry.items.iter())
+            .filter(|drawing| !live.contains(&drawing.id));
+        let mut clashing: Vec<DrawingId> = Vec::new();
+        for drawing in chart_only.chain(gone) {
+            if set.contains(&drawing.id) && !clashing.contains(&drawing.id) {
+                clashing.push(drawing.id);
+            }
+        }
+        clashing
+            .into_iter()
+            .map(|id| (id, self.alloc_id()))
+            .collect()
+    }
+}
+
+/// `set` with what one step of a chart's history (`then`) holds otherwise
+/// than the chart holds now (`held`) laid over it, by id: a mark the step
+/// lacks is taken out, and one it holds otherwise, or alone, is put in. A mark
+/// the step did not touch stays as `set` has it, another chart's edit
+/// included.
+fn rebase<T: Clone + PartialEq>(
+    set: &[Drawing<T>],
+    held: &[Drawing<T>],
+    then: &[&Drawing<T>],
+) -> Vec<Drawing<T>> {
+    let mut next = set.to_vec();
+    for gone in held
+        .iter()
+        .filter(|now| !then.iter().any(|old| old.id == now.id))
+    {
+        next.retain(|drawing| drawing.id != gone.id);
+    }
+    for &old in then {
+        if held.iter().any(|now| now.id == old.id && now == old) {
+            continue;
+        }
+        match next.iter_mut().find(|drawing| drawing.id == old.id) {
+            Some(slot) => *slot = old.clone(),
+            None => next.push(old.clone()),
+        }
+    }
+    next
 }
 
 /// Drop the steps of `stack` (oldest first) that no longer change anything:
@@ -232,6 +281,8 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
     pub fn put_away(self, settings: &mut MarketSettings) -> PaneWrite {
         let bars = self.bars();
         self.layout.drawings_spec = None;
+        self.layout.recut_checked = None;
+        self.layout.behind = PaneWrite::default();
         let Some(key) = self.layout.drawings_key.take() else {
             self.drawings.take_all();
             return PaneWrite::default();
@@ -245,6 +296,7 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
     /// Take what `key` shows at the pane's held bars, the `sync` way.
     pub fn sync(self, sync: PaneSync, settings: &MarketSettings, key: &DrawingKey) {
         let bars = self.bars();
+        self.layout.behind = PaneWrite::default();
         sync_pane(
             sync,
             self.drawings,
@@ -262,19 +314,54 @@ impl<B: Copy + PartialEq> PaneMarks<'_, B> {
         let base = &mut self.layout.shared_base;
         let write = persist_pane(self.drawings, base, settings, &key, &bars);
         self.layout.saved_revision = self.drawings.revision();
+        // Written against its base, it is level with the store now.
+        self.layout.behind = PaneWrite::default();
         Some((key, write))
     }
 
+    /// Whether the pane takes a write now, and how: `write` names the
+    /// writer's key and what it changed, `None` asks after one it waited out.
+    /// A pane busy (a gesture or a draft in flight) or holding an edit not yet
+    /// written takes nothing: it is marked behind ([`PaneLayout::behind`]),
+    /// and its own write merges against its base, or it is asked again once
+    /// free. The caller syncs the answer and re-anchors.
+    #[must_use]
+    pub fn follow_write(
+        self,
+        write: Option<(&DrawingKey, PaneWrite)>,
+        busy: bool,
+    ) -> Option<(DrawingKey, PaneSync)> {
+        let key = self.layout.drawings_key.clone()?;
+        if let Some((writer, write)) = write.filter(|(writer, write)| write.reaches(writer, &key)) {
+            self.layout.behind.all_timeframes |= write.all_timeframes;
+            self.layout.behind.own |= write.own && *writer == key;
+        }
+        let behind = self.layout.behind;
+        let dirty = self.layout.drawings_dirty(self.drawings.revision());
+        if !behind.changed() || busy || dirty {
+            return None;
+        }
+        let sync = if behind.own {
+            PaneSync::Readopt
+        } else {
+            PaneSync::Refresh
+        };
+        Some((key, sync))
+    }
+
     /// Each frame before a write: ids stay above every id the market holds,
-    /// and a quiet re-cut moves only bars (`PaneLayout::recut_in_place`).
-    pub fn follow_store(self, settings: &MarketSettings) {
+    /// and a quiet re-cut moves only bars (`PaneLayout::recut_in_place`),
+    /// asked again whenever the store has moved.
+    pub fn follow_store(self, store: &MarketSettingsStore) {
+        let settings = store.settings();
         if let Some(key) = &self.layout.drawings_key {
             self.drawings
                 .reserve_ids(settings.max_drawing_id(&key.market));
         }
         let rule = self.rule;
-        self.layout.recut_in_place(self.now, |key, held, now| {
-            settings.same_marks_at(key, &rule(*held), &rule(*now))
-        });
+        self.layout
+            .recut_in_place(self.now, store.revision(), |key, held, now| {
+                settings.same_marks_at(key, &rule(*held), &rule(*now))
+            });
     }
 }

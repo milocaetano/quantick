@@ -1,6 +1,6 @@
 //! Pane-local layout binding and persistence bookkeeping; session owns membership.
 use crate::layout_document::{LayoutId, SavedDrawing};
-use crate::market_settings::{DrawingKey, PaneRole};
+use crate::market_settings::{DrawingKey, PaneRole, PaneWrite};
 use crate::session::LayoutView;
 
 /// `Bars` is the host's bar rule, compared and never read here.
@@ -19,9 +19,13 @@ pub struct PaneLayout<Bars = ()> {
     /// The market's all-timeframes marks as this pane last loaded them: what
     /// its next write is merged against.
     pub shared_base: Vec<SavedDrawing>,
-    /// A cut `recut_in_place` already found it could not take in place, so a
-    /// chart held at its old bars is not asked again every frame.
-    pub recut_checked: Option<Bars>,
+    /// A cut `recut_in_place` already found it could not take in place, and
+    /// the store revision it asked at: a chart held at its old bars is not
+    /// asked again every frame, and is once the store moves.
+    pub recut_checked: Option<(Bars, u64)>,
+    /// What another pane's write changed that this one has not taken yet: it
+    /// was busy, or held an edit not yet written.
+    pub behind: PaneWrite,
 }
 impl<Bars> Default for PaneLayout<Bars> {
     fn default() -> Self {
@@ -35,6 +39,7 @@ impl<Bars> Default for PaneLayout<Bars> {
             saved_revision: 0,
             shared_base: Vec::new(),
             recut_checked: None,
+            behind: PaneWrite::default(),
         }
     }
 }
@@ -64,10 +69,12 @@ impl<Bars> PaneLayout<Bars> {
     }
     /// The flow chart cut to `now` keeps its key. When `alike` finds no mark
     /// pinned to either cut, only the held bars move: nothing is rebuilt, so
-    /// selection and undo survive. Answers whether they moved.
+    /// selection and undo survive. Answers whether they moved. A refusal is
+    /// asked again only for another cut or store `revision`.
     pub fn recut_in_place(
         &mut self,
         now: Bars,
+        revision: u64,
         alike: impl FnOnce(&DrawingKey, &Bars, &Bars) -> bool,
     ) -> bool
     where
@@ -76,15 +83,20 @@ impl<Bars> PaneLayout<Bars> {
         let (Some(key), Some(held)) = (&self.drawings_key, self.drawings_spec) else {
             return false;
         };
-        if held == now || key.role != PaneRole::Flow || self.recut_checked == Some(now) {
+        let asked = self.recut_checked == Some((now, revision));
+        if held == now || key.role != PaneRole::Flow || asked {
             return false;
         }
         let moved = alike(key, &held, &now);
         if moved {
             self.drawings_spec = Some(now);
         }
-        self.recut_checked = (!moved).then_some(now);
+        self.recut_checked = (!moved).then_some((now, revision));
         moved
+    }
+    /// Whether another pane's write waits on this one: see [`Self::behind`].
+    pub fn is_behind(&self) -> bool {
+        self.behind.changed()
     }
     pub fn drawings_dirty(&self, revision: u64) -> bool {
         self.drawings_key.is_some() && revision != self.saved_revision
@@ -156,7 +168,10 @@ mod tests {
             flow.recut_in_place(2, 8, |_, _, _| true),
             "the store moved: asked again"
         );
-        assert!(flow.recut_in_place(3, 8, |_, _, _| true), "a new cut is asked");
+        assert!(
+            flow.recut_in_place(3, 8, |_, _, _| true),
+            "a new cut is asked"
+        );
     }
 
     #[test]

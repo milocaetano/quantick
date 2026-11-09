@@ -772,7 +772,7 @@ impl LayoutAdapter<'_> {
         pane.layout.drawings_source = source;
         pane.layout.drawings_spec = Some(*pane.state.spec());
         if let Some(key) = grown {
-            self.refresh_twins(tab, side, &key, PaneWrite::ALL);
+            self.refresh_twins(Some((tab, side, &key, PaneWrite::ALL)));
         }
     }
 
@@ -844,7 +844,7 @@ impl LayoutAdapter<'_> {
             let write = self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
             if let Some(left) = left.filter(|_| write.changed()) {
-                self.refresh_twins(tab, side, &left, write);
+                self.refresh_twins(Some((tab, side, &left, write)));
                 self.mark_market_dirty();
             }
         }
@@ -854,6 +854,7 @@ impl LayoutAdapter<'_> {
     /// set copied into the market store, at the bars it is cut to.
     pub(super) fn persist_changed_drawings(&mut self) {
         self.follow_quiet_recuts();
+        self.refresh_twins(None);
         let changed: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()
@@ -878,44 +879,39 @@ impl LayoutAdapter<'_> {
             }
             if write.changed() {
                 self.mark_market_dirty();
-                self.refresh_twins(tab, side, &key, write);
+                self.refresh_twins(Some((tab, side, &key, write)));
             }
         }
     }
 
     /// Each frame before a write: `quantick_drawings::PaneMarks::follow_store`.
     fn follow_quiet_recuts(&mut self) {
-        let settings = self.store.market().settings();
+        let store = self.store.market();
         for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-            marks_of(pane).follow_store(settings);
+            marks_of(pane).follow_store(store);
         }
     }
 
-    /// Every other pane a write reaches ([`PaneWrite::reaches`]) is brought to
-    /// it, or its next edit writes a stale set over it. The selection crosses
-    /// the rebuild by id; only a gesture in flight holds a twin back.
-    fn refresh_twins(&mut self, tab: u64, side: PaneSide, key: &DrawingKey, write: PaneWrite) {
-        let twins: Vec<(u64, PaneSide, DrawingKey)> = self
+    /// Every other pane a write reaches ([`PaneWrite::reaches`]), or with none
+    /// every pane that waited one out, is brought to the store once it can take
+    /// it (`quantick_drawings::PaneMarks::follow_write`), or its next edit
+    /// writes a stale set over it. The selection crosses the rebuild by id.
+    fn refresh_twins(&mut self, write: Option<(u64, PaneSide, &DrawingKey, PaneWrite)>) {
+        let writer = write.map(|(tab, side, ..)| (tab, side));
+        let twins: Vec<(u64, PaneSide, bool)> = self
             .tabs
             .iter_with_ids()
-            .flat_map(|(other_id, other)| {
-                other.panes().filter_map(move |(pane, other_side)| {
-                    let held = pane.layout.drawings_key.as_ref()?;
-                    let reached = write.reaches(key, held) && !facts_of(pane).gesture_in_flight;
-                    reached.then(|| (other_id, other_side, held.clone()))
-                })
-            })
-            .filter(|(other, other_side, _)| (*other, *other_side) != (tab, side))
+            .flat_map(|(id, tab)| tab.panes().map(move |(pane, side)| (id, side, pane)))
+            .filter(|&(id, side, p)| writer.map_or(p.layout.is_behind(), |at| at != (id, side)))
+            .map(|(id, side, pane)| (id, side, facts_of(pane).gesture_in_flight))
             .collect();
-        for (twin_tab, twin_side, twin_key) in twins {
-            self.leave_pane_gestures(twin_tab, twin_side);
-            let own = write.own && twin_key == *key;
-            let sync = if own {
-                PaneSync::Readopt
-            } else {
-                PaneSync::Refresh
-            };
-            self.adopt_marks(twin_tab, twin_side, &twin_key, sync);
+        let reach = write.map(|(_, _, key, write)| (key, write));
+        for (tab, side, busy) in twins {
+            let follow = |pane: &mut ChartPane| marks_of(pane).follow_write(reach, busy);
+            if let Some((key, sync)) = self.pane_mut_at(tab, side).and_then(follow) {
+                self.leave_pane_gestures(tab, side);
+                self.adopt_marks(tab, side, &key, sync);
+            }
         }
     }
 }
