@@ -65,9 +65,10 @@ pub use lane_heat::{
     BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, LaneFold, book_carry, book_is_current,
 };
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
-    GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow,
-    SettledProjection, TapeFacts, normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BOOK_NOT_CURRENT, BOOK_PENDING,
+    BookSource, CellHitContext, FlowCellHit, GapPrimitive, HeatmapCell, HeatmapProjection,
+    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
+    normalized_area_size, normalized_log_intensity,
 };
 pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
@@ -79,7 +80,10 @@ pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::{TapeHorizontalGeometry, finite_unit_f64};
+pub use tape_geometry::{
+    LEAD_READ_MARGIN, MAX_LEAD_SHARE, TapeHorizontalGeometry, drawn_gaps, finite_unit_f64,
+    stale_book_gap,
+};
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };
@@ -262,6 +266,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         };
 
         let mut drawn = false;
@@ -326,6 +331,7 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
+            lead_span: None,
         });
     }
 
@@ -591,6 +597,7 @@ pub fn project_live_folded(
         settled.liquidity_reference,
         fold,
     );
+    let gaps = lane_heat::lead_gaps(history, timeline);
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
     //
@@ -601,6 +608,7 @@ pub fn project_live_folded(
         return LiveMarks {
             live_now_x,
             cells,
+            gaps,
             dropped_cells,
             current_book,
             ..LiveMarks::default()
@@ -749,6 +757,7 @@ pub fn project_live_folded(
         floored_quantity,
         live_now_x,
         cells,
+        gaps,
         dropped_cells,
         current_book,
     }

@@ -49,8 +49,15 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
+    quantick_control_handlers::home_tab::register(&mut registry)?;
+    quantick_control_handlers::market_palette::register(&mut registry)?;
+    quantick_control_handlers::desk::register(&mut registry)?;
+    quantick_control_handlers::workspace_book::register(&mut registry)?;
+    quantick_control_handlers::native_window::register(&mut registry)?;
+    quantick_control_handlers::market_windows::register(&mut registry)?;
     super::time_axis::register(&mut registry)?;
     quantick_control_handlers::opening_scale::register(&mut registry)?;
+    quantick_control_handlers::price_tag_progress::register(&mut registry)?;
     quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;
     quantick_control_handlers::bubble_preset::register(&mut registry)?;
     super::bubble_save::register(&mut registry)?;
@@ -60,6 +67,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::tape_view_set::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
     quantick_control_handlers::feed_source::register(&mut registry)?;
+    quantick_control_handlers::contract_roll::register(&mut registry)?;
     quantick_control_handlers::history::register(&mut registry)?;
     quantick_control_handlers::journal_sessions::register(&mut registry)?;
     quantick_control_handlers::pnl_display::register(&mut registry)?;

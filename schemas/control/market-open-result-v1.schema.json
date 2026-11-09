@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The tab that shows the market now.",
+  "properties": {
+    "background": {
+      "type": "boolean"
+    },
+    "bar": {
+      "type": "string"
+    },
+    "feed": {
+      "type": "string"
+    },
+    "focused": {
+      "description": "True when a tab already showed this market on this bar and workspace\nand was focused; nothing new opened.",
+      "type": "boolean"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tab_id",
+    "focused",
+    "feed",
+    "symbol",
+    "bar",
+    "workspace",
+    "background"
+  ],
+  "title": "MarketOpenResult",
+  "type": "object"
+}

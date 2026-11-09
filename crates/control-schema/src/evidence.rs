@@ -130,6 +130,11 @@ pub const MAX_UNAVAILABLE_FIELDS: usize = 256;
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceCaptureInput {
+    /// Live native market window, pinned once when this read reaches the UI thread.
+    /// Omission selects the focused live window at that admission point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
     /// Named explicitly, like every snapshot: a bundle may not aggregate its
     /// way into a scope the connection was not granted, and a caller that did
     /// not ask for a scope is told it was omitted rather than left to guess.
@@ -165,6 +170,9 @@ pub struct EvidenceReadInput {
 /// pay for the whole bundle to answer a question about its size.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceManifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
     pub evidence_id: EvidenceId,
     pub resource_id: ResourceId,
     pub manifest_version: u32,
@@ -264,6 +272,11 @@ pub struct EvidenceUnavailableField {
 /// The geometry and integrity of a captured frame, without its pixels.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceScreenshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_window_id: Option<WireU64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
     /// The capture this image belongs to — the same revision as the scene in
     /// the same bundle. That equality is the whole point: it is what turns a
     /// rectangle of pixels into the name of a control.
@@ -317,6 +330,9 @@ pub struct EvidenceControlRegion {
 /// The bundle itself: what the chunks reassemble into.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
     pub evidence_id: EvidenceId,
     pub bundle_version: u32,
     pub instance_id: InstanceId,
@@ -623,6 +639,7 @@ impl EvidenceCapture {
         };
 
         let mut document = EvidenceDocument {
+            window_id: snapshot.window_id,
             evidence_id: self.evidence_id.clone(),
             bundle_version: BUNDLE_VERSION,
             instance_id: self.instance_id.clone(),
@@ -703,6 +720,7 @@ impl EvidenceCapture {
 
         Ok((
             EvidenceManifest {
+                window_id: document.window_id,
                 evidence_id: self.evidence_id,
                 resource_id: self.resource_id,
                 manifest_version: MANIFEST_VERSION,
@@ -1341,6 +1359,7 @@ mod tests {
                 .collect(),
         );
         let snapshot = SerializedSnapshotCapture {
+            window_id: None,
             instance_id: instance(),
             capture_revision: WireU64::new(1),
             captured_at_unix_ms: 0,

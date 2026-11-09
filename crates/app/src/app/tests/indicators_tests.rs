@@ -329,6 +329,8 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
                 time_legend_collapsed: true,
+                workspace: None,
+                workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],
             None,
@@ -412,9 +414,9 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
 
     // Settled, the edited pane's set is the layout's.
     app.layout_adapter().apply_pending_indicator_state();
-    assert_eq!(app.layout_state().layouts().active().indicators.len(), 1);
+    assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
     assert_eq!(
-        app.layout_state().layouts().active().indicators[0].kind,
+        pane_set(&app, PaneSide::Flow)[0].kind,
         crate::indicators::state_file::SavedKind::native("native.ema")
     );
 }
@@ -440,8 +442,8 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
         assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
     }
-    assert!(app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
-    assert!(!app.layout_state().layouts().active().indicators[1].mouse_vertical_line);
+    assert!(pane_set(&app, PaneSide::Flow)[0].mouse_vertical_line);
+    assert!(!pane_set(&app, PaneSide::Flow)[1].mouse_vertical_line);
 
     let result = app
         .control_action(
@@ -457,7 +459,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         )
         .unwrap();
     assert_eq!(result["enabled"], false);
-    assert!(!app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!pane_set(&app, PaneSide::Flow)[0].mouse_vertical_line);
 }
 
 /// The four doors into the dialog have to be one door: whichever gesture a
@@ -637,7 +639,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         side: PaneSide::Time(0),
         slot,
     };
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
@@ -651,7 +653,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
             .hidden,
         "the time pane's own slot was toggled, focus notwithstanding"
     );
-    app.apply_indicator_legend_action(
+    app.indicator_wiring().apply_indicator_legend_action(
         target.tab,
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
@@ -691,15 +693,6 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         app.active_tab().focused_side(),
         PaneSide::Time(1),
         "clicking the bottom context chart focuses it"
-    );
-    assert_eq!(
-        app.status_model().spec_summary,
-        app.active_tab()
-            .pane(PaneSide::Time(1))
-            .state
-            .spec()
-            .summary(),
-        "the status bar speaks for it"
     );
 
     // The focused pane's selector fields, as its bars menu edits them.

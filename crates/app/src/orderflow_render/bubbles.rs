@@ -21,6 +21,7 @@ pub(super) use quantick_orderflow::config::dressing::{
     HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
     hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments, trail_half_height,
 };
+use quantick_orderflow::projection::{TapeDotFrame, TapeHorizontalGeometry};
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, INV_PHI,
     bubble_halo_padding, bubble_impact_ring_padding,
@@ -29,6 +30,7 @@ pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
+use super::OrderflowRenderStyle;
 use super::layout::RenderContext;
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
 
@@ -426,9 +428,21 @@ fn draw_bubble_with_light_offset(
     }
 
     // This print ate resting liquidity at this exact price.
-    let Some(matched_fraction) = matched else {
-        return;
-    };
+    if let Some(matched_fraction) = matched {
+        draw_consumption(painter, &mark, matched_fraction, dressed, bubbles, colors);
+    }
+}
+
+/// A print's consumption mark, crown or front, then its impact ring.
+fn draw_consumption(
+    painter: &egui::Painter,
+    mark: &BubbleMark,
+    matched_fraction: f32,
+    dressed: bool,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+) {
+    let (center, radius, side) = (mark.center, mark.radius, mark.side);
     match bubbles.consumption_mark {
         // The crown lives outside the rim, so it costs the disc nothing and
         // the smallest prints can still afford their pip.
@@ -491,84 +505,8 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     if !context.style.aggression_layer && !context.style.lane_aggression_layer {
         return;
     }
-    let mut style = context.style.sanitized();
     let dots = context.projection.volume_dots;
-    // The frame's own tape, never the switch: tape off keeps the tick chart.
-    let factual_tape = dots && style.dot_sizing.is_some_and(|sizing| sizing.native_tape);
-    let tape_rect = context.layout.lane_rect();
-    let tape_geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
-        tape_rect.width(),
-        tape_rect.height(),
-        &style.bubbles,
-    );
-    let fixed_tape_size = style.dot_sizing.is_some_and(|sizing| {
-        sizing
-            .tape_display_full_quantity(&style.bubbles, &style.live_lane)
-            .is_some()
-    });
-    if factual_tape && !fixed_tape_size && style.bubbles.viewport_scale.is_none() {
-        style.bubbles.max_radius = tape_geometry.max_radius;
-    }
-    let merged = factual_tape
-        .then(|| {
-            let geometry = quantick_orderflow::projection::TapeDotGeometry {
-                left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
-                right_x: 1.0,
-                width_px: tape_geometry.span_px,
-                height_px: context.layout.chart_rect.height(),
-            };
-            let (time, prices) = (context.tape_time, context.tape_prices);
-            // The live tape, which carries its rebuilds: it chooses its own
-            // marks, and reads none of them when its work runs elsewhere.
-            if let (Some((rebuilds, projection)), Some(memory)) =
-                (context.tape_rebuilds, context.tape_memory)
-            {
-                return rebuilds.borrow_mut().project(
-                    &mut memory.borrow_mut(),
-                    quantick_orderflow::projection::TapeFrameInputs {
-                        projection,
-                        bubbles: context.style,
-                        style: &style,
-                        geometry,
-                        time,
-                        prices,
-                        overlay: context.tape_overlay,
-                    },
-                );
-            }
-            let marks = if context.bubbles().count() == context.projection.aggressions.len() {
-                std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
-            } else {
-                std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
-            };
-            if let Some((memory, past)) = context.past_tape {
-                return quantick_orderflow::projection::project_past_tape_frame(
-                    &marks,
-                    &mut memory.borrow_mut(),
-                    past,
-                    &style,
-                    geometry,
-                    time,
-                    prices,
-                );
-            }
-            let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
-            quantick_orderflow::projection::project_tape_frame_with_overlay(
-                marks,
-                memory.as_deref_mut(),
-                &style,
-                geometry,
-                time,
-                prices,
-                context.projection.tape_facts.as_deref(),
-                context.tape_overlay.map(|overlay| &**overlay),
-            )
-        })
-        .flatten();
-    if let Some(frame) = &merged {
-        // Clearance changes disc area uniformly, never the configured time inset.
-        style.bubbles.max_radius = frame.max_radius;
-    }
+    let (style, factual_tape, tape_geometry, merged) = resolve_pass(context);
     let bubbles = &style.bubbles;
     let appearance = crate::theme::get(painter.ctx());
     let palette = style.colors(super::premultiplied);
@@ -736,48 +674,153 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             continue;
         };
         let clip = clip_for(trade);
-        let (size, radius) = drawn(trade);
-        let linked_reduction =
-            trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
-        draw_bubble(
+        draw_mark(
             clip,
-            BubbleMark {
-                center,
-                radius,
-                side: trade.side,
-                size,
-                matched: linked_reduction.then_some(trade.matched_fraction),
-                buy_share: trade.buy_share,
-                folded: trade.folded_marks,
-            },
+            &appearance,
             bubbles,
             &colors,
+            trade,
+            center,
+            drawn(trade),
         );
+    }
+}
 
-        if radius >= bubbles.label_min_radius
-            && let Some(label) = bubble_label(
-                trade.quantity,
-                trade.trade_count,
-                trade.folded_marks,
-                bubbles.show_quantity_labels,
-                bubbles.show_trade_count,
-            )
-        {
-            let font = appearance.label_font(
-                (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
-            );
-            let galley = clip.layout_no_wrap(label, font, colors.text);
-            if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
-                && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+/// The pass's style, factual-tape switch, tape geometry and tape frame.
+fn resolve_pass(
+    context: &RenderContext<'_>,
+) -> (
+    OrderflowRenderStyle,
+    bool,
+    TapeHorizontalGeometry,
+    Option<TapeDotFrame>,
+) {
+    let mut style = context.style.sanitized();
+    let dots = context.projection.volume_dots;
+    // The frame's own tape, never the switch: tape off keeps the tick chart.
+    let factual_tape = dots && style.dot_sizing.is_some_and(|sizing| sizing.native_tape);
+    let tape_rect = context.layout.lane_rect();
+    let tape_geometry =
+        TapeHorizontalGeometry::resolve(tape_rect.width(), tape_rect.height(), &style.bubbles);
+    let fixed_tape_size = style.dot_sizing.is_some_and(|sizing| {
+        sizing
+            .tape_display_full_quantity(&style.bubbles, &style.live_lane)
+            .is_some()
+    });
+    if factual_tape && !fixed_tape_size && style.bubbles.viewport_scale.is_none() {
+        style.bubbles.max_radius = tape_geometry.max_radius;
+    }
+    let merged = factual_tape
+        .then(|| {
+            let geometry = quantick_orderflow::projection::TapeDotGeometry {
+                left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
+                right_x: 1.0,
+                width_px: tape_geometry.span_px,
+                height_px: context.layout.chart_rect.height(),
+            };
+            let (time, prices) = (context.tape_time, context.tape_prices);
+            // The live tape, which carries its rebuilds: it chooses its own
+            // marks, and reads none of them when its work runs elsewhere.
+            if let (Some((rebuilds, projection)), Some(memory)) =
+                (context.tape_rebuilds, context.tape_memory)
             {
-                let pos = center - galley.size() / 2.0;
-                clip.galley_with_override_text_color(
-                    pos + LABEL_SHADOW_OFFSET_PX,
-                    galley.clone(),
-                    appearance.quantity_shadow(),
+                return rebuilds.borrow_mut().project(
+                    &mut memory.borrow_mut(),
+                    quantick_orderflow::projection::TapeFrameInputs {
+                        projection,
+                        bubbles: context.style,
+                        style: &style,
+                        geometry,
+                        time,
+                        prices,
+                        overlay: context.tape_overlay,
+                    },
                 );
-                clip.galley(pos, galley, colors.text);
             }
+            let marks = if context.bubbles().count() == context.projection.aggressions.len() {
+                std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
+            } else {
+                std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
+            };
+            if let Some((memory, past)) = context.past_tape {
+                return quantick_orderflow::projection::project_past_tape_frame(
+                    &marks,
+                    &mut memory.borrow_mut(),
+                    past,
+                    &style,
+                    geometry,
+                    time,
+                    prices,
+                );
+            }
+            let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
+            quantick_orderflow::projection::project_tape_frame_with_overlay(
+                marks,
+                memory.as_deref_mut(),
+                &style,
+                geometry,
+                time,
+                prices,
+                context.projection.tape_facts.as_deref(),
+                context.tape_overlay.map(|overlay| &**overlay),
+            )
+        })
+        .flatten();
+    if let Some(frame) = &merged {
+        // Clearance changes disc area uniformly, never the configured time inset.
+        style.bubbles.max_radius = frame.max_radius;
+    }
+    (style, factual_tape, tape_geometry, merged)
+}
+
+/// One aggression mark drawn `(size, radius)` at `center`, with its label.
+fn draw_mark(
+    clip: &egui::Painter,
+    appearance: &crate::theme::Palette,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+    trade: &AggressionPrimitive,
+    center: egui::Pos2,
+    (size, radius): (f32, f32),
+) {
+    let linked_reduction = trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
+    draw_bubble(
+        clip,
+        BubbleMark {
+            center,
+            radius,
+            side: trade.side,
+            size,
+            matched: linked_reduction.then_some(trade.matched_fraction),
+            buy_share: trade.buy_share,
+            folded: trade.folded_marks,
+        },
+        bubbles,
+        colors,
+    );
+
+    if radius >= bubbles.label_min_radius
+        && let Some(label) = bubble_label(
+            trade.quantity,
+            trade.trade_count,
+            trade.folded_marks,
+            bubbles.show_quantity_labels,
+            bubbles.show_trade_count,
+        )
+    {
+        let font = appearance
+            .label_font((radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX));
+        let galley = clip.layout_no_wrap(label, font, colors.text);
+        if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
+            && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+        {
+            let pos = center - galley.size() / 2.0;
+            clip.galley_with_override_text_color(
+                pos + LABEL_SHADOW_OFFSET_PX,
+                galley.clone(),
+                appearance.quantity_shadow(),
+            );
+            clip.galley(pos, galley, colors.text);
         }
     }
 }

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Whether the next launch reopens the tabs open when the window closed.",
+  "properties": {
+    "reopen": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "reopen"
+  ],
+  "title": "DeskReopenInput",
+  "type": "object"
+}

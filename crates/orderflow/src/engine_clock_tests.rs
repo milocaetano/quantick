@@ -189,6 +189,7 @@ fn rolling_window_frame(tape_only: bool, partial_open_ms: i64) -> Arc<VisibleOrd
                     tape_level_ticks: 1,
                     candle_level_ticks: 1,
                     lane_bars: vec![(partial_open_ms, 30_000)],
+                    tape_lead_share: 0.0,
                 }),
                 ..request(Some(30_000))
             },

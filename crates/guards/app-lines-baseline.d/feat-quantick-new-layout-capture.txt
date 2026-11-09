@@ -1,0 +1,8 @@
+# Native per-viewport paint admission, matching screenshot event conversion,
+# final Glow child framebuffer callback and narrow ControlWindow read adapters.
+# Generic target-keyed frame/ticket policy lives in control-host; contracts in
+# control-schema; the existing ControlAccess now docks one capture owner.
+crates/app +222
+!budget +222
+# Prepared-read adapters distinguish model reads from native paint completion;
+# scope classification and reserved-slot arithmetic live in control-host.

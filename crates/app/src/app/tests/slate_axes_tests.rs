@@ -16,19 +16,17 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         frame.time_strip.unwrap(),
     );
     let ui = crate::theme::axes(ctx);
-    let plot = area
-        .shrink(crate::plot_area::PLOT_PADDING_PX)
-        .with_max_x(gutter.left())
-        .with_max_y(strip.top());
+    let plot = area.with_max_x(gutter.left()).with_max_y(strip.top());
+    let chart_canvas = *ui.get(quantick_appearance::Token::ChartCanvas);
     assert!(
-        has_fill(output, area, ui.canvas()),
-        "the frame uses the shared Light canvas"
+        has_fill(output, area, chart_canvas),
+        "the frame uses the Light chart canvas"
     );
     assert!(
         has_fill(output, plot, crate::theme::bookmap(ctx).canvas()),
         "only data plots use Slate"
     );
-    assert_eq!(ui.canvas(), egui::Color32::WHITE);
+    assert_eq!(ui.canvas(), egui::Color32::from_rgb(255, 252, 247));
     let strip_fill = output.shapes.iter().rev().find_map(|shape| {
         if let egui::Shape::Rect(rect) = &shape.shape
             && rect
@@ -41,7 +39,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
             None
         }
     });
-    assert_eq!(strip_fill, Some(ui.canvas()), "time axes share one canvas");
+    assert_eq!(strip_fill, Some(chart_canvas), "time axes share one canvas");
     assert!(
         !output.shapes.iter().any(|shape| matches!(&shape.shape,
         egui::Shape::Rect(rect) if rect.fill == crate::theme::bookmap(ctx).canvas()
@@ -127,13 +125,14 @@ fn slate_chart_axis_text_uses_root_ink_while_plot_text_uses_surface_ink() {
                 surface.text_primary(),
                 "axis must not inherit Slate text ink"
             );
-            if section.format.color == ui.text_muted() {
+            if section.format.color == *ui.get(quantick_appearance::Token::AxisInk) {
                 ticks[axis] += 1;
             }
         }
     }
+    // Round instants a steady distance apart: a narrow strip may hold one.
     assert!(
-        ticks.iter().all(|count| *count > 1),
+        ticks[0] > 1 && ticks[1] >= 1,
         "price and time labels must both be present: {ticks:?}"
     );
 }
@@ -236,8 +235,10 @@ fn authored_dark_axes_keep_their_surface_ink_and_timestamp_backing() {
             }
         }
     }
+    // The time strip labels round instants a steady distance apart, so a
+    // narrow pane may hold one; each price column holds several.
     assert!(
-        ticks.iter().all(|count| *count >= 2),
+        ticks[..2].iter().all(|count| *count >= 2) && ticks[2] >= 1,
         "authored axis ticks: {ticks:?}"
     );
 
@@ -263,7 +264,7 @@ fn authored_dark_axes_keep_their_surface_ink_and_timestamp_backing() {
 }
 
 #[test]
-fn empty_light_loading_words_have_a_compact_backing_above_slate() {
+fn empty_loading_words_stand_bare_on_the_chart() {
     for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
         for layout in [CanvasLayout::Single, CanvasLayout::TimeAndFlow] {
             for reconnect in [false, true] {
@@ -278,10 +279,10 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                 run_frame(&mut app, &ctx);
                 run_frame(&mut app, &ctx);
                 if reconnect {
-                    app.active_tab_mut().notice =
+                    app.active_tab_mut().link.notice =
                         FeedNotice::attention("Connection unavailable", "Reconnect.");
                 } else {
-                    app.active_tab_mut().feed_connection = FeedConnectionState::Connecting;
+                    app.active_tab_mut().link.feed_connection = FeedConnectionState::Connecting;
                 }
                 let config = app.config.clone();
                 let past = metrics::wall_clock_ms()
@@ -298,7 +299,7 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                     .unwrap();
                 assert_eq!(words.reconnect, reconnect);
                 let title = format!("{}{}", words.verb, tab.symbol);
-                let text: Vec<_> = output
+                let mut text: Vec<_> = output
                     .shapes
                     .iter()
                     .enumerate()
@@ -313,56 +314,37 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                             .then_some((index, text))
                     })
                     .collect();
+                // A bold action is struck twice; the strike is one word.
+                text.dedup_by(|(_, a), (_, b)| a.galley.job.text == b.galley.job.text);
                 assert_eq!(
                     text.len(),
                     2 + usize::from(reconnect),
                     "one title, metadata and optional reconnect"
                 );
+                // Nothing charted: no plate stands behind the words in either
+                // theme, and they speak in the palette of the chart they stand in for.
                 let empty = tab.empty_panes_rect().unwrap();
-                let palette = crate::theme::get(&ctx);
-                let plates: Vec<_> = output
-                    .shapes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, clipped)| {
-                        let egui::Shape::Rect(rect) = &clipped.shape else {
-                            return None;
-                        };
-                        (rect.fill == palette.canvas()
-                            && rect.rect.width() < empty.width()
-                            && rect.rect.height() < empty.height() / 2.0
-                            && text.iter().all(|(_, text)| {
-                                rect.rect.contains_rect(text.visual_bounding_rect())
-                            }))
-                        .then_some(index)
-                    })
-                    .collect();
-                if source == quantick_appearance::DARK {
-                    assert!(plates.is_empty(), "Dark adds no loading backing");
-                    continue;
-                }
-                assert_eq!(plates.len(), 1, "one compact Light loading backing");
-                let plate = plates[0];
-                let slate = output
-                    .shapes
-                    .iter()
-                    .rposition(|clipped| {
-                        matches!(&clipped.shape,
-                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(67, 74, 82)
-                        && rect.rect.intersects(empty))
-                    })
-                    .unwrap();
-                assert!(
-                    slate < plate && text.iter().all(|(index, _)| *index > plate),
-                    "backing covers Slate before glyphs paint"
-                );
+                let plates = output.shapes.iter().filter(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Rect(rect)
+                    if rect.fill.a() > 0 && rect.rect.width() < empty.width()
+                        && text.iter().any(|(_, text)| {
+                            rect.rect.contains_rect(text.visual_bounding_rect())
+                        }))
+                });
+                assert_eq!(plates.count(), 0, "no loading backing");
+                let palette = tab.lead_pane().palette(&ctx);
                 for (_, text) in text {
                     for section in &text.galley.job.sections {
-                        let color = section.format.color;
+                        // A placeholder section paints in the shape's own ink.
+                        let color = match section.format.color {
+                            egui::Color32::PLACEHOLDER => text.fallback_color,
+                            color => color,
+                        };
                         if color.a() > 0 {
                             assert!(
-                                color == egui::Color32::from_rgb(48, 48, 48)
-                                    || color == egui::Color32::from_rgb(96, 96, 96)
+                                color == palette.loading_title()
+                                    || color == palette.loading_meta()
+                                    || color == palette.connection_action()
                             );
                         }
                     }

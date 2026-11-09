@@ -232,7 +232,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         "a chart with nothing wrong with it says nothing"
     );
 
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -242,7 +242,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         chip.width() < 100.0 && chip.height() < 30.0,
         "the corner is a corner, not a card: {chip:?}"
     );
-    app.active_tab_mut().forced_stall = None;
+    app.active_tab_mut().link.forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(
         app.chrome_reads().feed_chip_rect().is_none(),
@@ -257,7 +257,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
 fn the_empty_chart_never_says_the_same_thing_twice() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     let output = run_frame(&mut app, &ctx);
     let headline = app
         .active_tab()
@@ -298,7 +298,7 @@ fn the_overlay_stands_down_while_the_popup_is_open() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
     let headline = "MetaTrader 5 is not running";
-    app.active_tab_mut().notice = quantick_feed::FeedNotice::attention(headline, "Open it.");
+    app.active_tab_mut().link.notice = quantick_feed::FeedNotice::attention(headline, "Open it.");
     run_frame(&mut app, &ctx);
     // Stood long enough: the overlay's delay, told to the clock it reads.
     let past = metrics::wall_clock_ms() - quantick_chart::connection_state::OVERLAY_DELAY_MS;
@@ -338,6 +338,104 @@ fn the_overlay_stands_down_while_the_popup_is_open() {
     );
 }
 
+/// Nothing charted under a standing overlay: the canvas is one surface. No pane
+/// header, band or layout strip is painted across the logo, the logo stands in
+/// the middle of the whole canvas, and the panes come back on the frame the
+/// overlay goes down.
+#[test]
+fn an_offline_empty_tab_gives_the_overlay_the_whole_canvas() {
+    const CHROME: [&str; 4] = ["ORDER FLOW", "\u{192}xIndicators", "Layout 1", "TRAIL"];
+    let (mut app, _notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    app.active_tab_mut().link.notice =
+        quantick_feed::FeedNotice::attention("MT5 is down", "Open it.");
+    let panes = run_frame(&mut app, &ctx);
+    let header = painted_text_center(&panes, "ORDER FLOW").expect("the band names the pane");
+    for chrome in CHROME {
+        assert!(
+            painted_text(&panes).iter().any(|text| text == chrome),
+            "{chrome}"
+        );
+    }
+
+    let past = metrics::wall_clock_ms() - quantick_chart::connection_state::OVERLAY_DELAY_MS;
+    let config = app.config.clone();
+    app.active_tab_mut().connection = Default::default();
+    app.active_tab_mut().observe_connection(&config, past, None);
+    let whole = run_frame(&mut app, &ctx);
+    let texts = painted_text(&whole);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.starts_with("No connection to"))
+    );
+    assert!(texts.iter().any(|text| text == "Reconnect"));
+    for chrome in CHROME {
+        assert!(
+            !texts.iter().any(|text| text == chrome),
+            "no pane chrome: {chrome}"
+        );
+    }
+    let logos: Vec<_> = whole
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Mesh(mesh) if mesh.vertices.len() > 100 => {
+                let bounds = mesh.vertices.iter().fold(egui::Rect::NOTHING, |bounds, v| {
+                    bounds.union(egui::Rect::from_min_max(v.pos, v.pos))
+                });
+                Some((clipped.clip_rect, bounds))
+            }
+            _ => None,
+        })
+        .collect();
+    let [(canvas, logo)] = logos.as_slice() else {
+        panic!("one logo mesh: {logos:?}");
+    };
+    assert!(
+        canvas.contains(header),
+        "the overlay covers where the band stood"
+    );
+    assert!(canvas.contains_rect(*logo));
+    assert!(
+        (logo.center().x - canvas.center().x).abs() < canvas.width() * 0.02,
+        "the logo is centred in the canvas: {logo:?} in {canvas:?}"
+    );
+
+    // Lit, the canvas is the plot colour of the chart it stands in for, as
+    // that pane resolves it, not the app's own canvas.
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::LIGHT, false)
+        .unwrap();
+    let lit = run_frame(&mut app, &ctx);
+    let lead = app.active_tab().lead_pane();
+    let plot = crate::pane::background_color(&lead.plot_style(&app.runtime.style, &ctx));
+    assert_ne!(plot, crate::theme::get(&ctx).canvas(), "a plot of its own");
+    let fill = lit
+        .shapes
+        .iter()
+        .rev()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) if rect.rect.contains_rect(*canvas) => Some(rect.fill),
+            _ => None,
+        });
+    assert_eq!(
+        fill,
+        Some(plot),
+        "the takeover paints the chart's background"
+    );
+
+    app.active_tab_mut().connection = Default::default();
+    let back = run_frame(&mut app, &ctx);
+    for chrome in CHROME {
+        assert!(
+            painted_text(&back).iter().any(|text| text == chrome),
+            "back: {chrome}"
+        );
+    }
+}
+
 /// The word and the state answer the same stall on one frame, and a feed that
 /// is offline offers the one-click Reconnect a script can name too. Quiet does
 /// not: reconnecting an open socket fixes nothing.
@@ -352,7 +450,7 @@ fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
         (ForcedStall::Reconnect, "offline", true),
         (ForcedStall::FirstConnect, "offline", true),
     ] {
-        app.active_tab_mut().forced_stall = Some(stall);
+        app.active_tab_mut().link.forced_stall = Some(stall);
         run_frame(&mut app, &ctx);
         assert_eq!(app.chrome_reads().feed_word(), Some(word), "{stall:?}");
         assert_eq!(
@@ -371,7 +469,7 @@ fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
 fn a_click_on_the_chart_puts_the_popup_away() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -411,7 +509,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     let held = app.active_tab().flow_pane.state.trades().len();
     assert!(held > 0, "the chart has something to lose");
 
-    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -779,7 +877,7 @@ fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
 fn candle_appearance_change_is_render_only() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     take_capture_start(&mut cmd_rx);
-    let capture_epoch = app.active_tab().book_capture_epoch;
+    let capture_epoch = app.active_tab().link.book_capture_epoch;
     let bar_spec = *app.active_tab().flow_pane.state.spec();
 
     app.runtime.style.apply_preset(CandlePreset::OutlineOnly);
@@ -792,7 +890,7 @@ fn candle_appearance_change_is_render_only() {
 
     assert_eq!(app.active_tab().flow_pane.state.spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());
-    assert_eq!(app.active_tab().book_capture_epoch, capture_epoch);
+    assert_eq!(app.active_tab().link.book_capture_epoch, capture_epoch);
     assert!(
         matches!(cmd_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
         "appearance changes must not restart or reconfigure market data"
@@ -829,6 +927,8 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
                 time_bars: None,
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],
             None,

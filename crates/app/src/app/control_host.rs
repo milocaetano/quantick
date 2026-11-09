@@ -23,7 +23,15 @@
 //! fields cannot be.
 
 use eframe::egui;
+use quantick_control::error::ControlError;
+use quantick_control_handlers::desk::DeskAct;
+use quantick_control_handlers::market_palette::TabOpening;
+use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
+use quantick_workspace::market_list::{self as list, OpenChoice};
 
+use super::deal_recording_wiring as deals;
+use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::dock::Dock;
 use crate::drawings;
@@ -93,13 +101,31 @@ pub(crate) trait TabsPort {
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
+impl quantick_control_handlers::TabDirectory for TabReads<'_> {
+    fn active_tab_index(&self) -> usize {
+        self.tabs.active_index()
+    }
+    fn tab_position(&self, id: u64) -> Option<usize> {
+        self.tabs().position(id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.tabs().id_at(index)
+    }
+}
+
 /// Tabs and panes, changed: the tab or pane an action targets.
 pub(crate) trait TabsMutPort {
     fn tabs_mut(&mut self) -> TabsMut<'_>;
 }
 
 /// Chrome and layout: what the window drew around the tab on screen.
-pub(crate) trait ChromePort {
+pub(crate) trait ChromePort:
+    quantick_control_handlers::native_window::NativeWindowHost
+    + quantick_control_handlers::home_tab::HomeTabHost
+    + quantick_control_handlers::market_palette::MarketPaletteHost
+    + quantick_control_handlers::desk::DeskHost
+    + quantick_control_handlers::workspace_book::WorkspaceBookHost
+{
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
 
@@ -420,6 +446,15 @@ impl<'a> TabsMut<'a> {
         Some((tab, press))
     }
 
+    /// Fetch one more span of older venue candles on the active tab.
+    pub(crate) fn load_older_candles(self) {
+        let (active, tab_id) = (self.tabs.active_index(), self.tabs.active_id());
+        let act = quantick_session::Act::LoadOlderCandles { tab_id };
+        if let Some(tab) = self.tabs.get_mut(active) {
+            tab.run_session(Some(self.config), act);
+        }
+    }
+
     /// One tab beside the folds its order-flow panel reads, by position.
     pub(crate) fn tab_with_panel_folds(
         self,
@@ -485,6 +520,8 @@ pub(crate) struct ChromeReads<'a> {
     tz: TzOffset,
     drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
     drawn: ChromeDrawn,
+    title_bar: Option<&'a super::title_bar::TitleBarState>,
+    settings_section: Option<quantick_control_schema::settings_sections::SettingsSection>,
 }
 
 /// What the last frame published about the window chrome.
@@ -499,6 +536,17 @@ pub(crate) struct ChromeDrawn {
 }
 
 impl<'a> ChromeReads<'a> {
+    pub(crate) fn title_bar(self) -> Option<&'a super::title_bar::TitleBarState> {
+        self.title_bar
+    }
+
+    /// The section Settings is showing, while it is up.
+    pub(crate) fn settings_section(
+        self,
+    ) -> Option<quantick_control_schema::settings_sections::SettingsSection> {
+        self.settings_section
+    }
+
     /// The view over the window's own roots, as [`TabReads::new`].
     pub(crate) fn new(
         tabs: &'a ArrangementHost,
@@ -517,6 +565,8 @@ impl<'a> ChromeReads<'a> {
             tz,
             drawing_chrome,
             drawn,
+            title_bar: None,
+            settings_section: None,
         }
     }
 
@@ -593,7 +643,7 @@ impl<'a> ChromeReads<'a> {
 pub(crate) struct HealthReads<'a> {
     save_on_exit: bool,
     health: &'a super::health::HealthCounters,
-    history: &'a super::tabs::HistorySettings,
+    history: &'a quantick_session::HistorySettings,
 }
 
 impl<'a> HealthReads<'a> {
@@ -601,7 +651,7 @@ impl<'a> HealthReads<'a> {
     pub(super) fn new(
         save_on_exit: bool,
         health: &'a super::health::HealthCounters,
-        history: &'a super::tabs::HistorySettings,
+        history: &'a quantick_session::HistorySettings,
     ) -> Self {
         Self {
             save_on_exit,
@@ -726,6 +776,135 @@ impl TabsMutPort for QuantickApp {
     }
 }
 
+impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
+    fn show_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
+        super::home_wiring::show_home(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
+        Ok(())
+    }
+
+    fn leave_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
+        self.chrome.title_bar.surface.show_market();
+        Ok(())
+    }
+}
+
+impl quantick_control_handlers::desk::DeskHost for QuantickApp {
+    fn desk(&mut self, act: DeskAct) -> Result<bool, quantick_control::error::ControlError> {
+        Ok(super::desk_wiring::apply(self, act))
+    }
+}
+
+impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickApp {
+    /// What "Open a market" lists: the config's markets and this window's tabs.
+    fn market_snapshot(&self) -> list::MarketSnapshot {
+        let (venues, markets) = self.config.market_catalog(&self.added_symbols);
+        let (tabs, book) = (&self.runtime.tabs, &self.runtime.workspace.book);
+        let open = (tabs.iter().enumerate())
+            .map(|(index, tab)| list::OpenMarket {
+                tab_id: tabs.id_at(index),
+                position: index + 1,
+                feed_id: tab.feed_id.clone(),
+                symbol: tab.symbol.clone(),
+                asset: self.config.market_asset(&tab.feed_id, &tab.symbol),
+                workspace: book.tab_row(tabs.id_at(index)).0,
+                bar: tab.flow_pane.state.spec().to_config_string(),
+                context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
+                replay: tab.link.replay.is_some(),
+                streaming: tab.link.latest_trade_ms.is_some(),
+                price: super::menu_bar::last_price(tab),
+                trades_per_s: None,
+            })
+            .collect();
+        let workspaces = book.book().list().into_iter().map(|row| row.name);
+        list::MarketSnapshot {
+            venues,
+            markets,
+            open,
+            recent: self.surfaces.market_palette.recent.clone(),
+            starter_feed: self.config.default_feed.clone(),
+            workspaces: workspaces.collect(),
+            inherited_bar: Some(self.active_tab().flow_pane.state.spec().to_config_string()),
+        }
+    }
+    /// Bring the tab at `index` forward, off Home.
+    fn focus_tab(&mut self, index: usize) {
+        self.runtime.tabs.select(index);
+        self.chrome.title_bar.surface.show_market();
+    }
+    /// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<Bars>) -> TabOpening {
+        let shown = self.runtime.tabs.active_index();
+        (self.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
+        let timeframes = super::saved_context_intervals(&choice.context_bars, None);
+        self.active_tab_mut().canvas.open_context_on(&timeframes);
+        let tab = self.runtime.tabs.active_id();
+        let sync = self.runtime.workspace.book.sync_mut();
+        sync.join(tab, choice.arrival());
+        (choice.background).then(|| self.runtime.tabs.select(shown));
+        Ok(tab)
+    }
+    /// Add a symbol to a feed's list, or take one out.
+    fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
+        let mut catalog = self.symbol_catalog();
+        match add {
+            true => catalog.add(feed, symbol),
+            false => catalog.remove(feed, symbol),
+        }
+    }
+    /// Show the palette; `switch` puts it in switch mode on the active tab.
+    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
+        let port = self as &dyn ControlPort;
+        let target = switch.then(|| quantick_control_handlers::market_switch::target(port));
+        let target = target.transpose().map_err(ControlError::invalid_request)?;
+        self.surfaces.market_palette.open(query, target);
+        Ok(())
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: Bars) -> Result<(), String> {
+        let tab = self
+            .runtime
+            .tabs
+            .by_id_mut(tab)
+            .ok_or("The tab has closed")?;
+        tab.set_pane_bar_spec(0, bar)
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+}
+
+impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
+    fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
+        Some(&mut self.runtime.workspace.book)
+    }
+    fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
+        Some(&self.runtime.workspace.book)
+    }
+    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        Some(self.runtime.workspace.layouts_mut().market_mut())
+    }
+    fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
+        quantick_workspace::book_upkeep::show_recipe(&mut BookTabs(self), tab, recipe);
+    }
+    fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
+        self.workspace_save_adapter().write_auto_save(on)
+    }
+    fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
+        let index = self.runtime.tabs.position(tab);
+        // Without asking; with `close` false it only answers whether it would.
+        let Some(index) = index else { return false };
+        if !close {
+            return self.runtime.tabs.plan_close(index).is_ok();
+        }
+        let close = crate::tabstrip::TabAction::Close(index);
+        let asked = self.arrangement_adapter().apply_tab_action(close);
+        let closed = asked.1.is_some();
+        super::menu_bar::settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
+        closed
+    }
+    fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
+        super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
+    }
+}
+
 impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
@@ -734,7 +913,7 @@ impl ChromePort for QuantickApp {
             replay_day_before: self.replay_view.day_before(),
         };
         let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
-        ChromeReads::new(
+        let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
             rail,
@@ -742,7 +921,10 @@ impl ChromePort for QuantickApp {
             self.runtime.tz,
             chrome,
             drawn,
-        )
+        );
+        reads.title_bar = Some(&self.chrome.title_bar);
+        reads.settings_section = self.chrome.window_menu.settings_shown();
+        reads
     }
 }
 
@@ -771,23 +953,12 @@ impl LayoutPort for QuantickApp {
             tabs: &self.runtime.tabs,
             active: self.runtime.tabs.active_index(),
             session,
+            market: self.runtime.workspace.layouts().market(),
         }
     }
 
     fn layout_adapter(&mut self) -> LayoutAdapter<'_> {
-        self.runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace");
-        LayoutAdapter {
-            active: self.runtime.tabs.active_index(),
-            tabs: &mut self.runtime.tabs,
-            indicators: &mut self.runtime.indicators,
-            store: self.runtime.workspace.layouts_mut(),
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
-        }
+        self.indicator_wiring().into_layout()
     }
 }
 
@@ -882,7 +1053,8 @@ impl ScriptsPort for QuantickApp {
             .indicators
             .attach_script(pane, target, name, source, by_operator);
         let owner = attached.target;
-        self.apply_indicator_edit(IndicatorEdit::Attached(attached));
+        self.indicator_wiring()
+            .apply_indicator_edit(IndicatorEdit::Attached(attached));
         (owner.tab, owner.side, owner.slot)
     }
 
@@ -891,14 +1063,15 @@ impl ScriptsPort for QuantickApp {
             return Ok(false);
         };
         self.runtime.validate_target(target).map_err(|_| ())?;
-        self.apply_indicator_edit(IndicatorEdit::Remove(target));
+        self.indicator_wiring()
+            .apply_indicator_edit(IndicatorEdit::Remove(target));
         Ok(true)
     }
 }
 
 impl RecordingPort for QuantickApp {
-    fn set_deal_recording_default(&mut self, enabled: bool) {
-        super::deal_recording_wiring::set_default(self, enabled);
+    fn set_deal_recording_default(&mut self, on: bool) {
+        deals::set_default(&mut self.chrome.record_deals, &mut self.runtime.tabs, on);
     }
 }
 

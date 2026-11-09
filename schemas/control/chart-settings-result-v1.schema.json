@@ -32,6 +32,14 @@
       ],
       "type": "object"
     },
+    "StyleOwnership": {
+      "default": "explicit",
+      "enum": [
+        "theme",
+        "explicit"
+      ],
+      "type": "string"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -69,7 +77,7 @@
       "anyOf": [
         {
           "additionalProperties": false,
-          "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+          "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
           "properties": {
             "candles": {
               "additionalProperties": false,
@@ -246,6 +254,9 @@
                   "description": "Decimal [0, 1], inclusive.",
                   "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
                   "type": "string"
+                },
+                "time_grid_enabled": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -259,71 +270,43 @@
             },
             "ownership": {
               "additionalProperties": false,
-              "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+              "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
               "properties": {
                 "background": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bear_fill": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bear_outline": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bull_fill": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "bull_outline": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "fill_opacity": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "grid": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
+                },
+                "outline_opacity": {
+                  "$ref": "#/$defs/StyleOwnership"
+                },
+                "outline_width": {
+                  "$ref": "#/$defs/StyleOwnership"
+                },
+                "time_grid": {
+                  "$ref": "#/$defs/StyleOwnership"
                 },
                 "wick": {
-                  "default": "explicit",
-                  "enum": [
-                    "theme",
-                    "explicit"
-                  ],
-                  "type": "string"
+                  "$ref": "#/$defs/StyleOwnership"
+                },
+                "wick_opacity": {
+                  "$ref": "#/$defs/StyleOwnership"
                 }
               },
               "type": "object"

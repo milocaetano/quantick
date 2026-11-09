@@ -141,10 +141,15 @@ pub fn admit_capability<'a>(
     let descriptor = registry
         .capability(&envelope.capability_id, envelope.capability_version)
         .ok_or_else(|| {
-            ControlError::new(
-                ErrorCode::new(codes::CAPABILITY_UNKNOWN).expect("static error code is valid"),
-                "capability ID or version is not registered",
-                false,
+            crate::authority::retired_capability(envelope.capability_id.as_str()).unwrap_or_else(
+                || {
+                    ControlError::new(
+                        ErrorCode::new(codes::CAPABILITY_UNKNOWN)
+                            .expect("static error code is valid"),
+                        "capability ID or version is not registered",
+                        false,
+                    )
+                },
             )
         })?;
     if !descriptor.required_permissions.is_subset(effective_scopes) {

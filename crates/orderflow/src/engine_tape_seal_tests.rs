@@ -166,6 +166,7 @@ fn play_zooming(
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: Vec::new(),
+                tape_lead_share: 0.0,
             }),
         };
         if frame_index % FRAMES_PER_PUBLICATION == 0 && !queued.is_empty() {
@@ -442,6 +443,7 @@ fn the_worker_continues_its_sealed_tape_and_builds_the_complete_live_pass() {
         tape_level_ticks: 1,
         candle_level_ticks: 1,
         lane_bars: Vec::new(),
+        tape_lead_share: 0.0,
     };
     let prices = PriceWindow::new(Decimal::from(80), Decimal::from(130)).unwrap();
     let mut bars = TickBarBuilder::new(200);
@@ -557,6 +559,7 @@ fn grid_request(bars: &TickBarBuilder, closed: &[Bar], now_ms: i64) -> Projectio
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: Vec::new(),
+            tape_lead_share: 0.0,
         }),
     }
 }

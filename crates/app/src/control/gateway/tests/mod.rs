@@ -469,10 +469,15 @@ mod cockpit_tier_tests {
             .map(|(index, _)| index)
             .collect();
         assert_eq!(declarations.len(), 1, "one declaration of the seam module");
-        let above = source.lines().nth(declarations[0] - 1).unwrap_or("");
-        assert_eq!(
-            above.trim(),
-            "#[cfg(test)]",
+        // The attributes stacked on the declaration: the seam file's `#[path]`
+        // sits between, so the gate is any of them, not only the nearest.
+        let lines: Vec<&str> = source.lines().collect();
+        let mut attributes = lines[..declarations[0]]
+            .iter()
+            .rev()
+            .take_while(|line| line.trim().starts_with("#["));
+        assert!(
+            attributes.any(|line| line.trim() == "#[cfg(test)]"),
             "the seam module ships only in the test build"
         );
         assert!(

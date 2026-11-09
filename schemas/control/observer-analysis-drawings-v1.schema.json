@@ -55,6 +55,26 @@
       ],
       "type": "object"
     },
+    "DrawingOriginSnapshot": {
+      "description": "Where a migration merged a drawing from. See [`DrawingSnapshot::origin`].",
+      "properties": {
+        "layout": {
+          "type": "string"
+        },
+        "pane": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "layout",
+        "symbol",
+        "pane"
+      ],
+      "type": "object"
+    },
     "DrawingSnapshot": {
       "properties": {
         "anchor_count": {
@@ -110,6 +130,18 @@
         "off_series": {
           "description": "This pane's series does not reach the market instant an anchor was\nplaced at — the mark survived a re-cut, a rewind or a symbol switch,\nbut no longer sits on the data it was drawn against.",
           "type": "boolean"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawingOriginSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
         },
         "scope": {
           "description": "`this_chart` or `all_charts` — whether the tab's other panes show it.",

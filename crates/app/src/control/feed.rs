@@ -59,7 +59,7 @@ pub(crate) fn market_data_provenance(
     config: &crate::config::AppConfig,
 ) -> MarketDataProvenance {
     quantick_control_schema::feed::market_data_provenance(
-        tab.replay.is_some(),
+        tab.link.replay.is_some(),
         tab.capabilities(config).traded_volume,
         tab.side_note(config).is_some(),
     )
@@ -75,7 +75,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
             .iter_with_ids()
             .map(|(tab_id, tab)| {
                 let capabilities = tab.capabilities(config);
-                let replay = tab.replay.is_some();
+                let replay = tab.link.replay.is_some();
                 FeedTabSnapshot {
                     tab_id: WireU64::new(tab_id),
                     requested_feed_id: tab.feed_id.clone(),
@@ -84,8 +84,8 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     active_symbol: tab.active.1.clone(),
                     feed_display_name: tab.feed_display_name(config).to_owned(),
                     source_mode: if replay { "replay" } else { "live" }.to_owned(),
-                    connection_state: connection_state(tab.feed_connection).to_owned(),
-                    notice: FeedNoticeSnapshot::from_summary(tab.notice.summary()),
+                    connection_state: connection_state(tab.link.feed_connection).to_owned(),
+                    notice: FeedNoticeSnapshot::from_summary(tab.link.notice.summary()),
                     capabilities: FeedCapabilitiesSnapshot {
                         book_capture: capabilities.book_capture,
                         history_paging: capabilities.history_paging,
@@ -100,7 +100,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                         u64::try_from(tab.history_trades).unwrap_or(u64::MAX),
                     ),
                     history_reach_running: tab.session.history_reach_running(),
-                    feed_generation: WireU64::new(tab.feed_generation()),
+                    feed_generation: WireU64::new(tab.link.feed_generation()),
                     opening_slices_remaining: tab
                         .session
                         .opening_slices_remaining()
@@ -110,9 +110,9 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                         tab.session.history_status(),
                         tab.session.main_history_reach(),
                     )),
-                    live_trade_count: WireU64::new(tab.live_trades),
-                    latest_trade_unix_ms: tab.latest_trade_ms,
-                    latest_arrival_latency_ms: tab.trade_arrival_ms(),
+                    live_trade_count: WireU64::new(tab.link.live_trades),
+                    latest_trade_unix_ms: tab.link.latest_trade_ms,
+                    latest_arrival_latency_ms: tab.link.trade_arrival_ms(),
                     tape_age_ms: now_ms.and_then(|now| tab.tape_age_at(now)),
                     stall: now_ms
                         .and_then(|now| tab.stall_at(config, now))
@@ -122,6 +122,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                             text_availability: "redacted_pending_attention_scope".to_owned(),
                         }),
                     tape_gaps: tab
+                        .link
                         .feed_gaps
                         .iter()
                         .map(|gap| FeedGapSnapshot {
@@ -130,7 +131,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                             duration_ms: gap.duration_ms(),
                         })
                         .collect(),
-                    tape_backfill: tab.feed_integrity.last_refill.map(Into::into),
+                    tape_backfill: tab.link.feed_integrity.last_refill.map(Into::into),
                     deal_recording: tab
                         .deal_recording_view()
                         .as_ref()

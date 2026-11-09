@@ -35,7 +35,8 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     let call = |app: &mut QuantickApp, client: &mut LocalClient, operation| {
         unkeyed_call(app, client, CAPABILITY, json!({ "operation": operation })).0
     };
-    app.open_indicator_picker_on(app.active_tab().focused_side());
+    let side = app.active_tab().focused_side();
+    app.indicator_wiring().open_indicator_picker_on(side);
     let initial = success_result(&call(&mut app, &mut client, json!({"action": "inspect"})));
     assert_eq!(initial["open"], true);
     assert_eq!(initial["pane_id"], app.focused_pane().id.to_string());
@@ -94,7 +95,8 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
     let dock = app.dock.visible();
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    app.open_indicator_picker_on(app.active_tab().focused_side());
+    let side = app.active_tab().focused_side();
+    app.indicator_wiring().open_indicator_picker_on(side);
     run_frame_with_events(
         &mut app,
         &ctx,

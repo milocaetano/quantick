@@ -46,6 +46,7 @@ impl PendingPlace {
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: Vec::new(),
+            tape_lead_share: 0.0,
         };
         let dots = VolumeDots::resolve(
             request
@@ -67,6 +68,21 @@ impl PendingPlace {
 }
 
 impl ProjectionRequest {
+    /// The lead the view's pixels ask the tape's book for
+    /// ([`DotZoom::tape_lead_ms`]), on the window resolved for `edge`.
+    #[must_use]
+    pub(super) fn tape_lead_ms(&self, edge: Option<LiveEdge>) -> i64 {
+        edge.zip(self.dot_zoom.as_ref())
+            .map_or(0, |(edge, zoom)| zoom.tape_lead_ms(edge.window_ms))
+    }
+
+    /// Whether that lead stops at its cap ([`DotZoom::tape_lead_capped`]).
+    pub(super) fn tape_lead_capped(&self) -> bool {
+        self.dot_zoom
+            .as_ref()
+            .is_some_and(crate::projection::DotZoom::tape_lead_capped)
+    }
+
     /// Where the lane ends with `latest_ms` the newest recorded event: a native
     /// tape on the caller's clock, any other at that event, and either no later
     /// than a held window's cap.

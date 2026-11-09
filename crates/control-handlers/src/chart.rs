@@ -25,10 +25,10 @@ use quantick_control_host::{
     wire::{PaneSideDto, canonical_decimal, wire_usize},
 };
 use quantick_control_schema::chart::{
-    BarProvenanceContext, BarSnapshot, BarStateDto, ChartCoverage, ChartPaneSnapshot,
-    ChartSnapshot, ChartWindowPage, ChartWindowQuery, ChartWindowSelection, MODULE_ID,
-    OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, VenueCandleState, VenueCandleStatus,
-    ViewportSnapshot,
+    BarProgressSnapshot, BarProvenanceContext, BarSnapshot, BarStateDto, ChartCoverage,
+    ChartPaneSnapshot, ChartSnapshot, ChartWindowPage, ChartWindowQuery, ChartWindowSelection,
+    MODULE_ID, OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, VenueCandleState,
+    VenueCandleStatus, ViewportSnapshot,
 };
 use quantick_engine::Bar;
 use quantick_sources::candle_series::{SeriesState, SeriesStatus};
@@ -80,6 +80,11 @@ pub struct ChartPaneEntry<'a> {
     pub feed_id: &'a str,
     pub symbol: &'a str,
     pub pane: &'a dyn ChartPaneSource,
+    /// The tab's market clock: the replay's playhead while replaying, the
+    /// last print advanced by the host's own time live; `None` before a print,
+    /// and for a tab off screen, whose clock only advances while it is drawn:
+    /// such a tab reads a time rule on its trades' own time instead.
+    pub market_clock_ms: Option<i64>,
 }
 
 /// Whether the trader sees a pane and drives it: what the summary reports,
@@ -112,6 +117,9 @@ pub trait ChartPort {
         pane_id: u64,
         visit: &mut dyn FnMut(ChartPaneEntry<'_>),
     ) -> Result<(), MissingPane>;
+    /// Whether tab `tab_id`'s market prints the forming bar's progress on
+    /// its last-price tag.
+    fn price_tag_progress(&self, tab_id: u64) -> bool;
 }
 
 /// Dock the chart module and its summary scope.
@@ -151,11 +159,14 @@ fn project<H: ChartPort + ?Sized>(app: &H, _context: CaptureContext) -> ChartSna
 /// Every pane's summary, tab by tab.
 pub fn snapshot<H: ChartPort + ?Sized>(app: &H) -> ChartSnapshot {
     let mut panes = Vec::new();
-    app.visit_chart_panes(&mut |entry, framing| panes.push(pane_snapshot(&entry, framing)));
+    app.visit_chart_panes(&mut |entry, framing| {
+        let on = app.price_tag_progress(entry.tab_id);
+        panes.push(pane_snapshot(&entry, framing, on));
+    });
     ChartSnapshot { panes }
 }
 
-fn pane_snapshot(entry: &ChartPaneEntry<'_>, framing: PaneFraming) -> ChartPaneSnapshot {
+fn pane_snapshot(entry: &ChartPaneEntry<'_>, framing: PaneFraming, on: bool) -> ChartPaneSnapshot {
     let pane = entry.pane;
     let state = pane.state();
     let seam = pane.seam_slot();
@@ -182,6 +193,14 @@ fn pane_snapshot(entry: &ChartPaneEntry<'_>, framing: PaneFraming) -> ChartPaneS
             .backfill_boundary()
             .map(|boundary| wire_usize(seam + boundary)),
         has_in_progress_bar: state.partial().is_some(),
+        bar_progress: state.bar_progress_at(entry.market_clock_ms).map(|reading| {
+            BarProgressSnapshot {
+                done: canonical_decimal(reading.done()),
+                target: reading.target().map(canonical_decimal),
+                unit: reading.unit().to_owned(),
+            }
+        }),
+        price_tag_progress: Some(on),
         viewport: pane.viewport(),
         coverage: coverage(pane),
     }

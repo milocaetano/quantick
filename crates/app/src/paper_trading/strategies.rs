@@ -28,16 +28,12 @@ pub(super) fn draw_strategy_row(
 ) -> bool {
     let palette = theme::get(ui.ctx());
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Strategy")
-                .color(palette.text_muted())
-                .small(),
-        )
-        .on_hover_text(
-            "a named exit ladder: the order rests with its parts already drawn on \
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Strategy").color(palette.text_muted()))
+            .on_hover_text(
+                "a named exit ladder: the order rests with its parts already drawn on \
                  the chart. <None> rests a bare order you bracket by hand",
-        );
+            );
         let selected = account.selected_order_strategy().map_or_else(
             || STRATEGY_NONE.to_owned(),
             |strategy| strategy.name.clone(),
@@ -70,11 +66,7 @@ pub(super) fn draw_strategy_row(
     // The selected ladder, said in words: a trader must be able to read
     // what the next click will place without aiming it first.
     if let Some(strategy) = account.selected_order_strategy() {
-        ui.label(
-            egui::RichText::new(strategy.summary())
-                .color(palette.text_support())
-                .small(),
-        );
+        ui.label(egui::RichText::new(strategy.summary()).color(palette.text_support()));
         // An armed ladder that cannot resolve draws nothing on the
         // chart, and a trader holding the modifier over a silent chart
         // has no way to know why. The reason belongs here, beside the
@@ -83,8 +75,7 @@ pub(super) fn draw_strategy_row(
         if let Err(error) = strategy.validate() {
             ui.label(
                 egui::RichText::new(format!("not armed - {}", error.advice()))
-                    .color(palette.amber())
-                    .small(),
+                    .color(palette.amber()),
             );
         }
     }
@@ -122,7 +113,7 @@ pub(super) fn draw_strategy_editor(
         .resizable(true)
         .default_width(520.0)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.vertical(|ui| {
                     ui.set_min_width(150.0);
                     ui.label(caption(&palette, "STRATEGIES"));
@@ -176,9 +167,7 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
     let palette = theme::get(ui.ctx());
     let Some(index) = editing else {
         ui.label(
-            egui::RichText::new("No strategy yet - New starts one.")
-                .color(palette.text_support())
-                .small(),
+            egui::RichText::new("No strategy yet - New starts one.").color(palette.text_support()),
         );
         return false;
     };
@@ -186,12 +175,8 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
         return false;
     };
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Name")
-                .color(palette.text_muted())
-                .small(),
-        );
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Name").color(palette.text_muted()));
         if ui
             .add(egui::TextEdit::singleline(&mut strategy.name).desired_width(200.0))
             .changed()
@@ -200,59 +185,43 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
         }
     });
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Qty %")
-                .color(palette.text_muted())
-                .small(),
-        );
-        ui.add_space(38.0);
-        ui.label(
-            egui::RichText::new("Gain")
-                .color(palette.text_muted())
-                .small(),
-        );
-        ui.add_space(34.0);
-        ui.label(
-            egui::RichText::new("Loss")
-                .color(palette.text_muted())
-                .small(),
-        );
-        ui.label(
-            egui::RichText::new("ticks")
-                .color(palette.text_faint())
-                .small(),
-        );
-    });
     let mut remove: Option<usize> = None;
-    for (row_index, row) in strategy.rows.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let mut share = row.share_percent.to_f64().unwrap_or_default();
-            if ui
-                .add(
-                    egui::DragValue::new(&mut share)
-                        .speed(1.0)
-                        .range(0.0..=100.0)
-                        .suffix("%"),
-                )
-                .changed()
-            {
-                row.share_percent = Decimal::from_f64_retain(share)
-                    .unwrap_or_default()
-                    .round_dp(2);
-                changed = true;
+    egui::Grid::new("strategy_rungs")
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            for label in ["Qty %", "Gain (ticks)", "Loss (ticks)", ""] {
+                ui.label(label);
             }
-            changed |= ticks_field(ui, &mut row.gain_ticks, "how far the target sits");
-            changed |= ticks_field(ui, &mut row.loss_ticks, "how far the stop sits");
-            if ui
-                .small_button("−")
-                .on_hover_text("remove this row")
-                .clicked()
-            {
-                remove = Some(row_index);
+            ui.end_row();
+            for (row_index, row) in strategy.rows.iter_mut().enumerate() {
+                let mut share = row.share_percent.to_f64().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut share)
+                            .speed(1.0)
+                            .range(0.0..=100.0)
+                            .suffix("%"),
+                    )
+                    .changed()
+                {
+                    row.share_percent = Decimal::from_f64_retain(share)
+                        .unwrap_or_default()
+                        .round_dp(2);
+                    changed = true;
+                }
+                changed |= ticks_field(ui, &mut row.gain_ticks, "how far the target sits");
+                changed |= ticks_field(ui, &mut row.loss_ticks, "how far the stop sits");
+                if ui
+                    .small_button("−")
+                    .on_hover_text("remove this row")
+                    .clicked()
+                {
+                    remove = Some(row_index);
+                }
+
+                ui.end_row();
             }
         });
-    }
     if let Some(row_index) = remove {
         strategy.rows.remove(row_index);
         changed = true;
@@ -271,17 +240,11 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
     match strategy.validate() {
         Ok(()) => {
             ui.label(
-                egui::RichText::new("ready - the shares add up")
-                    .color(palette.text_support())
-                    .small(),
+                egui::RichText::new("ready - the shares add up").color(palette.text_support()),
             );
         }
         Err(error) => {
-            ui.label(
-                egui::RichText::new(error.advice())
-                    .color(palette.amber())
-                    .small(),
-            );
+            ui.label(egui::RichText::new(error.advice()).color(palette.amber()));
         }
     }
     changed
@@ -289,26 +252,90 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
 
 /// One optional tick distance, with a box that empties to "no leg here".
 fn ticks_field(ui: &mut egui::Ui, ticks: &mut Option<u32>, hover: &str) -> bool {
-    let mut on = ticks.is_some();
-    let mut changed = false;
-    if ui.checkbox(&mut on, "").on_hover_text(hover).changed() {
-        *ticks = if on { Some(NEW_RUNG_TICKS) } else { None };
-        changed = true;
+    ui.horizontal(|ui| {
+        let mut on = ticks.is_some();
+        let mut changed = false;
+        if ui.checkbox(&mut on, "").on_hover_text(hover).changed() {
+            *ticks = if on { Some(NEW_RUNG_TICKS) } else { None };
+            changed = true;
+        }
+        let mut value = ticks.unwrap_or(0);
+        let enabled = ticks.is_some();
+        if ui
+            .add_enabled(
+                enabled,
+                egui::DragValue::new(&mut value)
+                    .speed(1.0)
+                    .range(1..=100_000),
+            )
+            .changed()
+            && enabled
+        {
+            *ticks = Some(value);
+            changed = true;
+        }
+        changed
+    })
+    .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trade_actions_keep_readable_labels() {
+        for width in [320.0, 400.0, 520.0] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(quantick_appearance::LIGHT).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let mut paper = super::super::PaperTrading::new();
+            let mut strategy = OrderStrategy::starter(0);
+            strategy.rows[0].gain_ticks = Some(111);
+            strategy.rows[0].loss_ticks = Some(222);
+            paper.account.add_order_strategy(strategy.clone());
+            for _ in 0..3 {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 500.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::none())
+                            .show(ctx, |ui| {
+                                assert!(!draw_strategy_rows(ui, &mut paper.account, Some(0)));
+                            });
+                    },
+                );
+                let bounds = |wanted: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                                Some(text.visual_bounding_rect())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("missing {wanted}"))
+                };
+                let gain = bounds("Gain (ticks)");
+                let loss = bounds("Loss (ticks)");
+                assert!(bounds("111").left() >= gain.left());
+                assert!(bounds("111").right() < loss.left());
+                assert!(bounds("222").left() >= loss.left());
+                assert!(bounds("222").right() <= width);
+            }
+            assert_eq!(
+                paper.account.order_strategies()[0],
+                strategy,
+                "painting never changes the ladder"
+            );
+        }
     }
-    let mut value = ticks.unwrap_or(0);
-    let enabled = ticks.is_some();
-    if ui
-        .add_enabled(
-            enabled,
-            egui::DragValue::new(&mut value)
-                .speed(1.0)
-                .range(1..=100_000),
-        )
-        .changed()
-        && enabled
-    {
-        *ticks = Some(value);
-        changed = true;
-    }
-    changed
 }

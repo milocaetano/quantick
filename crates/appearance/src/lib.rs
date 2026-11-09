@@ -8,17 +8,23 @@ pub mod color;
 pub use builtin::Builtin;
 mod cache;
 pub use cache::RenderCache;
+pub mod chip;
 pub mod contrast;
 mod document;
 mod error;
 pub mod heat;
 pub mod orderflow;
 pub mod palette;
+pub mod paper;
 mod state;
+pub mod tab_strip;
 mod typography;
 
 pub use color::PremultipliedRgba;
-pub use document::{BookmapOverride, ColorValue, PremultipliedValue, ResolvedTheme, ThemeDocument};
+pub use document::{
+    AXIS_RESERVATION_RANGE, BookmapOverride, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes, ColorValue,
+    PremultipliedValue, ResolvedTheme, ThemeDocument, TitleStripOverride,
+};
 pub use error::ThemeError;
 pub use palette::Token;
 pub use state::{Appearance, ApplyOutcome, Inheritance};

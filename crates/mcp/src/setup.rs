@@ -76,7 +76,7 @@ pub fn walkthrough(
         "Register quantick-mcp with {label}\n\
          \n\
          1. Start Quantick and enable local agent access for this run\n   \
-            (Tools > Local agent access > Enable observer access).\n\
+            (window menu > Settings > Local agent access > Enable observer access).\n\
          2. Register this binary as a local STDIO server:\n   \
             {command}\n\
          3. Verify the registration:\n   \

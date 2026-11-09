@@ -18,8 +18,9 @@ use eframe::egui;
 
 use crate::timezone::TzOffset;
 
-/// Space outside the plot, including the compact tape-only header.
-pub(crate) const PLOT_PADDING_PX: f32 = 16.0;
+/// Room right of the price gutter, for labels wider than it. The canvas meets
+/// its header, its rail and the pane bottom: a border there only eats room.
+const PLOT_RIGHT_PAD_PX: f32 = 16.0;
 
 /// Split the padded plot area into the candle chart, the indicator panes, the
 /// optional live strip, the right price gutter and the bottom time strip, so
@@ -47,7 +48,7 @@ pub fn plot_split_with_metrics(
     pane_sizing: &[crate::indicators::PaneSizing],
     metrics: quantick_appearance::AxisMetrics,
 ) -> PlotAreas {
-    let plot = area.shrink(PLOT_PADDING_PX);
+    let plot = area.with_max_x(area.right() - PLOT_RIGHT_PAD_PX);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - metrics.gutter).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
@@ -159,64 +160,13 @@ pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) ->
     }
 }
 
-/// The sample a calendar chart's time labels are measured by, or `None`
-/// below a day, where the clock time is the label.
-///
-/// A daily, weekly or monthly bar opens at 00:00 UTC, so a clock time says
-/// nothing about it: every label would read the same. The date does.
-#[must_use]
-pub fn calendar_label_sample(interval_ms: i64) -> Option<&'static str> {
-    if interval_ms < quantick_engine::time_bucket::DAY_MS {
-        return None;
-    }
-    Some(
-        match quantick_engine::time_bucket::calendar_months(interval_ms) {
-            Some(1) => "Mmm 0000",
-            Some(_) => "0000",
-            None => "00 Mmm",
-        },
-    )
-}
-
-/// The time label of a bar opening at `open_ms` on a calendar chart: the
-/// UTC bucket it was cut in — a day or week as `07 Oct`, written as its year
-/// where the year changes from the bar labelled before it (`previous_ms`), a
-/// month as `Oct 2026`, and several months as the year. In UTC rather than
-/// the display zone because the buckets are UTC days: the label names the
-/// bucket, and a zone west of UTC would otherwise name the day before it.
-/// `None` below a day.
-#[must_use]
-pub fn fmt_calendar_label(
-    open_ms: i64,
-    interval_ms: i64,
-    previous_ms: Option<i64>,
-) -> Option<String> {
-    calendar_label_sample(interval_ms)?;
-    let date = |ms: i64| {
-        quantick_civil::CivilDate::from_ms(
-            quantick_engine::time_bucket::time_bucket_start(ms, interval_ms),
-            TzOffset::new(0),
-        )
-    };
-    let day = date(open_ms);
-    let (year, month, _) = day.ymd();
-    Some(
-        match quantick_engine::time_bucket::calendar_months(interval_ms) {
-            Some(1) => format!("{} {year:04}", quantick_civil::month_abbr(month)),
-            Some(_) => format!("{year:04}"),
-            None if previous_ms.is_some_and(|previous| date(previous).ymd().0 != year) => {
-                format!("{year:04}")
-            }
-            // `07 Oct`: the day, then the month's abbreviation.
-            None => day.short(),
-        },
-    )
-}
+pub use quantick_chart::time_marks::calendar_label_sample;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::timezone::TzOffset;
+    use quantick_chart::time_marks::fmt_calendar_label;
 
     /// The pointer's tag on a day, week or month chart names the bucket's
     /// date, not the display zone's clock at its UTC midnight.

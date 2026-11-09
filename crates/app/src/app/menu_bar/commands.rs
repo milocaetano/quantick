@@ -1,4 +1,4 @@
-//! What the menu bar and its shortcuts ask the window to do.
+//! What the window menu and its shortcuts ask the window to do.
 //!
 //! The menus and the keyboard are two doors onto one set of commands: each
 //! view records a [`MenuCommand`] instead of reaching into the window, and
@@ -6,26 +6,25 @@
 //! is carried out. Commands are applied in the order they were recorded.
 
 use eframe::egui;
+use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_session::workspace_menu::WorkspaceCommand;
 
 use crate::canvas_layout::LayoutPreset;
 use crate::dock::DockTab;
 use crate::layout_strip::StripAction;
-use crate::tabstrip::TabAction;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolboxDock;
 
 use super::{
     COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LAYOUT_PRESET_KEYS, LEGEND_SHORTCUT,
     PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
-    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, layout_preset_shortcut,
-    layout_tab_shortcut,
+    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_TO_WORKSPACE_SHORTCUT, SAVE_WORKSPACE_SHORTCUT,
+    SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
 /// One thing a menu entry or a menu shortcut asked for.
 #[derive(Debug)]
-pub(super) enum MenuCommand {
-    /// What the tab strip, or the File menu's tab entries, asked for.
-    Tab(TabAction),
+pub(in crate::app) enum MenuCommand {
     OpenReplayBrowser,
     CloseReplay,
     ToggleDock,
@@ -46,11 +45,13 @@ pub(super) enum MenuCommand {
     TakeMark,
     /// Save the workspace; the reason is what the save event records.
     SaveWorkspace(&'static str),
+    /// A row of the workspace menus.
+    Workspace(WorkspaceCommand),
     ForgetWorkspace,
-    /// Open the dialog that names a workspace bookmark.
-    NameWorkspace,
-    OpenNamedWorkspace(String),
-    DeleteNamedWorkspace(String),
+    ExportDesk,
+    ImportDesk,
+    OpenRecentDesk(std::path::PathBuf),
+    RevealDesk,
     SetSaveOnExit(bool),
     PaperMarket(quantick_engine::Side),
     PaperReverse,
@@ -68,6 +69,34 @@ pub(super) enum MenuCommand {
     OpenAppearance,
     OpenAgentAccess,
     OpenReplayFormatHelp,
+    /// `F10`: open or close the `⋮` window menu.
+    ToggleWindowMenu,
+    OpenSettings(SettingsSection),
+    OpenHelp(quantick_control_schema::window_menu::HelpPage),
+}
+
+impl MenuCommand {
+    /// Whether this changes or trades the chart on screen, so means nothing
+    /// while Home hides it. Tabs, replay browsing and the window's own chrome
+    /// are not the chart's.
+    pub(in crate::app) const fn needs_chart(&self) -> bool {
+        matches!(
+            self,
+            Self::CloseReplay
+                | Self::ToggleLayer(_)
+                | Self::ToggleContextCharts
+                | Self::ApplyLayoutPreset(_)
+                | Self::SwitchLayoutIndex(_)
+                | Self::Strip(_)
+                | Self::MoveContextChart { .. }
+                | Self::ToggleLegend
+                | Self::OpenOrderFlowPanel(_)
+                | Self::PaperMarket(_)
+                | Self::PaperReverse
+                | Self::PaperFlatten
+                | Self::PaperCancelAll
+        )
+    }
 }
 
 /// The menu shortcuts pressed this frame, as commands, in the order they
@@ -78,20 +107,31 @@ pub(super) enum MenuCommand {
 /// gated on. Ungated, `Ctrl+0` on the Flow or Timeframe layout set a flag
 /// nothing drew — and swallowed the key besides, so egui's own "reset zoom"
 /// never ran.
+///
+/// `chart_on_screen` is false while Home covers the canvas: what would change a
+/// chart or trade from it stands down, because a trader cannot see what those
+/// keys did. Nothing else in the window depends on them.
 pub(super) fn read_shortcuts(
     ctx: &egui::Context,
     context_column: bool,
+    chart_on_screen: bool,
     commands: &mut Vec<MenuCommand>,
 ) {
     let pressed =
         |shortcut: &egui::KeyboardShortcut| ctx.input_mut(|input| input.consume_shortcut(shortcut));
+    if pressed(&WINDOW_MENU_SHORTCUT) {
+        commands.push(MenuCommand::ToggleWindowMenu);
+    }
+    if pressed(&SETTINGS_SHORTCUT) {
+        commands.push(MenuCommand::OpenSettings(SettingsSection::Display));
+    }
     if pressed(&REPLAY_SHORTCUT) {
         commands.push(MenuCommand::OpenReplayBrowser);
     }
     if pressed(&DOCK_SHORTCUT) {
         commands.push(MenuCommand::ToggleDock);
     }
-    if !ctx.wants_keyboard_input() {
+    if chart_on_screen && !ctx.wants_keyboard_input() {
         for layer in [
             crate::chart_layers::ChartLayer::Bubbles,
             crate::chart_layers::ChartLayer::Footprint,
@@ -103,7 +143,7 @@ pub(super) fn read_shortcuts(
             }
         }
     }
-    if context_column && pressed(&COLLAPSE_CONTEXT_SHORTCUT) {
+    if chart_on_screen && context_column && pressed(&COLLAPSE_CONTEXT_SHORTCUT) {
         commands.push(MenuCommand::ToggleContextCharts);
     }
     // Layout by number, straight off the registry. The same
@@ -113,11 +153,11 @@ pub(super) fn read_shortcuts(
         let Some(shortcut) = layout_preset_shortcut(index) else {
             break;
         };
-        if pressed(&shortcut) {
+        if chart_on_screen && pressed(&shortcut) {
             commands.push(MenuCommand::ApplyLayoutPreset(preset));
         }
     }
-    // Layout tabs by number: `Alt+1..9`, beside `Ctrl+1..9` for the
+    // Layout tabs by number: `Alt+1..9`, beside `Ctrl+Shift+1..9` for the
     // presets — one row of keys, two things a trader switches by number.
     // Not while a text field has the keyboard — a rename box, a note,
     // the ticket — where Alt+1 is text, not a switch.
@@ -126,11 +166,11 @@ pub(super) fn read_shortcuts(
         let Some(shortcut) = layout_tab_shortcut(index) else {
             break;
         };
-        if !typing && pressed(&shortcut) {
+        if chart_on_screen && !typing && pressed(&shortcut) {
             commands.push(MenuCommand::SwitchLayoutIndex(index));
         }
     }
-    if pressed(&LEGEND_SHORTCUT) {
+    if chart_on_screen && pressed(&LEGEND_SHORTCUT) {
         commands.push(MenuCommand::ToggleLegend);
     }
     if pressed(&crate::control::MARK_SHORTCUT) {
@@ -139,10 +179,14 @@ pub(super) fn read_shortcuts(
     if pressed(&SAVE_WORKSPACE_SHORTCUT) {
         commands.push(MenuCommand::SaveWorkspace("shortcut"));
     }
+    // After the desk's Ctrl+Shift+S: a logical match ignores an extra Shift.
+    if chart_on_screen && pressed(&SAVE_TO_WORKSPACE_SHORTCUT) {
+        commands.push(MenuCommand::Workspace(WorkspaceCommand::SaveTo));
+    }
     // Trading hotkeys, swallowed only while no text field owns the
     // keyboard. Market entries use the ticket's quantity and offsets,
     // exactly like the toolbar buttons they twin.
-    if !ctx.wants_keyboard_input() {
+    if chart_on_screen && !ctx.wants_keyboard_input() {
         for (shortcut, command) in [
             (
                 PAPER_BUY_SHORTCUT,

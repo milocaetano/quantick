@@ -28,6 +28,7 @@ pub(super) struct LayoutRename {
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    pub(super) title_bar: super::title_bar::TitleBarState,
     /// Every scenario hook an agent drives this window by, captured once at
     /// launch and named. See [`crate::harness`] for what belongs here and why
     /// the trunk asks it rather than holding its flags. Exists only with the
@@ -66,9 +67,8 @@ pub(super) struct ChromeState {
     /// it, on disk too, so it is the one strip action behind a confirmation.
     pub(super) layout_delete_confirm: Option<crate::layouts::LayoutId>,
 
-    /// Where the Workspace button was drawn, published by the menu bar so the
-    /// hook can click it rather than guess at a coordinate.
-    pub(super) workspace_menu_rect: Option<egui::Rect>,
+    /// The `⋮` window menu and the windows it opens.
+    pub(super) window_menu: super::menu_bar::WindowMenuState,
 
     /// Where the toolbar's history caret is, published by the draw. `None`
     /// while the menu is unreachable — a feed that pages nothing has no menu

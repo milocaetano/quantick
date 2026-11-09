@@ -67,12 +67,14 @@ pub(super) fn set_numeric_input(
     )
     .ok_or("script input persistence is unavailable")?;
     let values = update_numeric_input(&view.descriptor.inputs, &saved, name, &value)?;
-    app.apply_indicator_settings_change(super::indicator_manager::SettingsChange::Inputs {
-        target,
-        slot: target.slot,
-        values,
-        commit: true,
-    });
+    app.indicator_wiring().apply_indicator_settings_change(
+        super::indicator_manager::SettingsChange::Inputs {
+            target,
+            slot: target.slot,
+            values,
+            commit: true,
+        },
+    );
     Ok(())
 }
 

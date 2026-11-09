@@ -81,6 +81,7 @@ pub const LOCAL_KEYS: &[&str] = &[
     "saved",
     "replay_folder",
     "save_on_exit",
+    "auto_save",
 ];
 
 /// Application configuration and persistence effects over the shared document.
@@ -511,6 +512,8 @@ mod tests {
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
@@ -532,6 +535,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                     orderflow_panel: Default::default(),
                 },
             ],
@@ -575,6 +580,7 @@ mod tests {
         let literal = concat!(
             "version = 1\n",
             "save_on_exit = false\n",
+            "auto_save = true\n",
             "window = [\n    1200.0,\n    800.0,\n]\n",
             "active_tab = 2\n",
             "tabs = []\n",
@@ -982,7 +988,10 @@ mod tests {
                 symbols: vec!["BTCUSDT".to_owned(), "ETHUSDT".to_owned()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -1016,6 +1025,8 @@ mod tests {
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
             orderflow_panel: Default::default(),
         });
         workspace.tabs.push(SavedTab {
@@ -1037,6 +1048,8 @@ mod tests {
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
             orderflow_panel: Default::default(),
         });
         let restored = restore(workspace, &catalogue(), clamp);
@@ -1173,6 +1186,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
@@ -1194,6 +1209,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                     orderflow_panel: Default::default(),
                 },
             ],
@@ -1234,6 +1251,8 @@ mod tests {
                 time_bars: None,
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
                 orderflow_panel: Default::default(),
             }],
             chrome: None,
@@ -1425,6 +1444,8 @@ time_bars = "time:60000"
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
             orderflow_panel: Default::default(),
         }];
         workspace

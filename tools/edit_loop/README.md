@@ -207,6 +207,15 @@ recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
 top-three selection and representatives are unchanged, and the PR's own
 ordinary exact-final-head run must pass every one.
 
+The platform member-only amendment (authorized by the trader on 2026-11-05 for
+the OS-window exception crate on `feat/quantick-new-layout`) binds root SHA256
+`76aebf4d2e880f923a87bc1fbe6037137b25baeeb52bf524de63538c8eddb09b`.
+Relative to the session identity above, only the `crates/platform` member is
+added; all other parsed manifest values are equal. This is applicability, not
+recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
+top-three selection and representatives are unchanged, and the PR's own
+ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the
@@ -341,6 +350,14 @@ passing budget check. No sample is discarded and no app limit is raised.
 Completion still requires a separate ordinary run at the final committed
 head with all five samples of every selected package below its fixed ceiling.
 Raw measurements and review records remain outside Git.
+
+The Pine library integration (#848) lifts `pine` into the top three, replacing
+`drawings`. The [scoped reference run](https://github.com/milocaetano/quantick/actions/runs/42679309502)
+at `85b7f57d3c39637977211aa950a937de84748647` measured the representative
+`crates/pine/src/parser.rs`. Its slowest of five loops was 2.122264053 s;
+`ceil(1.25 * 2.122264053 * 1000) / 1000` sets the Pine ceiling to **2.653 s**.
+The app and orderflow ceilings, host, toolchain, jobs, profile and protocol
+remain unchanged. A separate ordinary run on the final commit must pass.
 
 ### Rules for every calibration
 

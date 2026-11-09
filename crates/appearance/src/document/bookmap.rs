@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct BookmapOverride {
     pub candle_fill_opacity: Option<f32>,
+    pub candle_outline_width: Option<f32>,
+    pub candle_outline_opacity: Option<f32>,
+    pub candle_wick_opacity: Option<f32>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
@@ -22,11 +25,17 @@ impl BookmapOverride {
             name: parent.name.clone(),
             dark: parent.dark,
             candle_fill_opacity: self.candle_fill_opacity,
+            candle_outline_width: self.candle_outline_width,
+            candle_outline_opacity: self.candle_outline_opacity,
+            candle_wick_opacity: self.candle_wick_opacity,
+            chart_time_grid: None,
+            chart_axes: None,
             colors: self.colors.clone(),
             typography: BTreeMap::new(),
             footprint_heat: self.footprint_heat.clone(),
             orderflow: Default::default(),
             bookmap: None,
+            title_strip: None,
         }
         .resolve_with(Some(parent))
         .map_err(|error| ThemeError::new(format!("bookmap.{}", error.field), error.message))
@@ -55,16 +64,35 @@ mod tests {
         );
         for token in Token::ALL {
             let expected = match token {
-                Token::Canvas | Token::CandlePreviewBackground => [67, 74, 82, 255],
-                Token::DrawingDefault | Token::DrawingVwap => [181, 131, 43, 255],
-                Token::DrawingBuy => [8, 153, 129, 255],
-                Token::DrawingSell => [242, 54, 69, 255],
+                // An override's own canvas is its chart canvas too.
+                Token::Canvas | Token::ChartCanvas | Token::CandlePreviewBackground => {
+                    [37, 47, 55, 255]
+                }
+                // The flow pane's drawings read on its slate: a near-white
+                // default, Dark's side colours and Dark's accent for VWAP.
+                Token::DrawingDefault => [232, 236, 242, 255],
+                Token::DrawingVwap => [138, 180, 248, 255],
                 Token::DrawingProfile => [122, 142, 194, 255],
                 Token::TextPrimary => [243, 244, 246, 255],
                 Token::TextMuted | Token::TextSupport | Token::TapeLabel => [208, 215, 223, 255],
                 Token::TextFaint => [187, 198, 208, 255],
                 Token::CandleWick => [182, 201, 210, 255],
                 Token::FootprintProfile => [197, 204, 214, 255],
+                // The tab tokens belong to the title strip, never to a chart.
+                Token::ToolbarSheet
+                | Token::TabIdleFill
+                | Token::TabIdleOutline
+                | Token::TabBand
+                | Token::HomeGlow
+                // Light's axes read the root palette, never the slate plot's.
+                | Token::AxisInk
+                | Token::PriceAxisRule
+                | Token::TimeAxisRule
+                // A light theme's own signed-amount inks: its slate pane
+                // writes in the bright pair (`paper::pnl_ink`).
+                | Token::LossInk
+                | Token::BrightGainInk
+                | Token::BrightLossInk => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(
@@ -74,7 +102,8 @@ mod tests {
                 token.key()
             );
         }
-        assert_eq!(light.color(Token::Canvas).to_array(), [255, 255, 255, 255]);
+        assert_eq!(light.color(Token::Canvas).to_array(), [255, 252, 247, 255]);
+        assert_eq!(light.color(Token::ChartCanvas).to_array(), [255; 4]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

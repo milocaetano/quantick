@@ -104,16 +104,23 @@ pub(super) fn rendered(color: PremultipliedRgba) -> egui::Color32 {
 struct Palettes {
     ui: Arc<Palette>,
     bookmap: Arc<Palette>,
+    title_strip: Arc<Palette>,
 }
 impl Palettes {
     fn new(theme: &ResolvedTheme) -> Self {
         let ui = Arc::new(Palette::new(theme));
-        let bookmap = if std::ptr::eq(theme, theme.bookmap()) {
-            ui.clone()
-        } else {
-            Arc::new(Palette::new(theme.bookmap()))
+        let surface = |resolved: &ResolvedTheme| {
+            if std::ptr::eq(theme, resolved) {
+                ui.clone()
+            } else {
+                Arc::new(Palette::new(resolved))
+            }
         };
-        Self { ui, bookmap }
+        Self {
+            bookmap: surface(theme.bookmap()),
+            title_strip: surface(theme.title_strip()),
+            ui: ui.clone(),
+        }
     }
 }
 type Installed = quantick_appearance::RenderCache<Palettes>;
@@ -171,7 +178,16 @@ pub fn bookmap(ctx: &egui::Context) -> Arc<Palette> {
 }
 
 pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
-    let palette = bookmap(ctx);
+    scope(ctx, bookmap(ctx))
+}
+
+/// The title strip's painter colors (logo, tabs, `+`, menu, window buttons).
+pub fn title_strip_scope(ctx: &egui::Context) -> PaintScope {
+    let palette = ctx.data_mut(|data| cached(data).value.title_strip.clone());
+    scope(ctx, palette)
+}
+
+pub fn scope(ctx: &egui::Context, palette: Arc<Palette>) -> PaintScope {
     let previous = ctx.data_mut(|data| {
         let previous = data.get_temp::<Arc<Palette>>(surface_key());
         data.insert_temp(surface_key(), palette);

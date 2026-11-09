@@ -8,8 +8,41 @@
 use quantick_engine::Side;
 
 use super::Desk;
-use super::ticket::{entry_face, entry_label};
+use super::ticket::{ENTRY_FACE_MAX_CHARS, entry_face, entry_label};
 use crate::PaperAccount;
+
+// The toolbar paints these widths; they live here so the reserved width
+// is decided beside the faces that must fit it.
+/// One TRADE button's own horizontal padding, in pixels.
+const TRADE_BUTTON_PAD_PX: f32 = 16.0;
+/// Estimated width of one strong glyph in a TRADE button, in pixels: upper
+/// case and digits, wider than the average label glyph.
+const TRADE_GLYPH_PX: f32 = 8.0;
+/// The one width both entry buttons wear, in every position state: room
+/// for the longest face the paper desk ever writes
+/// ([`ENTRY_FACE_MAX_CHARS`](super::ticket::ENTRY_FACE_MAX_CHARS)), so a press lands where it landed flat.
+pub const TRADE_ENTRY_WIDTH_PX: f32 =
+    TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX;
+/// Gap between two TRADE buttons, in pixels.
+pub const TRADE_GAP_PX: f32 = 6.0;
+/// Characters the close button shows before it cuts with `…`: room for
+/// `× Close 999 SHORT`. The whole label is always in its hover.
+const TRADE_CLOSE_FACE_CHARS: usize = 17;
+/// The close button's fixed width, so the reverse beside it never moves on
+/// a flip from LONG to SHORT or on a size change.
+pub const TRADE_CLOSE_WIDTH_PX: f32 =
+    TRADE_BUTTON_PAD_PX + TRADE_CLOSE_FACE_CHARS as f32 * TRADE_GLYPH_PX;
+/// The reverse button's face.
+pub const TRADE_REVERSE_LABEL: &str = "Reverse";
+/// The reverse button's fixed width.
+pub const TRADE_REVERSE_WIDTH_PX: f32 =
+    TRADE_BUTTON_PAD_PX + TRADE_REVERSE_LABEL.len() as f32 * TRADE_GLYPH_PX;
+/// TRADE's width in the collapse plan: the entry pair and the open-state
+/// close and reverse, reserved flat too. Opening or closing a position then
+/// never changes what folds, so nothing left of TRADE - and nothing in it -
+/// moves when a fill lands.
+pub const W_TRADE: f32 =
+    2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX + 3.0 * TRADE_GAP_PX;
 
 /// Why the entries are off before the simulator has seen a price.
 pub const NO_MARKET_YET: &str = "waiting for the first print - there is no market yet";

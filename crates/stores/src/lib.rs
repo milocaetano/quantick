@@ -25,6 +25,7 @@ pub mod bubble_presets;
 pub mod bundle;
 pub mod candle_presets;
 pub mod candle_settings;
+pub mod chart_footprint;
 pub mod chart_style;
 pub mod config;
 pub mod footprint_config;
@@ -34,6 +35,7 @@ pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
 pub mod layouts;
+pub mod market_settings;
 pub mod pane_style;
 pub mod paths;
 #[cfg(test)]
@@ -42,6 +44,10 @@ pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
 pub mod ui_state;
+pub mod workspaces;
+
+/// The "Open a market" list, for the handlers that answer its calls.
+pub use quantick_workspace::market_list;
 
 pub mod indicator_picker;
 

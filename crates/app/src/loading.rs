@@ -10,6 +10,8 @@ use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWord
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
+use crate::theme::BOLD_STRIKE_PX;
+
 /// `menu > tooltip > loading-slot, overlay > chart`; keep the chart below this
 /// layer, and suppress chip tooltips while a popup is open ([`dot_hover`]).
 const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
@@ -24,7 +26,6 @@ const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
 const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
-const OVERLAY_PAD_PX: f32 = 8.0;
 /// The label a press on the overlay answers to: same word as the popup's.
 pub const RECONNECT_LABEL: &str = "Reconnect";
 
@@ -225,7 +226,7 @@ fn lay_out_overlay(
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
                     palette.body_font(CONTROL_PT),
-                    palette.loading_meta(),
+                    egui::Color32::PLACEHOLDER,
                 )
             }),
         )
@@ -266,7 +267,8 @@ pub fn reconnect_fits(
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
 
-/// Paint the logo and words; only the returned reconnect rect takes input.
+/// Paint the words straight on the surface, then the logo, so its flying cells
+/// cross over them; only the returned reconnect rect takes input.
 pub fn draw_overlay(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -279,22 +281,9 @@ pub fn draw_overlay(
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
     let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
     let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
-    painter.add(logo_mesh(ui, rect, symbol, now_ms, tab));
     let mut y = group.top;
     let centred = |width: f32| rect.center().x - width / 2.0;
     let size = group.title.size();
-    if !palette.resolved.dark {
-        let meta = group.meta.size();
-        let width = size.x.max(meta.x);
-        let mut plate = egui::Rect::from_min_size(
-            egui::pos2(centred(width), y),
-            egui::vec2(width, size.y + TITLE_GAP_PX + meta.y),
-        );
-        if let Some((_, hit)) = &group.control {
-            plate = plate.union(*hit);
-        }
-        painter.rect_filled(plate.expand(OVERLAY_PAD_PX), 4.0, palette.canvas());
-    }
     painter.galley(
         egui::pos2(centred(size.x), y),
         group.title,
@@ -307,25 +296,26 @@ pub fn draw_overlay(
         group.meta,
         palette.loading_meta(),
     );
-    let Some((control, hit)) = group.control else {
-        return (None, false);
-    };
-    let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
-    let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
-    let lit = response.hovered();
-    painter.galley(
-        at,
-        control,
-        if lit {
+    let answer = group.control.map(|(control, hit)| {
+        let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
+        let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
+        let lit = response.hovered();
+        let ink = if lit {
             palette.loading_title()
         } else {
-            palette.loading_meta()
-        },
-    );
-    if lit {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    (Some(hit), response.clicked())
+            palette.connection_action()
+        };
+        if !palette.resolved.dark {
+            painter.galley(at + egui::vec2(BOLD_STRIKE_PX, 0.0), control.clone(), ink);
+        }
+        painter.galley(at, control, ink);
+        if lit {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        (hit, response.clicked())
+    });
+    painter.add(logo_mesh(ui, rect, symbol, now_ms, tab));
+    answer.map_or((None, false), |(hit, clicked)| (Some(hit), clicked))
 }
 
 /// The width of the chip with its words, and with its dots alone.
@@ -645,10 +635,73 @@ mod tests {
         assert!(dark.1 && light.1);
         assert_eq!(
             dark.0, light.0,
-            "Light backing preserves the reconnect target"
+            "Light and Dark offer the same reconnect target"
         );
         for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
             assert!(!press_at(source, Some(egui::pos2(20.0, 20.0))).1);
+        }
+    }
+
+    /// Reconnect's ink is chosen at paint time, so a hover reaches the pixels:
+    /// the tessellated words change colour, resting in `connection_action`
+    /// and lit in `loading_title`, in both themes.
+    #[test]
+    fn the_reconnect_hover_ink_reaches_the_pixels() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let frame = |events: Vec<egui::Event>| {
+                let mut control = None;
+                let raw = egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                };
+                let output = ctx.run(raw, |ctx| {
+                    let panel = egui::CentralPanel::default().frame(egui::Frame::none());
+                    panel.show(ctx, |ui| {
+                        control = draw_overlay(ui, screen, "X", &words(true), (0, 1)).0;
+                    });
+                });
+                let words: Vec<_> = output
+                    .shapes
+                    .into_iter()
+                    .filter(|clipped| {
+                        matches!(&clipped.shape,
+                        egui::Shape::Text(text) if text.galley.text() == RECONNECT_LABEL)
+                    })
+                    .collect();
+                assert!(!words.is_empty(), "Reconnect is painted");
+                let control = control.expect("laid out");
+                let mut inks = std::collections::BTreeSet::new();
+                for primitive in ctx.tessellate(words, 1.0) {
+                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
+                        inks.extend(mesh.vertices.iter().map(|vertex| vertex.color.to_array()));
+                    }
+                }
+                (inks, control)
+            };
+            let (rest, control) = frame(Vec::new());
+            let _ = frame(vec![egui::Event::PointerMoved(control.center())]);
+            let (lit, _) = frame(Vec::new());
+            let palette = crate::theme::get(&ctx);
+            let only = |color: egui::Color32| std::collections::BTreeSet::from([color.to_array()]);
+            assert_eq!(
+                rest,
+                only(palette.connection_action()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_eq!(
+                lit,
+                only(palette.loading_title()),
+                "{}",
+                palette.resolved.name
+            );
+            assert_ne!(rest, lit);
         }
     }
 
@@ -688,6 +741,49 @@ mod tests {
                 });
             },
         );
+    }
+
+    /// No plate stands behind the words in either theme, and the logo paints
+    /// after them, so its flying cells cross over the text.
+    #[test]
+    fn the_logo_paints_over_bare_words() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            let output = ctx.run(raw, |ctx| {
+                let panel = egui::CentralPanel::default().frame(egui::Frame::none());
+                panel.show(ctx, |ui| {
+                    draw_overlay(ui, screen, "X", &words(true), (0, 1))
+                });
+            });
+            let shapes: Vec<_> = output.shapes.iter().map(|clipped| &clipped.shape).collect();
+            let logo = shapes
+                .iter()
+                .rposition(|shape| matches!(shape, egui::Shape::Mesh(_)))
+                .expect("the logo");
+            let mut text: Vec<_> = (0..shapes.len())
+                .filter(|&index| matches!(shapes[index], egui::Shape::Text(_)))
+                .collect();
+            // A bold action is struck twice; the strike is one word.
+            text.dedup_by(|a, b| match (shapes[*a], shapes[*b]) {
+                (egui::Shape::Text(a), egui::Shape::Text(b)) => a.galley.text() == b.galley.text(),
+                _ => false,
+            });
+            assert_eq!(text.len(), 3, "title, metadata and Reconnect");
+            assert!(text.iter().all(|&index| index < logo), "{text:?} {logo}");
+            assert!(
+                !shapes.iter().any(|shape| matches!(shape,
+                    egui::Shape::Rect(rect) if rect.fill.a() > 0)),
+                "no backing plate"
+            );
+        }
     }
 
     /// The walking dots never move the words: each step lays out as wide as

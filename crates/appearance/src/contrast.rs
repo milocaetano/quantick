@@ -1,6 +1,9 @@
 //! Contrast decisions over actual premultiplied renderer bytes.
 
-use crate::{PremultipliedRgba, color::RgbaExt};
+use crate::{
+    PremultipliedRgba,
+    color::{RgbaExt, opaque, with_opacity},
+};
 
 pub const INK_WHITE_MIX: f32 = 0.45;
 pub const ACTIVE_TINT_ALPHA: u8 = 56;
@@ -60,6 +63,40 @@ pub fn ink_on(
     }
 }
 
+/// The least contrast, against what it is painted over, at which a drawing's
+/// authored colour is still painted as authored.
+///
+/// Deliberately far below WCAG's 3:1 for graphics: that is a target for a
+/// palette someone designs, and holding a trader's chosen colour to it would
+/// overrule a soft amber or cyan he picked on purpose. This catches the colour
+/// that has disappeared - near-white on a light canvas (1.07:1), near-black on
+/// a dark one - and leaves every bundled default and swatch alone on both.
+pub const MIN_DRAWING_CONTRAST: f32 = 1.5;
+
+/// The colour a drawing is painted in over `background`: its authored `color`,
+/// unless its hue is all but invisible there and `fallback` reads better.
+///
+/// The hue is graded, not the translucent paint: a faint stroke is a choice
+/// of faintness, so the fallback keeps the authored alpha. Display only - the
+/// saved style is never rewritten, so the colour returns as soon as the
+/// canvas it was chosen for does.
+#[must_use]
+pub fn legible(
+    color: PremultipliedRgba,
+    background: PremultipliedRgba,
+    fallback: PremultipliedRgba,
+) -> PremultipliedRgba {
+    let seen = |ink: PremultipliedRgba| contrast_ratio(opaque(ink), background);
+    let authored = seen(color);
+    if color.a() == 0 || authored >= MIN_DRAWING_CONTRAST || seen(fallback) <= authored {
+        color
+    } else if color.a() == u8::MAX {
+        fallback
+    } else {
+        with_opacity(fallback, color.a())
+    }
+}
+
 impl crate::ResolvedTheme {
     /// Theme-owned foreground selection for an authored fill.
     pub fn ink_on(&self, fill: PremultipliedRgba) -> PremultipliedRgba {
@@ -69,5 +106,27 @@ impl crate::ResolvedTheme {
             self.color(crate::Token::ChipInk),
             self.color(crate::Token::TextPrimary),
         )
+    }
+
+    /// A drawing's authored colour as it is painted on this theme's canvas;
+    /// see [`legible`].
+    #[must_use]
+    pub fn legible_drawing(&self, color: PremultipliedRgba) -> PremultipliedRgba {
+        legible(
+            color,
+            self.color(crate::Token::Canvas),
+            self.color(crate::Token::DrawingDefault),
+        )
+    }
+
+    /// Readout text as it is painted on the readout plate, which sits over
+    /// the canvas; see [`legible`].
+    #[must_use]
+    pub fn legible_readout(&self, color: PremultipliedRgba) -> PremultipliedRgba {
+        let plate = over(
+            self.color(crate::Token::DrawingReadoutPlate),
+            self.color(crate::Token::Canvas),
+        );
+        legible(color, plate, self.color(crate::Token::DrawingDefault))
     }
 }

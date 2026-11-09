@@ -156,6 +156,36 @@ fn fixture_helpers_rebuild_a_single_tab_owner() {
 }
 
 #[test]
+fn moving_presentations_keeps_the_same_live_runtime_objects() {
+    use crate::arrangement::windows::{TransferTarget, WindowId};
+    let mut tabs = three();
+    let address = tabs.by_id(8).unwrap() as *const Fake;
+    let child = tabs
+        .transfer_tab(TabId(8), TransferTarget::NewWindow, 0)
+        .unwrap()
+        .destination;
+    assert_eq!(tabs.by_id(8).unwrap() as *const Fake, address);
+    assert_eq!(tabs.active_id(), 8);
+    tabs.present_window(WindowId::ROOT).unwrap();
+    tabs.select(tabs.position(7).unwrap());
+    tabs.present_window(child).unwrap();
+    assert_eq!(tabs.active_id(), 8, "each window retains its selection");
+    tabs.transfer_tab(TabId(8), TransferTarget::Window(WindowId::ROOT), 0)
+        .unwrap();
+    assert_eq!(tabs.by_id(8).unwrap() as *const Fake, address);
+    assert_eq!(
+        tabs.window_indices(WindowId::ROOT).collect::<Vec<_>>(),
+        [1, 0, 2]
+    );
+    assert!(tabs.iter().all(|tab| !tab.closed));
+    assert_eq!(
+        symbols(&tabs),
+        ["A", "B", "C"],
+        "one store still drains each runtime once"
+    );
+}
+
+#[test]
 fn colliding_local_ids_and_generations_cannot_accept_foreign_transitions() {
     let mut first = Arrangement::new(crate::lifetime::WorkspaceId(7), TabId(0), fake("A"));
     let mut second = Arrangement::new(crate::lifetime::WorkspaceId(8), TabId(0), fake("A"));

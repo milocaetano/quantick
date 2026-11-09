@@ -1,0 +1,9 @@
+# Chrome-style market tabs: native egui viewport creation, input/painting,
+# physical desktop hit geometry, insertion feedback, and per-window title state.
+# Ownership, order, drag decisions, cancellation, and persistence indexing live
+# in crates/workspace. QuantickApp's protected shape is unchanged and shrinks.
+# Same-frame account settlement/report and drawing-market binding are split
+# over the visible native presentations and the background pass; painted chip
+# observations retain IDs across close actions. No intake/worker duplication.
+crates/app +559
+!budget +559

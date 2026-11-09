@@ -1,4 +1,5 @@
 //! Execute the fixed end-of-frame plan against its actual feature owners.
+use super::arrangement_host::ArrangementHost;
 use crate::{
     config::AppConfig, feed_notice, surfaces::ToastSurface, tab::LiveFeedSpawn, timezone::TzOffset,
 };
@@ -26,11 +27,34 @@ pub(super) struct FrameTailInput<'a> {
     pub chip_rect: Option<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
+    /// The tail with every account settled at its paper stage.
+    #[cfg(test)]
     pub fn execute(
         self,
         input: FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.execute_settling(input, spawn, stages, settle_paper_panels);
+    }
+
+    /// One window's tail: only the account on screen settles here; the ones
+    /// no window shows settle once, after every window.
+    pub fn execute_watched(
+        self,
+        input: FrameTailInput<'_>,
+        spawn: &mut LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.execute_settling(input, spawn, stages, settle_active_paper_panel);
+    }
+
+    fn execute_settling(
+        self,
+        input: FrameTailInput<'_>,
+        spawn: &mut LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+        settle: fn(&mut ArrangementHost, &mut ToastSurface, Instant),
     ) {
         for stage in stages {
             if stage.needs_presentation() && input.presentation.is_none() {
@@ -50,9 +74,7 @@ impl FrameTailOwners<'_> {
                         }
                     }
                 }
-                FrameTailStage::SettlePaperPanels => {
-                    settle_paper_panels(self.tabs, self.toast, input.now)
-                }
+                FrameTailStage::SettlePaperPanels => settle(self.tabs, self.toast, input.now),
                 FrameTailStage::DrawPaperReport => {
                     let active = self.tabs.active_index();
                     self.tabs.runtime_mut(active).paper.draw_report_window(
@@ -79,15 +101,66 @@ impl FrameTailOwners<'_> {
 }
 
 /// Settle every account; watched acknowledgement wins, else first background.
+#[cfg(test)]
 pub(super) fn settle_paper_panels(
     tabs: &mut super::arrangement_host::ArrangementHost,
     toast: &mut ToastSurface,
     now: Instant,
 ) {
+    settle_paper_panels_where(tabs, toast, now, |_| true);
+}
+
+pub(super) fn settle_active_paper_panel(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+) {
+    let active = tabs.active_id();
+    settle_paper_panels_where(tabs, toast, now, |id| id == active);
+}
+
+/// The tab each window shows.
+fn shown(tabs: &ArrangementHost) -> Vec<u64> {
+    let windows = tabs.windows();
+    windows
+        .windows()
+        .iter()
+        .map(|window| window.selected().0)
+        .collect()
+}
+
+pub(super) fn settle_background_paper_panels(
+    tabs: &mut ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+) {
+    let shown = shown(tabs);
+    settle_paper_panels_where(tabs, toast, now, |id| !shown.contains(&id));
+}
+
+/// Cancels for the disarmed bots of the tabs no window shows.
+pub(super) fn clean_up_background_strategies(tabs: &mut ArrangementHost) {
+    let shown = shown(tabs);
+    for (id, tab) in tabs.iter_with_ids_mut() {
+        if !shown.contains(&id) {
+            tab.apply_strategy_cleanup();
+        }
+    }
+}
+
+fn settle_paper_panels_where(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+    include: impl Fn(u64) -> bool,
+) {
     let active_tab = tabs.active_index();
     let mut watched = None;
     let mut background = None;
-    for (index, tab) in tabs.iter_mut().enumerate() {
+    for (index, (id, tab)) in tabs.iter_with_ids_mut().enumerate() {
+        if !include(id) {
+            continue;
+        }
         tab.paper.settle();
         let Some(message) = tab.paper.take_toast() else {
             continue;

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Takes nothing: the desk is what is on screen.",
+  "title": "DeskInput",
+  "type": "object"
+}

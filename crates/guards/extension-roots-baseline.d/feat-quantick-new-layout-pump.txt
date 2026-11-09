@@ -1,0 +1,4 @@
+# Attach the native root repaint pump to eframe's surface and stop it on exit.
+# Two narrow lifecycle delegates, no root fields or runtime-processing ownership.
+QuantickApp +2
+!budget +2

@@ -29,7 +29,7 @@ use super::super::{
 };
 #[cfg(any(feature = "control-harness", test))]
 use super::HOOK_ACTOR_CLIENT_NAME;
-use super::{ActionOrigin, ControlAccess, UI_ACTOR_CLIENT_NAME};
+use super::{ActionOrigin, ControlAccess, RecordedActor, UI_ACTOR_CLIENT_NAME};
 #[cfg(any(feature = "control-harness", test))]
 use quantick_control::{
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
@@ -37,6 +37,42 @@ use quantick_control::{
 };
 
 impl ControlAccess {
+    /// Each frame: every recording a tab is playing with a control trace
+    /// beside it re-injects the recorded actions at their logical replay
+    /// time (contract §11), through this same door. When an entry is due is
+    /// `TraceWalks::collect_due`'s. Runs whether or not local access is
+    /// enabled: replay determinism does not depend on a client being
+    /// connected.
+    pub(crate) fn service_replay_trace(&mut self, app: &mut ControlWindow) {
+        let tabs = app.tab_reads().tabs();
+        let due = self.trace_reinjection.collect_due(
+            || super::trace_replay::playing(tabs),
+            &mut self.next_trace_sequence,
+            super::trace_replay::load_trace_for_reinjection,
+        );
+        for entry in due {
+            if let Err(error) = self.invoke_local_action(
+                app,
+                entry.capability_id.as_str(),
+                entry.capability_version,
+                entry.canonical_input,
+                ActionOrigin::TraceReplay(Box::new(RecordedActor {
+                    actor_kind: entry.actor_kind,
+                    client_name: entry.client_name.clone(),
+                })),
+            ) {
+                tracing::warn!(
+                    target: "quantick::control",
+                    event_code = "CONTROL_TRACE_REPLAY_REFUSED",
+                    capability = %entry.capability_id,
+                    version = entry.capability_version,
+                    code = %error.code,
+                    "a traced action was refused on replay"
+                );
+            }
+        }
+    }
+
     /// Invoke one registered action from inside the application — the hotkey,
     /// the `QUANTICK_CONTROL_MARK` hook, a test, or a replayed trace entry.
     /// Validates the input and the result against the action's schemas, and
@@ -116,6 +152,7 @@ impl ControlAccess {
                 .active_tab_index()
                 .min(tabs.len().saturating_sub(1))];
             active
+                .link
                 .replay
                 .as_ref()
                 .filter(|_| traced)
@@ -231,7 +268,7 @@ impl ControlAccess {
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn invoke_local_read(
         &mut self,
-        app: &ControlWindow,
+        app: &mut ControlWindow,
         capability_id: &str,
         input: Value,
     ) -> Result<Value, ControlError> {
@@ -274,6 +311,25 @@ impl ControlAccess {
                 )
                 .expect("a worker dispatch always answers on the worker path"),
             PreparedDispatch::Ui(_) => {
+                let window = prepared
+                    .dispatch
+                    .window_target()
+                    .map(|requested| app.pin_capture_window(requested))
+                    .transpose()?;
+                let previous = window
+                    .map(|window| app.present_capture_window(window))
+                    .transpose()?;
+                if let Some(window) = window {
+                    self.captures.screenshot = self.captures.frames.take_image(window);
+                    if self.captures.screenshot.is_some() {
+                        app.set_capture_scene(
+                            self.captures
+                                .frames
+                                .scene(window)
+                                .map(|painted| painted.scene.clone()),
+                        );
+                    }
+                }
                 let execution = prepared.dispatch.execute_ui(UiReadContext {
                     projections: &mut self.projections,
                     journal: &self.journal,
@@ -281,8 +337,15 @@ impl ControlAccess {
                     instance_id: &instance_id,
                     session: &session,
                     evidence: &self.evidence,
-                    screenshot: &mut self.screenshot,
-                })?;
+                    screenshot: &mut self.captures.screenshot,
+                    window_id: window,
+                });
+                app.set_capture_scene(None);
+                if let Some(previous) = previous {
+                    app.present_capture_window(previous)?;
+                }
+                self.captures.local_window = None;
+                let execution = execution?;
                 execution
                     .into_serialized()
                     .map(|serialized| serialized.result)

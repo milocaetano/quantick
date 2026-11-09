@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "SettingsSection": {
+      "description": "One section of the Settings window.",
+      "enum": [
+        "display",
+        "data",
+        "recording",
+        "agent_access"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Open the Settings window.",
+  "properties": {
+    "section": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SettingsSection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The section to show. Left out, Display. `agent_access` is refused."
+    }
+  },
+  "title": "SettingsOpenInput",
+  "type": "object"
+}

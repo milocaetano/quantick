@@ -9,7 +9,7 @@ pub(crate) fn maintain(
     pane: &ChartPane,
     style: &ChartStyle,
 ) {
-    let mask = pane.layer_mask(style);
+    let mask = pane.layer_read().mask(style);
     let Some(flipped) = workspace.layers_mut().observe(tab, mask) else {
         return;
     };
@@ -26,7 +26,10 @@ pub(crate) fn maintain(
             on = mask & (1 << slot) != 0, action = "persist_switch",
             "a chart layer switch moved; recording it as the trader's choice");
     }
-    save(workspace.chart_layers_path(), &pane.layer_states(style));
+    save(
+        workspace.chart_layers_path(),
+        &pane.layer_read().states(style),
+    );
     // Preserve the existing best-effort save contract; retries are a separate policy change.
     workspace.layers_mut().record(mask);
 }
@@ -49,14 +52,15 @@ pub(crate) fn restore(
             }
         }
         for pane in tabs.iter_mut().flat_map(Tab::panes_mut) {
-            pane.apply_layer_states(&defaults);
+            pane.layer_write().apply_states(&defaults);
         }
         tracing::info!(target: "quantick::app", schema_version = 1_u8,
             event_code = "CHART_LAYERS_RESTORED", path = %workspace.chart_layers_path().display(),
             off = defaults.values().filter(|visible| !**visible).count(), layers = defaults.len(),
             "chart layer visibility restored");
     }
-    workspace
-        .layers_mut()
-        .rebaseline(tabs.id_at(active), tabs[active].flow_pane.layer_mask(style));
+    workspace.layers_mut().rebaseline(
+        tabs.id_at(active),
+        tabs[active].flow_pane.layer_read().mask(style),
+    );
 }

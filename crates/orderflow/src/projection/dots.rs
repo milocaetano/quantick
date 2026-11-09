@@ -186,6 +186,27 @@ pub struct DotZoom {
     pub candle_level_ticks: i64,
     /// See [`PaneGeometry::lane_bars`].
     pub lane_bars: Vec<(i64, i64)>,
+    /// The share of the tape's window its averaged native book reaches
+    /// before the lane opens, under the inset left of the oldest dot
+    /// ([`TapeHorizontalGeometry::lead_share`](super::TapeHorizontalGeometry::lead_share));
+    /// zero for any other lane.
+    pub tape_lead_share: f64,
+}
+
+impl DotZoom {
+    /// [`Self::tape_lead_share`] of a lane showing `window_ms`
+    /// ([`crate::BarTimeline::with_lane_lead_ms`]).
+    #[must_use]
+    pub fn tape_lead_ms(&self, window_ms: i64) -> i64 {
+        super::tape_geometry::share_of_window_ms(self.tape_lead_share, window_ms)
+    }
+
+    /// Whether [`Self::tape_lead_ms`] stops at its cap, short of the inset
+    /// it pads: the inset beyond is a labelled gap.
+    #[must_use]
+    pub fn tape_lead_capped(&self) -> bool {
+        self.tape_lead_share >= super::MAX_LEAD_SHARE
+    }
 }
 
 /// The rungs a view is using, so the next frame holds them through a wobble,
@@ -261,12 +282,19 @@ impl DotRungMemory {
         self.candle_level_ticks = Some(candle_level_ticks);
         self.tape_px_per_ms = Some(px_per_ms);
         self.px_per_bar = Some(geometry.px_per_bar);
+        let tape_lead_share = super::TapeHorizontalGeometry::from_config(
+            config,
+            geometry.lane_width_px,
+            geometry.height_px,
+        )
+        .map_or(0.0, super::TapeHorizontalGeometry::lead_share);
         DotZoom {
             native_tape,
             tape_window_ms,
             tape_level_ticks,
             candle_level_ticks,
             lane_bars: geometry.lane_bars,
+            tape_lead_share,
         }
     }
 

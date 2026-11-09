@@ -338,9 +338,9 @@ fn script_library_end_to_end() {
             slot: target.slot,
             values: inputs.clone(),
         });
-    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Inputs(
-        target, inputs,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        crate::app::indicator_manager::IndicatorEdit::Inputs(target, inputs),
+    );
     settle_indicators(&mut app);
     let output = values(&app);
     edit(&mut app, Action::Save);
@@ -688,4 +688,53 @@ fn script_editor_read_validation_never_republishes_an_old_open_snapshot() {
         app.script_library_state(0, 64).numeric_inputs[0].value,
         NumericValue::Int(23)
     );
+}
+
+/// C9: the merged window stages still route editor keys and reloads before
+/// the chart consumes them, while preserving its layout-owned slot.
+#[test]
+fn script_editor_survives_workspace_layout_frame_stages() {
+    let (mut app, _directory, _commands) = copy_fixture();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let tab = app.runtime.tabs.active_id();
+    let pane = app.active_tab().flow_pane.id;
+    let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+    let layout = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let output = run_sized_frame(&mut app, &ctx, TEST_WINDOW, vec![key_press(egui::Key::F10)]);
+    assert!(!app.chrome.window_menu.open, "editor owns menu shortcuts");
+    assert!(painted_text_center(&output, "Editable copy · Saves automatically").is_some());
+    edit(
+        &mut app,
+        Action::ReplaceSource {
+            source: "indicator(\"Frame reload\", overlay=true)\nplot(close * 3)\n".into(),
+        },
+    );
+    let now = Instant::now();
+    let run = |app: &mut QuantickApp, now| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            app.draw_frame_stage_test_order(
+                ctx,
+                now,
+                &mut quantick_feed::spawn_live,
+                [super::frame::FrameStage::Surfaces],
+            );
+        });
+    };
+    run(&mut app, now);
+    run(&mut app, now + Duration::from_millis(350));
+    let started = Instant::now();
+    while app.surfaces.script_editor.compilation.is_some() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::yield_now();
+        run(&mut app, now + Duration::from_millis(351));
+    }
+    settle_indicators(&mut app);
+    assert_eq!(app.runtime.tabs.active_id(), tab);
+    assert_eq!(app.active_tab().flow_pane.id, pane);
+    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), layout);
+    let view = &app.active_tab().flow_pane.indicators.all()[0];
+    assert_eq!(view.slot, slot);
+    assert_eq!(view.label(), "Frame reload");
+    assert_eq!(values(&app)[0][39], 300.0);
 }

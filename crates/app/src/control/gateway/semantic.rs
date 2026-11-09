@@ -1,6 +1,6 @@
 //! The frame emitter's seat on the window: the window read as the
-//! `quantick_control_handlers::semantic` source, and the frame hook that
-//! hands it the gateway's journal and clock.
+//! `quantick_control_handlers::semantic` source. The frame hook that hands it
+//! the gateway's journal and clock is `ControlAccess::emit_semantic_changes`.
 //!
 //! What a change *is* and how it is journaled lives in the handler crate;
 //! this file only reads the tabs and panes into that vocabulary, allocating
@@ -12,13 +12,11 @@ use quantick_control_handlers::semantic::{SelectionIdentity, SemanticSource, Sem
 use quantick_control_schema::interaction::SelectionSnapshot;
 
 use crate::app::ControlWindow;
-use crate::metrics;
 use crate::tab::Tab;
 
 use super::super::feed::connection_state;
 use super::super::interaction::{selection_identity, selection_snapshot};
 use super::super::{PaneSideDto, pane_side_dto};
-use super::ControlAccess;
 
 /// One open tab with its id, lent for the walk.
 struct TabRead<'a> {
@@ -37,13 +35,11 @@ impl SemanticTab for TabRead<'_> {
         &self.tab.active.1
     }
     fn connection(&self) -> &'static str {
-        connection_state(self.tab.feed_connection)
+        connection_state(self.tab.link.feed_connection)
     }
     fn replay(&self) -> Option<(bool, bool)> {
-        self.tab
-            .replay
-            .as_ref()
-            .map(|link| (link.status.is_playing(), link.status.is_finished()))
+        let replay = self.tab.link.replay.as_ref()?;
+        Some((replay.status.is_playing(), replay.status.is_finished()))
     }
     /// [`Tab::panes`] and not a local `Vec`: walked on every frame, in the
     /// order both analysis scopes publish.
@@ -79,19 +75,5 @@ impl SemanticSource for ControlWindow {
         for (id, tab) in self.tab_reads().tabs().iter_with_ids() {
             visit(&TabRead { id, tab });
         }
-    }
-}
-
-impl ControlAccess {
-    /// Record the semantic changes since the last frame; with access disabled
-    /// nothing runs at all, the journal starts when the human opens the door
-    /// and records changes, not the state it found.
-    pub(super) fn emit_semantic_changes(&mut self, app: &ControlWindow) {
-        let Some(mut baseline) = self.semantic_baseline.take() else {
-            self.semantic_baseline = Some(SemanticBaseline::capture(app));
-            return;
-        };
-        baseline.emit(app, &mut self.journal, metrics::wall_clock_ms());
-        self.semantic_baseline = Some(baseline);
     }
 }

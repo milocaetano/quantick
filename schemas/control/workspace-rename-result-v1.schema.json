@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The name in force.",
+  "properties": {
+    "changed": {
+      "description": "`false` when the name already read so.",
+      "type": "boolean"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "workspace",
+    "changed"
+  ],
+  "title": "WorkspaceRenameResult",
+  "type": "object"
+}

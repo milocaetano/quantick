@@ -75,8 +75,8 @@ fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab_id),
-                    feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
-                        let integrity = tab.feed_integrity;
+                    feed_integrity: (tab.link.feed_integrity.anomalies > 0).then(|| {
+                        let integrity = tab.link.feed_integrity;
                         FeedIntegritySnapshot {
                             anomalies: WireU64::new(integrity.anomalies),
                             missing_messages: WireU64::new(integrity.missing_messages),
@@ -108,7 +108,7 @@ fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
 /// `None` when there is nothing measured to report at all: a tab that has not
 /// seen a live print, and any tab playing a recording.
 fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
-    let arrival_latency_ms = tab.trade_arrival_ms();
+    let arrival_latency_ms = tab.link.trade_arrival_ms();
     let split = tab.feed_latency();
     if arrival_latency_ms.is_none() && split.is_none() {
         return None;

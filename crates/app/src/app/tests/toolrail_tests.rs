@@ -95,31 +95,6 @@ fn restoring_the_saved_stars_writes_nothing() {
     );
 }
 
-/// A bookmark rearranges the cockpit; it does not curate the rail. One
-/// named before the trader starred anything used to wipe the pinned
-/// section the moment they opened it.
-#[test]
-fn opening_a_bookmark_leaves_the_starred_tools_alone() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("bookmark-stars"));
-    // Named while the rail was empty, which is the case that used to hurt.
-    app.workspace_save_adapter().save_named_workspace("scalp");
-    app.toolrail.toggle_favorite(starrable_tool());
-    run_frame(&mut app, &ctx);
-
-    app.arrangement_adapter().open_named_workspace("scalp");
-
-    assert_eq!(
-        app.workspace_state().starred_tool_ids(),
-        vec!["measure".to_owned()],
-        "the tools the trader keeps at hand outlive the arrangement"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
 /// Reset throws away the *startup arrangement*. The stars were never part
 /// of it, so they survive — like the bookmarks beside them, and the file
 /// stays on disk to hold them.

@@ -42,12 +42,14 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
         .tabs_mut()
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let (column, _) = tab.context_stack_geometry().ok_or_else(|| {
+    let geometry = tab.canvas.context_stack_geometry(&tab.time_panes);
+    let (column, _) = geometry.ok_or_else(|| {
         ControlError::invalid_request(
             "the current context stack must be visible and drawn before resizing",
         )
     })?;
     let result = tab
+        .canvas
         .resize_context_pair(
             tab_id,
             ResizeContextPair {
@@ -56,6 +58,7 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
                 wanted_y: egui::lerp(column.y_range(), fraction),
             },
             actor.actor_kind,
+            &tab.time_panes,
         )
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let result = ResizePairResult {

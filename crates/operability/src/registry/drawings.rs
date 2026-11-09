@@ -23,23 +23,22 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
     UiBehaviour {
         id: "toolrail.dock.set",
         title: "Park the drawing rail on the left, top or bottom edge",
-        reach: "View menu, Drawing toolbar, and dragging the rail grip",
+        reach: "window menu, Panels, and dragging the rail grip",
         keys: &[
             (Source::ToolboxDock, "Left"),
             (Source::ToolboxDock, "Top"),
             (Source::ToolboxDock, "Bottom"),
-            (Source::MenuEntry, "Drawing toolbar"),
+            (Source::MenuEntry, "Left"),
+            (Source::MenuEntry, "Top"),
+            (Source::MenuEntry, "Bottom"),
         ],
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
         id: "toolrail.visible.toggle",
         title: "Show or hide the drawing rail",
-        reach: "View menu",
-        keys: &[(
-            Source::Authored,
-            "a View menu entry whose label the source computes, so no literal to claim",
-        )],
+        reach: "window menu",
+        keys: &[(Source::MenuEntry, "Hidden")],
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {

@@ -149,9 +149,20 @@ pub(crate) struct UiReadContext<'a> {
     /// arrived. Taken by the read that uses it, so a stale image can never be
     /// served to the next capture.
     pub screenshot: &'a mut Option<RawScreenshot>,
+    pub window_id: Option<WireU64>,
 }
 
 pub(crate) trait PreparedUiRead: Send {
+    /// `Some(None)` means the focused live window must be pinned at UI admission.
+    fn window_target(&self) -> Option<Option<WireU64>> {
+        None
+    }
+
+    /// Only reads of painted controls wait for a matching native paint.
+    fn needs_paint(&self) -> bool {
+        self.needs_screenshot()
+    }
+
     fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError>;
 
     /// Whether this read needs the frame rasterised before it can run.
@@ -176,6 +187,19 @@ pub(crate) trait PreparedWorkerRead: Send {
 }
 
 impl PreparedDispatch {
+    pub fn needs_paint(&self) -> bool {
+        match self {
+            Self::Ui(read) => read.needs_paint(),
+            _ => false,
+        }
+    }
+    pub fn window_target(&self) -> Option<Option<WireU64>> {
+        match self {
+            Self::Ui(read) => read.window_target(),
+            _ => None,
+        }
+    }
+
     pub fn execute_worker(
         &self,
         contract: &ObserverContract,

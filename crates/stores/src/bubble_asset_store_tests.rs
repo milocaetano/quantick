@@ -8,7 +8,7 @@ use quantick_orderflow::LaneWindow;
 
 const NATIVE_PRESET: &str = "mini index regions";
 
-pub(super) fn shipped_config() -> AppConfig {
+pub(crate) fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse")
 }
 

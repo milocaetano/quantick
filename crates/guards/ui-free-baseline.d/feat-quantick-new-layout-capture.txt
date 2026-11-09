@@ -1,0 +1,7 @@
+# App-only read adapters pin/present/restore ControlWindow and project its
+# Tab/chrome state into published headless capture contracts. GPU/event/frame
+# handling remains in UI files; generic keyed-frame policy lives in control-host.
+crates/app +70
+!budget +70
+# Prepared-read adapters distinguish model reads from native paint completion;
+# scope classification and reserved-slot arithmetic live in control-host.

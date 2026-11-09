@@ -631,48 +631,41 @@ impl StrategyPopup {
 /// The trading half of the form: side, size, the force band, the projected
 /// brackets and what happens after a fill or a cut.
 fn trade_fields(ui: &mut egui::Ui, form: &mut presets::StoredPreset) {
-    ui.horizontal(|ui| {
-        ui.label("side");
-        let buy = form.side == "buy";
-        if ui.selectable_label(buy, "BUY").clicked() {
-            form.side = "buy".to_owned();
-        }
-        if ui.selectable_label(!buy, "SELL").clicked() {
-            form.side = "sell".to_owned();
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.label("quantity");
-        ui.add(egui::TextEdit::singleline(&mut form.quantity).desired_width(60.0));
-    });
-    ui.horizontal(|ui| {
-        ui.label("force band: body between");
-        ui.add(egui::TextEdit::singleline(&mut form.min_factor).desired_width(40.0));
-        ui.label("× and");
-        ui.add(egui::TextEdit::singleline(&mut form.max_factor).desired_width(40.0));
-        ui.label("× the average of");
-        ui.add(
-            egui::DragValue::new(&mut form.window)
-                .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-        );
-        ui.label("bodies");
-    });
-    ui.horizontal(|ui| {
-        ui.label("and candle ≥");
-        ui.add(egui::TextEdit::singleline(&mut form.min_range).desired_width(50.0));
-        ui.label("pts (0 = off)").on_hover_text(
-            "the elephant floor, measured across the whole candle (high − low, \
-             wicks included): the relative band alone marks dozens of small bars \
-             as force on activity-cut bars; an elephant has a size",
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.label("projection: TP");
-        ui.add(egui::TextEdit::singleline(&mut form.tp_mult).desired_width(40.0));
-        ui.label("× range ahead, SL");
-        ui.add(egui::TextEdit::singleline(&mut form.sl_mult).desired_width(40.0));
-        ui.label("× range behind (0 = no leg)");
-    });
+    egui::Grid::new("strategy_trade_fields")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("Side");
+            ui.horizontal(|ui| {
+                let buy = form.side == "buy";
+                if ui.selectable_label(buy, "BUY").clicked() {
+                    form.side = "buy".to_owned();
+                }
+                if ui.selectable_label(!buy, "SELL").clicked() {
+                    form.side = "sell".to_owned();
+                }
+            });
+            ui.end_row();
+            for (label, text) in [
+                ("Quantity", &mut form.quantity),
+                ("Minimum body / average", &mut form.min_factor),
+                ("Maximum body / average", &mut form.max_factor),
+                ("Minimum candle (pts)", &mut form.min_range),
+                ("TP / range ahead", &mut form.tp_mult),
+                ("SL / range behind", &mut form.sl_mult),
+            ] {
+                ui.label(label);
+                ui.add(egui::TextEdit::singleline(text).desired_width(70.0));
+                ui.end_row();
+            }
+            ui.label("Average body window");
+            ui.add(
+                egui::DragValue::new(&mut form.window)
+                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+            );
+            ui.end_row();
+        });
+    ui.label("The candle floor includes wicks. Zero disables the floor or a projected leg.");
     let mut auto = form.rearm == "auto";
     if ui
         .checkbox(&mut auto, "re-arm automatically after the operation closes")

@@ -2,7 +2,7 @@
 
 use crate::deal_recording::{self, DealRecorder};
 
-use super::QuantickApp;
+use super::{ArrangementHost, QuantickApp};
 
 fn recorder_for(
     app: &mut QuantickApp,
@@ -49,35 +49,21 @@ pub(super) fn ensure(app: &mut QuantickApp) {
             .take_day_cache();
         let mut recorder = recorder_for(app, &feed_id, &symbol, day_cache);
         let tab = app.runtime.tabs.runtime_mut(index);
-        recorder.set_available(tab.feed_capabilities.borrow().deal_counter);
+        recorder.set_available(tab.link.feed_capabilities.borrow().deal_counter);
         tab.deal_recorder = recorder;
     }
 }
 
-fn default_for(app: &QuantickApp) -> bool {
+pub(super) fn default_for(app: &QuantickApp) -> bool {
     app.chrome
         .record_deals
         .unwrap_or_else(|| app.config.records_deals(&app.active_tab().feed_id))
 }
 
-/// Draw the saved recording default through the Tools menu.
-pub(super) fn draw_toggle(app: &mut QuantickApp, ui: &mut eframe::egui::Ui) {
-    let mut enabled = default_for(app);
-    if ui
-        .checkbox(&mut enabled, "Record deals by default")
-        .on_hover_text(
-            "start writing the venue's deal counter when a MetaTrader B3 symbol connects",
-        )
-        .changed()
-    {
-        set_default(app, enabled);
-    }
-}
-
 /// Save the default and apply it to undecided recorders.
-pub(crate) fn set_default(app: &mut QuantickApp, enabled: bool) {
-    app.chrome.record_deals = Some(enabled);
-    for tab in app.runtime.tabs.iter_mut() {
-        tab.deal_recorder.set_default(enabled);
+pub(crate) fn set_default(saved: &mut Option<bool>, tabs: &mut ArrangementHost, on: bool) {
+    *saved = Some(on);
+    for tab in tabs.iter_mut() {
+        tab.deal_recorder.set_default(on);
     }
 }

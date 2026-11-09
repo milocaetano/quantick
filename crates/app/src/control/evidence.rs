@@ -73,9 +73,11 @@ pub(crate) fn capture_prevalidated(
     input: &EvidenceCaptureInput,
     source_scopes: BTreeSet<PermissionId>,
 ) -> Result<EvidenceCapture, ControlError> {
-    let snapshot = context
-        .projections
-        .capture(context.app, context.instance_id, &input.scopes)?;
+    let mut snapshot =
+        context
+            .projections
+            .capture(context.app, context.instance_id, &input.scopes)?;
+    snapshot.window_id = context.window_id;
     let events = recent_events(context.journal, context.instance_id, input.event_limit)?;
     let (configuration, mut pending_gaps) = redact_configuration(context.app.tab_reads().config());
     let screenshot = if input.screenshot {

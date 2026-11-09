@@ -41,13 +41,21 @@ impl LayerWiring<'_> {
         layer: chart_layers::ChartLayer,
         visible: bool,
     ) {
-        if layer == chart_layers::ChartLayer::Grid {
-            self.tabs
+        if matches!(
+            layer,
+            chart_layers::ChartLayer::Grid | chart_layers::ChartLayer::TimeGrid
+        ) {
+            let candles = &mut self
+                .tabs
                 .runtime_mut(tab)
                 .pane_mut(side)
                 .presentation
-                .candles
-                .set_grid(self.style, visible);
+                .candles;
+            if layer == chart_layers::ChartLayer::Grid {
+                candles.set_grid(self.style, visible);
+            } else {
+                candles.set_time_grid(self.style, visible);
+            }
             *self.style_revision = self.style_revision.saturating_add(1);
             return;
         }
@@ -62,11 +70,15 @@ impl LayerWiring<'_> {
     /// What a pane's layer menu could not switch itself.
     ///
     /// Drained right after the canvas, so the frame that clicked the entry is
-    /// the frame that applies it. Both wishes reach the real owner — the shared
-    /// style, the indicator state file — instead of a second copy on the pane.
+    /// the frame that applies it. Each wish reaches the real owner — the shared
+    /// style, the indicator state file, the market settings — instead of a
+    /// second copy on the pane.
     pub(crate) fn apply_actions(&mut self) {
         let actions = std::mem::take(&mut self.workspace.layers_mut().actions);
-        if let Some(visible) = actions.grid {
+        if let Some(on) = actions.bar_progress {
+            self.set_bar_progress(self.tabs.id_at(self.tabs.active_index()), on);
+        }
+        if actions.grid.is_some() || actions.time_grid.is_some() {
             let tab = self.tabs.runtime_mut(self.tabs.active_index());
             let side = match actions.grid_pane {
                 Some(id) => tab
@@ -76,10 +88,13 @@ impl LayerWiring<'_> {
                 None => Some(tab.focused_side()),
             };
             if let Some(side) = side {
-                tab.pane_mut(side)
-                    .presentation
-                    .candles
-                    .set_grid(self.style, visible);
+                let candles = &mut tab.pane_mut(side).presentation.candles;
+                if let Some(visible) = actions.grid {
+                    candles.set_grid(self.style, visible);
+                }
+                if let Some(visible) = actions.time_grid {
+                    candles.set_time_grid(self.style, visible);
+                }
                 // The renderer and style log read this revision.
                 *self.style_revision = self.style_revision.saturating_add(1);
             }
@@ -127,22 +142,36 @@ impl LayerWiring<'_> {
     ///
     /// Whatever is edited also becomes the window default, which is what a
     /// trader configuring their first chart means; a second chart diverges
-    /// only when they configure it too.
+    /// only when they configure it too. A tab keeps its own style: see
+    /// `quantick_stores::chart_footprint`.
     pub(crate) fn apply_footprint_change(&mut self, change: FootprintChange) {
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         let side = tab.focused_side();
         match change {
             FootprintChange::Applied(edited) => {
-                tab.pane_mut(side).presentation.footprint.config = Some((*edited).clone());
+                tab.pane_mut(side)
+                    .presentation
+                    .footprint
+                    .config
+                    .set_own(Some((*edited).clone()));
                 *self.footprint_config = *edited;
+                for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+                    pane.presentation
+                        .footprint
+                        .config
+                        .follow(self.footprint_config);
+                }
                 crate::footprint_config::save(
                     self.workspace.footprint_settings_path(),
                     self.footprint_config,
                 );
             }
-            FootprintChange::ResetToDefault => {
-                tab.pane_mut(side).presentation.footprint.config = None;
-            }
+            FootprintChange::ResetToDefault => tab
+                .pane_mut(side)
+                .presentation
+                .footprint
+                .config
+                .set_own(None),
         }
     }
 
@@ -154,7 +183,7 @@ impl LayerWiring<'_> {
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         chart_layers::maintain(self.workspace, tab_id, &tab.flow_pane, self.style);
         if tab.tape_mut().settle_old_tape_fold() {
-            let states = tab.flow_pane.layer_states(self.style);
+            let states = tab.flow_pane.layer_read().states(self.style);
             chart_layers::save(self.workspace.chart_layers_path(), &states);
         }
         if !ctx.input(|input| input.pointer.any_down()) {

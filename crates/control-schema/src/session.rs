@@ -323,3 +323,18 @@ pub fn file_name(path: &std::path::Path) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
+
+/// Published schemas of the observer session snapshots.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "observer-session-paper-v1.schema.json",
+            schema::<PaperSnapshot>(),
+        ),
+        (
+            "observer-session-replay-v1.schema.json",
+            schema::<ReplaySnapshot>(),
+        ),
+    ]
+}

@@ -340,6 +340,8 @@ pub(crate) struct Harness {
     context_menu_layers_release: Option<egui::Pos2>,
     /// `QUANTICK_MENU`: which menu bar button to press open.
     menu: Option<ScriptedMenu>,
+    /// Where the scripted menu's button last was, and for how many frames.
+    menu_button_held: (egui::Pos2, u32),
     /// That press's matching release, on the frame after it.
     menu_release: Option<egui::Pos2>,
     /// `QUANTICK_VENUE_HISTORY_DEMO`: a venue candle prefix delivered to the
@@ -441,6 +443,7 @@ impl Harness {
             context_menu_layers: read("QUANTICK_CONTEXT_MENU")
                 .is_some_and(|value| context_menu_expands_chart_layers(&value)),
             context_menu_layers_release: None,
+            menu_button_held: (egui::Pos2::ZERO, 0),
             menu: read("QUANTICK_MENU").and_then(|value| ScriptedMenu::from_token(value.trim())),
             menu_release: None,
             venue_history_demo: read("QUANTICK_VENUE_HISTORY_DEMO")
@@ -617,19 +620,32 @@ impl Harness {
         self.context_menu_layers = layers;
     }
 
+    /// Whether the button held still long enough to press: the `⋮` rides the right
+    /// edge, and the window takes its scripted size a few frames in.
+    fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
+        const SETTLED_FRAMES: u32 = 10;
+        let (held, frames) = self.menu_button_held;
+        let frames = if held == position { frames + 1 } else { 0 };
+        self.menu_button_held = (position, frames);
+        frames >= SETTLED_FRAMES
+    }
+
     /// Send each press and release through egui, waiting for the painted target.
+    ///
+    /// `window` is the `⋮` button, which must also hold still before it is
+    /// pressed; every later step of a path is a row its own draw published.
     pub(crate) fn push_menu_input(
         &mut self,
         ctx: &egui::Context,
         raw_input: &mut egui::RawInput,
-        workspace: Option<egui::Rect>,
+        window: Option<egui::Rect>,
         history: Option<egui::Rect>,
     ) -> bool {
         let click = if let Some(position) = self.menu_release.take() {
             Some((position, false))
         } else if let Some(menu) = self.menu.as_mut().and_then(ScriptedMenu::ready) {
             let rect = match menu.target() {
-                "Workspace" => workspace,
+                "Window" => window.filter(|rect| self.menu_button_settled(rect.center())),
                 "History" => history,
                 target => ctx.data_mut(|data| {
                     data.remove_temp::<Option<egui::Rect>>(egui::Id::new(("scripted_menu", target)))
