@@ -3,7 +3,7 @@
 //! Keyboard paste and the older Duplicate action share the normalization in
 //! this module, so a chart never grows two subtly different kinds of copy.
 
-use crate::{Drawing, DrawingId, Drawings};
+use crate::{Drawing, DrawingId, DrawingScope, Drawings};
 
 impl<T: Clone + PartialEq> Drawings<T> {
     /// Paste a drawing snapshot as one undo entry and return its fresh id.
@@ -27,6 +27,15 @@ impl<T: Clone + PartialEq> Drawings<T> {
             point.time_ms = None;
         }
         copy.locked = false;
+        // Where it shows is the source's. Without instants a copy of a mark on
+        // every timeframe is kept to this chart (`all_timeframes` asks for
+        // them, and so does every toggle) and joins them once a drag dates
+        // it; a copy of a mark kept to its chart, an old one too, stays kept.
+        // A new object: nothing it inherits predates pinning.
+        if copy.legacy_unpinned {
+            copy.scope = DrawingScope::ThisChart;
+        }
+        copy.legacy_unpinned = false;
         let id = copy.id;
         self.items.push(copy);
         self.select(Some(self.items.len() - 1));

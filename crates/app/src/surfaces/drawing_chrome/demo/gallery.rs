@@ -45,7 +45,7 @@ const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
 pub(crate) struct GalleryPlan {
     anchors: Vec<Anchor>,
     bands: Vec<Anchor>,
-    shared: bool,
+    shared: Option<bool>,
     selected_tool: Option<String>,
 }
 impl DrawingsDemo {
@@ -123,8 +123,8 @@ impl GalleryPlan {
         let mut requested = None;
         for anchor in &self.anchors {
             let completed = anchor.apply(target);
-            if completed && self.shared {
-                target.share_selected();
+            if completed && self.shared == Some(false) {
+                target.keep_selected_to_chart();
             }
             if completed && self.selected_tool.as_deref() == Some(anchor.tool.id()) {
                 requested = target.selected();
@@ -279,7 +279,7 @@ pub(crate) trait DrawingRecipient {
         look: Look,
     ) -> bool;
     fn finish(&mut self) -> bool;
-    fn share_selected(&mut self);
+    fn keep_selected_to_chart(&mut self);
     fn selected(&self) -> Option<usize>;
     fn select(&mut self, index: usize);
     fn selected_center(&self) -> Option<f32>;
@@ -326,11 +326,9 @@ impl DrawingRecipient for Drawings {
     fn finish(&mut self) -> bool {
         self.finish_draft()
     }
-    fn share_selected(&mut self) {
-        if let Some(drawing) = self.selected_mut()
-            && drawing.shareable()
-        {
-            drawing.scope = drawings::DrawingScope::AllCharts;
+    fn keep_selected_to_chart(&mut self) {
+        if let Some(drawing) = self.selected_mut() {
+            drawing.set_scope(drawings::DrawingScope::ThisChart);
         }
     }
     fn selected(&self) -> Option<usize> {

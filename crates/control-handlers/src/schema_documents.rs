@@ -14,6 +14,7 @@ use quantick_control_schema::chart::{ChartSnapshot, ChartWindowPage, ChartWindow
 use quantick_control_schema::drawing_magnet::{
     DrawingMagnetInput, DrawingMagnetResult, ObjectMagnetInput, ObjectMagnetResult,
 };
+use quantick_control_schema::drawing_scope::{DrawingScopeInput, DrawingScopeResult};
 use quantick_control_schema::evidence::{
     EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest, EvidenceReadInput,
 };
@@ -99,6 +100,8 @@ pub fn documents() -> Vec<SchemaDocument> {
         document::<DrawingMagnetResult>("annotate-magnet-result-v1.schema.json"),
         document::<ObjectMagnetInput>("annotate-drawing-magnet-input-v1.schema.json"),
         document::<ObjectMagnetResult>("annotate-drawing-magnet-result-v1.schema.json"),
+        document::<DrawingScopeInput>("annotate-drawing-scope-input-v1.schema.json"),
+        document::<DrawingScopeResult>("annotate-drawing-scope-result-v1.schema.json"),
         // The shape a failed compile puts in `error.context.details`, so a
         // client can generate a reader for its own diagnostics.
         document::<ScriptDiagnostic>("indicator-script-diagnostic-v1.schema.json"),

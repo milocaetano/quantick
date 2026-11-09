@@ -1523,6 +1523,17 @@ fn place_level(app: &mut QuantickApp, side: PaneSide, price: f64) {
     assert!(placed, "a horizontal line places on one anchor");
 }
 
+/// Set the scope of every mark on `side` as the context bar's sharing button
+/// does: one recorded edit each, so the next frame writes it.
+fn set_scope_on(app: &mut QuantickApp, side: PaneSide, scope: drawings::DrawingScope) {
+    let store = &mut app.active_tab_mut().pane_mut(side).drawings;
+    for index in 0..store.items().len() {
+        let before = store.items()[index].clone();
+        store.items_mut()[index].scope = scope;
+        store.record_edit_of(index, before);
+    }
+}
+
 fn drawings_on(app: &QuantickApp, side: PaneSide) -> Vec<f64> {
     app.active_tab()
         .pane(side)

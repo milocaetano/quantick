@@ -406,9 +406,10 @@ fn object_chips(object: &ObjectFact) -> Vec<ChipFact> {
     }
     if object.shared {
         chip(
-            "all charts",
+            "all timeframes",
             Some(
-                "Also drawn on the other chart of this tab, at the same moment in market time"
+                "Drawn on every chart of this market, at any timeframe, at the same moment in \
+                 market time"
                     .into(),
             ),
             false,
@@ -539,9 +540,9 @@ pub fn describe(model: &Model, facts: &Facts) -> Vec<Entry> {
     let count = facts.objects.len();
     let empty = (count == 0).then(|| "nothing is drawn on this chart".into());
     out.push(Entry::new(format!("objects ({count})"), Kind::Submenu(vec![Entry::new("", Kind::Scroll { maximum_height: 320.0, children: object_entries(&facts.objects) })]))
-        .hint("objects drawn on this chart, its all-charts marks included (they leave every chart); a mark shared from another chart is listed and cleared on that chart").disabled(empty.clone()));
+        .hint("objects drawn on this chart, its all-timeframes marks included (they leave every chart)").disabled(empty.clone()));
     out.push(Entry::new("clear objects\u{2026}", Kind::Button { event: Event::AskClear { count }, close: true, small: false }).trace(Trace::Clear)
-        .hint("delete every object drawn on this chart, its all-charts marks from every chart too, after a confirmation; Ctrl+Z brings them back").disabled(empty));
+        .hint("delete every object drawn on this chart, its all-timeframes marks from every chart too, after a confirmation; Ctrl+Z brings them back").disabled(empty));
     out.push(separator());
     if let Some(price) = model.menu.price {
         out.push(Entry::new("", Kind::Trade(price)));

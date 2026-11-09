@@ -1,7 +1,10 @@
 //! The market settings document at its resolved path, under the commit policy.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings},
+    market_settings::{
+        DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings, PaneRole,
+        pane_marks::shown_sets,
+    },
 };
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -83,6 +86,7 @@ impl MarketSettingsStore {
         };
         let (from, to) = (of(self.asset(venue, from)), of(self.asset(venue, to)));
         let carried = self.settings.carry_market(&from, &to);
+        self.revision += 1;
         (to, carried)
     }
 
@@ -195,8 +199,11 @@ impl MarketSettingsStore {
     #[must_use]
     pub fn commit_document(&self, keys: &[DrawingKey]) -> Option<MarketSettings> {
         let mut document = self.saved.clone();
-        for key in keys {
+        for key in &shown_sets(keys) {
             document.restore(&self.settings, key);
+            if key.role == PaneRole::AllTimeframes {
+                document.carry_retirement(&self.settings, &key.market);
+            }
         }
         (document != self.saved).then_some(document)
     }
@@ -242,7 +249,8 @@ impl MarketSettingsStore {
         if !self.held {
             return 0;
         }
-        keys.into_iter()
+        shown_sets(keys)
+            .iter()
             .inspect(|_| self.counted.set(self.counted.get() + 1))
             .map(|key| self.settings.drawing_changes(&self.saved, key))
             .sum()
@@ -254,9 +262,13 @@ impl MarketSettingsStore {
     pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey]) -> bool {
         self.revision += 1;
         let mut dropped = false;
-        for key in closed.iter().filter(|key| !open.contains(key)) {
+        let open = shown_sets(open);
+        for key in shown_sets(closed).difference(&open) {
             dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
             self.settings.restore(&self.saved, key);
+            if key.role == PaneRole::AllTimeframes {
+                self.settings.undo_retirement(&self.saved, &key.market);
+            }
         }
         if self.settings == self.saved {
             // The pending change is consumed unwritten: the file already holds this.

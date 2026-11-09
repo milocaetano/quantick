@@ -36,7 +36,6 @@
 pub use quantick_control_schema::analysis::*;
 
 use quantick_chart::indicator_views::{IndicatorView, IndicatorViews};
-use quantick_chart_interaction::drawing_model::DrawingScope;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE, CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE},
@@ -73,6 +72,18 @@ pub trait AnalysisPort {
     fn drawing_magnet(&self) -> bool;
     /// Visit every tab in screen order with its panes in the tab's order.
     fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>]));
+}
+
+/// Where a drawing shows, as the wire names it: `all_charts` only when every
+/// chart of its market can show it (asked for, and dated at every anchor),
+/// the same answer the toggle and the chips give.
+#[must_use]
+pub fn scope_name(drawing: &Drawing<DrawingTool>) -> &'static str {
+    if drawing.all_timeframes() {
+        "all_charts"
+    } else {
+        "this_chart"
+    }
 }
 
 /// The one wire name of a drawing band, used by the pointer hit in the pane
@@ -373,11 +384,7 @@ fn drawing_snapshot(drawing: &Drawing<DrawingTool>) -> DrawingSnapshot {
         tool_id: drawing.tool.id().to_owned(),
         band: drawing_band_name(&drawing.band).to_owned(),
         annotation_band: crate::annotate::annotation_band(&drawing.band),
-        scope: match drawing.scope {
-            DrawingScope::ThisChart => "this_chart",
-            DrawingScope::AllCharts => "all_charts",
-        }
-        .to_owned(),
+        scope: scope_name(drawing).to_owned(),
         locked: drawing.locked,
         magnet: drawing.own_magnet(),
         hidden: drawing.hidden,

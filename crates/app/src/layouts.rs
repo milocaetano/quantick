@@ -82,6 +82,7 @@ mod tests {
             text: None,
             id: None,
             origin: None,
+            bars: None,
         }
     }
 

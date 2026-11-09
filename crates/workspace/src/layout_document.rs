@@ -159,7 +159,8 @@ pub struct SavedDrawing {
     /// when on, so a document from before the flag saves back unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub magnet: bool,
-    /// "Show on all charts": mirrored onto the other panes of the market.
+    /// "Show on all timeframes": every chart of the market shows it, at any
+    /// bars, placed by market time and price.
     #[serde(default)]
     pub shared: bool,
     /// The tool's own state, as its preset export writes it.
@@ -173,6 +174,24 @@ pub struct SavedDrawing {
     /// Where a migration found this entry. Absent on anything drawn since.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SavedOrigin>,
+    /// The bar rule a mark kept to its chart was written at (`time:15m`): it
+    /// shows only on a chart cut that way. Absent on a mark shown on all
+    /// timeframes, and on one written before marks were pinned, which shows
+    /// at every bar rule of its chart as it always has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bars: Option<String>,
+}
+
+impl SavedDrawing {
+    /// Kept once for its market and shown at every bar rule: shared, and
+    /// dated at every anchor, because market time is the only coordinate two
+    /// cuts of one tape agree on.
+    #[must_use]
+    pub fn all_timeframes(&self) -> bool {
+        self.shared
+            && !self.points.is_empty()
+            && self.points.iter().all(|point| point.time_ms.is_some())
+    }
 }
 
 /// The layout, contract and pane a migrated drawing was kept under.

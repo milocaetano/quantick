@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 114 |
+| Reachable by capability | 115 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **168** |
+| **Total** | **169** |
 
-97 of the 168 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 71 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 169 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -198,6 +198,7 @@ The three exclusion classes are closed:
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
+| `drawing.scope.toggle` | Show one drawing on every timeframe of its market, or keep it to its chart | the object context bar's sharing button, beside Hide, and the inspector's Coordinates tab checkbox | `annotate.drawing_scope.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
 | `desk.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | `desk.export` | — |
@@ -244,7 +245,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 71 |
+| `authored` | 72 |
 
 ## Appendix: rows no registry stands behind
 
@@ -325,6 +326,7 @@ declares nothing here is a guard failure.
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 | `drawing.magnet.toggle` | the context bar's magnet button is a widget, not a registry entry |
+| `drawing.scope.toggle` | the context bar's sharing button and the inspector checkbox are widgets, not registry entries |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
 

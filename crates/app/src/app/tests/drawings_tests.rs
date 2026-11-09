@@ -2322,7 +2322,9 @@ fn the_coordinates_tab_offers_sharing_across_charts() {
     open_inspector(&mut app, &ctx);
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
-        texts.iter().any(|text| text.contains("Show on all charts")),
+        texts
+            .iter()
+            .any(|text| text.contains("Show on all timeframes")),
         "the sharing control must be on screen, not folded away; painted: {texts:?}"
     );
 }
@@ -2616,8 +2618,9 @@ fn clicking_a_drawing_on_a_crowded_chart_keeps_it_selected() {
 }
 
 /// Marina's ask (`docs/ux/drawing-tools-2026-08.md` §D7): a level drawn on
-/// one chart of the tab shows on the other, at the same moment in market
-/// time — one version of the truth instead of two hand-drawn ones.
+/// one chart shows on every chart of its market, at the same moment in market
+/// time — one version of the truth instead of two hand-drawn ones. Kept to
+/// its chart, it paints there alone.
 #[test]
 fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
     let (mut app, _commands) = app_with_history(200);
@@ -2655,6 +2658,7 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
             }
         },
     ));
+    pane.drawings.selected_mut().expect("just placed").scope = drawings::DrawingScope::ThisChart;
 
     let own_pane_only = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
@@ -2662,14 +2666,9 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
         "the object paints on the chart it was drawn on"
     );
 
-    let drawing = app
-        .active_tab_mut()
-        .flow_pane
-        .drawings
-        .selected_mut()
-        .expect("placement selects what it completed");
-    assert!(drawing.shareable(), "an anchor on a real bar has a time");
-    drawing.scope = drawings::DrawingScope::AllCharts;
+    let drawing = app.active_tab().flow_pane.drawings.items();
+    assert!(drawing[0].shareable(), "an anchor on a real bar has a time");
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::AllCharts);
 
     let both_panes = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
@@ -2678,6 +2677,8 @@ fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
     );
 }
 
+/// Every chart of the market holds a mark shown on all timeframes itself: it is
+/// selected where it is pressed, and deleted there it leaves every chart.
 #[test]
 fn a_shared_mark_is_selected_and_deleted_from_the_other_chart() {
     let ctx = egui::Context::default();
@@ -2685,21 +2686,19 @@ fn a_shared_mark_is_selected_and_deleted_from_the_other_chart() {
 
     click_chart(&mut app, &ctx, on_the_time_pane);
 
+    let time_pane = app.active_tab().pane(PaneSide::Time(0));
     assert_eq!(
-        app.active_tab().flow_pane.drawings.selected(),
+        time_pane.drawings.selected(),
         Some(0),
-        "pressing the mirrored copy takes the one object it mirrors"
+        "pressing the mark takes the chart's own copy"
     );
-    assert_eq!(
-        app.active_tab().drawing_side(),
-        PaneSide::Flow,
-        "and the chrome follows the object, not the pane under the pointer"
-    );
+    assert_eq!(app.active_tab().drawing_side(), PaneSide::Time(0));
 
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+    run_frame(&mut app, &ctx);
     assert!(
         app.active_tab().flow_pane.drawings.items().is_empty(),
-        "Delete on the chart the mark was seen on deletes the mark"
+        "Delete on the chart the mark was seen on deletes the mark everywhere"
     );
 }
 
@@ -2708,7 +2707,13 @@ fn a_shared_mark_is_dragged_from_the_other_chart() {
     let ctx = egui::Context::default();
     let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
     let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
-    let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+    let time_drawings = |app: &QuantickApp| {
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .drawings
+            .undo_depth()
+    };
+    let undo_before = time_drawings(&app);
 
     // Straight up: a horizontal line has one anchor and price is the
     // coordinate both panes read the same way.
@@ -2718,18 +2723,19 @@ fn a_shared_mark_is_dragged_from_the_other_chart() {
         on_the_time_pane,
         on_the_time_pane - egui::vec2(0.0, 60.0),
     );
+    run_frame(&mut app, &ctx);
 
     let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
     assert!(
         after.price > before.price,
-        "dragging the mirror up moves the object up: {} -> {}",
+        "dragging the other chart's copy up moves the object up: {} -> {}",
         before.price,
         after.price
     );
     assert_eq!(
-        app.active_tab().flow_pane.drawings.undo_depth(),
+        time_drawings(&app),
         undo_before + 1,
-        "the whole drag is one undo entry on the store that holds it"
+        "the whole drag is one undo entry on the chart it was made on"
     );
 }
 
@@ -4313,12 +4319,17 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
         .context_bar()
         .sharing_rect()
         .expect("a shareable drawing renders the all-charts button");
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].scope,
+        drawings::DrawingScope::AllCharts,
+        "a new drawing shows on all timeframes"
+    );
     click_chart(&mut app, &ctx, sharing.center());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::AllCharts
+        drawings::DrawingScope::ThisChart
     );
     assert!(
         !app.drawings.chrome.inspector_open(),
@@ -4335,7 +4346,7 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     run_frame(&mut app, &ctx);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
-        drawings::DrawingScope::ThisChart
+        drawings::DrawingScope::AllCharts
     );
 }
 
@@ -4908,6 +4919,12 @@ fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
     place_level(&mut app, PaneSide::Flow, 50.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
     run_frame(&mut app, &ctx);
     let drawn_at = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
 
@@ -4934,8 +4951,140 @@ fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
 }
 
-/// Two context charts on one bar rule hold one set, so a shared mark is theirs
-/// already and reaches the flow chart once.
+/// An edit on one chart does not cost another chart its history: the flow
+/// chart adds a level every chart shows, and Ctrl+Z on the context chart still
+/// undoes what was done there.
+#[test]
+fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![50.0, 100.0]);
+
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    let undo = key_press_with(egui::Key::Z, egui::Modifiers::COMMAND);
+    run_frame_with_modifiers(&mut app, &ctx, vec![undo], egui::Modifiers::COMMAND);
+    run_frame(&mut app, &ctx);
+    let scopes: Vec<_> = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .drawings
+        .items()
+        .iter()
+        .map(|drawing| drawing.scope)
+        .collect();
+    assert_eq!(
+        scopes,
+        [drawings::DrawingScope::AllCharts; 2],
+        "the scope change made on the context chart is undone there"
+    );
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
+}
+
+/// Another chart's write does not cost a chart the undo of its own edit to a
+/// mark every chart shows: a level placed on the flow chart still undoes
+/// there after the context chart adds one, and leaves every chart.
+#[test]
+fn a_level_placed_on_one_chart_undoes_after_another_chart_draws() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
+
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let undo = key_press_with(egui::Key::Z, egui::Modifiers::COMMAND);
+    run_frame_with_modifiers(&mut app, &ctx, vec![undo], egui::Modifiers::COMMAND);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+}
+
+/// A mark kept to the flow chart stays with the bars it was kept at: a re-cut
+/// hides it and the way back restores it.
+#[test]
+fn a_flow_chart_recut_hides_a_mark_kept_to_it_until_it_returns() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
+    run_frame(&mut app, &ctx);
+    let drawn_at = *app.active_tab().flow_pane.state.spec();
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Flow)
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    assert!(drawings_on(&app, PaneSide::Flow).is_empty(), "other bars");
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Flow)
+        .set_spec(drawn_at);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0], "back again");
+}
+
+/// A strategy armed on a mark kept to its chart still names that mark after
+/// another chart of the market adds a level for all timeframes.
+#[test]
+fn a_strategy_on_a_chart_only_mark_keeps_naming_it_when_another_chart_draws() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    place_level(&mut app, PaneSide::Flow, 50.0);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    let index = pane
+        .drawings
+        .index_of(drawing)
+        .expect("the region kept its id");
+    assert_eq!(pane.drawings.items()[index].tool.id(), "rectangle");
+    assert_eq!(pane.drawings.items().len(), 2, "and the level arrived");
+    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+}
+
+/// A level is a level on every timeframe: drawn on one chart, it stays on it
+/// when that chart is cut to other bars, and on the flow chart beside it.
+#[test]
+fn a_level_drawn_on_one_timeframe_stays_on_every_other() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Time(0), 100.0);
+    run_frame(&mut app, &ctx);
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+
+    for bars in [BarSpec::Tick(77), BarSpec::Time(5 * 60_000)] {
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time(0))
+            .set_spec(bars);
+        app.active_tab_mut().apply_spec_changes();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drawings_on(&app, PaneSide::Time(0)),
+            vec![100.0],
+            "{bars:?}"
+        );
+        assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0], "{bars:?}");
+    }
+}
+
+/// Every chart of a market holds its all-timeframes marks itself, so none
+/// mirrors another's: a shared mark paints once on each.
 #[test]
 fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     let ctx = egui::Context::default();
@@ -4953,9 +5102,12 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
 
     let (flow, top, bottom) = (0, 1, 2);
     let owners = |viewer| app.active_tab().mirror_owners(viewer).collect::<Vec<_>>();
-    assert_eq!(owners(flow), [top], "one mirror of the shared set");
-    assert_eq!(owners(top), [flow], "the twin adds nothing to its own set");
-    assert_eq!(owners(bottom), [flow]);
+    assert!(
+        owners(flow).is_empty(),
+        "the flow chart holds the shared set"
+    );
+    assert!(owners(top).is_empty(), "and so does each context chart");
+    assert!(owners(bottom).is_empty());
 }
 
 /// Two context charts on one bar rule claim two legacy slots into one set: both
@@ -5023,6 +5175,11 @@ points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), both);
 
     place_level(&mut app, PaneSide::Time(0), 300.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
     run_frame(&mut app, &ctx);
     let all = vec![100.0, 200.0, 300.0];
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), all);
@@ -5272,19 +5429,12 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
     );
     app.layout_adapter().switch_layout(second).expect("forth");
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0, 200.0]);
-    let bars = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .state
-        .spec()
-        .to_config_string();
-    let key = crate::layouts::DrawingKey {
-        market: quantick_workspace::market_settings::MarketKey {
+    let key = crate::layouts::DrawingKey::all_timeframes(
+        quantick_workspace::market_settings::MarketKey {
             venue: "binance".to_owned(),
             asset: "TESTUSDT".to_owned(),
         },
-        role: crate::layouts::PaneRole::Context { bars },
-    };
+    );
     assert_eq!(
         app.runtime
             .workspace
@@ -5294,7 +5444,7 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
             .drawings(&key)
             .len(),
         2,
-        "the market store holds them under its market and role"
+        "the market store holds them once, for every chart of the market"
     );
 }
 
@@ -5334,9 +5484,8 @@ fn drawings_follow_the_market_the_tab_shows() {
     );
 }
 
-/// "Show on all charts" is stored once, under the pane it was drawn on,
-/// and comes back shared — so the other pane mirrors it again after a
-/// layout round trip.
+/// "Show on all timeframes" is stored once for the market and comes back
+/// shared after a layout round trip.
 #[test]
 fn a_shared_drawing_comes_back_shared() {
     let ctx = egui::Context::default();
@@ -5405,6 +5554,11 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     place_level(&mut app, PaneSide::Time(0), 100.0);
+    set_scope_on(
+        &mut app,
+        PaneSide::Time(0),
+        drawings::DrawingScope::ThisChart,
+    );
     run_frame(&mut app, &ctx);
     let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
 
@@ -5504,13 +5658,15 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    // A mark on each pane, so an index means something on both.
+    // A mark kept to each pane, so an index means something on both.
     for side in [PaneSide::Time(0), PaneSide::Flow] {
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
+        set_scope_on(&mut app, side, drawings::DrawingScope::ThisChart);
     }
+    run_frame(&mut app, &ctx);
     let time_depth = app
         .active_tab()
         .pane(PaneSide::Time(0))

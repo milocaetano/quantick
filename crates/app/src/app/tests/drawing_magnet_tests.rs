@@ -658,6 +658,7 @@ fn shared_mirror_drag(rail: bool, own: bool) -> f64 {
     let (_, scale) = time_pane_projection(&app);
     let to = egui::pos2(x, scale.y(high) - 4.0);
     drag_chart(&mut app, &ctx, on_the_time_pane, to);
+    run_frame(&mut app, &ctx);
     app.active_tab().flow_pane.drawings.items()[0].points[0].price
 }
 

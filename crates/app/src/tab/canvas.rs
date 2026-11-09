@@ -169,7 +169,7 @@ impl Tab {
         let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
         self.apply_shared_interactions(&edits);
 
-        // Drawings marked "show on all charts" cross here, after both panes
+        // Drawings marked "show on all timeframes" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
         // pane pass because each pane paints the *other* pane's marks, and
         // that needs both panes borrowed at once — immutably, which is also
@@ -883,14 +883,14 @@ impl Tab {
         picks
     }
 
-    /// The panes whose shared marks `viewer` shows. Two context charts on one
-    /// bar rule hold one set: a pane holding the viewer's own set adds nothing,
-    /// and of two holding another set only the first does, or a shared mark
+    /// The panes whose shared marks `viewer` shows. Every pane of a market holds
+    /// its all-timeframes marks itself: a pane holding the viewer's market adds
+    /// nothing, and of two holding another only the first does, or a shared mark
     /// would paint twice and its fill read darker than it is.
     pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
         let key = move |pane: PaneIndex| {
-            self.pane_at(pane)
-                .and_then(|pane| pane.layout.drawings_key.as_ref())
+            let key = self.pane_at(pane)?.layout.drawings_key.as_ref();
+            key.map(|key| &key.market)
         };
         (0..self.pane_count()).filter(move |&owner| {
             let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);

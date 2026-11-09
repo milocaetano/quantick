@@ -139,7 +139,7 @@ pub(crate) fn draw(
         // A tool that snaps by its own rule has no magnet to switch.
         magnet: drawing.takes_magnet().then_some(drawing.magnet),
         hidden: drawing.hidden,
-        shared: drawing.scope == drawings::DrawingScope::AllCharts,
+        shared: drawing.all_timeframes(),
         shareable: drawing.shareable(),
         supports_fill: tool.supports_fill(),
         // Pinned, the full panel is already on screen: a gear leading where
@@ -371,11 +371,11 @@ impl BarEdit {
         let mut edited = drawing.clone();
         edited.style = self.style;
         if self.toggle_shared {
-            edited.scope = if edited.scope == drawings::DrawingScope::AllCharts {
+            edited.set_scope(if edited.all_timeframes() {
                 drawings::DrawingScope::ThisChart
             } else {
                 drawings::DrawingScope::AllCharts
-            };
+            });
         }
         edited.magnet ^= self.toggle_magnet;
         if let Some(px) = self.glyph_px {

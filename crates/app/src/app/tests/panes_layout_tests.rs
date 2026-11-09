@@ -957,12 +957,7 @@ fn unsharing_removes_the_copy_from_the_other_pane() {
         .scope = drawings::DrawingScope::AllCharts;
     let shared = drawing_strokes(&run_frame(&mut app, &ctx));
 
-    app.active_tab_mut()
-        .flow_pane
-        .drawings
-        .selected_mut()
-        .expect("selected")
-        .scope = drawings::DrawingScope::ThisChart;
+    set_scope_on(&mut app, PaneSide::Flow, drawings::DrawingScope::ThisChart);
     let alone = drawing_strokes(&run_frame(&mut app, &ctx));
     assert!(
         alone < shared,
@@ -2299,7 +2294,9 @@ fn the_keyboard_deletes_from_the_focused_pane() {
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
+        set_scope_on(&mut app, side, drawings::DrawingScope::ThisChart);
     }
+    run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
     assert_eq!(
         app.active_tab()

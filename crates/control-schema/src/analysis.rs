@@ -231,7 +231,9 @@ pub struct DrawingSnapshot {
     /// so v1 readers stay compatible.
     #[serde(default)]
     pub annotation_band: Option<quantick_control::annotation::AnnotationBand>,
-    /// `this_chart` or `all_charts` — whether the tab's other panes show it.
+    /// `all_charts` (the default) when every chart of its market shows it at
+    /// any timeframe; `this_chart` when only its own chart does, at the bars
+    /// it was kept to.
     pub scope: String,
     pub locked: bool,
     /// This object's own OHLC magnet (`annotate.drawing_magnet.set`), which

@@ -1082,14 +1082,17 @@ fn selection_preserves_the_drawing_color_and_adds_white_handles() {
     assert!(ring_handle, "selection must add ring anchor handles");
 }
 
-/// Nothing that exists changes: every object still opens on the chart it
-/// was drawn on, and sharing is something the trader asks for.
+/// A level is a level on every timeframe: a new object shows on all of its
+/// market's charts, and keeping it to one is something the trader asks for.
 #[test]
-fn a_new_drawing_belongs_to_the_chart_it_was_drawn_on() {
+fn a_new_drawing_shows_on_all_timeframes() {
     let mut drawings = Drawings::default();
-    assert!(drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0)));
-    assert_eq!(drawings.items()[0].scope, DrawingScope::ThisChart);
-    assert!(!drawings.items()[0].shared());
+    assert!(drawings.place(
+        tool("horizontal-line"),
+        ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000))
+    ));
+    assert_eq!(drawings.items()[0].scope, DrawingScope::AllCharts);
+    assert!(drawings.items()[0].shared());
 }
 
 /// Market time is the only coordinate two panes agree on, so an anchor
