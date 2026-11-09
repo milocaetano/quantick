@@ -7,13 +7,21 @@ use quantick_indicators::Indicator;
 fn oracle_baseline_and_determinism() {
     let report = parity_support::oracle_report();
     assert!(report.contains("matching_cells=1920/1920"), "{report}");
-    let app = root().join("../../app/scripts");
-    let mut paths: Vec<_> = std::fs::read_dir(app)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
-    paths.sort();
-    for path in paths {
+    // These snapshots describe the original application corpus. New market
+    // scripts have independent numerical fixtures in popular_pine.rs.
+    let originals = [
+        "ema",
+        "cvd",
+        "delta_histogram",
+        "vwap_cumulative",
+        "zigzag",
+        "range_box",
+        "copilot",
+        "force_bar",
+        "exhaustion_reversal",
+    ];
+    for name in originals {
+        let path = root().join(format!("../../app/scripts/{name}.pine"));
         let source = std::fs::read_to_string(&path).unwrap();
         let data = bars("tick");
         let first = snapshot(&run(&source, &data));

@@ -504,8 +504,17 @@ pub fn recent_events(
 /// here, because nothing else can find prose in a free-form payload — and the
 /// day one is forgotten is the day a bundle carries the trader's words while
 /// its coverage says it does not.
-pub const USER_PROSE_PAYLOAD_KEYS: &[&str] =
-    &["note", "message", "text", "label", "name", "title", "query"];
+pub const USER_PROSE_PAYLOAD_KEYS: &[&str] = &[
+    "note",
+    "message",
+    "text",
+    "label",
+    "name",
+    "title",
+    "query",
+    "source",
+    "diagnostics",
+];
 
 /// Take the operator's own words out of the events a bundle carries.
 ///
@@ -1131,6 +1140,22 @@ mod tests {
         // And everything that is not prose is untouched.
         assert_eq!(payload["target"]["pane_id"], "3");
         assert_eq!(payload["annotation"]["tool_id"], "text");
+    }
+
+    #[test]
+    fn editor_source_and_diagnostics_are_redacted_from_bundles() {
+        let mut payload = json!({"script_editor": {
+            "document": {"source": "plot(private_signal)", "title": "Private script"},
+            "diagnostics": "Unknown private_signal at line 1", "revision": "4",
+        }});
+        redact_prose_value(&mut payload);
+        assert!(!payload.to_string().contains("private_signal"));
+        assert_eq!(
+            payload["script_editor"]["document"]["source"]["redacted"],
+            true
+        );
+        assert_eq!(payload["script_editor"]["diagnostics"]["redacted"], true);
+        assert_eq!(payload["script_editor"]["revision"], "4");
     }
 
     #[test]

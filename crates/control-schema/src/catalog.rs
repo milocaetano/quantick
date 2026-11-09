@@ -28,5 +28,6 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     documents.extend(crate::market_palette::documents());
     documents.extend(crate::bubble_preset::documents());
     documents.extend(crate::appearance::documents());
+    documents.extend(crate::script_editor::documents());
     documents
 }

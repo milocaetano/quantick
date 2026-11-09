@@ -1,0 +1,5 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Average True Range", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+plot(ta.atr(len), title="ATR", color=color.orange)

@@ -61,6 +61,12 @@ pub enum IndicatorCommand {
         slot: SlotId,
         source: IndicatorSource,
     },
+    /// Reload using durable overrides as provenance; empty means source defaults.
+    ReloadWithInputs {
+        slot: SlotId,
+        source: IndicatorSource,
+        values: Vec<InputValue>,
+    },
     /// Drop a slot.
     Remove(SlotId),
 }

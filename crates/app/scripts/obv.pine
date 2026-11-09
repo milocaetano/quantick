@@ -1,0 +1,8 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("On-Balance Volume", overlay=false)
+var total = 0.0
+change = ta.change(close)
+if not na(volume)
+    total := total + (na(change) ? 0 : math.sign(change) * volume)
+plot(na(volume) ? na : total, title="OBV", color=color.blue)

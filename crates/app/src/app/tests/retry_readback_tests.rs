@@ -94,6 +94,8 @@ mod opening_scale_control;
 mod pane_header_tests;
 #[path = "price_axis_control_tests.rs"]
 mod price_axis_control;
+#[path = "script_editor_control.rs"]
+mod script_editor_control;
 #[path = "tape_navigation_tests.rs"]
 mod tape_navigation;
 #[path = "tick_bubbles_control_tests.rs"]
@@ -657,6 +659,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
         ("indicator.picker.set", 1, Value::Null, Readback::Moves),
+        ("indicator.library.edit", 1, Value::Null, Readback::Moves),
         // A listing changes nothing, so no `session.journal.changed` is
         // journaled either side of it; the edits are proven in
         // `quantick-paper` and `quantick-control-handlers`.
@@ -1102,6 +1105,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 })
             }
             "indicator.picker.set" => json!({ "operation": { "action": "open" } }),
+            "indicator.library.edit" => {
+                json!({ "operation": { "action": "open", "id": "ema.pine" } })
+            }
             "chart.settings.set" => json!({ "action": "open", "tab": "candles" }),
             "orderflow.tape.opening_scale.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),

@@ -63,3 +63,5 @@ mod test_support;
 
 pub mod appearance;
 pub mod chart_settings;
+
+pub mod script_editor;

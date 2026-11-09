@@ -50,3 +50,5 @@ pub mod workspaces;
 pub use quantick_workspace::market_list;
 
 pub mod indicator_picker;
+
+pub mod script_editor;

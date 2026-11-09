@@ -1,0 +1,17 @@
+//@version=5
+// Independently authored from the formulas in docs/indicators/pine-library.md.
+indicator("Directional Movement / ADX", overlay=false)
+len = input.int(14, "Length", minval=1, maxval=500)
+smoothing = input.int(14, "ADX smoothing", minval=1, maxval=500)
+up = high - high[1]
+down = low[1] - low
+positive = bar_index == 0 ? 0 : (up > down and up > 0 ? up : 0)
+negative = bar_index == 0 ? 0 : (down > up and down > 0 ? down : 0)
+range = ta.rma(ta.tr(true), len)
+plus = range == 0 ? 0 : 100 * ta.rma(positive, len) / range
+minus = range == 0 ? 0 : 100 * ta.rma(negative, len) / range
+total = plus + minus
+dx = total == 0 ? 0 : 100 * math.abs(plus - minus) / total
+plot(plus, title="+DI", color=color.green)
+plot(minus, title="-DI", color=color.red)
+plot(ta.rma(dx, smoothing), title="ADX", color=color.orange)

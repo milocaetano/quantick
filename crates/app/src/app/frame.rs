@@ -364,7 +364,7 @@ impl QuantickApp {
             }
             FrameStage::TabKeys => {
                 scratch.background = Some(pane::background_color(&self.runtime.style));
-                self.surfaces.indicator_picker.capture_keyboard(ctx);
+                self.surfaces.capture_keyboard(ctx);
                 let surface = &mut self.chrome.title_bar.surface;
                 super::home_wiring::observe_market(&self.runtime.tabs, surface);
                 self.handle_tab_keys(ctx);
@@ -389,6 +389,7 @@ impl QuantickApp {
                 surfaces::reload_changed_scripts(
                     &mut self.runtime.indicators,
                     &mut self.runtime.tabs,
+                    self.runtime.workspace.layouts(),
                 );
                 self.layout_adapter().apply_pending_indicator_state();
                 self.layer_wiring().maintain(ctx);
@@ -527,7 +528,8 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
-                indicators: &self.runtime.indicators,
+                indicators: &mut self.runtime.indicators,
+                store: self.runtime.workspace.layouts(),
                 alert_failure: self.audio.alert_failure.as_deref(),
                 style: &self.runtime.style,
                 footprint_config: &self.runtime.footprint_config,

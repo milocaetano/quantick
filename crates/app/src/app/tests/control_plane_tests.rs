@@ -141,7 +141,7 @@ plot(close)
         .find(|v| v.slot == slot)
         .expect("the slot has a view");
     assert!(view.error.is_some(), "and it carries the read failure");
-    assert_eq!(view.label(), "vanishing.pine");
+    assert_eq!(view.label(), "vanishing");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
