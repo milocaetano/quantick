@@ -51,6 +51,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("chart.price_axis.set"),
     },
     UiBehaviour {
+        id: "chart.price_tag.progress.set",
+        title: "Show or hide the forming bar's progress on the last-price tag",
+        reach: "the price axis menu's first row, per market",
+        keys: &[(
+            Source::Authored,
+            "a checkbox in the price axis context menu, not an entry in an action enum",
+        )],
+        mapping: capability!("chart.price_tag.progress.set"),
+    },
+    UiBehaviour {
         id: "chart.time_axis.reset",
         title: "Reset a time axis to where it opened, or the candles to a live overview",
         reach: "double-click the candles' time strip, or the tape's; double-click open canvas",
@@ -107,7 +117,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.context.collapse",
         title: "Put the context charts away, or bring them back",
-        reach: "View menu, Ctrl+0",
+        reach: "window menu, Ctrl+0",
         keys: &[(Source::Hotkey, "COLLAPSE_CONTEXT_SHORTCUT")],
         mapping: capability!("layout.pane.collapse", "layout.pane.expand"),
     },
@@ -131,7 +141,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.pane.move",
         title: "Move a context chart up or down the column",
-        reach: "View → Move chart, and the drag the menu entry exists to replace",
+        reach: "window menu, Workspace, Move chart, and the drag the menu entry exists to replace",
         keys: &[(Source::MenuEntry, "Move chart")],
         mapping: capability!("layout.pane.move"),
     },
@@ -145,7 +155,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.preset.apply",
         title: "Switch the canvas to another arrangement",
-        reach: "toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9",
+        reach: "toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
         keys: &[
             (Source::ToolbarAction, "SetLayout"),
             (Source::LayoutPreset, "flow"),
@@ -171,7 +181,7 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "history.progressive.toggle",
         title: "Build venue history backwards a week at a time, or in one request",
-        reach: "View menu",
+        reach: "window menu",
         keys: &[(Source::MenuEntry, "Progressive venue history")],
         mapping: PENDING_HISTORY,
     },
@@ -192,7 +202,7 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "history.venue_lead_in.toggle",
         title: "Put venue minute candles in front of bars cut by trades",
-        reach: "View menu",
+        reach: "window menu",
         keys: &[(Source::MenuEntry, "Venue candles on charts cut by trades")],
         mapping: PENDING_HISTORY,
     },

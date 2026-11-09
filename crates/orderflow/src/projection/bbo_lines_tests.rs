@@ -325,7 +325,8 @@ fn a_held_tape_places_its_own_lines_on_its_clock() {
     let history = bbo_fixture();
     let grouping =
         crate::EffectiveGrouping::resolve(crate::DisplayGrouping::Native, Decimal::ONE, 50.into());
-    let heat = super::super::project_past_heat(&history, 1_000, 1_700, prices(), grouping);
+    let heat =
+        super::super::project_past_heat(&history, (1_000, 1_700), (0, false), prices(), grouping);
     assert_eq!(heat.bbo_lines.len(), 4, "two sides, broken at the gap");
     let placed = heat.placed(1_350, 300, 2);
     assert_eq!(

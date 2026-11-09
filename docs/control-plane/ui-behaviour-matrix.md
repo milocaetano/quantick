@@ -42,47 +42,60 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 86 |
-| Excluded: `authority` | 6 |
-| Excluded: `ui_only_by_decision` | 3 |
-| Excluded: `pending_capability` | 50 |
-| **Total** | **145** |
+| Reachable by capability | 114 |
+| Excluded: `authority` | 4 |
+| Excluded: `ui_only_by_decision` | 7 |
+| Excluded: `pending_capability` | 43 |
+| **Total** | **168** |
 
-86 of the 145 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 59 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 168 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 71 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
 | Behaviour | What it does | Reach | Capability | Exclusion |
 | --- | --- | --- | --- | --- |
-| `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
-| `tab.market.activate` | Switch to another market tab | tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
-| `tab.market.close` | Close the active market tab | tab strip chip, File menu, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
-| `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
-| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
-| `replay.browser.open` | Open the market replay browser | File menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `replay.close` | Leave replay and go back to the live tape | File menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
-| `replay.format_help.open` | Read what a replay file has to look like | Help menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layout.tab.create` | Add a layout tab | layout strip +, View → Layouts | `layout.tab.create` | — |
-| `layout.tab.delete` | Delete a layout tab | layout strip context menu, View → Layouts | — | `ui_only_by_decision` — `crate::control::layout` states it: `layout.tab.delete` is deliberately not registered, because deleting a layout destroys its indicator set and every drawing under it and no effect policy in the control contract allows a destructive capability yet. The trader deletes from the strip or the View menu |
-| `layout.tab.rename` | Rename a layout tab | layout strip double-click, View → Layouts | `layout.tab.rename` | — |
+| `layout.window.state.set` | Set native window presentation | title-strip minimize and maximize controls; double-click free title-strip space | `layout.window.state.set` | — |
+| `home.show` | Show the Home tab | first tab of the market title strip, Ctrl+1, Ctrl+Shift+H | `home.show` | — |
+| `home.leave` | Leave the Home tab | the active market's chip, Ctrl+Tab and Ctrl+Shift+Tab while Home shows | `home.leave` | — |
+| `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | `layout.window.placement.set` | — |
+| `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — Windows snapping remains an OS gesture; layout.window.placement.set requests an explicit bounded rectangle and does not invoke shell snapping |
+| `app.exit` | Close the application | the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the final window would end every other capability's session; layout.window.close instead preserves tabs in a sibling and refuses final-window exit |
+| `tab.market.activate` | Switch to another market tab | market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab | `layout.market_tab.select` | — |
+| `tab.market.transfer` | Reorder, detach or attach a market tab | drag a market chip within its strip, outside it, or onto another exposed window strip | `layout.market_tab.reorder`, `layout.market_tab.detach`, `layout.market_tab.attach` | — |
+| `tab.market.drag.cancel` | Cancel a staged market-tab drag | Escape while dragging a market chip | `layout.market_tab.drag.begin`, `layout.market_tab.drag.cancel` | — |
+| `window.close_preserving_tabs` | Close one native window and retain every market in a sibling | native window close while sibling windows exist | `layout.window.close` | — |
+| `tab.market.close` | Close the active market tab | tab strip chip, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
+| `tab.market.open` | Open the Open a market palette | tab strip +, Ctrl+T, Home's Open a market | `market.palette.open` | — |
+| `market.palette.choose` | Open or focus the market chosen in the palette | Enter or Ctrl+Enter on a palette row, with its Bars and Workspace selectors | `market.open` | — |
+| `market.palette.add` | Add a symbol to a venue and open it | Enter on a palette no-match row | — | `pending_capability` — no capability adds a symbol to a venue's list yet; `market.open` opens what the config and the added-symbols file already offer. Tracked in issue 401 |
+| `market.palette.remove` | Remove a market the trader added | Delete on a palette row the trader added | `catalog.remove` | — |
+| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's market button, then Enter on a row of the palette in switch mode | `tab.market.set`, `feed.source.set` | — |
+| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode | `feed.contract.roll` | — |
+| `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `replay.close` | Leave replay and go back to the live tape | window menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
+| `replay.format_help.open` | Read what a replay file has to look like | window menu, Help | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `layout.tab.create` | Add a layout tab | layout strip +, window menu, Workspace, Layouts | `layout.tab.create` | — |
+| `layout.tab.delete` | Delete a layout tab | layout strip context menu, window menu, Workspace, Layouts | — | `ui_only_by_decision` — `crate::control::layout` states it: `layout.tab.delete` is deliberately not registered, because deleting a layout destroys its indicator set and every drawing under it and no effect policy in the control contract allows a destructive capability yet. The trader deletes from the strip or the window menu |
+| `layout.tab.rename` | Rename a layout tab | layout strip double-click, window menu, Workspace, Layouts | `layout.tab.rename` | — |
 | `layout.tab.rename.cancel` | Abandon a rename in progress | Escape, or clicking away from the strip's rename box | — | `ui_only_by_decision` — `layout.tab.rename` is atomic: a caller sends the new name or sends nothing, so there is no half-finished rename for it to abandon. The begin/cancel pair is the in-place editor's own state and has no remote counterpart by construction |
-| `layout.tab.switch` | Show another layout on the focused chart | layout strip, View → Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
+| `layout.tab.switch` | Show another layout on the focused chart | layout strip, window menu, Workspace, Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
 | `chart.bars.set_spec` | Change what one bar is — kind and size | each pane header's bars control, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
+| `chart.price_tag.progress.set` | Show or hide the forming bar's progress on the last-price tag | the price axis menu's first row, per market | `chart.price_tag.progress.set` | — |
 | `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
 | `chart.tape.window` | Choose how much market time the tape shows | the window selector in the tape's header and its window menu, both the call with `file` set | `chart.tape_view.set` | — |
 | `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
-| `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
+| `layout.context.collapse` | Put the context charts away, or bring them back | window menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.flow.collapse` | Put the flow chart away, or bring it back | drag the vertical canvas divider toward the right edge or drag its rail left | `layout.flow.collapse`, `layout.flow.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
-| `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
+| `layout.pane.move` | Move a context chart up or down the column | window menu, Workspace, Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
-| `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
-| `dock.tab.open` | Open a panel — session, trading or trades | View menu, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply` | — |
+| `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the capsule's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
@@ -96,7 +109,7 @@ The three exclusion classes are closed:
 | `layer.tape_bbo_lines.toggle` | Draw the best bid and best ask as bold stepped lines on the tape | pane right-click layer menu; Bubbles settings, Best bid/ask lines | `layers.visibility.set` | — |
 | `orderflow.tape.fold.set` | Close the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps | `orderflow.tape.fold.set` | — |
 | `orderflow.tape.market_fold.set` | Fold the tape while the market is closed | the checkbox in the tape section of the Bubbles settings | `orderflow.tape.market_fold.set` | — |
-| `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; View menu; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
+| `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; window menu, Panels; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
 | `orderflow.settings.close` | Close the order-flow panel | the panel's ×; the gear's left click; Ctrl+Shift+O | `orderflow.settings.close` | — |
 | `orderflow.settings.section.set` | Fold or open a section of the order-flow panel, for the asset on screen | a click on the section's header in the panel | `orderflow.settings.section.set` | — |
 | `orderflow.tape.view.set` | Show the trail and tape, the trail alone or the tape alone | pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
@@ -105,17 +118,18 @@ The three exclusion classes are closed:
 | `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
 | `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker | `orderflow.bubbles.tick.set` | — |
 | `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
+| `orderflow.bubbles.reset` | Reset the bubble look to the asset's factory preset | Bubbles settings, reset bubble visuals | `orderflow.bubbles.reset` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
-| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `appearance.configuration` | Apply a complete appearance configuration | Tools > Theme > Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
+| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `appearance.configuration` | Apply a complete appearance configuration | ⋮ › Settings › Display › Theme › Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
-| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
+| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | Settings window, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
-| `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, window menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.mouse_vertical_line.toggle` | Mirror price hover into one non-price indicator pane | right-click menu on an indicator pane | `indicator.mouse_vertical_line.set` | — |
 | `indicator.native.add` | Add a native indicator from the catalog | toolbar indicator picker | — | `pending_capability` — `indicator.script.attach` attaches a Pine script; the native catalog has no capability, so an operator can add the indicators a trader writes and not the ones shipped. Tracked in issue 401 |
 | `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicator picker | — | `pending_capability` — `indicator.script.detach` names a script; a native has no identifier it accepts. Tracked in issue 401 |
@@ -143,9 +157,9 @@ The three exclusion classes are closed:
 | `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup; the connection overlay's Reconnect; the status bar's Reconnect while the chart holds bars | `feed.reconnect` | — |
 | `feed.reload` | Throw the timeline away and rebuild the chart | the feed notice popup | `feed.reload` | — |
 | `feed.connection_state` | Read what the chart says about its feed, book, trades and current job | the flow header's chip and slot, the connection overlay, the status word | — | `ui_only_by_decision` — nothing to perform: the state is readable as `connection` on the `feed.status` scope, and the recovery it offers is `feed.reconnect` and `feed.reload` |
-| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
-| `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | View menu, Drawing toolbar, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Settings window's `Record deals by default` row | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
+| `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | window menu, Panels, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `toolrail.visible.toggle` | Show or hide the drawing rail | window menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.magnet.toggle` | Snap drawing anchors to the candle's open, high, low or close | tool rail magnet button; the rail's More menu on its narrowest stage | `annotate.magnet.set` | — |
 | `tool.crosshair` | Arm the crosshair | tool rail | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
 | `tool.pointer` | Arm the pointer — pan, zoom, select and move | tool rail, Escape | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
@@ -186,19 +200,28 @@ The three exclusion classes are closed:
 | `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
-| `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.bookmark.open` | Reopen a named arrangement | Workspace menu, Open | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.bookmark.save` | Keep these tabs and panels under a name | Workspace menu, Save as… | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.export` | Write the whole cockpit to a file | Workspace menu, Export to file… | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
-| `workspace.import` | Open a cockpit from a file | Workspace menu, Open from file… | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
-| `workspace.recent.open` | Reopen a cockpit file opened before | Workspace menu, Open recent | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
-| `workspace.reveal` | Open the folder the cockpit is kept in | Workspace menu, Show where it is saved | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting a terminal or any other process, and this entry hands the path to the system file manager |
-| `workspace.save` | Remember this arrangement as what quantick opens on | Workspace menu, Ctrl+Shift+S | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.save_on_exit` | Keep the arrangement automatically when the window closes | Workspace menu | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.startup.reset` | Forget the saved workspace and open on the configured default | Workspace menu, Reset startup layout | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `control.access.open` | Open the local agent access panel | Tools menu, and the menu row access chip | — | `authority` — the panel is where the trader grants and revokes an operator's access. A capability that opened it would let a connection widen its own authority, which `docs/control-plane/observer-threat-model.md` exists to prevent |
-| `view.perf_readings.toggle` | Show fps, frame time and trade count on the status bar | View menu | — | `pending_capability` — `health.diagnostics.read` reports the same numbers to an operator directly, so the switch governs the trader's own status bar and nothing else. A capability would be for parity of the screen, not of the reading. Tracked in issue 401 |
-| `view.timezone.set` | Change the timezone the time axis is labelled in | View menu, Timezone | — | `pending_capability` — no capability sets the display timezone; every control-plane reading is already absolute, so this is the trader's own axis. Tracked in issue 401 |
+| `desk.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | `desk.export` | — |
+| `desk.import` | Open a cockpit from a file | window menu, Desk, Import desk from file… | `desk.import` | — |
+| `workspace.recent.open` | Reopen a cockpit file opened before | window menu, Desk, Open recent | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
+| `workspace.reveal` | Open the folder the cockpit is kept in | window menu, Desk, Show where it is saved | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting a terminal or any other process, and this entry hands the path to the system file manager |
+| `desk.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | `desk.save` | — |
+| `desk.reopen_on_launch.set` | Keep the arrangement automatically when the window closes | window menu, Desk | `desk.reopen_on_launch.set` | — |
+| `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
+| `tab.workspace.set` | Put a tab on a saved workspace | the status bar's workspace cell | `tab.workspace.set` | — |
+| `workspace.save_to` | Save a tab's edits to its workspace | window menu, Save to | `workspace.save_to` | — |
+| `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
+| `workspace.new` | Make a new, empty workspace for a tab | the status bar's workspace cell, New workspace | `workspace.new` | — |
+| `workspace.autosave.set` | Turn auto save layout changes on or off | the status bar's auto save check, or the workspace cell's menu | `workspace.autosave.set` | — |
+| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename | `workspace.rename` | — |
+| `workspace.delete` | Delete a workspace, moving its tabs to Default | window menu, Workspace, Delete | `workspace.delete` | — |
+| `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
+| `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
+| `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
+| `window.help.open` | Read a help page: keyboard shortcuts, workspaces, the version | window menu, Help | — | `ui_only_by_decision` — reference text for a human; the shortcuts and the workspace rules are the contract an operator already reads |
+| `window.command_palette.open` | Open the command palette | window menu, disabled until the market palette ships | — | `ui_only_by_decision` — not built: the row is greyed out and says so, and nothing runs behind it |
+| `control.access.open` | Open the local agent access panel | Settings, Agent access, Manage clients… | — | `authority` — the panel is where the trader grants and revokes an operator's access. A capability that opened it would let a connection widen its own authority, which `docs/control-plane/observer-threat-model.md` exists to prevent |
+| `view.perf_readings.toggle` | Show fps, frame time and trade count on the status bar | Settings window | — | `pending_capability` — `health.diagnostics.read` reports the same numbers to an operator directly, so the switch governs the trader's own status bar and nothing else. A capability would be for parity of the screen, not of the reading. Tracked in issue 401 |
+| `view.timezone.set` | Change the timezone the time axis is labelled in | Settings window, Timezone | — | `pending_capability` — no capability sets the display timezone; every control-plane reading is already absolute, so this is the trader's own axis. Tracked in issue 401 |
 
 ## Appendix: sources the guard walks
 
@@ -210,7 +233,7 @@ matrix fails the build.
 | --- | --- |
 | `toolbar_action` | 16 |
 | `strip_action` | 6 |
-| `tab_action` | 3 |
+| `tab_action` | 4 |
 | `dock_tab` | 3 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
@@ -218,10 +241,10 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 19 |
-| `menu_entry` | 29 |
+| `hotkey` | 25 |
+| `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 59 |
+| `authored` | 71 |
 
 ## Appendix: rows no registry stands behind
 
@@ -233,10 +256,22 @@ declares nothing here is a guard failure.
 
 | Behaviour | Why nothing registers it |
 | --- | --- |
-| `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
+| `layout.window.state.set` | native title-strip minimize/maximize buttons and free-space double-click |
+| `home.leave` | market chip click and tab cycling while Home shows |
+| `window.move` | native title-strip drag and window-edge resize gestures |
+| `window.snap` | native Windows snapping |
+| `app.exit` | native window close button |
+| `tab.market.transfer` | native market-tab drag and insertion marker |
+| `tab.market.drag.cancel` | native market-tab staged gesture and Escape |
+| `window.close_preserving_tabs` | native close-to-survivor lifecycle |
+| `market.palette.choose` | palette rows are drawn from the headless market list, not an action enum |
+| `market.palette.add` | the no-match row is drawn from the headless market list |
+| `market.palette.remove` | the row is drawn from the headless market list |
+| `tab.market.roll` | the roll row is drawn from the headless market list, not an action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
+| `chart.price_tag.progress.set` | a checkbox in the price axis context menu, not an entry in an action enum |
 | `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |
@@ -259,6 +294,7 @@ declares nothing here is a guard failure.
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |
 | `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
 | `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
+| `orderflow.bubbles.reset` | the reset button at the foot of the Bubbles settings |
 | `indicator.picker.open` | the glyph is a pane header widget, not an entry in the toolbar's action enum |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
@@ -276,7 +312,6 @@ declares nothing here is a guard failure.
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `feed.connection_state` | a readout painted from one state, with no control of its own |
-| `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
@@ -303,18 +338,16 @@ disagree with.
 
 | Source | Entry | Why not a behaviour |
 | --- | --- | --- |
-| `menu_entry` | `File` | a top-level menu; it holds entries and performs nothing |
-| `menu_entry` | `View` | a top-level menu; it holds entries and performs nothing |
-| `menu_entry` | `Workspace` | a top-level menu; it holds entries and performs nothing |
-| `menu_entry` | `Tools` | a top-level menu; it holds entries and performs nothing |
-| `menu_entry` | `Help` | a top-level menu; it holds entries and performs nothing |
+| `menu_entry` | `Help` | a submenu of the window menu; it holds entries and performs nothing |
+| `menu_entry` | `Panels` | a submenu of the window menu; it holds entries and performs nothing |
+| `menu_entry` | `Desk` | a submenu of the window menu; it holds entries and performs nothing |
 | `menu_entry` | `Layouts` | a submenu holding the layout tabs and the three edits the strip's own menu holds; each of those is a row of its own |
 | `rail_tool` | `Drawing` | the rail's slot for the drawing registry rather than a tool of its own; every drawing tool behind it is a `tool.*` row |
 | `notice_action` | `None` | the feed notice's "nothing was clicked" variant: an absence, not a behaviour |
-| `scripted_menu` | `workspace` | a capture hook that opens the Workspace menu so a screenshot can see it. It performs nothing the menu's own entries do not |
+| `scripted_menu` | `window` | a capture hook that opens the window menu so a screenshot can see it. It performs nothing the menu's own entries do not |
 | `scripted_menu` | `history` | a capture hook that opens the toolbar's history caret. The behaviour behind it is `history.reach.set` |
 | `scripted_menu` | `theme` | a capture hook opening the native Theme menu; appearance.apply owns its choices |
 | `scripted_menu` | `theme-dark` | a scripted native Dark click; appearance.apply owns the same publication |
 | `scripted_menu` | `theme-light` | a scripted native Light click; appearance.apply owns the same publication |
 
-13 entries.
+11 entries.

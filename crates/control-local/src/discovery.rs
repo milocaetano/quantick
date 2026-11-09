@@ -17,8 +17,7 @@ use quantick_control::{descriptor::InstanceDescriptor, limits::CONTROL_DESCRIPTO
 
 use quantick_control::limits::CONTROL_DISCOVERY_MAX_ENTRIES;
 
-const NO_INSTANCE_NEXT_STEP: &str =
-    "Start Quantick, open Tools > Local agent access, and enable observer access.";
+const NO_INSTANCE_NEXT_STEP: &str = "Start Quantick, open the window menu > Settings > Local agent access, and enable observer access.";
 /// Covers the Unix boot-time resolution and small wall-clock adjustments.
 const PROCESS_START_TOLERANCE_MS: i64 = 1_000;
 #[cfg(windows)]

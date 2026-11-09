@@ -27,11 +27,20 @@ pub fn no_span_reported() -> WireU64 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSnapshot {
+    /// Native presentation order, independent of the retained runtime storage indices below.
+    #[serde(default)]
+    pub windows: Vec<crate::market_windows::MarketWindowSnapshot>,
+    #[serde(default)]
+    pub focused_window_id: Option<WireU64>,
     pub active_tab_index: WireU64,
     pub active_tab_id: WireU64,
     pub timezone_offset_minutes: i32,
     pub timezone_label: String,
     pub save_on_exit: bool,
+    /// Whether layout edits are written into the tab's workspace as they are
+    /// made (`workspace.autosave.set`). Absent from an older answer: on.
+    #[serde(default = "auto_save_default")]
+    pub auto_save: bool,
     pub performance_readings_visible: bool,
     /// Whether a feed that folds minutes builds its candle history a week
     /// at a time. A feed serving every interval asks one page at the pane's
@@ -96,6 +105,12 @@ pub struct WorkspaceSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceTab {
+    #[serde(default)]
+    pub window_id: Option<WireU64>,
+    #[serde(default)]
+    pub window_index: Option<WireU64>,
+    #[serde(default)]
+    pub selected_in_window: bool,
     pub index: WireU64,
     pub tab_id: WireU64,
     pub label: String,
@@ -117,6 +132,16 @@ pub struct WorkspaceTab {
     #[serde(default)]
     pub flow_collapsed: bool,
     pub panes: Vec<WorkspacePane>,
+    /// The tab's venue. Additive; empty from a build that predates it.
+    #[serde(default)]
+    pub venue: String,
+    /// The workspace this tab uses. Additive; empty from a build that predates
+    /// it.
+    #[serde(default)]
+    pub workspace: String,
+    /// Whether the tab holds edits it has not saved to that workspace.
+    #[serde(default)]
+    pub modified: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -132,4 +157,9 @@ pub struct WorkspacePane {
     #[serde(default)]
     pub collapsed: bool,
     pub focused: bool,
+}
+
+/// An answer from before `auto_save` reads as the opening default.
+const fn auto_save_default() -> bool {
+    true
 }

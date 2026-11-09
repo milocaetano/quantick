@@ -44,6 +44,8 @@ fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickAp
             pane.set_layer_visible(layer, false, &mut Default::default());
         }
     }
+    // A chart keys its drawings by its bars once the frame has seen them.
+    run_frame(&mut app, ctx);
     // Twelve cycles on a five-point grid; enough price changes to settle
     // Renko's inferred step. Row volumes per cycle: 2, 6, 13, 12, 7.
     // At the market grid the value area expands above the POC; on the
@@ -128,7 +130,7 @@ fn assert_market_grid(app: &QuantickApp) {
 fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
     let ctx = egui::Context::default();
     let mut app = profile_fixture_unadopted(&ctx, false);
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     let before = app.active_tab_mut().tape_mut().base_capture_grouping();
     assert_ne!(before, Decimal::from(5), "the view mirror must start stale");
     for side in [PaneSide::Time(0), PaneSide::Time(1)] {
@@ -294,7 +296,7 @@ fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
             .is_none()
     );
     assert_market_grid(&app);
-    app.active_tab_mut().set_context_collapsed(false);
+    app.active_tab_mut().canvas.set_context_collapsed(false);
     run_frame(&mut app, &ctx);
     assert!(
         app.active_tab()
@@ -305,8 +307,9 @@ fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
     );
     assert_market_grid(&app);
     app.active_tab_mut()
+        .canvas
         .restore_context_heights(&[0.4, 0.6], &[false, false]);
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     for spec in ["tick:3", "renko:3"] {
         app.active_tab_mut()
             .set_pane_bar_spec(2, BUILTIN_BARS.parse(spec).unwrap())

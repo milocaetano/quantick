@@ -60,6 +60,16 @@ impl PaneTape {
         }
     }
 
+    /// The market's clock whatever the pane draws: live, the last applied
+    /// print advanced by the host's monotonic time; replayed, the source's
+    /// playhead, stopped at the next print the chart has not applied. Never
+    /// held: a window that stops says nothing about the time it is. `None`
+    /// before the first print.
+    #[must_use]
+    pub fn market_now_ms(&self) -> Option<i64> {
+        self.depth_clock.now_ms()
+    }
+
     /// Say whether the window is held: the host's call each frame, from its link
     /// and its last print. `None` leaves the clock exactly as it was.
     pub fn set_hold(&mut self, hold: Option<TapeHold>) {
@@ -242,6 +252,24 @@ mod hold_tests {
             ..HOLD
         }));
         assert_eq!(tape.lane_now_ms(true), Some(160_000));
+    }
+
+    /// The market clock runs for every pane, native tape or not, held or not,
+    /// and a replay puts it at the playhead short of the next unapplied print.
+    #[test]
+    fn the_market_clock_runs_without_a_native_tape_and_through_a_hold() {
+        let mut tape = PaneTape::default();
+        assert_eq!(tape.market_now_ms(), None, "no print, no clock");
+        tape.follow_live(false, Some(100_000), 0);
+        tape.set_hold(Some(HOLD));
+        tape.follow_live(false, Some(100_000), 30_000);
+        assert_eq!(tape.market_now_ms(), Some(130_000));
+        tape.follow_replay(false, 125_000, Some(100_000), Some(120_000));
+        assert_eq!(
+            tape.market_now_ms(),
+            Some(120_000),
+            "short of the next print"
+        );
     }
 
     #[test]

@@ -68,6 +68,7 @@ fn fixture(native: bool) -> (HeatmapConfig, LiquidityHistory, ProjectionRequest)
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: Vec::new(),
+            tape_lead_share: 0.0,
         }),
     };
     (config, history, request)

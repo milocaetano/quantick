@@ -1,6 +1,6 @@
 # quantick
 
-Real-time alternative bar charts (tick / volume / dollar / imbalance) for order flow trading; one deterministic Rust engine feeds chart, backtest and bot.
+Real-time alternative bar charts (tick/volume/dollar/imbalance) for order flow trading; one deterministic Rust engine feeds chart, backtest and bot.
 
 Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gates: `.claude/hooks/README.md`.
 
@@ -11,7 +11,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 - **Dependency direction is one-way; no reverse edges.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; see `guards/src/graph.rs`. Inside a crate too: `guards/src/cycle.rs` fails a module cycle.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp`, `guards`.
 - **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `appearance`, `anchored-studies`, `backpressure`, `chart`, `chart-interaction`, `drawings`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `control-handlers`, `control-schema`, `operability`, `indicators`, `indicator-session`, `pine`, `replay`, `session`, `sim`, `sources`, `stores`, `paper`, `civil`, `layers`, `workspace` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but network. `replay` and `strategy` are told the time, never read it. `backtest` and `mcp` are headless too, bar `backtest`'s stderr stopwatch.
-- **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses `FeedEvent`.
+- **`feed` and `feed-*` are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses `FeedEvent`. `platform` binds OS windows for `app` alone: safe calls, no egui or domain.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
 - **Replay is a source, not a chart mode** — same `FeedEvent` channel a live venue uses. UI gates on `FeedCapabilities`, never on "is it a replay?".
@@ -36,7 +36,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.
-- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative, English.
+- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative.
 - **One goal, one worktree** — cut from updated target (campaign children: the base in [the integration contract](docs/campaign/integration.md)) under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree, and arm the guards:
 
   ```sh
@@ -46,6 +46,6 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
   ```
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
-- **Process belongs to the skill that runs it** — verification, tiers, reviews and the PR flow live in `mission`, `ship` and `implement`; [`CONTRIBUTING.md`](CONTRIBUTING.md) holds the checks and `.claude/hooks/README.md` what the hooks enforce.
+- **Process belongs to the skill that runs it** — verification, tiers, reviews and the PR flow live in `mission`, `ship` and `implement`; [`CONTRIBUTING.md`](CONTRIBUTING.md) holds the checks.
 - **Only the user merges to `main`.** Agents merge only into an explicitly authorized integration branch under its contract — no auto-merge, merge queue, direct integration push or protection bypass. Hand off a ready PR.
 - **Name the subagent model at the call** — retrieval `haiku`, checklist application `sonnet`, open judgement (bugs, docking, design) the default strong model.

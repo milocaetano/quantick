@@ -39,7 +39,7 @@ impl FeedSourcePort for dyn ControlPort {
         Some(FeedSelection {
             feed_id: tab.active.0.clone(),
             symbol: tab.active.1.clone(),
-            replay: tab.replay.is_some(),
+            replay: tab.link.replay.is_some(),
         })
     }
     fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection> {
@@ -47,6 +47,28 @@ impl FeedSourcePort for dyn ControlPort {
         (tab.feed_id, tab.symbol) = (feed_id.to_owned(), symbol.to_owned());
         tab.maybe_switch_feed(config);
         self.feed_selection(index)
+    }
+}
+
+impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlPort {
+    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
+        let feed = self.tab_reads().config().feed(feed_id)?;
+        feed.next_contract(symbol).map(str::to_owned)
+    }
+    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
+        let feed = self.tab_reads().config().feed(feed_id);
+        feed.is_some_and(|feed| feed.symbols.iter().any(|offered| offered == symbol))
+    }
+    fn paper_not_flat(&self, index: usize) -> bool {
+        let tab = self.tab_reads().tab_at(index);
+        tab.is_some_and(|tab| !tab.paper.is_flat())
+    }
+    fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool {
+        self.layout_state().drawing_gesture_on(feed_id, from, to)
+    }
+    fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
+        self.layout_adapter()
+            .carry_market_drawings(feed_id, from, to)
     }
 }
 
@@ -294,13 +316,17 @@ impl OrderflowPane for OrderflowPaneRead<'_> {
         self.pane.presentation.footprint.visible
     }
     fn footprint_overridden(&self) -> bool {
-        self.pane.presentation.footprint.config.is_some()
+        self.pane.presentation.footprint.config.is_own()
     }
     fn footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
         self.pane.footprint_config(self.window)
     }
     fn opening_scale(&self) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
-        self.pane.opening_scale_snapshot()
+        let view = self.pane.orderflow.as_ref();
+        quantick_control_schema::orderflow::OpeningScaleSnapshot {
+            tape: view.map(|v| v.cached_config().volume_dots.ignore_opening_burst_in_scale),
+            candle: view.is_some_and(crate::orderflow_view::OrderflowView::ignore_flow_opening),
+        }
     }
     fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
         self.tab.tape_age_at(now_ms)
@@ -409,7 +435,7 @@ impl SessionPort for dyn ControlPort {
         for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
             let read = SessionTabRead {
                 tab,
-                replay: tab.replay.as_ref().map(ReplayLinkRead),
+                replay: tab.link.replay.as_ref().map(ReplayLinkRead),
             };
             visit(tab_id, &read);
         }

@@ -16,6 +16,8 @@
 
 use eframe::egui;
 
+use quantick_appearance::chip::{chip_fill, chip_ink};
+
 use crate::theme;
 
 /// Height of every pane's header strip, in pixels.
@@ -123,11 +125,9 @@ pub fn draw(
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
             let selected = *interval_ms == preset_ms;
-            let ink = if selected {
-                palette.text_primary()
-            } else {
-                palette.text_muted()
-            };
+            let ink = *palette.get(chip_ink(selected));
+            // Reserved under the label, so an opaque fill never covers it.
+            let backdrop = content.painter().add(egui::Shape::Noop);
             let chip = content.add(
                 egui::Button::new(
                     egui::RichText::new(label)
@@ -136,11 +136,10 @@ pub fn draw(
                 )
                 .frame(false),
             );
-            if chip.hovered() {
+            if let Some(fill) = chip_fill(selected, chip.hovered(), palette.resolved.dark) {
                 let patch = egui::Rounding::same(crate::pane_header::HOVER_ROUNDING);
-                content
-                    .painter()
-                    .rect_filled(chip.rect, patch, theme::get(ui.ctx()).bare_hover());
+                let shape = egui::Shape::rect_filled(chip.rect, patch, *palette.get(fill));
+                content.painter().set(backdrop, shape);
             }
             #[cfg(test)]
             if let Some(slot) = recorded.next() {

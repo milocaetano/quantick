@@ -505,7 +505,7 @@ mod appearance_tests {
     use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
 
     #[test]
-    fn light_creates_amber_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
+    fn light_creates_slate_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
         let path = crate::scratch::thread_dir("light-drawing-defaults").join(PRESETS_FILE);
         let mut store = PresetStore::load_from(&path);
         let mut appearance = quantick_appearance::Appearance::default();
@@ -518,12 +518,15 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
             let fresh = new_drawing_from_defaults(&store, tool);
-            // Marks keep the market's green and red, like TradingView's.
+            // Every tool is born in the slate default but those whose colour
+            // is their meaning: the buy and sell marks, the VWAP and the
+            // profile.
             let expected = match tool.id() {
                 "fixed-range-profile" => [122, 142, 194, 255],
-                "arrow-mark-up" => [8, 153, 129, 255],
-                "arrow-mark-down" => [242, 54, 69, 255],
-                _ => [181, 131, 43, 255],
+                "anchored-vwap" => [36, 93, 177, 255],
+                "arrow-mark-up" => [31, 122, 52, 255],
+                "arrow-mark-down" => [17, 17, 17, 255],
+                _ => [43, 54, 64, 255],
             };
             assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
             assert_eq!(fresh.style.width_px, existing.style.width_px);

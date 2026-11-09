@@ -111,7 +111,7 @@ impl CustomPresetRows<'_> {
         } = self;
         let mut edited = false;
         let customs = host.custom_preset_names(tool_id);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let selected_id = ui.id().with("custom-preset");
             let mut selected: String =
                 ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
@@ -150,12 +150,13 @@ impl CustomPresetRows<'_> {
                 host.set_default_preset(tool_id, Some(selected.clone()));
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let name_id = ui.id().with("preset-name");
             let mut name: String = ui.data_mut(|data| data.get_temp(name_id).unwrap_or_default());
-            ui.add(
+            crate::theme::preset_input(
+                ui,
                 egui::TextEdit::singleline(&mut name)
-                    .hint_text("Preset name")
+                    .hint_text(crate::theme::supporting_text(ui, "Preset name"))
                     .desired_width(120.0),
             );
             let confirm_id = ui.id().with("preset-overwrite");

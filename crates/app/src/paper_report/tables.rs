@@ -11,14 +11,12 @@ use egui_phosphor::regular as icons;
 use quantick_sim::{PerformanceReport, SideReport, history};
 use rust_decimal::Decimal;
 
-use quantick_paper::report::fit::elide_to_width;
-
 use super::rows::text_width;
-use super::{HEADLINE_FONT_PX, REPORT_LIST_MAX_H_PX, ReportView, TILE_GUTTER_PX, TILE_HEIGHT_PX};
+use super::{HEADLINE_FONT_PX, REPORT_LIST_MAX_H_PX, ReportView, TILE_GUTTER_PX};
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{
-    caption, fmt_decimal, fmt_duration_ms, fmt_points, fmt_signed_points, points_color,
-    position_word,
+    caption, financial_text, fmt_decimal, fmt_duration_ms, fmt_points, fmt_signed_points,
+    points_color, position_word,
 };
 use crate::theme;
 
@@ -28,8 +26,21 @@ use crate::theme;
 pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
     let palette = theme::get(ui.ctx());
     let report = &view.report;
-    let width = ((ui.available_width() - 2.0 * TILE_GUTTER_PX) / 3.0).max(80.0);
-    ui.horizontal(|ui| {
+    let font = palette.mono_font(HEADLINE_FONT_PX);
+    let needed = ui
+        .painter()
+        .layout_no_wrap(view.net_text.0.clone(), font, palette.text_primary())
+        .size()
+        .x
+        + 24.0;
+    let column = (ui.available_width() - 2.0 * TILE_GUTTER_PX) / 3.0;
+    let columns_fit = column >= needed.max(150.0);
+    let width = if columns_fit {
+        column
+    } else {
+        ui.available_width()
+    };
+    let draw = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.x = TILE_GUTTER_PX;
         draw_tile(
             ui,
@@ -69,7 +80,12 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
                 fmt_points(report.gross_loss)
             ),
         );
-    });
+    };
+    if columns_fit {
+        ui.horizontal(draw);
+    } else {
+        ui.vertical(draw);
+    }
 }
 
 /// One headline tile: caption, hero value with its unit, denominator line.
@@ -83,64 +99,24 @@ fn draw_tile(
     subline: String,
 ) {
     let palette = theme::get(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, palette.layout(TILE_HEIGHT_PX)),
-        egui::Sense::hover(),
-    );
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    response.on_hover_text(format!("{label}: {value}{unit} ? {subline}"));
-    let painter = &ui.painter().with_clip_rect(rect);
-    let room = (rect.width() - 24.0).max(0.0);
-    painter.rect_filled(rect, egui::Rounding::same(4.0), palette.inset());
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(4.0),
-        egui::Stroke::new(1.0_f32, palette.border()),
-    );
-    theme::text_fitted(
-        painter,
-        rect.min + egui::vec2(12.0, palette.layout(6.0)),
-        egui::Align2::LEFT_TOP,
-        label,
-        palette.mono_font(10.0),
-        palette.text_faint(),
-        room,
-    );
-    let value = elide_to_width(
-        &value,
-        room - text_width(painter, unit, &palette.mono_font(11.0))
-            - if unit.is_empty() { 0.0 } else { 4.0 },
-        |text| text_width(painter, text, &palette.mono_font(HEADLINE_FONT_PX)),
-    );
-    let value_galley =
-        painter.layout_no_wrap(value, palette.mono_font(HEADLINE_FONT_PX), value_color);
-    let value_w = value_galley.size().x;
-    let baseline = rect.top() + palette.layout(38.0);
-    painter.galley(
-        egui::pos2(rect.left() + 12.0, baseline - value_galley.size().y),
-        value_galley,
-        value_color,
-    );
-    if !unit.is_empty() {
-        painter.text(
-            egui::pos2(rect.left() + 12.0 + value_w + 4.0, baseline - 2.0),
-            egui::Align2::LEFT_BOTTOM,
-            unit,
-            palette.mono_font(11.0),
-            palette.text_muted(),
-        );
-    }
-    theme::text_fitted(
-        painter,
-        egui::pos2(rect.left() + 12.0, rect.bottom() - palette.layout(6.0)),
-        egui::Align2::LEFT_BOTTOM,
-        subline,
-        palette.mono_font(10.0),
-        palette.text_faint(),
-        room,
-    );
+    egui::Frame::none()
+        .fill(palette.inset())
+        .stroke(egui::Stroke::new(1.0_f32, palette.border()))
+        .rounding(egui::Rounding::same(4.0))
+        .inner_margin(12.0)
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width((width - 24.0).max(1.0));
+                ui.label(caption(&palette, label));
+                ui.label(financial_text(
+                    &palette,
+                    &format!("{value}{unit}"),
+                    palette.mono_font(HEADLINE_FONT_PX),
+                    value_color,
+                ));
+                ui.label(egui::RichText::new(subline).color(palette.text_support()));
+            });
+        });
 }
 
 /// The trade list's columns: caption and width in pixels, in paint order.
@@ -155,25 +131,25 @@ const REPORT_LIST_ROW_H_PX: f32 = 17.0;
 /// Left padding inside a trade-list cell.
 const TRADE_LIST_CELL_PAD_PX: f32 = 4.0;
 
-/// The trade list's full width — the sum of its columns.
-fn trade_list_width() -> f32 {
-    TRADE_LIST_COLUMNS.iter().map(|(_, width)| width).sum()
-}
-
-/// Paint one row of cells on the shared column grid, each cut to its own
-/// column rather than allowed to run into the next one.
-fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, egui::Color32)]) {
+/// Cells share measured column widths; the existing horizontal scroll exposes
+/// the complete values without truncating a financial calculation.
+fn paint_list_row(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    cells: &[(String, egui::Color32)],
+    widths: &[f32],
+) {
     let palette = theme::get(painter.ctx());
     let font = palette.mono_font(10.0);
     let mut x = rect.left();
-    for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
-        let width = palette.layout(width);
-        let room = width - 2.0 * TRADE_LIST_CELL_PAD_PX;
-        painter.text(
-            egui::pos2(x + TRADE_LIST_CELL_PAD_PX, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            elide_to_width(text, room, |text| text_width(painter, text, &font)),
-            font.clone(),
+    for ((text, color), width) in cells.iter().zip(widths) {
+        let galley = painter.layout_job(financial_text(&palette, text, font.clone(), *color));
+        painter.galley(
+            egui::pos2(
+                x + TRADE_LIST_CELL_PAD_PX,
+                rect.center().y - galley.size().y / 2.0,
+            ),
+            galley,
             *color,
         );
         x += width;
@@ -189,7 +165,12 @@ fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, e
 /// Virtualised: the list holds whatever the filters kept — an "All" window
 /// can be thousands of trades — and only the rows on screen are ever laid
 /// out. Returns whether the section's collapse control was clicked.
-pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
+pub(super) fn draw_trade_list(
+    ui: &mut egui::Ui,
+    view: &ReportView,
+    open: bool,
+    cache: &mut Option<(egui::FontId, f32, f32, Vec<f32>)>,
+) -> bool {
     let palette = theme::get(ui.ctx());
     let mut toggled = false;
     ui.horizontal(|ui| {
@@ -221,7 +202,33 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
     if !open {
         return toggled;
     }
-    let width = palette.layout(trade_list_width());
+    let font = palette.mono_font(10.0);
+    let scale = palette.layout(1.0);
+    let dpi = ui.ctx().pixels_per_point();
+    if cache
+        .as_ref()
+        .is_none_or(|(held_font, held_scale, held_dpi, _)| {
+            *held_font != font || *held_scale != scale || *held_dpi != dpi
+        })
+    {
+        let mut widths: Vec<f32> = TRADE_LIST_COLUMNS
+            .iter()
+            .map(|(label, width)| {
+                palette
+                    .layout(*width)
+                    .max(text_width(ui.painter(), label, &font) + 8.0)
+            })
+            .collect();
+        for ordinal in 0..view.rows.len() {
+            for ((text, _), width) in trade_cells(view, ordinal, &palette).iter().zip(&mut widths) {
+                *width =
+                    width.max(text_width(ui.painter(), text, &font) + 2.0 * TRADE_LIST_CELL_PAD_PX);
+            }
+        }
+        *cache = Some((font, scale, dpi, widths));
+    }
+    let widths = &cache.as_ref().expect("measured above").3;
+    let width = widths.iter().sum();
     // Wide by nature — ten columns of facts — and long by nature too. It
     // scrolls both ways inside a bounded strip rather than pushing the
     // window wider, clipping a number in half, or growing until the metric
@@ -251,7 +258,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                             .iter()
                             .map(|(label, _)| ((*label).to_owned(), palette.text_faint()))
                             .collect();
-                        paint_list_row(ui.painter(), rect, &cells);
+                        paint_list_row(ui.painter(), rect, &cells, widths);
                         ui.painter().line_segment(
                             [
                                 egui::pos2(rect.left(), rect.bottom()),
@@ -264,72 +271,17 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                     let ordinal = index - 1;
                     let row = &view.rows[ordinal];
                     let trade = &row.trade;
-                    // The running total was cut with the view, so a row
-                    // deep in the list costs no more than the first.
-                    let equity = view
-                        .equity
-                        .points
-                        .get(index)
-                        .copied()
-                        .unwrap_or(Decimal::ZERO);
                     if response.hovered() {
                         ui.painter()
-                            .rect_filled(rect, egui::Rounding::ZERO, palette.border());
+                            .rect_filled(rect, egui::Rounding::ZERO, palette.hover_fill());
                     } else if ordinal % 2 == 1 {
                         ui.painter()
                             .rect_filled(rect, egui::Rounding::ZERO, palette.inset());
                     }
-                    let muted = palette.text_muted();
-                    let cells = [
-                        (format!("{}", ordinal + 1), palette.text_faint()),
-                        (
-                            CivilDate::from_ms(trade.closed_ms, view.tz).iso(),
-                            palette.text_primary(),
-                        ),
-                        (crate::plot_area::fmt_time(trade.closed_ms, view.tz), muted),
-                        (row.symbol.clone(), palette.text_primary()),
-                        (
-                            format!(
-                                "{} {}",
-                                position_word(trade.side),
-                                fmt_decimal(trade.quantity)
-                            ),
-                            palette.side_color(trade.side),
-                        ),
-                        (
-                            format!(
-                                "{} → {}",
-                                fmt_decimal(trade.entry_price),
-                                fmt_decimal(trade.exit_price)
-                            ),
-                            muted,
-                        ),
-                        (
-                            fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
-                            muted,
-                        ),
-                        (trade.exit_reason.as_str().replace('_', " "), muted),
-                        (
-                            view.trade_text(ordinal).to_owned(),
-                            points_color(&palette, trade.pnl_points),
-                        ),
-                        (view.equity.text(index), points_color(&palette, equity)),
-                        match row.source {
-                            Some(history::SessionSource::Live) => {
-                                ("live".to_owned(), palette.text_faint())
-                            }
-                            Some(history::SessionSource::Replay) => {
-                                ("replay".to_owned(), palette.warn())
-                            }
-                            // Unrecorded is not "live": a file from before
-                            // the source line existed says so with a mark
-                            // that reads as absence, never as a fact.
-                            None => ("—".to_owned(), palette.text_faint()),
-                        },
-                    ];
-                    paint_list_row(ui.painter(), rect, &cells);
-                    // Every fact the columns cannot hold whole, on hover -
-                    // including the session source, which is never guessed.
+                    let cells = trade_cells(view, ordinal, &palette);
+                    paint_list_row(ui.painter(), rect, &cells, widths);
+                    // Repeat the complete facts on hover, including the
+                    // session source, which is never guessed.
                     // Spelled with words, not an arrow: a hover card is
                     // drawn in the proportional UI font, which has no glyph
                     // for → and paints a tofu box. The arrow survives in the
@@ -361,6 +313,71 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
         )
     });
     toggled
+}
+
+#[cfg(test)]
+thread_local! { pub(super) static FORMATTED_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn trade_cells(
+    view: &ReportView,
+    ordinal: usize,
+    palette: &theme::Palette,
+) -> [(String, egui::Color32); 11] {
+    #[cfg(test)]
+    FORMATTED_ROWS.with(|count| count.set(count.get() + 1));
+    let row = &view.rows[ordinal];
+    let trade = &row.trade;
+    let index = ordinal + 1;
+    let equity = view
+        .equity
+        .points
+        .get(index)
+        .copied()
+        .unwrap_or(Decimal::ZERO);
+    let muted = palette.text_muted();
+    [
+        (format!("{}", ordinal + 1), palette.text_faint()),
+        (
+            CivilDate::from_ms(trade.closed_ms, view.tz).iso(),
+            palette.text_primary(),
+        ),
+        (crate::plot_area::fmt_time(trade.closed_ms, view.tz), muted),
+        (row.symbol.clone(), palette.text_primary()),
+        (
+            format!(
+                "{} {}",
+                position_word(trade.side),
+                fmt_decimal(trade.quantity)
+            ),
+            palette.side_color(trade.side),
+        ),
+        (
+            format!(
+                "{} → {}",
+                fmt_decimal(trade.entry_price),
+                fmt_decimal(trade.exit_price)
+            ),
+            muted,
+        ),
+        (
+            fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
+            muted,
+        ),
+        (trade.exit_reason.as_str().replace('_', " "), muted),
+        (
+            view.trade_text(ordinal).to_owned(),
+            points_color(palette, trade.pnl_points),
+        ),
+        (view.equity.text(index), points_color(palette, equity)),
+        match row.source {
+            Some(history::SessionSource::Live) => ("live".to_owned(), palette.text_faint()),
+            Some(history::SessionSource::Replay) => ("replay".to_owned(), palette.warn()),
+            // Unrecorded is not "live": a file from before
+            // the source line existed says so with a mark
+            // that reads as absence, never as a fact.
+            None => ("—".to_owned(), palette.text_faint()),
+        },
+    ]
 }
 
 /// The metric grid: one metric per row, the explanation on hover, honest

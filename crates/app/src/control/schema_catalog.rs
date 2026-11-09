@@ -1,29 +1,18 @@
 //! Generated observer contracts committed under `schemas/control`.
 
 use quantick_control::schema::generated_schema;
+use quantick_control_handlers::schema_documents::SchemaDocument;
 use serde_json::{Value, json};
 
-use quantick_control_handlers::attention::{MarkInput, MarkResult};
+use super::contract::{ChartWindowInput, ObserverContract};
 
-use super::contract::ObserverContract;
-
-pub(crate) struct SchemaDocument {
-    pub file_name: &'static str,
-    pub schema: Value,
-}
-
+/// The documents below the app, and the one whose type only the app owns.
 pub(crate) fn documents() -> Vec<SchemaDocument> {
-    let mut documents = vec![
-        document::<MarkInput>("attention-mark-input-v1.schema.json"),
-        document::<MarkResult>("attention-mark-result-v1.schema.json"),
-    ];
-    documents.extend(
-        quantick_control_schema::catalog::documents()
-            .into_iter()
-            .chain(quantick_control_schema::bubble_preset::documents())
-            .chain(quantick_control_schema::appearance::documents())
-            .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
-    );
+    let mut documents = quantick_control_handlers::schema_documents::documents();
+    documents.push(SchemaDocument {
+        file_name: "observer-chart-window-input-v1.schema.json",
+        schema: generated_schema::<ChartWindowInput>(),
+    });
     documents
 }
 
@@ -54,11 +43,4 @@ pub(crate) fn capability_catalog() -> Value {
         "capabilities": description.capabilities,
         "snapshot_scopes": description.snapshot_scopes,
     })
-}
-
-fn document<T: schemars::JsonSchema>(file_name: &'static str) -> SchemaDocument {
-    SchemaDocument {
-        file_name,
-        schema: generated_schema::<T>(),
-    }
 }

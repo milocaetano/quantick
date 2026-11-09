@@ -253,6 +253,7 @@ impl Surface for BarSwitchSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_BAR_SWITCH"];
 
 #[cfg(test)]

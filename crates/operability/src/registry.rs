@@ -139,28 +139,18 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 pub const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
     (
         Source::MenuEntry,
-        "File",
-        "a top-level menu; it holds entries and performs nothing",
-    ),
-    (
-        Source::MenuEntry,
-        "View",
-        "a top-level menu; it holds entries and performs nothing",
-    ),
-    (
-        Source::MenuEntry,
-        "Workspace",
-        "a top-level menu; it holds entries and performs nothing",
-    ),
-    (
-        Source::MenuEntry,
-        "Tools",
-        "a top-level menu; it holds entries and performs nothing",
-    ),
-    (
-        Source::MenuEntry,
         "Help",
-        "a top-level menu; it holds entries and performs nothing",
+        "a submenu of the window menu; it holds entries and performs nothing",
+    ),
+    (
+        Source::MenuEntry,
+        "Panels",
+        "a submenu of the window menu; it holds entries and performs nothing",
+    ),
+    (
+        Source::MenuEntry,
+        "Desk",
+        "a submenu of the window menu; it holds entries and performs nothing",
     ),
     (
         Source::MenuEntry,
@@ -180,8 +170,8 @@ pub const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
     ),
     (
         Source::ScriptedMenu,
-        "workspace",
-        "a capture hook that opens the Workspace menu so a screenshot can see it. It performs \
+        "window",
+        "a capture hook that opens the window menu so a screenshot can see it. It performs \
          nothing the menu's own entries do not",
     ),
     (

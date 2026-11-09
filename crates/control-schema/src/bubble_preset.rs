@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub const BUBBLE_PRESET_CAPABILITY_ID: &str = "orderflow.bubbles.preset.apply";
 pub const BUBBLE_PRESETS_LIST_CAPABILITY_ID: &str = "orderflow.bubbles.presets.list";
+pub const BUBBLE_RESET_CAPABILITY_ID: &str = "orderflow.bubbles.reset";
 pub const MAX_PRESETS: usize = quantick_stores::bubble_look::PRESET_PAGE_MAX;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -18,6 +19,14 @@ pub struct ApplyInput {
     pub pane_id: WireU64,
     /// Exact name returned by orderflow.bubbles.presets.list.
     pub preset: String,
+}
+
+/// The pane whose bubble look returns to its asset's factory preset.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResetInput {
+    pub tab_id: WireU64,
+    pub pane_id: WireU64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -97,15 +106,16 @@ pub fn page(
     })
 }
 
+/// What a whole look worn on the pane `(tab_id, pane_id)` answers.
 pub fn applied(
-    input: &ApplyInput,
+    (tab_id, pane_id): (WireU64, WireU64),
     changed: bool,
     snapshot: crate::orderflow::BubblesStateSnapshot,
     config: &quantick_orderflow::HeatmapConfig,
 ) -> ApplyResult {
     ApplyResult {
-        tab_id: input.tab_id,
-        pane_id: input.pane_id,
+        tab_id,
+        pane_id,
         changed,
         preset: snapshot.preset,
         native_tape_requested: config.live_lane.native_tape,
@@ -150,6 +160,18 @@ pub fn apply_descriptor() -> CapabilityDescriptor {
     descriptor
 }
 
+pub fn reset_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = crate::layout::transient_descriptor::<ResetInput, ApplyResult>(
+        BUBBLE_RESET_CAPABILITY_ID,
+        crate::orderflow::MODULE_ID,
+        "Reset bubble look to the asset's factory preset",
+        "Does what the Bubbles settings button reset bubble visuals does: puts back the look a fresh open of the pane's asset shows, tick spheres included. That is the preset the feed config declares for the asset as the shipped presets hold it (never the operator's edited copy of that name); without a shipped declared preset, the look the operator's presets open the asset on. Only the look, the native tape it sets included: the pane's tape-only view stays. A pane with no asset gets the code defaults and an empty preset; otherwise preset names the look worn. Changes follow the asset save switch. Read selection and effective policies in orderflow.bubbles.",
+        "Stable tab/pane IDs are checked before mutation. A pane already on its factory look is a no-op answering changed false. Keyed retries replay the first answer.",
+    );
+    descriptor.persistence = EffectPersistence::Durable;
+    descriptor
+}
+
 pub fn list_descriptor() -> CapabilityDescriptor {
     read_descriptor::<ListInput, ListResult>(&ReadSpec {
         id: BUBBLE_PRESETS_LIST_CAPABILITY_ID,
@@ -164,17 +186,30 @@ pub fn list_descriptor() -> CapabilityDescriptor {
     })
 }
 
-pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
-    BUBBLE_PRESET_CAPABILITY_ID,
-    IdempotencyPolicy::Optional,
-    crate::orderflow::BUBBLES_SCOPE_ID,
-    "tabs[].panes[].bubbles.preset",
-    "the addressed pane reports the selected whole look and effective tape policy after application",
-    &[
-        "whole_presets_reapply_drift_and_are_authorized_retry_safe",
-        crate::readback::EVERY_OPTIONAL_TEST,
-    ],
-)];
+pub const READBACKS: &[crate::readback::Readback] = &[
+    crate::readback::snapshot(
+        BUBBLE_PRESET_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        crate::orderflow::BUBBLES_SCOPE_ID,
+        "tabs[].panes[].bubbles.preset",
+        "the addressed pane reports the selected whole look and effective tape policy after application",
+        &[
+            "whole_presets_reapply_drift_and_are_authorized_retry_safe",
+            crate::readback::EVERY_OPTIONAL_TEST,
+        ],
+    ),
+    crate::readback::snapshot(
+        BUBBLE_RESET_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        crate::orderflow::BUBBLES_SCOPE_ID,
+        "tabs[].panes[].bubbles.preset",
+        "the addressed pane reports the factory look it wears after the reset, or an empty preset on the code defaults",
+        &[
+            "bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe",
+            crate::readback::EVERY_OPTIONAL_TEST,
+        ],
+    ),
+];
 
 /// Published schemas for the bubble configuration family, generated canonically.
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
@@ -187,6 +222,10 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         (
             "orderflow-bubble-preset-result-v1.schema.json",
             schema::<crate::bubble_preset::ApplyResult>(),
+        ),
+        (
+            "orderflow-bubbles-reset-input-v1.schema.json",
+            schema::<crate::bubble_preset::ResetInput>(),
         ),
         (
             "orderflow-bubble-presets-list-input-v1.schema.json",

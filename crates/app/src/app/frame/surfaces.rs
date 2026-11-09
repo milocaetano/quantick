@@ -11,14 +11,12 @@ use std::time::Instant;
 use crate::app::arrangement_host::ArrangementHost;
 use crate::app::indicator_manager::IndicatorState;
 use crate::canvas_layout::MAX_CANVAS_PANES;
-use crate::config::AppConfig;
 use crate::footprint_config::FootprintConfig;
 use crate::indicator_panel::SettingsDialog;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
-use crate::symbols_file::AddedSymbols;
-use crate::workspace_store::WorkspaceStore;
+use quantick_chart::bar_progress::BarProgressReading;
 
 use super::super::TabSlot;
 
@@ -46,13 +44,12 @@ pub(super) fn open_requested_strategy_popups(
 /// What the surfaces' environment is read from.
 pub(super) struct SurfaceOwners<'a> {
     pub indicators: &'a mut IndicatorState,
+    pub store: &'a crate::workspace_store::LayoutStore,
     pub alert_failure: Option<&'a str>,
-    pub workspace: &'a WorkspaceStore,
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
     pub tabs: &'a mut ArrangementHost,
-    pub config: &'a AppConfig,
-    pub added_symbols: &'a AddedSymbols,
+    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
 }
 
 /// Draw every registered surface against this frame's environment and
@@ -65,13 +62,12 @@ pub(super) fn draw_surfaces(
 ) -> SurfaceResponse {
     let SurfaceOwners {
         indicators,
+        store,
         alert_failure,
-        workspace,
         style,
         footprint_config,
         tabs,
-        config,
-        added_symbols,
+        markets,
     } = owners;
     // `hooks_pending` is the frame a capture hook opens a surface from
     // inside `draw_all`: it is not open yet when this runs, but it is about
@@ -101,23 +97,16 @@ pub(super) fn draw_surfaces(
         if staging || registry.strategy_popup.is_open() {
             focused_tab
                 .sides()
-                .filter(|side| focused_tab.pane(*side).state.progress().is_some())
+                .filter(|side| {
+                    let reading = focused_tab.pane(*side).state.bar_progress_at(None);
+                    reading
+                        .and_then(BarProgressReading::fixed_progress)
+                        .is_some()
+                })
                 .collect()
         } else {
             SmallVec::new()
         };
-    // The markets tabs are showing: the dialog greys out removing one of
-    // those, because a tab left on a symbol the catalog no longer offers
-    // gets silently retargeted by the next SOURCE correction. Built only
-    // while the dialog is open — it is a `String` pair per tab, and no frame
-    // should pay for it to be thrown away.
-    let open_markets: Vec<(String, String)> = if staging || registry.source_picker.is_open() {
-        tabs.iter()
-            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-            .collect()
-    } else {
-        Vec::new()
-    };
     // Read once. `focused_pane` resolves the same side internally, and the
     // answer is not a field lookup — it reads the layout, because focus on a
     // collapsed pane is focus on nothing.
@@ -176,7 +165,6 @@ pub(super) fn draw_surfaces(
             picker_pane_id: focused_pane.id,
             picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
-            bookmarks: workspace.session().bookmarks(),
             now,
             indicator_preview_area: indicator_preview_area(
                 tabs,
@@ -187,11 +175,9 @@ pub(super) fn draw_surfaces(
             style: &editor_style,
             style_bookmap: editor_pane.orderflow.is_some(),
             footprint: focused_pane.footprint_config(footprint_config),
-            footprint_customized: focused_pane.presentation.footprint.config.is_some(),
+            footprint_customized: focused_pane.presentation.footprint.config.is_own(),
             focused_side,
-            config,
-            added_symbols,
-            open_markets: &open_markets,
+            markets,
             active_tab: tabs.active_id(),
             counted_bar_sides: &counted_bar_sides,
             alert_failure,
@@ -213,7 +199,7 @@ pub(super) fn draw_surfaces(
         registry,
         indicators,
         tabs,
-        workspace.layouts(),
+        store,
         std::mem::take(&mut asks.script_editor_actions),
         now,
     );

@@ -99,16 +99,6 @@ pub(super) fn answer_and_release(
     }
 }
 
-/// Write an answer that releases nothing: a refusal for a request this
-/// connection never tracked.
-pub(super) fn send_response(
-    writer: &Arc<Mutex<TcpStream>>,
-    codec: &BoundedCodec,
-    response: ResponseEnvelope,
-) {
-    write_answer(writer, codec, response, || {}, || {});
-}
-
 /// `release` runs under the writer lock, then `before_write`, then the
 /// frame is written, still under the lock.
 fn write_answer(

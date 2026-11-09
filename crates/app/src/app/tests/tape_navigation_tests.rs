@@ -1467,21 +1467,22 @@ fn the_tape_fold_is_an_alias_over_the_view_retry_safe_and_read_back() {
 }
 
 /// Text painted in the bottom time strip whose clip or anchor lies in
-/// `x_from..x_to`: what a folded side would crowd its rail with.
+/// `x_from..x_to`: what a folded side would crowd its rail with. Its glyphs
+/// must reach the pane's own strip: the drawing rail's icons, left of the
+/// pane at the same height, are not the pane's labels.
 fn strip_texts(app: &QuantickApp, output: &egui::FullOutput, x: (f32, f32)) -> Vec<String> {
-    let strip = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .time_strip
-        .expect("a strip");
+    let frame = &app.active_tab().flow_pane.frame;
+    let strip = frame.time_strip.expect("a strip");
+    let pane = frame.area.expect("the pane drew");
     let band = egui::Rect::from_x_y_ranges(x.0..=x.1, strip.y_range());
+    let pane_strip = egui::Rect::from_x_y_ranges(pane.x_range(), strip.y_range());
     output
         .shapes
         .iter()
         .filter_map(|clipped| match &clipped.shape {
             egui::Shape::Text(text)
-                if band.contains(text.pos) || band.contains(clipped.clip_rect.center()) =>
+                if text.visual_bounding_rect().intersects(pane_strip)
+                    && (band.contains(text.pos) || band.contains(clipped.clip_rect.center())) =>
             {
                 Some(text.galley.text().to_owned())
             }

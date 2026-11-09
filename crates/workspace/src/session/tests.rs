@@ -41,7 +41,6 @@ fn no_op_selection_bypasses_refusal_and_does_not_seed_twice() {
             10,
             LayoutId(1),
             PaneFacts {
-                strategy_armed: true,
                 gesture_in_flight: true,
             },
         )
@@ -65,14 +64,13 @@ fn all_panes_are_preflighted_before_delete_without_partial_state() {
         (
             20,
             PaneFacts {
-                strategy_armed: true,
                 gesture_in_flight: true,
             },
         ),
     ];
     assert_eq!(
         session.plan_delete(second, facts.into_iter()),
-        Err(LayoutError::StrategyArmed)
+        Err(LayoutError::GestureInFlight)
     );
     assert_eq!(first_view.layout(), Some(second));
     assert_eq!(last_view.layout(), Some(second));
@@ -191,7 +189,6 @@ fn removed_target_cannot_be_committed_and_seed_invalidates_earlier_plan() {
 #[test]
 fn a_gesture_alone_refuses_selection_and_delete() {
     let gesture = PaneFacts {
-        strategy_armed: false,
         gesture_in_flight: true,
     };
     let mut session = LayoutSession::new(LayoutBook::default());

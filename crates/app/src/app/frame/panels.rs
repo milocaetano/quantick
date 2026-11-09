@@ -46,7 +46,7 @@ pub(super) fn draw_replay_browser(
             .flat_map(|feed| feed.symbols.iter().map(String::as_str))
             .collect(),
     };
-    replay_view.draw(ctx, tab.replay.as_ref(), &market)
+    replay_view.draw(ctx, tab.link.replay.as_ref(), &market)
 }
 
 /// The drawing rail, listing and managing the focused pane's objects: what
@@ -76,13 +76,13 @@ pub(super) fn draw_dock(
     replay_view: &mut ReplayView,
     tz: TzOffset,
 ) -> DockResponse {
-    let Tab { replay, paper, .. } = tabs.runtime_mut(tabs.active_index());
+    let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
     let mut response = crate::dock::draw(
         dock,
         ctx,
         &mut DockEnv {
             replay_view,
-            replay: replay.as_ref(),
+            replay: link.replay.as_ref(),
             paper,
             tz,
         },

@@ -2,6 +2,10 @@ version = 1
 name = "Dark"
 dark = true
 candle_fill_opacity = 0.20
+candle_outline_width = 1.25
+candle_outline_opacity = 0.96
+candle_wick_opacity = 0.90
+chart_time_grid = false
 
 [colors]
 drawing_default = "#8AB4F8"
@@ -68,6 +72,31 @@ chrome = "#171B26"
 inset = "#10141D"
 control = "#232936"
 chart_grid = "#232936"
+# The market tab strip and window title area, the wordmark's "tick" and a
+# replaying tab's mark (docs/ux/layout-appearance-2026-11-06).
+tab_strip = "#10141D"
+brand = "#3AF0B2"
+replay_ink = "#C58CFF"
+# The tabs: the active tab and the toolbar row
+# are one sheet; an idle tab is the strip lifted by #0B0C10 and edged by the
+# strip lifted by #323743; the active one wears the band on its top edge.
+toolbar_sheet = "#171B26"
+tab_idle_fill = "#1B202D"
+tab_idle_outline = "#424B60"
+tab_band = "#3AF0B2"
+# The glow behind the Q while Home is shown, in the band's green. egui blends
+# in linear light, so this opacity reads as the mock's ~25% rise at the peak.
+home_glow = "#3AF0B210"
+# Dark writes its axes in text_muted and rules them in the chart grid's own
+# colour, so the rules follow the grid switch: these three are read by light
+# themes only, and record what Dark's axes look like by default.
+axis_ink = "#96A0AF"
+chart_canvas = "#131722"
+# Dark's chip wears the candle outline; these are read by light themes only.
+last_price_up = "#68E0C9"
+last_price_down = "#FF898B"
+price_axis_rule = "#232936A6"
+time_axis_rule = "#232936A6"
 border = "#2E3648"
 text_primary = "#D2DAE2"
 text_muted = "#96A0AF"
@@ -104,6 +133,26 @@ candle_wick = "#A0A9B8"
 
 buy_ink = "#88CEC7"
 sell_ink = "#F6A09F"
+# The filled replay key is Dark's amber with chip ink; a light theme lays
+# dark plates under its replay key, chart order labels and ledger session
+# rows instead. Dark paints its order labels on inset with side inks, and
+# writes gains and losses in buy_ink and sell_ink.
+replay_plate = "#F0B90B"
+replay_plate_ink = "#0E121A"
+order_plate = "#10141D"
+order_plate_ink = "#D2DAE2"
+plate_gain = "#88CEC7"
+plate_loss = "#F6A09F"
+# A hovered control lifts onto the border colour; a resting one is unedged;
+# the connection screen's Reconnect is in the loading meta grey.
+hover_fill = "#2E3648"
+control_edge = "#00000000"
+connection_action = "#7C8799"
+# A light theme's own gain and loss inks; Dark writes signed amounts in buy
+# and sell, which these mirror.
+loss_ink = "#EF5350"
+bright_gain_ink = "#26A69A"
+bright_loss_ink = "#EF5350"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

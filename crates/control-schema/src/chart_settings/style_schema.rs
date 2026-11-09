@@ -5,16 +5,20 @@ use quantick_stores::chart_style::{
 };
 use serde_json::{Value, json};
 
-pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    let inherited = json!({
-        "type": "string",
-        "enum": ["theme", "explicit"],
-        "default": "explicit"
-    });
+/// The one ownership marker every field's provenance uses, named once under
+/// `$defs` with its default so the many markers stay one reference each.
+const OWNERSHIP_MARKER: &str = "StyleOwnership";
+
+pub(super) fn chart_style(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.definitions_mut().insert(
+        OWNERSHIP_MARKER.to_owned(),
+        json!({"type": "string", "enum": ["theme", "explicit"], "default": "explicit"}),
+    );
+    let inherited = json!({"$ref": format!("#/$defs/{OWNERSHIP_MARKER}")});
     let ownership = json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+        "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
         "properties": {
             "fill_opacity": inherited.clone(),
             "bull_fill": inherited.clone(),
@@ -23,7 +27,11 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
             "bear_outline": inherited.clone(),
             "wick": inherited.clone(),
             "background": inherited.clone(),
-            "grid": inherited
+            "grid": inherited.clone(),
+            "outline_width": inherited.clone(),
+            "outline_opacity": inherited.clone(),
+            "wick_opacity": inherited.clone(),
+            "time_grid": inherited
         }
     });
     let candles = json!({
@@ -65,6 +73,7 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
             "background_enabled": {"type": "boolean"},
             "background": rgb(),
             "grid_enabled": {"type": "boolean"},
+            "time_grid_enabled": {"type": "boolean"},
             "grid": rgb(),
             "grid_opacity": range(0.0, 1.0)
         }
@@ -72,7 +81,7 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
     schemars::json_schema!({
         "type": "object",
         "additionalProperties": false,
-        "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+        "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
         "required": ["candles", "canvas"],
         "properties": {
             "ownership": ownership,
@@ -100,4 +109,54 @@ fn rgb() -> Value {
 fn range(min: f32, max: f32) -> Value {
     json!({"type": "string", "pattern": r"^-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$",
         "description": format!("Decimal [{min}, {max}], inclusive.")})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{ChartSettingsInput, ChartSettingsResult, descriptor};
+    use quantick_control::limits::CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES;
+    use quantick_control::schema::{CompiledSchema, generated_schema};
+    use serde_json::{Value, json};
+
+    /// The style document as each published schema carries it.
+    fn style_of(schema: &Value) -> &Value {
+        let update = schema["oneOf"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|variant| variant["properties"]["action"]["const"] == "update_candles");
+        match update {
+            Some(variant) => &variant["properties"]["style"],
+            None => &schema["properties"]["effective_style"]["anyOf"][0],
+        }
+    }
+
+    #[test]
+    fn every_ownership_marker_states_its_explicit_default_and_the_descriptor_fits() {
+        for schema in [
+            generated_schema::<ChartSettingsInput>(),
+            generated_schema::<ChartSettingsResult>(),
+        ] {
+            let marker = &schema["$defs"][super::OWNERSHIP_MARKER];
+            assert_eq!(marker["default"], json!("explicit"), "{marker}");
+            assert_eq!(marker["enum"], json!(["theme", "explicit"]));
+            let markers = style_of(&schema)["properties"]["ownership"]["properties"]
+                .as_object()
+                .expect("an ownership object");
+            assert_eq!(markers.len(), 12, "{markers:?}");
+            for (field, value) in markers {
+                assert_eq!(
+                    value["$ref"],
+                    json!(format!("#/$defs/{}", super::OWNERSHIP_MARKER)),
+                    "{field}"
+                );
+            }
+            CompiledSchema::new(&schema).expect("the schema compiles with its reference");
+        }
+        let bytes = serde_json::to_vec(&descriptor()).unwrap().len();
+        assert!(
+            bytes <= CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES,
+            "chart settings descriptor is {bytes} bytes"
+        );
+    }
 }

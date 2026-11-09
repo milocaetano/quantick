@@ -1,5 +1,5 @@
 //! How the app keeps every pane equal to *its* layout ([`crate::layouts`]):
-//! the indicator fan-out, the per-market drawing swap, and the layout
+//! the indicator fan-out, the drawings a market keeps, and the layout
 //! operations the strip, the menu, the keyboard and the control plane all
 //! call.
 //!
@@ -28,53 +28,40 @@
 //! attached to and out of every layout: they are an agent's overlay, removed
 //! by the agent, and were never part of what a trader keeps.
 //!
-//! **Drawings: put away and brought out.** Each pane holds the drawings of
-//! one [`DrawingKey`] under its own layout at a time. When its tab moves to
-//! another market, or the pane switches layout, what it holds is serialised
-//! under the old key and the new key's set is adopted — with the ids it had,
-//! so a strategy armed on a region and an annotation an agent placed still
-//! name their object, and anchored by market time. A pane's revision counter
-//! is compared each frame; when it moved, the set is written into its layout
-//! and the debounced save follows.
+//! **Drawings: put away and brought out.** Each pane holds the set of one
+//! [`DrawingKey`], its market and role, and no layout. A layout switch leaves it
+//! on the pane; a tab moving market, or a context chart to other bars, stores it
+//! under the old key and adopts the new key's, ids kept. A pane's revision
+//! counter is compared each frame; when it moved, the set goes to the market
+//! store and the debounced save follows.
 //!
-//! Per-frame cost: one integer compare and two short string compares per
-//! pane, and a flag test per pane for seeding. Nothing here allocates on a
-//! quiet frame.
+//! Per-frame cost: integer and short string compares per pane. Nothing here
+//! allocates on a quiet frame.
 
-use crate::layouts::SavedDrawingExt;
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
 use crate::indicator_worker::{IndicatorCommand, SlotId};
-use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, Loaded, SavedDrawing};
+use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
 use super::TabSlot;
-use crate::workspace_store::LayoutSave;
+use crate::workspace_store::LayoutStore;
+use quantick_stores::market_settings;
 
+mod bar_progress;
 mod indicators;
 pub(super) use indicators::saved_inputs;
 pub(crate) use indicators::set_indicator_mouse_vertical_line;
 mod strip;
 
-/// The feed half of a drawing key while a tab plays a recording.
-///
-/// A recording is its own market: its prices are the recorded day's, not
-/// the live venue's, so a level drawn on it belongs to the recording's
-/// symbol under this name and never lands on the live chart of the same
-/// symbol, nor on another tab streaming it.
-const REPLAY_FEED_KEY: &str = "replay";
-
 /// Whether a pane can be swapped under the trader right now.
 ///
-/// A strategy armed on a region names that drawing; putting the drawing
-/// away would orphan the instance and drop it with no reason given. A
-/// gesture in flight — a drag, a half-placed object — addresses the
-/// store by index, and a swap under it would land on another layout's
-/// object. Both are the trader's to finish first, and the refusal says so.
+/// A gesture in flight — a drag, a half-placed object — may address a band of
+/// an indicator the switch takes off. It is the trader's to finish first, and
+/// the refusal says so.
 fn facts_of(pane: &ChartPane) -> PaneFacts {
     PaneFacts {
-        strategy_armed: !pane.strategies.anchors.is_empty(),
         gesture_in_flight: pane.drawings.in_gesture()
             || pane.drawings.draft().is_some()
             || !matches!(pane.gestures.drag, DrawingDrag::None),
@@ -86,8 +73,22 @@ pub(crate) struct LayoutRead<'a> {
     pub(super) tabs: &'a crate::app::arrangement_host::ArrangementHost,
     pub(super) active: usize,
     pub(super) session: &'a quantick_workspace::session::LayoutSession,
+    pub(super) market: &'a quantick_workspace::market_settings_store::MarketSettingsStore,
 }
 impl<'a> LayoutRead<'a> {
+    /// A drawing gesture in flight on a pane holding `from`'s or `to`'s marks.
+    pub(crate) fn drawing_gesture_on(&self, feed: &str, from: &str, to: &str) -> bool {
+        self.tabs.iter_with_ids().any(|(_, tab)| {
+            tab.panes().any(|(pane, _)| {
+                let source = pane.layout.drawings_source.as_ref();
+                pane.drawings.in_gesture()
+                    && source.is_some_and(|(venue, symbol)| {
+                        venue == feed && (symbol == from || symbol == to)
+                    })
+            })
+        })
+    }
+
     pub(crate) fn layouts(&self) -> &'a LayoutBook {
         self.session.book()
     }
@@ -97,12 +98,19 @@ impl<'a> LayoutRead<'a> {
             .by_id(tab)
             .and_then(|tab| tab.pane_at(side.index()))
             .and_then(ChartPane::layout_id);
-        self.session.resolve_layout(named)
+        self.session
+            .book()
+            .strip_layout(self.session.resolve_layout(named))
     }
     pub(crate) fn focused_pane_layout(&self) -> LayoutId {
         let tab_id = self.tabs.id_at(self.active);
         let tab = &self.tabs[self.active];
         self.pane_layout(tab_id, tab.focused_side())
+    }
+    /// The indicators the focused pane shows, or would show, on strip layout `id`.
+    pub(crate) fn shown_count(&self, id: LayoutId) -> usize {
+        let pane = self.tabs[self.active].focused_pane().id;
+        self.session.shown_count(pane, id)
     }
 }
 
@@ -116,6 +124,18 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
     pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
     pub(super) delete_confirm: &'a mut Option<LayoutId>,
+}
+
+/// The layouts and the market store this cockpit opens with, the drawings an
+/// older file left in its layouts already moved to their markets.
+pub(super) fn open_layout_store(config: &crate::config::AppConfig) -> LayoutStore {
+    let path = layouts::default_path();
+    let (book, blocked) =
+        layouts::load_or_starter(&path, &crate::indicators::state_file::default_path());
+    let config = config.clone();
+    let assets =
+        std::rc::Rc::new(move |venue: &str, symbol: &str| config.market_asset(venue, symbol));
+    market_settings::open_layout_store(book, path, blocked, layouts::market_settings_path(), assets)
 }
 
 impl LayoutAdapter<'_> {
@@ -165,36 +185,6 @@ impl LayoutAdapter<'_> {
     // Boot and file
     // ------------------------------------------------------------------
 
-    /// Read the layouts file, or migrate the indicator set a cockpit kept
-    /// before layouts existed, or start with one empty layout.
-    ///
-    /// The flag says whether the file may be written back: a file this build
-    /// could not read *and* could not set aside is the trader's only copy,
-    /// and the empty book the session opens on must never be saved over it.
-    pub(super) fn load_layouts(
-        path: &std::path::Path,
-        legacy_indicators: &std::path::Path,
-    ) -> (LayoutBook, bool) {
-        match layouts::load(path) {
-            Loaded::Book(book) => (book, false),
-            Loaded::Refused { set_aside, .. } => (LayoutBook::default(), !set_aside),
-            Loaded::Missing => {
-                let legacy = crate::indicators::state_file::load(legacy_indicators);
-                if !legacy.is_empty() {
-                    tracing::info!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "LAYOUTS_MIGRATED",
-                        indicators = legacy.len(),
-                        action = "indicator_state_moved_into_layout_1",
-                        "the indicator set became Layout 1"
-                    );
-                }
-                (LayoutBook::starter(legacy), false)
-            }
-        }
-    }
-
     /// The book, for the strip, the menu and the control plane to read.
     pub(crate) fn layouts(&self) -> &LayoutBook {
         self.store.book()
@@ -207,41 +197,27 @@ impl LayoutAdapter<'_> {
         self.store.mark_changed(Instant::now());
     }
 
-    /// Carry out what the store decided. The decision is not made here and
-    /// cannot be: `take_save` and `take_flush` own the debounce and the blocked
-    /// condition, and consume the pending change before this runs.
-    fn act_on(&mut self, decision: LayoutSave) {
-        match decision {
-            LayoutSave::Wait => {}
-            LayoutSave::Write => layouts::save(self.store.path(), self.layouts()),
-            LayoutSave::Blocked => tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "LAYOUTS_SAVE_BLOCKED",
-                path = %self.store.path().display(),
-                action = "file_left_untouched",
-                "the layouts file could not be read at launch and was not set aside; this session's layouts are not written over it"
-            ),
-        }
+    fn mark_market_dirty(&mut self) {
+        self.store.market_mut().mark_changed(Instant::now());
     }
 
     /// Everything the frame owes the layouts: seed panes that just appeared,
     /// follow tabs that changed market, notice drawings that changed, and
     /// write the file once the last change has settled.
     pub(super) fn maintain_layouts(&mut self) {
+        // First, so a twin brought to a claimed or left set has no edit to lose.
+        self.persist_changed_drawings();
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
-        let decision = self.store.take_save(Instant::now());
-        self.act_on(decision);
+        market_settings::save_settled(self.store, Instant::now());
     }
 
     /// Write the file now, whatever the debounce says — the way out on exit,
     /// and the moment before a bundle export reads it.
     pub(super) fn flush_layouts(&mut self) {
         self.persist_changed_drawings();
-        let decision = self.store.take_flush();
-        self.act_on(decision);
+        market_settings::flush(self.store, Instant::now());
     }
 
     // ------------------------------------------------------------------
@@ -251,16 +227,53 @@ impl LayoutAdapter<'_> {
     /// The layout a pane shows: its own, or the book's default for a pane
     /// that has not been given one yet.
     pub(crate) fn pane_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
+        let own = self.pane_own_layout(tab, side);
+        self.store.session().book().strip_layout(own)
+    }
+
+    /// The entry an edit on this pane writes to: its own copy, once it has one.
+    fn pane_own_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
         self.store
             .session()
             .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
+    }
+
+    /// Every seeded pane on its tab's copy of its strip layout; see
+    /// [`quantick_workspace::session::LayoutSession::own_copies`].
+    pub(in crate::app) fn own_indicator_copies(&mut self) {
+        let panes = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(id, tab)| tab.panes().map(move |(pane, _)| (id, pane.id)));
+        let owned = self.store.session_mut().own_copies(panes);
+        let reshow: Vec<_> = owned
+            .reshow
+            .iter()
+            .filter_map(|id| self.pane_address(*id))
+            .collect();
+        for (tab, side) in reshow {
+            let layout = self.layouts().get(self.pane_own_layout(tab, side));
+            let set = layout.map(|layout| layout.indicators.clone());
+            self.show_pane_indicators(tab, side, &set.unwrap_or_default());
+        }
+        if owned.changed {
+            self.mark_layouts_dirty();
+        }
+    }
+
+    /// Where the pane with `id` stands.
+    fn pane_address(&self, id: u64) -> Option<(u64, PaneSide)> {
+        self.tabs.iter_with_ids().find_map(|(tab_id, tab)| {
+            let mut panes = tab.panes();
+            panes.find_map(|(pane, side)| (pane.id == id).then_some((tab_id, side)))
+        })
     }
 
     /// Attach the core's read-only membership view to an actual pane.
     fn register_layout_pane(&mut self, tab: u64, side: PaneSide) -> Result<u64, LayoutError> {
         let pane = self.pane_at(tab, side).ok_or(LayoutError::Unknown)?;
         let (id, named) = (pane.id, pane.layout_id());
-        let view = self.store.session_mut().register(id, named);
+        let view = self.store.session_mut().register_in(tab, id, named);
         if let Some(pane) = self.pane_mut_at(tab, side) {
             pane.layout.view = view;
             pane.layout.opening = None;
@@ -275,15 +288,14 @@ impl LayoutAdapter<'_> {
         (tab_id, tab.focused_side())
     }
 
-    /// How many panes show `layout` — the same question [`Self::panes_on`]
-    /// answers, for the callers that want only the count and would otherwise
-    /// heap-allocate a list per frame to call `.len()` on it.
-    fn panes_on_count(&self, layout: LayoutId) -> usize {
+    /// How many panes show strip layout `layout`, on it or on a copy: the
+    /// panes its delete moves. Counted, not collected: read every frame.
+    pub(in crate::app) fn panes_on_count(&self, layout: LayoutId) -> usize {
         let session = self.store.session();
         self.tabs
             .iter()
             .flat_map(|tab| tab.panes())
-            .filter(|(pane, _)| session.shows(&pane.layout.view, layout))
+            .filter(|(pane, _)| session.shows_origin(&pane.layout.view, layout))
             .count()
     }
 
@@ -301,12 +313,12 @@ impl LayoutAdapter<'_> {
             .collect()
     }
 
-    /// Give a pane its layout's name for its header.
+    /// Give a pane its strip layout's name for its header.
     fn refresh_layout_label(&mut self, tab: u64, side: PaneSide) {
         let name = self
             .pane_at(tab, side)
             .and_then(ChartPane::layout_id)
-            .and_then(|id| self.layouts().get(id))
+            .and_then(|id| self.layouts().get(self.layouts().strip_layout(id)))
             .map(|layout| layout.name.clone())
             .unwrap_or_default();
         if let Some(pane) = self.pane_mut_at(tab, side) {
@@ -332,9 +344,8 @@ impl LayoutAdapter<'_> {
 
     /// Make `id` the layout one pane shows.
     ///
-    /// The pane's drawings go to the layout going out, its layout slots are
-    /// taken off, the new layout's set is put on, and the new layout's
-    /// drawings for the pane's market come out. Panes on other layouts are
+    /// Its layout slots are taken off and the new layout's set is put on. Its
+    /// drawings stay: they are the market's. Panes on other layouts are
     /// untouched; the book's default moves to `id`, so the next pane to open
     /// takes what the trader last picked.
     pub(crate) fn switch_pane_layout(
@@ -352,6 +363,8 @@ impl LayoutAdapter<'_> {
         if !selection.changed() {
             return Ok(false);
         }
+        // Onto the tab's copy now, so an edit before the next frame is the tab's.
+        self.own_indicator_copies();
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -378,9 +391,6 @@ impl LayoutAdapter<'_> {
         let mut committed = None;
         for effect in selection.effects() {
             match effect {
-                LayoutEffect::LeaveGestures => self.leave_pane_gestures(tab, side),
-                LayoutEffect::PersistChangedDrawings => self.persist_changed_drawings(),
-                LayoutEffect::StoreOutgoingDrawings => self.put_away_drawings(tab, side),
                 LayoutEffect::DetachIndicators => self.remove_layout_indicators_at(tab, side),
                 LayoutEffect::CommitMembership => {
                     committed = Some(self.store.session_mut().commit_selection(selection)?)
@@ -393,7 +403,6 @@ impl LayoutAdapter<'_> {
                         .unwrap_or_default();
                     self.materialize_indicators_at(tab, side, &set);
                 }
-                LayoutEffect::RestoreDrawings => self.bring_out_drawings(tab, side),
                 LayoutEffect::RefreshLabel => self.refresh_layout_label(tab, side),
                 LayoutEffect::CommitDefault => self
                     .store
@@ -451,13 +460,7 @@ impl LayoutAdapter<'_> {
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
-                .tabs
-                .iter_with_ids()
-                .find_map(|(tab_id, tab)| {
-                    tab.panes()
-                        .find(|(pane, _)| pane.id == selection.pane())
-                        .map(|(_, side)| (tab_id, side))
-                })
+                .pane_address(selection.pane())
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }
@@ -527,7 +530,7 @@ impl LayoutAdapter<'_> {
             // is told what to open on; a built pane is switched now.
             if !self.pane_is_real(tab_id, side) {
                 if let Some(tab) = self.tabs.by_id_mut(tab_id) {
-                    tab.set_opening_layout(side, id);
+                    tab.canvas.set_opening_layout(side, id);
                 }
                 continue;
             }
@@ -569,10 +572,10 @@ impl LayoutAdapter<'_> {
     /// by its position with it.
     ///
     /// The slot bookkeeping (`slot_kinds`, the operator's slots, the pending
-    /// hides and styles) and each pane's drawing key name a context chart by
-    /// its slot. A move that left them behind would have the charts swap
-    /// their drawing sets on the next switch and the layout address the
-    /// wrong pane's slots. The one door for the View menu and the control
+    /// hides and styles) names a context chart by its slot. A move that left it
+    /// behind would have the layout address the wrong pane's slots. The drawings
+    /// travel with the pane: their key names its role, not its place. The one
+    /// door for the View menu and the control
     /// plane, so neither can forget the second half.
     pub(crate) fn move_context_pane_at(
         &mut self,
@@ -595,16 +598,6 @@ impl LayoutAdapter<'_> {
                     to,
                 );
         }
-        // The drawings travel with the pane; their key follows its address.
-        if let Some(tab) = self.tabs.by_id_mut(tab_id) {
-            for (pane, side) in tab.panes_with_sides_mut() {
-                if let Some(key) = pane.layout.drawings_key.as_mut() {
-                    key.pane = side.index();
-                }
-            }
-        }
-        // Keys changed under stored sets: write them where they now belong.
-        self.mark_layouts_dirty();
         true
     }
 
@@ -687,32 +680,25 @@ impl LayoutAdapter<'_> {
     // Drawings
     // ------------------------------------------------------------------
 
-    /// The market a tab's panes are showing, as a drawing key names it.
-    ///
-    /// `tab.active` is the feed thread's market and does not move for a
-    /// recording; the recording's symbol does, under its own feed name.
+    /// The market a tab's panes are showing: see `market_settings::shown_market`.
     fn market_of(tab: &crate::tab::Tab) -> (&str, &str) {
-        if tab.replay.is_some() {
-            (REPLAY_FEED_KEY, tab.symbol.as_str())
-        } else {
-            (tab.active.0.as_str(), tab.active.1.as_str())
-        }
+        let recording = tab.link.replay.as_ref().map(|_| tab.symbol.as_str());
+        let live = (tab.active.0.as_str(), tab.active.1.as_str());
+        quantick_workspace::market_settings::shown_market(live, recording)
     }
 
+    /// The market and role a pane's drawings belong to right now.
     fn drawing_key(&self, tab: u64, side: PaneSide) -> Option<DrawingKey> {
-        let tab = self.tabs.by_id(tab)?;
-        let (feed, symbol) = Self::market_of(tab);
-        Some(DrawingKey {
-            feed: feed.to_owned(),
-            symbol: symbol.to_owned(),
-            pane: side.index(),
-        })
+        let pane = self.pane_at(tab, side)?;
+        let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
+        let bars = (side != PaneSide::Flow).then(|| pane.state.spec().to_config_string());
+        let asset = self.store.market().asset(venue, symbol);
+        Some(DrawingKey::of_pane(venue, asset, bars))
     }
 
-    /// Serialise what a pane holds into its layout under the key the pane
+    /// Serialise what a pane holds into the market store under the key the pane
     /// says it holds, and empty the pane.
     fn put_away_drawings(&mut self, tab: u64, side: PaneSide) {
-        let layout = self.pane_layout(tab, side);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -722,49 +708,50 @@ impl LayoutAdapter<'_> {
             pane.drawings.take_all();
             return;
         };
-        let items: Vec<SavedDrawing> = pane
-            .drawings
-            .take_all()
-            .iter()
-            .map(SavedDrawing::from_drawing)
-            .collect();
+        let marks = pane.drawings.take_all();
         pane.layout.saved_revision = pane.drawings.revision();
-        self.store
-            .session_mut()
-            .store_drawings(layout, &key, items, |tool| {
-                crate::drawings::DrawingTool::by_id(tool).is_some()
-            });
+        quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
     }
 
-    /// Adopt the pane's layout's drawings for the pane's current market.
+    /// Adopt the drawings of the pane's current market and role. A context
+    /// chart first claims what a legacy file kept under its address.
     fn bring_out_drawings(&mut self, tab: u64, side: PaneSide) {
         let Some(key) = self.drawing_key(tab, side) else {
             return;
         };
-        let layout = self.pane_layout(tab, side);
-        let saved = self
-            .store
-            .book()
-            .get(layout)
-            .and_then(|layout| layout.drawings(&key))
-            .unwrap_or(&[]);
-        let mut items: Vec<crate::drawings::Drawing> = Vec::with_capacity(saved.len());
-        for entry in saved {
-            match entry.to_drawing(crate::drawings::DrawingId(entry.id.unwrap_or(0))) {
-                Some(drawing) => items.push(drawing),
-                None => tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "LAYOUT_DRAWING_TOOL_UNKNOWN",
-                    tool = %entry.tool,
-                    feed = %key.feed,
-                    symbol = %key.symbol,
-                    pane = key.pane,
-                    action = "kept_in_file_not_drawn",
-                    "a saved drawing uses a tool this build does not have"
-                ),
-            }
+        // A twin mid-gesture would write its stale set over a claim when it
+        // lets go; the slot waits in the file until the next time it is asked.
+        let busy = self
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .any(|(pane, _)| {
+                pane.layout.drawings_key.as_ref() == Some(&key) && facts_of(pane).gesture_in_flight
+            });
+        let market = self.store.market_mut();
+        let claimed = !busy && market.settings_mut().claim_for(&key, side.index());
+        if claimed {
+            self.mark_market_dirty();
         }
+        let grown = claimed.then(|| key.clone());
+        let source = self.tabs.by_id(tab).map(Self::market_of);
+        let source = source.map(|(venue, symbol)| (venue.to_owned(), symbol.to_owned()));
+        self.adopt_marks(tab, side, &key);
+        let Some(pane) = self.pane_mut_at(tab, side) else {
+            return;
+        };
+        pane.layout.drawings_key = Some(key);
+        pane.layout.drawings_source = source;
+        pane.layout.drawings_spec = Some(*pane.state.spec());
+        pane.layout.saved_revision = pane.drawings.revision();
+        if let Some(key) = grown {
+            self.refresh_twins(tab, side, &key);
+        }
+    }
+
+    /// Put the set kept under `key` on a pane.
+    fn adopt_marks(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
+        let items = quantick_drawings::live_marks(self.store.market().settings(), key);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -779,40 +766,76 @@ impl LayoutAdapter<'_> {
             let slots = pane.slots();
             pane.reanchor_drawings(slots);
         }
-        pane.layout.drawings_key = Some(key);
         pane.layout.saved_revision = pane.drawings.revision();
     }
 
-    /// A tab whose market moved out from under a pane: the drawings go to
-    /// the market they were drawn on and the new market's come out.
-    fn follow_market_changes(&mut self) {
+    /// A contract roll's half of the drawings. Contracts of one asset are one
+    /// market, so nothing moves; a roll onto another asset copies what is on
+    /// screen to it, and a pane already there shows the result instead of
+    /// writing its old set back. The roll's rule refused a gesture on either
+    /// contract before this.
+    pub(crate) fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.persist_changed_drawings();
+        let (to, carried) = self.store.market_mut().carry_roll(feed, from, to);
+        if carried == 0 {
+            return 0;
+        }
+        let holding: Vec<(u64, PaneSide, DrawingKey)> = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(tab_id, tab)| {
+                tab.panes().filter_map(move |(pane, side)| {
+                    let key = pane.layout.drawings_key.clone()?;
+                    Some((tab_id, side, key))
+                })
+            })
+            .filter(|(_, _, key)| key.market == to)
+            .collect();
+        for (tab, side, key) in holding {
+            self.rebuild_keeping_selection(tab, side, &key);
+        }
+        self.mark_market_dirty();
+        carried
+    }
+
+    /// A tab whose market moved out from under a pane, or a context chart cut
+    /// to other bars: the drawings go to the key they were drawn on and the new
+    /// key's come out. A roll inside one asset lands on the same key. A chart
+    /// cut to other bars with a strategy live stays on the key it holds until the
+    /// strategy stops: it names one of these drawings, and a re-cut is no reason
+    /// to kill it. Moving the tab to another market still does, as it always has.
+    pub(super) fn follow_market_changes(&mut self) {
         let moved: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()
             .flat_map(|(tab_id, tab)| {
                 let (feed, symbol) = Self::market_of(tab);
                 tab.panes()
-                    .filter(move |(pane, _)| {
-                        pane.layout_seeded()
-                            && pane
-                                .layout
-                                .drawings_key
-                                .as_ref()
-                                .is_some_and(|key| key.feed != feed || key.symbol != symbol)
+                    .filter(move |(pane, side)| {
+                        let recuttable =
+                            *side != PaneSide::Flow && pane.strategies.anchors.watching() == 0;
+                        let bars = recuttable.then(|| pane.state.spec());
+                        pane.layout.needs_rekey(feed, symbol, bars)
                     })
                     .map(move |(_, side)| (tab_id, side))
             })
             .collect();
         for (tab, side) in moved {
             self.leave_pane_gestures(tab, side);
+            let left = self
+                .pane_at(tab, side)
+                .and_then(|pane| pane.layout.drawings_key.clone());
             self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
-            self.mark_layouts_dirty();
+            if let Some(left) = left {
+                self.refresh_twins(tab, side, &left);
+            }
+            self.mark_market_dirty();
         }
     }
 
     /// Any pane whose drawings changed since they were last written has its
-    /// set copied into its layout.
+    /// set copied into the market store.
     pub(super) fn persist_changed_drawings(&mut self) {
         let changed: Vec<(u64, PaneSide)> = self
             .tabs
@@ -827,78 +850,69 @@ impl LayoutAdapter<'_> {
             })
             .collect();
         for (tab, side) in changed {
-            let layout = self.pane_layout(tab, side);
             let Some(pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
             let Some(key) = pane.layout.drawings_key.clone() else {
                 continue;
             };
-            let items: Vec<SavedDrawing> = pane
+            pane.layout.saved_revision = pane.drawings.revision();
+            let marks = pane.drawings.items().to_vec();
+            quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
+            self.mark_market_dirty();
+            self.refresh_twins(tab, side, &key);
+        }
+    }
+
+    /// One market and role is one set: every other pane holding `key` is brought
+    /// to what was written, or its next edit writes a stale set over it. The
+    /// selection crosses the rebuild by id; only a gesture in flight holds a twin
+    /// back, since a swap under it would land on another object.
+    fn refresh_twins(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
+        let twins: Vec<(u64, PaneSide)> = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(other_id, other)| {
+                other
+                    .panes()
+                    .filter(|(pane, _)| {
+                        pane.layout.drawings_key.as_ref() == Some(key)
+                            && !facts_of(pane).gesture_in_flight
+                    })
+                    .map(move |(_, other_side)| (other_id, other_side))
+            })
+            .filter(|target| *target != (tab, side))
+            .collect();
+        for (twin_tab, twin_side) in twins {
+            self.leave_pane_gestures(twin_tab, twin_side);
+            self.rebuild_keeping_selection(twin_tab, twin_side, key);
+        }
+    }
+
+    /// Bring a pane to what its layout now holds for its market.
+    fn rebuild_keeping_selection(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
+        let selected_id = self.pane_at(tab, side).and_then(|pane| {
+            let index = pane.drawings.selected()?;
+            Some(pane.drawings.items().get(index)?.id)
+        });
+        if let Some(pane) = self.pane_mut_at(tab, side) {
+            pane.drawings.take_all();
+        }
+        // Under the key it holds, which a chart held by a strategy keeps whatever
+        // its bars are now.
+        self.adopt_marks(tab, side, key);
+        // By id, not by index: the set that came back may hold one more
+        // object than the one that went away, and the index the trader
+        // selected now points at a different mark.
+        if let Some(id) = selected_id
+            && let Some(pane) = self.pane_mut_at(tab, side)
+        {
+            let index = pane
                 .drawings
                 .items()
                 .iter()
-                .map(SavedDrawing::from_drawing)
-                .collect();
-            pane.layout.saved_revision = pane.drawings.revision();
-            self.store
-                .session_mut()
-                .store_drawings(layout, &key, items, |tool| {
-                    crate::drawings::DrawingTool::by_id(tool).is_some()
-                });
-            self.mark_layouts_dirty();
-            // Two panes on one market and one layout show one set of
-            // drawings: the other pane holding this key under this layout
-            // is brought to what was just written, rather than keeping a
-            // copy that drifts until a switch. Ids travel, so a strategy or
-            // an annotation on the twin still names its object.
-            //
-            // A twin is never *skipped* for having a selection, however
-            // tempting: a twin left behind is a twin whose own next edit
-            // writes its stale set over this key and takes the drawing just
-            // made here with it. The selection is carried across the rebuild
-            // by id instead, which is the thing the trader can see. Only a
-            // gesture in flight still holds a twin back — that addresses the
-            // store by index and a swap under it would land on another
-            // object.
-            let twins: Vec<(u64, PaneSide)> = self
-                .tabs
-                .iter_with_ids()
-                .flat_map(|(other_id, other)| {
-                    other
-                        .panes()
-                        .filter(|(pane, _)| {
-                            pane.layout.drawings_key.as_ref() == Some(&key)
-                                && pane.layout_id() == Some(layout)
-                                && !pane.drawings.in_gesture()
-                        })
-                        .map(move |(_, other_side)| (other_id, other_side))
-                })
-                .filter(|target| *target != (tab, side))
-                .collect();
-            for (twin_tab, twin_side) in twins {
-                let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
-                    let index = twin.drawings.selected()?;
-                    Some(twin.drawings.items().get(index)?.id)
-                });
-                if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
-                    twin.drawings.take_all();
-                }
-                self.bring_out_drawings(twin_tab, twin_side);
-                // By id, not by index: the set that came back may hold one
-                // more object than the one that went away, and the index the
-                // trader selected now points at a different mark.
-                if let Some(id) = selected_id
-                    && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
-                {
-                    let index = twin
-                        .drawings
-                        .items()
-                        .iter()
-                        .position(|drawing| drawing.id == id);
-                    twin.drawings.select(index);
-                }
-            }
+                .position(|drawing| drawing.id == id);
+            pane.drawings.select(index);
         }
     }
 }

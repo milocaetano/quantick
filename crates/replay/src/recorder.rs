@@ -704,6 +704,54 @@ impl DealRecorder {
             tz_minutes: self.tz_minutes,
         }
     }
+
+    /// Per drain: learn what the feed can count, honour the default once,
+    /// and reach the disk on schedule. Returns what a start resumed from
+    /// today's file, for the caller to hand to its panes.
+    pub fn tick(&mut self, available: bool, now_ms: i64) -> Vec<DealSample> {
+        self.set_available(available);
+        let resumed = if self.auto_start_due() {
+            self.start(now_ms)
+        } else {
+            Vec::new()
+        };
+        self.flush_if_due(now_ms);
+        resumed
+    }
+
+    /// The recorder as the chrome sees it beside the live market, or none
+    /// where no REC control is drawn at all: while a replay holds the tab,
+    /// and on a feed with no counter and nothing loaded.
+    #[must_use]
+    pub fn live_view(
+        &self,
+        replaying: bool,
+        latest_trade_ms: Option<i64>,
+    ) -> Option<RecordingView> {
+        if replaying {
+            // A replay is another tape and declares no counter: the live
+            // market's recorder, and its recorded days, are not for it.
+            return None;
+        }
+        let view = self.view(latest_trade_ms);
+        view.supported().then_some(view)
+    }
+
+    /// What the chart-corner chip reads. Not [`Self::live_view`]: the one
+    /// chip a feed with no counter owes, a `trades` pane with nothing to cut
+    /// on, is exactly the case that view withholds.
+    #[must_use]
+    pub fn chip_view(&self, replaying: bool, latest_trade_ms: Option<i64>) -> RecordingView {
+        let mut view = self.view(latest_trade_ms);
+        if replaying {
+            // A replay carries no counter and is not this recorder's tape:
+            // the one chip it can earn is the no-count one, on a trades pane,
+            // never "recording" over another day's prints.
+            view.state = RecState::Unsupported;
+            view.loaded_days.clear();
+        }
+        view
+    }
 }
 
 /// What every REC surface reads: the toolbar button and its popover, the
@@ -1311,6 +1359,41 @@ mod tests {
             !rec.auto_start_due(),
             "stopped by a hand: the default does not restart it"
         );
+    }
+
+    /// The drain's tick waits for the counter, starts the default once, and
+    /// hands back what a resumed day held.
+    #[test]
+    fn the_tick_starts_the_default_once_the_feed_can_count() {
+        let dir = scratch("tick");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), true);
+        assert!(rec.tick(false, LATE_EVENING_BRT_MS).is_empty());
+        assert_eq!(rec.state(None), RecState::Unsupported);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), LATE_EVENING_BRT_MS);
+        rec.tick(true, LATE_EVENING_BRT_MS);
+        assert_eq!(rec.state(None), RecState::Recording);
+        rec.stop();
+        rec.tick(true, LATE_EVENING_BRT_MS + 1_000);
+        assert_eq!(rec.state(None), RecState::Off, "the default fires once");
+        let resumed = rec.tick(true, LATE_EVENING_BRT_MS + 2_000);
+        assert!(resumed.is_empty(), "nothing started, nothing resumed");
+    }
+
+    /// A replay holds no REC control and wears the no-count chip; the live
+    /// market gets its view back when the replay goes.
+    #[test]
+    fn a_replay_withholds_the_live_view_and_dims_the_chip() {
+        let dir = scratch("replay-views");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        assert_eq!(rec.live_view(false, None), None, "no counter, no day");
+        rec.set_available(true);
+        assert_eq!(rec.live_view(false, None), Some(rec.view(None)));
+        assert_eq!(rec.live_view(true, None), None);
+        rec.start(LATE_EVENING_BRT_MS);
+        assert_eq!(rec.chip_view(false, None), rec.view(None));
+        let chip = rec.chip_view(true, None);
+        assert_eq!(chip.state, RecState::Unsupported);
+        assert!(chip.loaded_days.is_empty());
     }
 
     #[test]

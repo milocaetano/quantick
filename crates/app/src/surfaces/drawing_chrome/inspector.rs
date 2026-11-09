@@ -184,7 +184,8 @@ pub(crate) fn draw_pinned(
     let mut edited = selected.drawing.clone();
     let mut recorder = RecordingPresetHost::new(env.presets);
     let mut actions = InspectorActions::default();
-    egui::SidePanel::right("drawing_inspector_panel")
+    let id = egui::Id::new((ctx.viewport_id(), "drawing_inspector_panel"));
+    egui::SidePanel::right(id)
         .resizable(true)
         .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
         .width_range(INSPECTOR_MIN_WIDTH_PX..=INSPECTOR_MAX_WIDTH_PX)

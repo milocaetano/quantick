@@ -7,12 +7,15 @@ mod days;
 mod dividers;
 mod flow;
 mod indicators;
-pub(super) use days::{DayRulePass, DaySeparatorPass};
+pub(super) use days::DayRulePass;
 pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;
+#[cfg(test)]
+pub(crate) use axes::MARK_RUNS;
 pub(super) use axes::{
-    AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, TimeStripPass,
+    AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, StripMarks,
+    TimeStripPass,
 };
 mod drawings;
 pub(in crate::pane) use drawings::{TextFonts, paint_scene};
@@ -53,7 +56,6 @@ pub(super) enum Contribution {
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
     FeedGaps(for<'a> fn(&mut DividerPass<'a>)),
     DayRule(for<'a> fn(&mut DayRulePass<'a>)),
-    DaySeparator(for<'a> fn(&mut DaySeparatorPass<'a>)),
     Grid(for<'a, 'b> fn(&mut GridPass<'a, 'b>)),
     LastPrice(for<'a> fn(&mut LastPricePass<'a>)),
     Crosshair(for<'a> fn(&mut CrosshairPass<'a>)),
@@ -125,7 +127,6 @@ pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);
 pass!(feed_gaps, FeedGaps, DividerPass<'_>);
 pass!(day_rule, DayRule, DayRulePass<'_>);
-pass!(day_separator, DaySeparator, DaySeparatorPass<'_>);
 pass!(grid, Grid, GridPass<'_, '_>);
 pass!(last_price, LastPrice, LastPricePass<'_>);
 pass!(crosshair, Crosshair, CrosshairPass<'_>);
@@ -206,18 +207,19 @@ pub(super) mod probe {
         let mut pane = installed();
         let style = ChartStyle::default();
         let catalog = pane.layers.registry();
-        assert_eq!(catalog.layers().len(), 27);
+        assert_eq!(catalog.layers().len(), 28);
         let discovered = catalog.resolve("test_probe").unwrap();
         assert_eq!(discovered.label(), "Probe");
         assert!(!pane.layer_visible(discovered, &style));
         pane.set_layer_visible(discovered, true, &mut LayerActions::default());
         assert!(pane.layer_visible(discovered, &style));
-        let text = quantick_layers::LayerDocument::encode(&pane.layer_states(&style)).unwrap();
+        let text =
+            quantick_layers::LayerDocument::encode(&pane.layer_read().states(&style)).unwrap();
         let restored = quantick_layers::LayerDocument::parse(&text)
             .unwrap()
             .resolve(pane.layers.registry());
         let mut second = installed();
-        second.apply_layer_states(&restored);
+        second.layer_write().apply_states(&restored);
         assert!(second.layer_visible(discovered, &style));
         second.set_layer_visible(discovered, false, &mut LayerActions::default());
         assert!(!second.layer_visible(discovered, &style));

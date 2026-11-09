@@ -24,6 +24,15 @@ pub enum SavedKind {
 }
 
 impl SavedKind {
+    /// The short name a prompt lists: `native.rsi` is `RSI`, `zigzag.pine`
+    /// is `zigzag`.
+    #[must_use]
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Native { id } => id.strip_prefix("native.").unwrap_or(id).to_uppercase(),
+            Self::Script { name } => name.strip_suffix(".pine").unwrap_or(name).to_owned(),
+        }
+    }
     /// A native entry for a catalog id.
     pub fn native(id: &str) -> Self {
         SavedKind::Native { id: id.to_owned() }

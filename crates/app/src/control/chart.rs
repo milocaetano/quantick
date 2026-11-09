@@ -28,20 +28,25 @@ impl ChartPort for dyn ControlPort {
         for (tab_index, tab) in reads.tabs().iter().enumerate() {
             let tab_id = reads.tabs().id_at(tab_index);
             let focused = tab.focused_side();
-            let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
+            let shown = usize::from(!tab.canvas.context_collapsed) * tab.context_panes_shown();
             for (pane, side) in tab.panes() {
                 let visible = match side {
-                    PaneSide::Flow => tab.layout.shows_flow(),
-                    PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+                    PaneSide::Flow => tab.canvas.layout.shows_flow(),
+                    PaneSide::Time(slot) => tab.canvas.layout.shows_time() && slot < shown,
                 };
                 let framing = PaneFraming {
                     visible: tab_index == active && visible,
                     focused: tab_index == active && focused == side,
                 };
                 let read = PaneRead { tab, pane, config };
-                visit(entry(tab_id, tab, side, &read), framing);
+                let on_screen = tab_index == active;
+                visit(entry(tab_id, tab, side, &read, on_screen), framing);
             }
         }
+    }
+
+    fn price_tag_progress(&self, tab_id: u64) -> bool {
+        self.layout_state().bar_progress_on(tab_id)
     }
 
     fn visit_chart_pane(
@@ -52,6 +57,7 @@ impl ChartPort for dyn ControlPort {
     ) -> Result<(), MissingPane> {
         let reads = self.tab_reads();
         let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
+        let on_screen = reads.tabs().id_at(reads.active_tab_index()) == tab_id;
         let (pane, side) = tab
             .panes()
             .find(|(pane, _)| pane.id == pane_id)
@@ -61,7 +67,7 @@ impl ChartPort for dyn ControlPort {
             pane,
             config: reads.config(),
         };
-        visit(entry(tab_id, tab, side, &read));
+        visit(entry(tab_id, tab, side, &read, on_screen));
         Ok(())
     }
 }
@@ -71,6 +77,7 @@ fn entry<'a>(
     tab: &'a Tab,
     side: PaneSide,
     read: &'a PaneRead<'a>,
+    on_screen: bool,
 ) -> ChartPaneEntry<'a> {
     ChartPaneEntry {
         tab_id,
@@ -79,6 +86,7 @@ fn entry<'a>(
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
         pane: read,
+        market_clock_ms: on_screen.then(|| tab.tape().market_now_ms()).flatten(),
     }
 }
 

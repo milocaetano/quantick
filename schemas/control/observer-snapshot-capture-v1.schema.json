@@ -106,6 +106,17 @@
         }
       },
       "type": "object"
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Pinned native window identity when the host supports window targeting."
     }
   },
   "required": [

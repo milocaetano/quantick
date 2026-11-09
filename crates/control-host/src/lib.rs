@@ -33,3 +33,5 @@ mod scratch;
 pub mod system;
 pub mod trace;
 pub mod wire;
+
+pub mod window_capture;

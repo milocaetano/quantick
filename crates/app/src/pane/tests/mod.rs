@@ -72,14 +72,20 @@ fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
     let mut discarded = LayerActions::default();
     pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
     pane.set_layer_visible(ChartLayer::LaneMarks, false, &mut discarded);
-    assert!(!pane.projection_demand(), "nobody is asking");
+    assert!(!pane.layer_read().projection_demand(), "nobody is asking");
 
     pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut discarded);
-    assert!(pane.projection_demand(), "the strip alone asks");
+    assert!(
+        pane.layer_read().projection_demand(),
+        "the strip alone asks"
+    );
 
     pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
     pane.set_layer_visible(ChartLayer::LaneMarks, true, &mut discarded);
-    assert!(pane.projection_demand(), "the lane's marks alone ask");
+    assert!(
+        pane.layer_read().projection_demand(),
+        "the lane's marks alone ask"
+    );
 }
 
 /// A chart that has never been configured follows the window's setup —
@@ -1213,7 +1219,7 @@ fn drive_navigation_asking(
     ctx: &egui::Context,
     area: egui::Rect,
     events: Vec<egui::Event>,
-) -> (Option<SlotId>, bool) {
+) -> (Option<SlotId>, quantick_layers::LayerActions) {
     let mut toolrail = crate::toolrail::ToolRail::new();
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
@@ -1251,13 +1257,17 @@ fn drive_navigation_asking(
                 shared: SharedInteraction::default(),
                 capabilities: crate::config::FeedCapabilities::none(),
                 side_inferred: false,
+                price_tag: quantick_chart::bar_progress::TagProgress {
+                    on: true,
+                    clock_ms: None,
+                },
                 footprint: &footprint,
                 layers: &mut layers,
             };
             pane.handle_navigation(ui, area, &mut chrome);
         });
     });
-    (pane.take_settings_request(), layers.open_chart_settings)
+    (pane.take_settings_request(), layers)
 }
 
 /// Build a whole `PaneChrome` with `tool` armed and hand it to `body`.
@@ -1296,6 +1306,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
         shared: SharedInteraction::default(),
         capabilities: crate::config::FeedCapabilities::none(),
         side_inferred: false,
+        price_tag: Default::default(),
         footprint: &footprint,
         layers: &mut layers,
     })
@@ -1378,7 +1389,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
 
     // The armed tool alone decides it, and that is not a shortcut: arming
     // the crosshair turns its layer back on through
-    // `unhide_layer_for_armed_tool`, so "armed but not drawing" is a state
+    // `PaneLayerWrite::unhide_for_tool`, so "armed but not drawing" is a state
     // the app does not have. A second conjunct testing the layer would
     // read as a condition that can be met and never be false — and the
     // assertion guarding it would pass only by setting the field behind
@@ -1386,7 +1397,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
     // rule the code did not deliver.
     pane.set_layer_visible(ChartLayer::Crosshair, false, &mut discarded);
     with_chrome(Tool::Crosshair, |chrome| {
-        pane.unhide_layer_for_armed_tool(chrome);
+        pane.layer_write().unhide_for_tool(chrome);
     });
     assert!(
         pane.layer_visible(ChartLayer::Crosshair, &crate::style::ChartStyle::default()),
@@ -1532,6 +1543,7 @@ fn the_live_price_is_painted_over_a_level_and_not_under_it() {
             newest: Some(&bar),
             last_price_visible: pane
                 .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            progress: None,
             style: chrome.style,
         }
         .paint(pane.layer_renderers);
@@ -1736,6 +1748,44 @@ fn the_axis_menu_entry_switches_the_layer_it_names() {
     );
 }
 
+/// The price axis menu's first row asks the window to switch the market's
+/// price-tag progress: the pane keeps no copy of a market setting.
+#[test]
+fn the_axis_menu_first_row_switches_the_price_tag_progress() {
+    let ctx = egui::Context::default();
+    let mut pane = pane_with_timed_bars(200);
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    let areas = test_areas(&pane, TEST_PLOT);
+    right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
+    // The rows where the open menu stands now, not where its first frame
+    // measured them.
+    pane.context_menu.menu_rects.clear();
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    let rows = &pane.context_menu.menu_rects;
+    let row = |label: &str| {
+        rows.iter()
+            .find(|(name, _)| *name == label)
+            .map(|(_, rect)| *rect)
+    };
+    let checkbox = row("Bar progress on the price tag").expect("the axis offers the switch");
+    let first = rows
+        .iter()
+        .map(|(_, rect)| rect.top())
+        .fold(f32::INFINITY, f32::min);
+    assert_eq!(checkbox.top(), first, "the first row");
+    let mut asked = None;
+    for pressed in [true, false] {
+        let events = press_at(checkbox.center(), pressed);
+        let (_, layers) = drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, events);
+        asked = layers.bar_progress.or(asked);
+    }
+    assert_eq!(
+        asked,
+        Some(false),
+        "on by default, so the click turns it off"
+    );
+}
+
 /// A double click at `pos`, as two press/release pairs in two frames —
 /// A double click at `pos`, as two press/release pairs in two frames —
 /// egui reports the second as `double_clicked`.
@@ -1758,9 +1808,9 @@ fn double_click_asking(
 ) -> (Option<SlotId>, bool) {
     let (mut request, mut chart_settings) = (None, false);
     for pressed in [true, false, true, false] {
-        let (asked, settings) = drive_navigation_asking(pane, ctx, area, press_at(pos, pressed));
+        let (asked, layers) = drive_navigation_asking(pane, ctx, area, press_at(pos, pressed));
         request = asked.or(request);
-        chart_settings |= settings;
+        chart_settings |= layers.open_chart_settings;
     }
     (request, chart_settings)
 }
@@ -2389,7 +2439,7 @@ fn the_off_band_caret_stays_whole_inside_its_band() {
             .into_iter()
             .find(|tool| tool.id() == "horizontal-line")
             .expect("registered"),
-        &DrawingBand::Indicator(drawings::PaneKey {
+        &DrawingBand::Indicator(quantick_drawings::PaneKey {
             kind: std::sync::Arc::from("native.cvd"),
             ordinal: 0,
         }),

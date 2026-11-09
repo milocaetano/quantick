@@ -284,19 +284,18 @@ fn declaration(window: &str) -> &str {
 ///
 /// A computed label cannot be scanned, so it cannot be claimed by key. It is
 /// counted instead: a new one changes this number and fails the guard, which
-/// sends the author to this module to say which behaviour it belongs to. The
-/// twelve are the panels, legend, drawing-rail and agent-access switches; the
-/// layout, bookmark-open, bookmark-delete and recent-file lists; and the two
-/// `Chart N up` / `Chart N down` entries.
-pub(crate) const COMPUTED_MENU_LABELS: usize = 12;
+/// sends the author to this module to say which behaviour it belongs to. They
+/// are the legend and context-chart switches; the layout, preset and recent-file
+/// lists; the table's row and submenu labels; the two buttons Settings names from
+/// its own table; and the two `Chart N up` / `Chart N down` entries.
+pub(crate) const COMPUTED_MENU_LABELS: usize = 11;
 
 /// The actual owners that render the menu bar and its workspace file actions.
 const MENU_SOURCES: &[&str] = &[
     "crates/app/src/theme/choice.rs",
     "crates/app/src/app/menu_bar.rs",
     "crates/app/src/app/menu_bar/menus.rs",
-    "crates/app/src/app/workspace_bundle_adapter.rs",
-    "crates/app/src/workspace_picker.rs",
+    "crates/app/src/app/menu_bar/settings_window.rs",
 ];
 
 /// The menu bar's own labels, and the count of the ones it computes.
@@ -344,6 +343,10 @@ fn menu_labels() -> (Vec<String>, usize) {
             .find('"')
             .expect("a string literal in the menu bar is closed");
         labels.push(literal[..end].to_owned());
+    }
+    // Settings paints its rows from this table, so its labels are read here.
+    for section in quantick_control_schema::settings_sections::SettingsSection::ALL {
+        labels.extend(section.rows().iter().map(|row| row.label().to_owned()));
     }
     assert!(
         !labels.is_empty(),
@@ -408,6 +411,13 @@ pub(crate) fn registered() -> Vec<Registered> {
     for label in labels {
         entries.push(Registered::new(Source::MenuEntry, label));
     }
+    for row in quantick_control_schema::window_menu::ROWS {
+        entries.push(Registered::new(Source::MenuEntry, row.label));
+    }
+    for id in quantick_control_schema::window_menu::SUBMENUS {
+        let label = quantick_control_schema::window_menu::submenu(*id).0;
+        entries.push(Registered::new(Source::MenuEntry, label));
+    }
 
     entries.sort();
     let duplicates = duplicate_keys(&entries);
@@ -441,16 +451,10 @@ mod tests {
     /// Dropping either extracted owner must lose a literal door or the recent
     /// file's computed entry, even though the original menu file still parses.
     #[test]
-    fn the_menu_walk_keeps_the_original_and_extracted_file_actions() {
+    fn the_menu_walk_reads_the_literal_labels_the_painters_keep() {
         let (labels, computed) = menu_labels();
-        assert_eq!(computed, 12);
-        for expected in [
-            "Save as…",
-            "Export to file…",
-            "Open from file…",
-            "Open recent",
-            "Show where it's saved",
-        ] {
+        assert_eq!(computed, COMPUTED_MENU_LABELS);
+        for expected in ["Appearance…", "Perf readings", "New layout"] {
             assert_eq!(
                 labels
                     .iter()

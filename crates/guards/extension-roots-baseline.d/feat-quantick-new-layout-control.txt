@@ -1,0 +1,6 @@
+# NativeWindowHost's narrow trait methods delegate window inspection,
+# keyed operations, targeted state and physical placement to native adapters.
+# All ownership/order/gesture/close decisions live in workspace window_commands.
+# QuantickApp's protected field shape is unchanged; no runtime is duplicated.
+QuantickApp +18
+!budget +18

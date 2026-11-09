@@ -1,7 +1,8 @@
 //! Fixed dependencies for the synchronous end of an application frame.
 //!
-//! Recovery may journal a close, so every account settles before the active
-//! report is painted. Feature outcomes remain with the caller.
+//! Recovery may journal a close, so the shown account settles before its
+//! report is painted; the frame settles the accounts no window shows once,
+//! after every window. Feature outcomes remain with the caller.
 
 use crate::stage_registry::declare_stages;
 #[cfg(test)]
@@ -14,7 +15,7 @@ declare_stages! {
     pub enum FrameTailStage {
         /// The feed notice's reconnect or reload runs first.
         ApplyNoticeAction after [],
-        /// A reload may journal a close; every account settles after it.
+        /// A reload may journal a close; the account settles after it.
         SettlePaperPanels after [ApplyNoticeAction],
         /// The report reads the settled account.
         DrawPaperReport after [SettlePaperPanels],

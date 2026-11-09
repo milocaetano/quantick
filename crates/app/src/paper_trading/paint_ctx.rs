@@ -9,6 +9,7 @@
 
 use eframe::egui;
 use eframe::egui::{Color32, Stroke};
+use quantick_appearance::{PremultipliedRgba, paper};
 use quantick_paper::desk::geometry::{self, Bounds, Point};
 use quantick_paper::desk::geometry::{
     LINE_GRAB_RADIUS_PX, TAG_BUTTON_PX, TAG_GAP_PX, TAG_HEIGHT_PX,
@@ -20,6 +21,7 @@ use super::{
     LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
+use crate::paper_chrome::has_signed_figure;
 use crate::theme;
 
 /// The frame geometry every paper paint helper reads: one struct so a tag,
@@ -42,6 +44,14 @@ pub(super) struct PaintCtx<'a> {
 }
 
 impl PaintCtx<'_> {
+    /// The plate (fill, ink) a light chart lays under a level drawn in
+    /// `color`; `None` keeps the accent and side colours (`paper::plate_for`).
+    pub(super) fn plate(&self, color: Color32) -> Option<(Color32, Color32)> {
+        let line = PremultipliedRgba::from_premultiplied(color.to_array());
+        let plate = paper::plate_for(&self.palette.resolved, line)?;
+        Some((*self.palette.get(plate.fill), *self.palette.get(plate.ink)))
+    }
+
     pub(super) fn in_range(&self, y: f32) -> bool {
         y >= self.chart_rect.top() && y <= self.chart_rect.bottom()
     }
@@ -65,6 +75,7 @@ impl PaintCtx<'_> {
         hovered: bool,
         dragged: bool,
     ) {
+        let color = self.plate(color).map_or(color, |(plate, _)| plate);
         let width = if dragged {
             LINE_DRAG_WIDTH_PX
         } else if hovered {
@@ -102,13 +113,10 @@ impl PaintCtx<'_> {
     /// chip's geometry. The line stays at its true price; only the chip
     /// dodges the reserved last-price row.
     pub(super) fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
-        let palette = &self.palette;
-        self.chip(
-            y,
-            color,
-            text,
-            (color, palette.chip_ink(), egui::Stroke::NONE),
-        );
+        let (fill, ink) = self
+            .plate(color)
+            .unwrap_or((color, self.palette.chip_ink()));
+        self.chip(y, fill, text, (fill, ink, egui::Stroke::NONE));
     }
 
     /// Hollow: a `color` border and ink on the chart's ground, for a level
@@ -185,10 +193,37 @@ impl PaintCtx<'_> {
         ghost: bool,
     ) {
         let palette = &self.palette;
-        let ink = if ghost { fill } else { palette.chip_ink() };
-        let galley =
+        // A light chart's tag is its plate; a ghost keeps only its outline,
+        // in the plate's gain or loss ink so a pending TP and SL differ.
+        let plated = self.plate(fill);
+        let outline = plated.filter(|_| ghost).map_or(fill, |(_, ink)| ink);
+        let fill = plated.map_or(fill, |(plate, _)| plate);
+        let plate_ink = plated.filter(|_| !ghost).map(|(_, ink)| ink);
+        let financial = plate_ink.is_none() && !palette.resolved.dark && has_signed_figure(text);
+        let ink = if let Some(ink) = plate_ink {
+            ink
+        } else if financial {
+            palette.text_primary()
+        } else if ghost {
+            fill
+        } else {
+            crate::paper_chrome::trade_action_ink(palette, fill)
+        };
+        let font = palette.mono_font(11.0);
+        let galley = if plate_ink.is_some() {
+            let job = crate::paper_chrome::plate_text(palette, text, font, ink);
+            self.painter.layout_job(job)
+        } else if financial {
+            self.painter.layout_job(crate::paper_chrome::financial_text(
+                palette,
+                text,
+                palette.mono_font(11.0),
+                ink,
+            ))
+        } else {
             self.painter
-                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
+                .layout_no_wrap(text.to_owned(), palette.mono_font(11.0), ink)
+        };
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -198,13 +233,13 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
-        if ghost {
+        if ghost || financial {
             self.painter
                 .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
             self.painter.rect_stroke(
                 full,
                 egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, fill),
+                egui::Stroke::new(1.0_f32, outline),
             );
         } else {
             self.painter
@@ -219,12 +254,14 @@ impl PaintCtx<'_> {
             return;
         }
         let button = close_button_rect(self.tag_right, center_y);
+        // Only a plate's glyph dims at rest; the others keep their one ink.
+        let lit = plate_ink.is_none() || self.pointer.is_some_and(|at| button.contains(at));
         self.painter.text(
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
             palette.mono_font(11.0),
-            ink,
+            theme::with_opacity(ink, paper::close_glyph_alpha(lit)),
         );
         // A hairline of ink between the words and the ✕, so the zone reads
         // as a button rather than a longer label.
@@ -250,14 +287,26 @@ impl PaintCtx<'_> {
     ) -> egui::Rect {
         let palette = &self.palette;
         let font = palette.mono_font(11.0);
-        let side_galley =
-            self.painter
-                .layout_no_wrap(side_text.to_owned(), font.clone(), side_color);
+        // A light chart lays the label on the order plate in white, its rail
+        // in the side's plate ink; Dark keeps the card in the side colour.
+        let plate = self.plate(side_color);
+        let ink = plate.map(|_| palette.order_plate_ink());
+        let side_color = plate.map_or(side_color, |(_, rail)| rail);
+        let side_galley = self.painter.layout_no_wrap(
+            side_text.to_owned(),
+            font.clone(),
+            match ink {
+                Some(ink) => ink,
+                None if palette.resolved.dark => side_color,
+                None => palette.text_primary(),
+            },
+        );
         let points_galley = points.map(|(text, color)| {
-            (
-                self.painter.layout_no_wrap(text, font.clone(), color),
-                color,
-            )
+            let job = match ink {
+                Some(ink) => crate::paper_chrome::plate_text(palette, &text, font.clone(), ink),
+                None => crate::paper_chrome::financial_text(palette, &text, font.clone(), color),
+            };
+            (self.painter.layout_job(job), color)
         });
         let rail = 3.0;
         let mut content_w = rail + TAG_PAD_X + side_galley.size().x + TAG_PAD_X + TAG_BUTTON_PX;
@@ -271,12 +320,13 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
+        let (body, edge) = plate.map_or((palette.inset(), palette.border()), |(p, _)| (p, p));
         self.painter
-            .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
+            .rect_filled(full, egui::Rounding::same(3.0), body);
         self.painter.rect_stroke(
             full,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, palette.border()),
+            egui::Stroke::new(1.0_f32, edge),
         );
         // The side rail rides the card's left edge.
         self.painter.rect_filled(
@@ -312,10 +362,10 @@ impl PaintCtx<'_> {
             egui::Align2::CENTER_CENTER,
             "×",
             palette.mono_font(11.0),
-            if over_button {
-                palette.text_primary()
-            } else {
-                palette.text_muted()
+            match ink {
+                Some(ink) => theme::with_opacity(ink, paper::close_glyph_alpha(over_button)),
+                None if over_button => palette.text_primary(),
+                None => palette.text_muted(),
             },
         );
         // A hairline between the words and the ✕ zone.
@@ -324,7 +374,10 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 3.0),
                 egui::pos2(button.left(), full.bottom() - 3.0),
             ],
-            egui::Stroke::new(1.0_f32, palette.border()),
+            egui::Stroke::new(
+                1.0_f32,
+                ink.map_or(edge, |ink| theme::with_opacity(ink, CLOSE_DIVIDER_ALPHA)),
+            ),
         );
         full
     }

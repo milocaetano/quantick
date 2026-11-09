@@ -454,11 +454,11 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
             let directory = crate::scratch::ScratchDir::new("control7-trace-order");
             let session = recording_at(&directory);
             let (mut seed, _) = app_with_history_and_launch(8, captured_control_launch(env));
-            seed.active_tab_mut().replay =
+            seed.active_tab_mut().link.replay =
                 Some(replay_test_support::detached_link(session.clone()));
             seed.take_mark(Some("sidecar-first".to_owned()));
             drop(seed);
-            app.active_tab_mut().replay = Some(replay_test_support::detached_link(session));
+            app.active_tab_mut().link.replay = Some(replay_test_support::detached_link(session));
             run_frame(&mut app, &ctx);
             let marks: Vec<_> = events(&app)
                 .into_iter()

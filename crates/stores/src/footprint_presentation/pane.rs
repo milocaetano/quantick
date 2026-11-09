@@ -17,13 +17,13 @@ pub struct PaneFootprint {
     pub visible: bool,
     /// This chart's own footprint setup, once it has been configured here.
     ///
-    /// `None` — the default — means "follow the window's last setup", which
+    /// The default means "follow the window's last setup", which
     /// keeps the common case (one chart, one taste) behaving like a global
     /// setting. A split layout is two readings of the same market (a 90-day
     /// context chart beside a 50-tick flow chart) and one set of thresholds
     /// cannot serve both, so the moment a chart is configured on its own it
-    /// keeps its own.
-    pub config: Option<crate::footprint_config::FootprintConfig>,
+    /// keeps its own. A tab's workspace pins only the style.
+    pub config: crate::chart_footprint::ChartFootprint,
     /// The footprint's sticky detail level (hysteresis on zoom-out).
     pub lod: super::FootprintLod,
     /// The forming bar's ladder as last snapshotted for drawing, with the
@@ -37,4 +37,19 @@ pub struct PaneFootprint {
     /// the range-profile drawings use to notice the live edge moved, so they
     /// re-fold at the snapshot cadence, never per paint.
     pub live_version: u64,
+}
+
+impl PaneFootprint {
+    /// The bars with a ladder: `closed` from `first_state_slot`, and the
+    /// forming bar's snapshot at `partial_slot` while it is on screen.
+    #[must_use]
+    pub fn ladder_slots<'a>(
+        &'a self,
+        first_state_slot: usize,
+        closed: &'a [quantick_engine::BarFootprint],
+        partial_slot: Option<usize>,
+    ) -> super::LadderSlots<'a> {
+        let live = self.live.as_ref().map(|(_, _, ladder)| ladder);
+        super::LadderSlots::new(first_state_slot, closed, partial_slot.zip(live))
+    }
 }

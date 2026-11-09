@@ -1,0 +1,5 @@
+# Narrow read-presentation delegates on NativeWindowHost reach app-only native
+# viewport bindings and the temporary painted-scene view. No new root fields;
+# target routing/frame tickets are headless and painting lives in native adapters.
+QuantickApp +16
+!budget +16

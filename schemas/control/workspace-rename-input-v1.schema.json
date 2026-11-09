@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Rename a workspace.",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "to"
+  ],
+  "title": "WorkspaceRenameInput",
+  "type": "object"
+}

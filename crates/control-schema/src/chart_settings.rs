@@ -151,3 +151,18 @@ pub const READBACKS: &[Readback] = &[journal(
     "an event after the pre-call cursor carries the window and presets the call left",
     &[EVERY_OPTIONAL_TEST],
 )];
+
+/// Published schemas of the chart settings.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "chart-settings-input-v1.schema.json",
+            schema::<ChartSettingsInput>(),
+        ),
+        (
+            "chart-settings-result-v1.schema.json",
+            schema::<ChartSettingsResult>(),
+        ),
+    ]
+}

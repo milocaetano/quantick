@@ -85,7 +85,7 @@ impl CandlesTab {
             if !saved.is_empty() {
                 // The trader's own looks, told apart from the built-ins.
                 ui.separator();
-                ui.label(egui::RichText::new("Saved").small().weak());
+                ui.label(theme::supporting_text(ui, "Saved").small());
             }
             for name in saved {
                 let selected = current.as_deref() == Some(name.as_str());
@@ -111,14 +111,15 @@ impl CandlesTab {
             current.as_deref().unwrap_or("Custom")
         ));
         ui.horizontal(|ui| {
-            let typed = ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.name_draft)
-                        .desired_width(150.0)
-                        .char_limit(MAX_NAME_LEN)
-                        .hint_text("name this look"),
-                )
-                .changed();
+            let hint = crate::theme::supporting_text(ui, "name this look");
+            let typed = crate::theme::preset_input(
+                ui,
+                egui::TextEdit::singleline(&mut self.name_draft)
+                    .desired_width(150.0)
+                    .char_limit(MAX_NAME_LEN)
+                    .hint_text(hint),
+            )
+            .changed();
             self.settle(typed);
             let can_save = !self.name_draft.trim().is_empty();
             if ui

@@ -206,6 +206,15 @@ impl<T: Copy> RenderPalette<T> {
     pub fn inset(&self) -> T {
         *self.get(Token::Inset)
     }
+    pub fn tab_strip(&self) -> T {
+        *self.get(Token::TabStrip)
+    }
+    pub fn brand(&self) -> T {
+        *self.get(Token::Brand)
+    }
+    pub fn replay_ink(&self) -> T {
+        *self.get(Token::ReplayInk)
+    }
     pub fn control(&self) -> T {
         *self.get(Token::Control)
     }
@@ -313,5 +322,32 @@ impl<T: Copy> RenderPalette<T> {
     }
     pub fn sell_ink(&self) -> T {
         *self.get(Token::SellInk)
+    }
+    pub fn replay_plate(&self) -> T {
+        *self.get(Token::ReplayPlate)
+    }
+    pub fn replay_plate_ink(&self) -> T {
+        *self.get(Token::ReplayPlateInk)
+    }
+    pub fn order_plate(&self) -> T {
+        *self.get(Token::OrderPlate)
+    }
+    pub fn order_plate_ink(&self) -> T {
+        *self.get(Token::OrderPlateInk)
+    }
+    pub fn plate_gain(&self) -> T {
+        *self.get(Token::PlateGain)
+    }
+    pub fn plate_loss(&self) -> T {
+        *self.get(Token::PlateLoss)
+    }
+    pub fn hover_fill(&self) -> T {
+        *self.get(Token::HoverFill)
+    }
+    pub fn control_edge(&self) -> T {
+        *self.get(Token::ControlEdge)
+    }
+    pub fn connection_action(&self) -> T {
+        *self.get(Token::ConnectionAction)
     }
 }

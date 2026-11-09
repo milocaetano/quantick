@@ -1,6 +1,6 @@
 //! Per-pane appearance and stable editor addressing, independent of focus.
 use crate::style::ChartStyle;
-use quantick_appearance::ResolvedTheme;
+use quantick_appearance::{Inheritance, ResolvedTheme};
 
 /// Runtime identity, never a mutable pane position or the active tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,9 @@ pub struct PaneStyle {
     authored: Option<ChartStyle>,
     requested: bool,
     context: u64,
+    /// The time grid the theme this pane paints with asks for
+    /// (`chart_time_grid`), kept by [`Self::follow_theme`].
+    theme_time_grid: bool,
 }
 impl PaneStyle {
     pub fn new(style: Option<ChartStyle>) -> Self {
@@ -39,6 +42,7 @@ impl PaneStyle {
             authored: style,
             requested: false,
             context: 0,
+            theme_time_grid: false,
         }
     }
     pub fn request_editor(&mut self) {
@@ -77,6 +81,32 @@ impl PaneStyle {
     pub fn set_grid(&mut self, legacy: &ChartStyle, visible: bool) {
         let mut style = self.authored.unwrap_or(*legacy);
         style.canvas.grid_enabled = visible;
+        self.set(style);
+    }
+    /// Take the theme this pane paints with, so the switches that read the
+    /// pane answer what its paint shows. The window calls it for every pane
+    /// at the start of each frame, beside the egui palette.
+    pub fn follow_theme(&mut self, theme: &ResolvedTheme, bookmap: bool) {
+        let theme = if bookmap { theme.bookmap() } else { theme };
+        self.theme_time_grid = theme.chart_time_grid;
+    }
+    /// The vertical grid this pane shows: the trader's answer where the
+    /// pane, or the window seed it still follows, owns it, otherwise the
+    /// theme's. The same rule [`Self::resolve`] applies, so a layer read, a
+    /// menu, the control plane and the paint agree whether or not `legacy`
+    /// was ever resolved.
+    pub fn time_grid(&self, legacy: &ChartStyle) -> bool {
+        let style = self.authored.unwrap_or(*legacy);
+        style
+            .ownership
+            .time_grid
+            .resolve(style.canvas.time_grid_enabled, || self.theme_time_grid)
+    }
+    /// Switch the vertical grid; from then on it is the trader's, not the theme's.
+    pub fn set_time_grid(&mut self, legacy: &ChartStyle, visible: bool) {
+        let mut style = self.authored.unwrap_or(*legacy);
+        style.canvas.time_grid_enabled = visible;
+        style.ownership.time_grid = Inheritance::Explicit;
         self.set(style);
     }
     pub fn set(&mut self, style: ChartStyle) {
@@ -146,6 +176,39 @@ mod tests {
             panes[1].resolve(&legacy, &dark).candles.bear_fill,
             panes[1].resolve(&legacy, &light).candles.bear_fill
         );
+    }
+    #[test]
+    fn the_light_time_grid_reads_as_it_paints_whatever_the_seed_holds() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        // A fresh seed, never resolved; and one saved before the switch
+        // existed, which owns an off grid.
+        let fresh = ChartStyle::default();
+        let mut saved = ChartStyle::default();
+        saved.ownership.time_grid = Inheritance::Explicit;
+        let mut handed_back = saved;
+        handed_back.ownership.time_grid = Inheritance::Theme;
+        for (legacy, authored) in [
+            (fresh, None),
+            (fresh, Some(fresh)),
+            (saved, None),
+            (saved, Some(handed_back)),
+        ] {
+            let mut pane = PaneStyle::new(authored);
+            pane.follow_theme(&light, false);
+            let painted = pane.resolve(&legacy, &light).canvas.time_grid_enabled;
+            assert_eq!(pane.time_grid(&legacy), painted, "{authored:?}");
+            pane.set_time_grid(&legacy, !painted);
+            assert_eq!(pane.time_grid(&legacy), !painted);
+            assert_eq!(
+                pane.resolve(&legacy, &light).canvas.time_grid_enabled,
+                !painted
+            );
+        }
+        let mut pane = PaneStyle::default();
+        pane.follow_theme(&light, true);
+        assert!(pane.time_grid(&fresh), "Light's Bookmap surface keeps it");
+        pane.follow_theme(&ResolvedTheme::default(), false);
+        assert!(!pane.time_grid(&fresh), "Dark opens without it");
     }
     #[test]
     fn focus_and_stale_identity_never_replace_pinned_target() {

@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 mod asset_modes;
+mod contract_rolls;
+mod market_asset;
 pub use asset_modes::AssetMode;
 
 use crate::symbols_file::AddedSymbols;
@@ -93,11 +95,24 @@ pub struct FeedConfig {
     /// stays the presets file's business, reported when it is applied.
     #[serde(default)]
     pub symbol_bubble_presets: BTreeMap<String, String>,
+    /// Families of dated contracts that are one market for its drawings, on top
+    /// of the keys above: `"WDO*"`. A family here moves no saved bubble look.
+    #[serde(default)]
+    pub asset_families: Vec<String>,
+    /// Other names an asset is searched by in "Open a market", keyed like
+    /// the tables above: `"WIN*" = ["mini índice", "ibovespa"]`.
+    #[serde(default)]
+    pub asset_aliases: BTreeMap<String, Vec<String>>,
     /// Per-asset modes, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets):
     /// what an asset gets only because the config switches it on
     /// ([`AssetMode`]). Keys must match a symbol this feed offers.
     #[serde(default)]
     pub symbol_asset_modes: BTreeMap<String, AssetMode>,
+    /// Which dated contract follows which: `contract_rolls = { "<symbol>" =
+    /// "<next>" }`. Exact symbols, never a pattern. The one place a roll's
+    /// target comes from ([`Self::next_contract`]).
+    #[serde(default)]
+    pub contract_rolls: BTreeMap<String, String>,
     /// The canvas layout a tab on this feed opens showing.
     ///
     /// Startup-scoped, like `default_feed`: it decides what a *new* tab looks
@@ -493,6 +508,23 @@ impl AppConfig {
         feed.symbols.len() != before
     }
 
+    /// `(id, label)` for every configured feed, for a picker. A provider that is
+    /// not streaming yet says "(soon)", so the list is honest about what connects.
+    #[must_use]
+    pub fn feed_choices(&self) -> Vec<(String, String)> {
+        self.feeds
+            .iter()
+            .map(|feed| {
+                let label = if feed.provider.is_implemented() {
+                    feed.name.clone()
+                } else {
+                    format!("{} (soon)", feed.name)
+                };
+                (feed.id.clone(), label)
+            })
+            .collect()
+    }
+
     /// The display name of feed `id`, or its id when the config has no such
     /// feed — a borrow, because the chrome reads it every frame.
     #[must_use]
@@ -696,6 +728,8 @@ impl AppConfig {
             // empty preset name is a config typo. Whether the name resolves
             // stays the presets file's business.
             feed.validate_asset_modes()?;
+            feed.validate_asset_aliases()?;
+            feed.validate_contract_rolls()?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols
@@ -1346,7 +1380,10 @@ mod tests {
         // rather than one list that half-resolves whoever is logged in.
         let b3 = config.feed("metatrader-b3").expect("B3 feed");
         assert_eq!(b3.provider, ProviderKind::MetaTrader);
-        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26"]);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26", "WINZ26", "WING27"]);
+        assert_eq!(b3.next_contract("WINV26"), Some("WINZ26"));
+        assert_eq!(b3.next_contract("WINZ26"), Some("WING27"));
+        assert_eq!(b3.next_contract("WIN$N"), None, "an alias never rolls");
         let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
         assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
         assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);

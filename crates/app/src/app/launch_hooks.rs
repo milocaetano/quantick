@@ -93,7 +93,11 @@ pub(super) fn apply_launch_phase(
     // An env var is not a user edit: what the autostart hooks switched on
     // must not be written back as though the user had asked for it every
     // launch from now on. Same rule the indicator state follows.
-    let staged_layers = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let staged_layers = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);
@@ -795,15 +799,15 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // follows the layout choice because set_layout opens every selected pane.
     let tab = app.active_tab_mut();
     if env.var("QUANTICK_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.set_context_collapsed(true);
+        tab.canvas.set_context_collapsed(true);
     }
     if env.var("QUANTICK_FLOW_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.set_flow_collapsed(true);
+        tab.canvas.set_flow_collapsed(true);
     }
     let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
     let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
-    if tab.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
-        let shares = tab.context_height_shares();
+    if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
+        let shares = tab.canvas.context_height_shares();
         let shares = [
             shares
                 .first()
@@ -816,7 +820,7 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
                 .filter(|share| *share > 0.0)
                 .unwrap_or(0.5),
         ];
-        tab.restore_context_heights(&shares, &[upper, lower]);
+        tab.canvas.restore_context_heights(&shares, &[upper, lower]);
     }
     // The Workspace menu's own path, so a validation run can see the save
     // confirmation without a click. A menu entry cannot be reached by an

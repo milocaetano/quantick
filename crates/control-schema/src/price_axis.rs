@@ -91,3 +91,18 @@ pub const READBACKS: &[Readback] = &[snapshot(
         "the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane",
     ],
 )];
+
+/// Published schemas of the price axis.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "chart-price-axis-input-v1.schema.json",
+            schema::<PriceAxisInput>(),
+        ),
+        (
+            "chart-price-axis-result-v1.schema.json",
+            schema::<PriceAxisResult>(),
+        ),
+    ]
+}

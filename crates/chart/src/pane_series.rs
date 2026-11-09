@@ -9,6 +9,24 @@ pub struct PaneSeriesRead<'a> {
 }
 
 impl<'a> PaneSeriesRead<'a> {
+    /// The slot of a bar that covers only *part* of the interval it occupies,
+    /// when there is one.
+    ///
+    /// The tape's first bar opens on its first print, which lands somewhere
+    /// inside the interval rather than on its edge — and the venue candle
+    /// that did cover the whole interval was dropped at the seam
+    /// (`trim_to_seam`) precisely because the two overlap. So that slot holds
+    /// a short bar wearing a full bar's clothes: a range folding it is missing
+    /// whatever traded before the app connected, measured on a live BTCUSDT
+    /// connect at 36% of a 1-minute bucket and 94% of an hourly one.
+    ///
+    /// No volume is invented to close the gap. The profile says the bar is
+    /// partly covered and lets the trader judge it — the same contract the
+    /// approximated-from-OHLC label keeps.
+    ///
+    /// `None` for a pane that does not cut by time (a tick or volume bar owns
+    /// no interval to fall short of), and for a first bar that opens exactly
+    /// on its boundary.
     pub fn partial_bucket_slot(&self) -> Option<usize> {
         let interval = self.state.spec().time_interval_ms()?;
         // The first print, not the bar's open: a venue lead in front of it
@@ -18,6 +36,34 @@ impl<'a> PaneSeriesRead<'a> {
             quantick_engine::time_bucket::time_bucket_start(first, interval) != first;
         opens_inside.then(|| self.seam_slot())
     }
+    /// The slot whose bar *covers* market time `ms`, or `None` when this
+    /// pane's tape does not reach that instant at all.
+    ///
+    /// [`Self::slot_at_time`] clamps at both ends — an instant older than the
+    /// series answers slot 0, a newer one the newest slot — which is what a
+    /// drawing anchor being re-hung on the closest bar wants. A mark standing
+    /// for a *fill* wants the opposite answer at those edges: outside the
+    /// window the pane holds, the tape on screen cannot prove the print
+    /// happened, and a mark on the wrong bar is worse than no mark. Without
+    /// it a replay seek — which wipes the bars and keeps the round trips,
+    /// because they happened — stacks every earlier trade on whichever bar
+    /// sits at the edge, and they pile up there as the replay runs on.
+    ///
+    /// The window is [`Self::covered_window`]'s. Between its two ends
+    /// `slot_at_time` is already exact, so only the edges are decided here.
+    ///
+    /// Third of three deliberately different answers to one lookup, and the
+    /// list is meant to stay at three. [`Self::slot_at_time`] clamps at both
+    /// ends; `slot_of_time` refuses the old end but lets the new one *run on*
+    /// past the newest bar, because a trend line pointing into the future
+    /// belongs there; this one refuses both, because a fill does not happen
+    /// in the future and did not happen before the tape began.
+    ///
+    /// One instant per call. A caller asking about many instants against one
+    /// cut of the series — the trade paint, twice per closed round trip per
+    /// frame — takes `covered_window` itself and tests against the two
+    /// numbers, rather than re-deriving them thousands of times a second on
+    /// the paint path.
     pub fn covering_slot_at_time(&self, ms: i64) -> Option<usize> {
         let (oldest, newest) = self.covered_window()?;
         if ms < oldest || ms > newest {
@@ -25,6 +71,13 @@ impl<'a> PaneSeriesRead<'a> {
         }
         self.slot_at_time(ms)
     }
+    /// The stretch of market time this pane's bars cover, both ends
+    /// inclusive: the oldest bar's open to the newest bar's last print.
+    ///
+    /// The oldest bar is the venue prefix's first candle when there is a
+    /// prefix, so the lower end is that candle's open rather than a print —
+    /// which is what "the chart reaches back this far" means to someone
+    /// reading the screen, candles or prints. `None` for a pane with no bars.
     pub fn covered_window(&self) -> Option<(i64, i64)> {
         let newest = self
             .state
@@ -34,6 +87,9 @@ impl<'a> PaneSeriesRead<'a> {
             .map(|bar| bar.close_time)?;
         Some((self.slot_open_time(0)?, newest))
     }
+    /// The market time under the right edge of the candles' pane, or `None`
+    /// while the view follows live (the right edge is the newest bar by
+    /// definition, so there is nothing to remember) or when there are no bars.
     pub fn right_edge_time(&self, viewport: &crate::viewport::Viewport) -> Option<i64> {
         if viewport.follows_live() {
             return None;

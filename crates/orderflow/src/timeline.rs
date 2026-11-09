@@ -61,6 +61,12 @@ struct Lane {
     start_ms: i64,
     end_ms: i64,
     reference_ms: i64,
+    /// Market time before `start_ms` the native tape draws its book over,
+    /// left of its oldest dot ([`BarTimeline::with_lane_lead_ms`]).
+    lead_ms: i64,
+    /// Whether that lead stopped at its cap, short of the inset it pads
+    /// ([`BarTimeline::with_lane_lead_capped`]).
+    lead_capped: bool,
 }
 
 /// One bar slot and the market time it represents.
@@ -155,6 +161,8 @@ impl BarTimeline {
             start_ms: edge.now_ms.saturating_sub(edge.window_ms.max(1)),
             end_ms: edge.now_ms,
             reference_ms: edge.reference_ms,
+            lead_ms: 0,
+            lead_capped: false,
         });
         Self {
             slots,
@@ -169,6 +177,43 @@ impl BarTimeline {
     pub fn with_full_lane_coverage(mut self) -> Self {
         self.full_lane_coverage = true;
         self
+    }
+
+    /// Let the lane's book reach `lead_ms` of market time before the lane
+    /// opens, on the lane's own clock: the native tape pads its oldest dot
+    /// with an inset, and the book under that inset is this older depth,
+    /// never the oldest column stretched. Nothing else moves: the lane still
+    /// opens at [`Self::lane_start_ms`], and every position stays in it.
+    #[must_use]
+    pub fn with_lane_lead_ms(mut self, lead_ms: i64) -> Self {
+        if let Some(lane) = &mut self.lane {
+            lane.lead_ms = lead_ms.max(0);
+        }
+        self
+    }
+
+    /// Mark the lead as stopped at its cap
+    /// ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)): the inset
+    /// farther out than it is a labelled gap, never an empty book.
+    #[must_use]
+    pub fn with_lane_lead_capped(mut self, capped: bool) -> Self {
+        if let Some(lane) = &mut self.lane {
+            lane.lead_capped = capped;
+        }
+        self
+    }
+
+    /// Whether the lane's lead stopped at its cap.
+    #[must_use]
+    pub fn lane_lead_capped(&self) -> bool {
+        self.lane.is_some_and(|lane| lane.lead_capped)
+    }
+
+    /// The market time before the lane's opening its book reaches over;
+    /// zero when there is no lane or no lead.
+    #[must_use]
+    pub fn lane_lead_ms(&self) -> i64 {
+        self.lane.map_or(0, |lane| lane.lead_ms)
     }
 
     /// Exchange timestamp where the live lane begins.

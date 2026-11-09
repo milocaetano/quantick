@@ -135,6 +135,27 @@ impl ChartPane {
         open_settings
     }
 
+    /// Whether the pane has the time axis `tape` names: the candles' always,
+    /// the tape's only where its strip is laid out past the lane divider.
+    /// The one rule the strip's double-click and `chart.time_axis.reset` share.
+    pub(crate) fn has_time_axis(&self, tape: bool) -> bool {
+        !tape || (self.orderflow.is_some() && self.frame.lane_time_strip.is_some())
+    }
+
+    /// A time axis back where it opened: the candles' spacing, or the tape's
+    /// window onto its setting. The strip's double-click and the named call
+    /// both land here; `false`, and nothing moves, on a pane without that axis.
+    pub(crate) fn reset_time_axis(&mut self, tape: bool) -> bool {
+        if !self.has_time_axis(tape) {
+            return false;
+        }
+        match self.orderflow.as_mut().filter(|_| tape) {
+            Some(orderflow) => orderflow.reset_live_lane_window(),
+            None => self.model.viewport.reset_zoom(),
+        }
+        true
+    }
+
     /// Up and down pans the shared price axis wherever the drag is; sideways
     /// it pans the candles, or over the tape the tape's own time: rightward
     /// reveals older prints.

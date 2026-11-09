@@ -57,6 +57,7 @@ fn stroke(stroke: quantick_drawings::Stroke) -> egui::Stroke {
 /// egui shape the tool's own painter call made before the tools left `app`
 /// (`drawings_scene_golden` holds the two to the same list).
 pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
+    let palette = crate::theme::get(painter.ctx());
     for shape in &scene.shapes {
         match shape {
             MarkShape::Line {
@@ -129,13 +130,16 @@ pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
                 font,
                 color,
             } => {
-                painter.text(
-                    pos(*at),
-                    egui::Align2([align(*x), align(*y)]),
-                    text,
-                    font_id(*font),
-                    to_color32(*color),
-                );
+                let color = to_color32(*color);
+                let galley = painter.layout_no_wrap(text.clone(), font_id(*font), color);
+                let rect =
+                    egui::Align2([align(*x), align(*y)]).anchor_size(pos(*at), galley.size());
+                if let Some(backing) =
+                    crate::drawings::text_backing(&palette, color, palette.canvas())
+                {
+                    painter.rect_filled(rect.expand(2.0), 2.0, backing);
+                }
+                painter.galley(rect.min, galley, color);
             }
         }
     }

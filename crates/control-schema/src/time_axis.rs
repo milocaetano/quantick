@@ -90,3 +90,18 @@ pub const READBACKS: &[Readback] = &[snapshot(
         "the_live_overview_call_matches_the_open_canvas_double_click",
     ],
 )];
+
+/// Published schemas of the time axis reset.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "chart-time-axis-reset-input-v1.schema.json",
+            schema::<TimeAxisResetInput>(),
+        ),
+        (
+            "chart-time-axis-reset-result-v1.schema.json",
+            schema::<TimeAxisResetResult>(),
+        ),
+    ]
+}

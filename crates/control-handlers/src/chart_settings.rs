@@ -128,14 +128,18 @@ pub fn apply(
             required()?;
         }
         ChartSettingsInput::UpdateCandles { style, .. } => {
-            required()?;
+            let stored = required()?;
             let file = style_wire::decode(style).map_err(PresetError::Refused)?;
             if !file.valid() {
                 return Err(PresetError::Refused(
                     "chart style values must be finite and within the documented bounds",
                 ));
             }
-            look = Some(file.into());
+            let edited: ChartStyle = file.into();
+            if let Some(refusal) = edited.theme_owned_edit(&stored, &surface.resolve(stored)) {
+                return Err(PresetError::Refused(refusal));
+            }
+            look = Some(edited);
         }
     }
     let look = look.map(|style| surface.resolve(style));

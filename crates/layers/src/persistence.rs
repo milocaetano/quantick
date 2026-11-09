@@ -52,7 +52,9 @@ impl SavedLayers {
 #[derive(Debug, Default)]
 pub struct LayerActions {
     pub grid: Option<bool>,
-    /// The pane whose canvas requested the grid change.
+    /// The vertical time grid, asked for the same way.
+    pub time_grid: Option<bool>,
+    /// The pane whose canvas requested either grid change.
     pub grid_pane: Option<u64>,
     pub indicators_changed: bool,
     pub footprint_changed: bool,
@@ -63,4 +65,7 @@ pub struct LayerActions {
     pub toggle_settings: bool,
     /// A double click on the candles asked for the chart settings window.
     pub open_chart_settings: bool,
+    /// The axis menu switched the forming bar's progress on the price tag,
+    /// a setting of the tab's market.
+    pub bar_progress: Option<bool>,
 }

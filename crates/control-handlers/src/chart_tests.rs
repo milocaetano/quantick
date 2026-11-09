@@ -62,6 +62,17 @@ fn the_summary_reports_every_pane_with_its_framing_and_coverage() {
     assert_eq!(empty.side, PaneSideDto::Time);
     assert!(!empty.focused);
     assert_eq!(empty.coverage.oldest_open_time_unix_ms, None);
+    // The forming bar holds the fifth print of two: one of two ticks.
+    let progress = flow.bar_progress.as_ref().expect("a forming bar reads");
+    assert_eq!(progress.done.as_str(), "1");
+    assert_eq!(progress.target.as_ref().map(|t| t.as_str()), Some("2"));
+    assert_eq!(progress.unit, "ticks");
+    assert_eq!(flow.price_tag_progress, Some(true));
+    let wire = serde_json::to_value(flow).expect("a pane serializes");
+    assert_eq!(
+        wire["bar_progress"],
+        serde_json::json!({"done": "1", "target": "2", "unit": "ticks"})
+    );
 }
 
 #[test]

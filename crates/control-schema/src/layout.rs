@@ -323,7 +323,7 @@ pub fn apply_preset_descriptor() -> CapabilityDescriptor {
     descriptor(
         APPLY_PRESET_CAPABILITY_ID,
         "Apply a layout preset",
-        "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+        "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read.",
         generated_schema::<ApplyPresetInput>(),
     )
 }
@@ -423,7 +423,7 @@ pub fn tab_switch_descriptor() -> CapabilityDescriptor {
     tab_descriptor(
         TAB_SWITCH_CAPABILITY_ID,
         "Switch layout tab",
-        "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
+        "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and its drawings stay, being the market's. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
         generated_schema::<SwitchLayoutTabInput>(),
     )
 }

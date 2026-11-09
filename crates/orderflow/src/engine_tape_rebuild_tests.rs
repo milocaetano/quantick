@@ -132,6 +132,7 @@ fn play_hosted(prints: &[Trade], first: &HeatmapConfig, schedule: &Schedule<'_>)
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: Vec::new(),
+                tape_lead_share: 0.0,
             }),
         };
         if frame_index % FRAMES_PER_PUBLICATION == 0
@@ -361,6 +362,7 @@ fn the_overlay_folded_where_prints_land_is_the_overlay_folded_whole() {
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: Vec::new(),
+                tape_lead_share: 0.0,
             }),
         };
         // The worker stalls for twenty seconds twice.

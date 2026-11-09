@@ -78,8 +78,12 @@ impl FlowCellHit {
         if regions.saturating_sub(usize::from(context.has_lane)) == 0 {
             return None;
         }
-        let (first, after, touches_lane) =
-            super::depth_cell_slots(cell.x0, cell.x1, regions, context.has_lane);
+        // A lead band sits at the opening with no width there: it is the
+        // tape's, older than its window, never a candle's.
+        let (first, after, touches_lane) = match cell.lead_span {
+            Some(_) if context.has_lane => (regions - 1, regions - 1, true),
+            _ => super::depth_cell_slots(cell.x0, cell.x1, regions, context.has_lane),
+        };
         Some(Self {
             generation: cell.generation,
             side: cell.side,
@@ -176,6 +180,18 @@ pub struct HeatmapCell {
     /// zero-width at the confirmation instant, and at the live edge when the
     /// lane's own runs carry the book there (depth averaging off).
     pub current_book: bool,
+    /// Where a lane cell outside the lane's window runs on the tape's own
+    /// clock, as lane fractions `(from, to)`: zero is the opening (the
+    /// oldest dot), one is NOW. Below zero is the older depth the native
+    /// tape paints in its inset left of the oldest dot; above one, only on a
+    /// held tape, the depth recorded after its right edge, in the inset past
+    /// it ([`TapeHorizontalGeometry::book_span_px`](super::TapeHorizontalGeometry::book_span_px)).
+    /// `x0` and `x1` both stand at a lane edge, so no reader places it in a
+    /// candle slot; one that asks which pane a cell is in reads this field
+    /// ([`FlowCellHit::from_cell`] reports it on the lane). Painted after the
+    /// lane's own bands, and only in the room their cap left. `None` for
+    /// every other cell.
+    pub lead_span: Option<(f64, f64)>,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
@@ -300,6 +316,17 @@ pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
 /// drag outran the published blocks. Unknown, never an empty book.
 pub const BOOK_PENDING: &str = "book_pending_for_held_tape";
 
+/// Reason for the part of a native tape's inset farther from its window than
+/// the book it reads beside it
+/// ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)): recorded, but
+/// not read this far out. Never an empty book.
+pub const BOOK_BEYOND_LEAD: &str = "book_not_read_beyond_tape_lead";
+
+/// Reason for the inset past NOW while the live tape's current book is no
+/// longer current ([`book_is_current`](crate::projection::book_is_current)):
+/// there is no book to preview there, and a stale one is never carried.
+pub const BOOK_NOT_CURRENT: &str = "book_not_current_past_now";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {
@@ -313,6 +340,11 @@ pub struct GapPrimitive {
     pub x1: f64,
     /// Diagnostic reason copied from history.
     pub reason: String,
+    /// A gap outside the lane's window, in one of the native tape's insets:
+    /// lane fractions, as [`HeatmapCell::lead_span`], an infinite end
+    /// reaching the pane's edge; `x0` and `x1` stand at a lane edge. `None`
+    /// for every other gap.
+    pub lead_span: Option<(f64, f64)>,
 }
 
 impl GapPrimitive {
@@ -321,6 +353,15 @@ impl GapPrimitive {
     #[must_use]
     pub fn precedes_capture(&self) -> bool {
         self.reason == BEFORE_CAPTURE
+    }
+
+    /// Whether the painter marks only this gap's capture boundary, as it
+    /// marks the stretch before capture across the chart. In a native
+    /// tape's inset the same stretch is filled: the inset is a strip beside
+    /// the book, and an unfilled one would read as an empty book.
+    #[must_use]
+    pub fn marks_boundary_only(&self) -> bool {
+        self.precedes_capture() && self.lead_span.is_none()
     }
 }
 
@@ -533,6 +574,8 @@ pub struct LiveMarks {
     /// The book on the tape, read on this frame's clock and carried to its
     /// live edge (`lane_heat`).
     pub cells: Vec<HeatmapCell>,
+    /// The coverage gaps inside the tape's lead (`lane_heat::lead_gaps`).
+    pub gaps: Vec<GapPrimitive>,
     /// Tape bands the visible-cell cap left out.
     pub dropped_cells: usize,
     /// The book the current rows among [`cells`](Self::cells) were read from.
@@ -630,7 +673,11 @@ impl SettledProjection {
             tape_facts: live.tape_facts,
             volume_dots: self.volume_dots,
             liquidity_events,
-            gaps: Arc::clone(&self.gaps),
+            gaps: if live.gaps.is_empty() {
+                Arc::clone(&self.gaps)
+            } else {
+                Arc::new(self.gaps.iter().cloned().chain(live.gaps).collect())
+            },
             bbo_lines: Arc::new(Vec::new()),
             current_book: live.current_book,
             live_now_x: live.live_now_x,

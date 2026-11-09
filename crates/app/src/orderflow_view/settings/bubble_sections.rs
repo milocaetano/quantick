@@ -736,7 +736,7 @@ fn color_override(ui: &mut egui::Ui, label: &str, value: &mut Option<[u8; 3]>, f
                 *value = None;
             }
         } else {
-            ui.weak("(theme)");
+            ui.label(crate::theme::supporting_text(ui, "(theme)"));
         }
     });
 }

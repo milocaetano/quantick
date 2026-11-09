@@ -49,9 +49,6 @@ const WINDOW_PADDING_X: f32 = 3.0;
 /// The bars text and its faint caret.
 const BARS_SIZE: f32 = 13.0;
 const CARET_SIZE: f32 = 10.0;
-/// egui's bundled fonts have one weight; the text painted again this far right
-/// reads as the semibold the header asks for.
-const SEMIBOLD_OFFSET_PX: f32 = 0.4;
 /// The spin inside the bars control during a recut.
 const REBUILD_SPINNER_PX: f32 = 10.0;
 /// The indicators button: 12 pt words, an icon and its gap, its padding.
@@ -1065,7 +1062,11 @@ fn caret_text(palette: &crate::theme::Palette, words: &str) -> egui::text::Layou
         3.0,
         egui::TextFormat::simple(
             palette.body_font(CARET_SIZE),
-            palette.text_faint().gamma_multiply(0.6),
+            if palette.resolved.dark {
+                palette.text_faint().gamma_multiply(0.6)
+            } else {
+                palette.text_support()
+            },
         ),
     );
     text
@@ -1117,7 +1118,7 @@ pub fn bars_control(
         );
     } else {
         ui.painter().galley(
-            at + egui::vec2(SEMIBOLD_OFFSET_PX, 0.0),
+            at + egui::vec2(crate::theme::BOLD_STRIKE_PX, 0.0),
             galley.clone(),
             palette.text_primary(),
         );

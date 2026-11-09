@@ -175,6 +175,9 @@ fn freeze_past(view: &OrderflowView, shown: &VisibleOrderflow) -> usize {
         heat: Arc::new(quantick_orderflow::projection::PastHeat {
             from_ms,
             until_ms: from_ms + block_ms,
+            lead_ms: 0,
+            lead_capped: false,
+            recorded_until_ms: from_ms + block_ms,
             prices: PriceWindow::new(Decimal::ZERO, Decimal::ONE).unwrap(),
             liquidity_reference: Decimal::ZERO,
             effective_grouping: shown.projection.effective_grouping,

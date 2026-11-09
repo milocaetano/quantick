@@ -80,15 +80,25 @@ impl PreparedWorkerRead for DescribeInvocation {
 }
 
 struct SnapshotInvocation {
+    window_id: Option<quantick_control::wire::WireU64>,
     scopes: Vec<SnapshotScopeId>,
 }
 
 impl PreparedUiRead for SnapshotInvocation {
+    fn needs_paint(&self) -> bool {
+        quantick_control_host::window_capture::needs_painted_scopes(&self.scopes)
+    }
+    fn window_target(&self) -> Option<Option<quantick_control::wire::WireU64>> {
+        Some(self.window_id)
+    }
     fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
         context
             .projections
             .capture(context.app, context.instance_id, &self.scopes)
-            .map(|capture| Box::new(capture) as UiReadExecution)
+            .map(|mut capture| {
+                capture.window_id = context.window_id;
+                Box::new(capture) as UiReadExecution
+            })
     }
 }
 
@@ -195,6 +205,13 @@ struct EvidenceCaptureInvocation {
 }
 
 impl PreparedUiRead for EvidenceCaptureInvocation {
+    fn needs_paint(&self) -> bool {
+        self.input.screenshot
+            || quantick_control_host::window_capture::needs_painted_scopes(&self.input.scopes)
+    }
+    fn window_target(&self) -> Option<Option<quantick_control::wire::WireU64>> {
+        Some(self.input.window_id)
+    }
     fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
         capture_prevalidated(context, &self.input, self.source_scopes.clone())
             .map(|capture| Box::new(capture) as UiReadExecution)
@@ -279,6 +296,7 @@ pub(super) fn prepare_snapshot(
     Ok(PreparedCapability {
         dispatch: PreparedDispatch::Ui(Box::new(SnapshotInvocation {
             scopes: input.scopes,
+            window_id: input.window_id,
         })),
         dynamic_permissions: required,
     })
@@ -400,6 +418,7 @@ pub(super) fn prepare_diagnostics(
     Ok(PreparedCapability {
         dispatch: PreparedDispatch::Ui(Box::new(SnapshotInvocation {
             scopes: vec![SnapshotScopeId::new("health.summary").expect("static scope ID is valid")],
+            window_id: None,
         })),
         dynamic_permissions: BTreeSet::new(),
     })
@@ -411,9 +430,10 @@ pub(super) fn prepare_scene(
     _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
-    let _: EmptyInput = decode_payload(payload)?;
+    let input: quantick_control_schema::scene::SceneReadInput = decode_payload(payload)?;
     Ok(PreparedCapability {
         dispatch: PreparedDispatch::Ui(Box::new(SnapshotInvocation {
+            window_id: input.window_id,
             scopes: vec![
                 SnapshotScopeId::new(SCENE_CONTROLS_SCOPE_ID).expect("static scope ID is valid"),
             ],
@@ -448,7 +468,10 @@ pub(super) fn bindings() -> [(CapabilityDescriptor, PrepareHandler); 9] {
             prepare_diagnostics,
         ),
         (
-            read_descriptor::<EmptyInput, SerializedSnapshotCapture>(&SCENE),
+            read_descriptor::<
+                quantick_control_schema::scene::SceneReadInput,
+                SerializedSnapshotCapture,
+            >(&SCENE),
             prepare_scene,
         ),
         (

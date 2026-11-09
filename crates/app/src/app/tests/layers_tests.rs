@@ -184,7 +184,11 @@ fn layer_visibility_survives_a_restart() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.runtime.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let mask = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
@@ -207,7 +211,10 @@ fn layer_visibility_survives_a_restart() {
     app.layer_wiring().maintain(&egui::Context::default());
     assert_eq!(
         app.runtime.workspace.layers().mask(),
-        app.active_tab().flow_pane.layer_mask(&app.runtime.style),
+        app.active_tab()
+            .flow_pane
+            .layer_read()
+            .mask(&app.runtime.style),
         "a settled canvas writes nothing further"
     );
 
@@ -256,7 +263,11 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.runtime.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    let mask = app
+        .active_tab()
+        .flow_pane
+        .layer_read()
+        .mask(&app.runtime.style);
     app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     app.layer_wiring().maintain(&egui::Context::default());
@@ -948,7 +959,8 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let stroke_position = egui::pos2(700.0, 300.0);
     click_chart(&mut app, &ctx, stroke_position);
-    let marker = egui::Color32::from_rgb(1, 2, 3);
+    // A sentinel the canvas leaves alone: near-black would be repainted legible.
+    let marker = egui::Color32::from_rgb(201, 2, 3);
     app.active_tab_mut()
         .flow_pane
         .drawings

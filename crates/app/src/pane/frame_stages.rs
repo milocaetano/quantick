@@ -23,6 +23,7 @@ use crate::indicators::IndicatorViews;
 use crate::orderflow_view::{LiveLane, OrderflowView, VisibleBarTimeline};
 use crate::style::CandleStyle;
 use crate::viewport::Viewport;
+use quantick_stores::footprint_presentation::{CandleStyles, LadderSlots};
 
 use super::PaneChrome;
 use super::draw_frame::DrawFrame;
@@ -441,6 +442,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         indicators: &'s IndicatorViews,
         clear_depth: bool,
         base: &'s CandleStyle,
+        ladders: LadderSlots<'s>,
     ) -> CandlePass<'s, 'f> {
         CandlePass {
             frame: self.frame,
@@ -451,7 +453,8 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             half: self.dress.half,
             candle_lane: self.dress.candle_lane,
             content_half: self.dress.content_half,
-            style: self.dress.style(base),
+            styles: CandleStyles::new(base, self.dress.faded.as_ref(), ladders),
+            pixel: None,
         }
     }
 
@@ -510,7 +513,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             // Field access, not `ChartPane::footprint_config`: the method
             // borrows the whole pane and the draw below needs the level of
             // detail mutably. Same resolution rule.
-            config: footprint.config.as_ref().unwrap_or(chrome.footprint),
+            config: footprint.config.resolve(chrome.footprint),
         };
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
@@ -610,24 +613,6 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             {
                 crate::indicator_guide::paint(frame.painter, pane_frame.rect, x);
             }
-        }
-    }
-}
-
-impl super::ChartPane {
-    pub(crate) fn opening_scale_snapshot(
-        &self,
-    ) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
-        quantick_control_schema::orderflow::OpeningScaleSnapshot {
-            tape: self.orderflow.as_ref().map(|view| {
-                view.cached_config()
-                    .volume_dots
-                    .ignore_opening_burst_in_scale
-            }),
-            candle: self
-                .orderflow
-                .as_ref()
-                .is_some_and(OrderflowView::ignore_flow_opening),
         }
     }
 }

@@ -214,7 +214,7 @@ pub(super) struct CandleDress {
     pub(super) half: f32,
     pub(super) candle_lane: f32,
     pub(super) content_half: f32,
-    faded: Option<CandleStyle>,
+    pub(super) faded: Option<CandleStyle>,
 }
 
 impl CandleDress {
@@ -235,7 +235,7 @@ impl CandleDress {
         // a style below its own zoom floor hands over, and the candle must be
         // laid out for whichever one paints. Asking the requested style put a
         // sidebar lane under a style that draws full width.
-        let config = footprint.config.as_ref().unwrap_or(chrome.footprint);
+        let config = footprint.config.resolve(chrome.footprint);
         let footprint_style = footprint.lod.effective_style(config.style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot, and the
@@ -261,11 +261,5 @@ impl CandleDress {
             content_half,
             faded,
         }
-    }
-
-    /// The style the candles paint in: the faded one while the footprint
-    /// dresses them, else the chart's own.
-    pub(super) fn style<'s>(&'s self, base: &'s CandleStyle) -> &'s CandleStyle {
-        self.faded.as_ref().unwrap_or(base)
     }
 }

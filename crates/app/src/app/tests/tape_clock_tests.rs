@@ -57,7 +57,7 @@ fn replay_clock_uses_applied_prints_to_bound_playhead_motion_and_pause() {
     let status = std::sync::Arc::clone(&link.status);
     let (mut app, _events, _commands, _book) = test_app();
     enable_tape_only(&mut app);
-    app.active_tab_mut().replay = Some(link);
+    app.active_tab_mut().link.replay = Some(link);
     app.active_tab_mut().flow_pane.ingest_backfill(&[first]);
 
     replay_support::set_position_ms(&status, start + 1_000);
@@ -129,4 +129,120 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
         Some(clock),
         "the first print frees it"
     );
+}
+
+/// What a time pane's price tag reads with the tab's market clock, as the
+/// canvas hands it to every pane.
+fn time_left(app: &QuantickApp) -> Option<i64> {
+    let tab = app.active_tab();
+    let clock_ms = tab.tape().market_now_ms();
+    match tab.flow_pane.state.bar_progress_at(clock_ms)? {
+        quantick_chart::bar_progress::BarProgressReading::Remaining { remaining_ms, .. } => {
+            Some(remaining_ms)
+        }
+        other => panic!("a time pane counts down, not {other:?}"),
+    }
+}
+
+/// A time bar counts down on the market clock with no tape layer on: live
+/// it runs on the host's time between prints, replayed it stands on the
+/// playhead and stops while the replay is paused.
+#[test]
+fn the_time_countdown_reads_the_market_clock_live_and_replayed() {
+    let (mut app, _events, _commands, _book) = test_app();
+    app.active_tab_mut()
+        .flow_pane
+        .set_spec(quantick_engine::BarSpec::Time(60_000));
+    let print = trade(1);
+    app.active_tab_mut().ingest_live_trade_at(&print, 10_000);
+    app.active_tab_mut().update_tape_clock_at(10_000);
+    assert_eq!(time_left(&app), Some(60_000 - print.timestamp_ms));
+    app.active_tab_mut().update_tape_clock_at(17_000);
+    assert_eq!(
+        time_left(&app),
+        Some(60_000 - print.timestamp_ms - 7_000),
+        "no print came"
+    );
+
+    let text = "# quantick-replay 1\n# symbol=WINV26\n# timezone=UTC\n# side_source=venue_flags\nDate,Time,Price,Bid,Ask,Volume,Side\n2026-09-22,09:00:05.000,187000,186995,187005,10,B\n2026-09-22,09:00:50.000,187005,187000,187010,20,S\n";
+    let session = quantick_replay::Session::from_text(
+        std::path::Path::new("WINV26/2026-09-22.csv"),
+        text,
+        quantick_replay::ParseOptions::default(),
+    )
+    .expect("clock fixture is a valid recording");
+    let first = session.trades[0].clone();
+    let link = replay_support::detached_link(session);
+    let status = std::sync::Arc::clone(&link.status);
+    let (mut app, _events, _commands, _book) = test_app();
+    app.active_tab_mut()
+        .flow_pane
+        .set_spec(quantick_engine::BarSpec::Time(60_000));
+    app.active_tab_mut().link.replay = Some(link);
+    app.active_tab_mut()
+        .flow_pane
+        .ingest_backfill(std::slice::from_ref(&first));
+    replay_support::set_position_ms(&status, first.timestamp_ms + 20_000);
+    app.active_tab_mut().update_tape_clock_at(10_000);
+    assert_eq!(time_left(&app), Some(35_000), "09:00:25 of a 09:00 bar");
+    app.active_tab_mut().update_tape_clock_at(40_000);
+    assert_eq!(
+        time_left(&app),
+        Some(35_000),
+        "a paused replay's countdown stands"
+    );
+}
+
+/// The market clock `chart.summary` reads a pane's time rule on, per tab.
+fn summary_clocks(app: &QuantickApp) -> Vec<(u64, Option<i64>)> {
+    use quantick_control_handlers::chart::ChartPort as _;
+    let port: &dyn crate::app::control_host::ControlPort = app;
+    let mut clocks = Vec::new();
+    port.visit_chart_panes(&mut |entry, _| clocks.push((entry.tab_id, entry.market_clock_ms)));
+    clocks
+}
+
+/// Only the tab on screen has its market clock advanced each frame, so a
+/// tab behind it reads its time rule on its trades' own time rather than on
+/// a clock stopped the frame it was last drawn.
+#[test]
+fn a_background_tab_summary_reads_its_trades_time_not_a_stopped_clock() {
+    let (mut app, _events, _commands, _book) = test_app();
+    let first = app.runtime.tabs.active_id();
+    app.active_tab_mut()
+        .flow_pane
+        .set_spec(quantick_engine::BarSpec::Time(60_000));
+    app.active_tab_mut().ingest_live_trade_at(&trade(1), 10_000);
+    app.active_tab_mut().update_tape_clock_at(10_000);
+    app.active_tab_mut().update_tape_clock_at(17_000);
+    let on_screen = summary_clocks(&app);
+    assert!(
+        on_screen
+            .iter()
+            .any(|&(tab, clock)| tab == first && clock.is_some()),
+        "{on_screen:?}"
+    );
+
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "SECOND".to_owned(), None);
+    assert_ne!(
+        app.runtime.tabs.active_id(),
+        first,
+        "the new tab is on screen"
+    );
+    let behind = summary_clocks(&app);
+    let first_clocks: Vec<_> = behind.iter().filter(|(tab, _)| *tab == first).collect();
+    assert!(!first_clocks.is_empty());
+    assert!(
+        first_clocks.iter().all(|(_, clock)| clock.is_none()),
+        "{behind:?}"
+    );
+
+    use quantick_control_handlers::chart::ChartPort as _;
+    let port: &dyn crate::app::control_host::ControlPort = &app;
+    let pane = app.runtime.tabs.by_id(first).unwrap().flow_pane.id;
+    let mut clock = Some(0);
+    port.visit_chart_pane(first, pane, &mut |entry| clock = entry.market_clock_ms)
+        .unwrap();
+    assert_eq!(clock, None, "the one-pane read agrees");
 }

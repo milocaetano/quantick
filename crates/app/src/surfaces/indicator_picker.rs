@@ -288,6 +288,7 @@ fn draw_active(
     close
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PICKER"];
 
 #[cfg(test)]

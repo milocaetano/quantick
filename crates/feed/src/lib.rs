@@ -35,12 +35,14 @@ pub use quantick_sources::history_reach;
 pub use quantick_sources::history_run;
 pub mod hooks;
 pub mod hyperliquid;
+pub mod link;
 pub mod log_sink;
 pub mod metatrader;
 pub mod mt5_bridge;
 pub mod notice_report;
 pub mod ohlcv_plan;
 pub mod replay;
+pub mod replay_desk;
 pub mod replay_download;
 #[cfg(test)]
 mod scratch;
@@ -60,6 +62,7 @@ pub use quantick_orderbook::DepthEvent;
 use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
 pub use continuity::{FeedContinuity, FeedIntegrity, ResumeSeam};
+pub use link::FeedLink;
 pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 

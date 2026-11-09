@@ -10,7 +10,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.configuration",
         title: "Apply a complete appearance configuration",
-        reach: "Tools > Theme > Dark/Light; versioned TOML or builtin choice through the local control plane",
+        reach: "⋮ › Settings › Display › Theme › Dark/Light; versioned TOML or builtin choice through the local control plane",
         keys: &[(Source::MenuEntry, "Theme")],
         mapping: capability!("appearance.apply"),
     },
@@ -27,11 +27,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.dialog.toggle",
         title: "Open the chart settings on the Candles tab — candles, canvas, grid",
-        reach: "toolbar brush button, Tools menu, a double click on a candle",
-        keys: &[
-            (Source::ToolbarAction, "ToggleAppearance"),
-            (Source::MenuEntry, "Appearance…"),
-        ],
+        reach: "Settings window, a double click on a candle",
+        keys: &[(Source::MenuEntry, "Appearance…")],
         mapping: capability!("chart.settings.set"),
     },
     UiBehaviour {
@@ -58,7 +55,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.legend.collapse",
         title: "Fold the focused chart's indicator legend to its count",
-        reach: "the legend's own chevron, View menu, Ctrl+L",
+        reach: "the legend's own chevron, window menu, Ctrl+L",
         keys: &[(Source::Hotkey, "LEGEND_SHORTCUT")],
         mapping: PENDING_SURFACE,
     },
