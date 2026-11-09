@@ -210,6 +210,31 @@ mod tests {
             assert_eq!(style.ownership.fill_opacity, Inheritance::Explicit);
         }
     }
+    /// The still-forming bar is the side colour at the style's forming
+    /// opacity, through the one path both themes take: Light's grey forming
+    /// bar is its black bear fill, opaque at rest, at Dark's 0.62. Its
+    /// contour and wick are Light's black, faded by the same factor.
+    #[test]
+    fn light_forming_bar_is_the_side_colour_at_the_forming_opacity_dark_uses() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut lit = ChartStyle::default();
+        lit.apply_theme(&light);
+        let mut unlit = ChartStyle::default();
+        unlit.apply_theme(&dark);
+        assert_eq!(lit.candles.forming_opacity, unlit.candles.forming_opacity);
+        let alpha = |opacity: f32| (opacity * lit.candles.forming_opacity * 255.0).round() as u8;
+        for (up, rgb) in [(true, [76, 175, 80]), (false, [0, 0, 0])] {
+            let forming = lit.candles.resolved(up, true);
+            let [r, g, b, a] = forming.fill.unwrap();
+            assert_eq!([r, g, b], rgb, "the side colour, not a grey");
+            assert_eq!(a, alpha(lit.candles.fill_opacity));
+            assert_eq!(forming.outline[..3], [0, 0, 0]);
+            assert_eq!(forming.outline[3], alpha(lit.candles.outline_opacity));
+            let dark_fill = unlit.candles.resolved(up, true).fill.unwrap();
+            assert_eq!(dark_fill[3], alpha(unlit.candles.fill_opacity));
+        }
+    }
     #[test]
     fn width_only_edit_preserves_inheritance_and_equal_default_explicit_survives_switch() {
         let mut style = ChartStyle::default();

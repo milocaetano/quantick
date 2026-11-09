@@ -13,6 +13,7 @@
 // way -- the shape `app/tests/` already uses across twelve files.
 
 mod layout_tests;
+mod light_plate_tests;
 mod risk_tests;
 
 // The items the split gave owners; `super::*` still carries the ticket

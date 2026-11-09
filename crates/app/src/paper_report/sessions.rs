@@ -9,6 +9,8 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_appearance::FontRole;
+use quantick_appearance::paper::{RowKind, ledger_row};
 use quantick_paper::report::LoadedHistory;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress, complete_tag,
@@ -255,31 +257,25 @@ impl LedgerSessions {
 }
 
 /// A session's row inside its day: fold caret, source glyph, label, count
-/// and net. A click folds it; the menu renames or deletes it.
+/// and net, on its own plate indented under the day
+/// (`paper::RowKind::Session`). A click folds it; the menu renames or
+/// deletes it.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
+    let look = ledger_row(palette.resolved.dark, RowKind::Session);
+    let ink = *palette.get(look.ink);
     let (glyph, glyph_ink) =
         source_glyph(&palette, head.source).unwrap_or(("", palette.text_faint()));
+    let glyph_ink = look.mark.map_or(glyph_ink, |token| *palette.get(token));
     let mut job = egui::text::LayoutJob::default();
     for (text, font_id, color) in [
         (
-            format!(
-                "{} ",
-                if head.folded {
-                    icons::CARET_RIGHT
-                } else {
-                    icons::CARET_DOWN
-                }
-            ),
-            palette.body_font(10.0),
-            palette.text_faint(),
+            format!("{} ", super::rows::caret(head.folded)),
+            palette.font(FontRole::Body),
+            ink,
         ),
         (format!("{glyph} "), palette.body_font(10.0), glyph_ink),
-        (
-            format!("{}\n", head.label),
-            palette.mono_font(10.0),
-            palette.text_primary(),
-        ),
+        (format!("{}\n", head.label), palette.mono_font(10.0), ink),
     ] {
         job.append(
             &text,
@@ -287,22 +283,26 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             egui::TextFormat {
                 font_id,
                 color,
+                valign: egui::Align::Center,
                 ..Default::default()
             },
         );
     }
-    let numbers = crate::paper_chrome::financial_text(
-        &palette,
+    let numbers = crate::paper_chrome::signed_text(
         &format!("{} \u{00b7} {}", head.count, head.net.1),
         palette.mono_font(10.0),
-        points_color(&palette, head.net.0),
+        ink,
+        |value| match look.pnl_ink(value.cmp(&rust_decimal::Decimal::ZERO)) {
+            Some(token) => *palette.get(token),
+            None => points_color(&palette, value),
+        },
     );
     for section in numbers.sections {
         job.append(&numbers.text[section.byte_range], 0.0, section.format);
     }
     job.break_on_newline = true;
     job.wrap.max_rows = usize::MAX;
-    job.wrap.max_width = (ui.available_width() - SESSION_INDENT_PX - 6.0).max(1.0);
+    job.wrap.max_width = (ui.available_width() - 2.0 * SESSION_INDENT_PX - 6.0).max(1.0);
     let galley = ui.painter().layout_job(job);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), galley.size().y + 12.0),
@@ -310,15 +310,11 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
     );
     let mut press = None;
     if ui.is_rect_visible(rect) {
-        if head.focused || response.hovered() {
-            ui.painter()
-                .rect_filled(rect, egui::Rounding::ZERO, palette.border());
-        }
-        ui.painter().galley(
-            rect.min + egui::vec2(SESSION_INDENT_PX, 6.0),
-            galley,
-            palette.text_primary(),
-        );
+        let plate = rect.with_min_x(rect.left() + SESSION_INDENT_PX);
+        let lit = head.focused || response.hovered();
+        super::rows::paint_look(ui, &palette, plate, &look, lit, 0.0);
+        ui.painter()
+            .galley(plate.min + egui::vec2(6.0, 6.0), galley, ink);
     }
     if response.clicked() {
         press = Some(SessionPress::Fold(head.key.clone(), !head.folded));

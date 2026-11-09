@@ -30,7 +30,11 @@ fn check_shapes(shapes: &[egui::epaint::ClippedShape], width: f32) -> String {
                 assert!(
                     overlap.width() <= 0.5
                         || overlap.height() <= 0.5
-                        || (*previous == shape.galley.text() && *rect == bounds),
+                        // The same text again, or its bold strike under a
+                        // pixel to the right.
+                        || (*previous == shape.galley.text()
+                            && (rect.size() - bounds.size()).length() < 0.01
+                            && (rect.min - bounds.min).length() < 1.0),
                     "{previous} overlaps {}: {rect:?} / {bounds:?}",
                     shape.galley.text()
                 );

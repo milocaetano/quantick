@@ -273,7 +273,7 @@ pub(super) fn draw_trade_list(
                     let trade = &row.trade;
                     if response.hovered() {
                         ui.painter()
-                            .rect_filled(rect, egui::Rounding::ZERO, palette.border());
+                            .rect_filled(rect, egui::Rounding::ZERO, palette.hover_fill());
                     } else if ordinal % 2 == 1 {
                         ui.painter()
                             .rect_filled(rect, egui::Rounding::ZERO, palette.inset());

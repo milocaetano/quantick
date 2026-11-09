@@ -12,10 +12,10 @@ candle_wick_opacity = 1.0
 chart_time_grid = true
 
 [colors]
-drawing_default = "#B5832B"
-drawing_buy = "#B5832B"
-drawing_sell = "#B5832B"
-drawing_vwap = "#B5832B"
+drawing_default = "#2B3640"
+drawing_buy = "#1F7A34"
+drawing_sell = "#111111"
+drawing_vwap = "#245DB1"
 # The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
 drawing_profile = "#7A8EC2"
 flow_surface = "#EEEBE7"
@@ -73,9 +73,9 @@ footprint_profile = "#404040"
 footprint_bevel_highlight = { premultiplied = [0, 0, 0, 30] }
 footprint_bevel_shadow = { premultiplied = [0, 0, 0, 100] }
 canvas = "#FFFCF7"
-chrome = "#ECE9E4"
-inset = "#E6E3DF"
-control = "#DEDBD7"
+chrome = "#EDEDED"
+inset = "#F7F7F7"
+control = "#FFFFFF"
 # The renderer premultiplies in linear light: at the grid's default opacity
 # this renders TradingView's #F2F3F3 on the white chart canvas.
 chart_grid = "#BABBBB"
@@ -83,7 +83,7 @@ chart_grid = "#BABBBB"
 # Light theme without that table, or one derived from this file, has its own.
 tab_strip = "#D9D6D2"
 brand = "#12C68C"
-# Darker than draw_violet so a replaying idle tab keeps 4.5:1 on its warm grey.
+# Dark enough that a replaying idle tab keeps 4.5:1 on its warm grey.
 replay_ink = "#7832AA"
 # The active tab flows into the toolbar row on the canvas white; idle tabs are
 # warm grey blocks with no edge, on the title strip's slate (see [title_strip]).
@@ -103,7 +103,7 @@ last_price_up = "#3D8540"
 last_price_down = "#000000"
 price_axis_rule = "#E0E3EB00"
 time_axis_rule = "#E0E3EB"
-border = "#B8B6B2"
+border = "#7C7C7C"
 text_primary = "#202020"
 text_muted = "#505050"
 text_faint = "#707070"
@@ -112,8 +112,8 @@ buy = "#4CAF50"
 sell = "#000000"
 poc = "#9A6500"
 accent = "#245DB1"
-amber = "#906900"
-pane_mark = "#795B1A"
+amber = "#7F5300"
+pane_mark = "#202020"
 pane_action = "#555555"
 off = "#98540B"
 capsule_fill = "#F7F4F0DB"
@@ -127,17 +127,35 @@ warn = "#B23824"
 rec = "#BA2636"
 gap_line = "#80600096"
 gap_label = "#765B0E"
-tag_bg = "#E2DFDB"
+tag_bg = "#E2E2E2"
 chip_ink = "#FFFFFF"
 casing = "#F5F2EEEB"
-draw_violet = "#7F36B3"
-draw_cyan = "#007D91"
+draw_violet = "#6A2BA8"
+draw_cyan = "#006A7A"
 float_shadow = "#00000038"
 candle_bull_outline = "#000000"
 candle_bear_outline = "#000000"
 candle_wick = "#000000"
-buy_ink = "#286B2B"
+buy_ink = "#1B6E2E"
 sell_ink = "#202020"
+# Dark plates on the pale chrome: the replay key, the chart's order labels
+# and the report's drawdown chip, with vivid gains and losses inside them.
+replay_plate = "#202020"
+replay_plate_ink = "#FFFFFF"
+order_plate = "#15191E"
+order_plate_ink = "#FFFFFF"
+plate_gain = "#22C55E"
+plate_loss = "#FF8080"
+# White controls on the pale chrome: edged in the border, hovered on the tag
+# grey so their words keep 4.5:1; Reconnect in the primary ink.
+hover_fill = "#E2E2E2"
+control_edge = "#7C7C7C"
+connection_action = "#202020"
+# A loss on the pale panels, apart from sell_ink (the sell side's near-black);
+# gains and losses on a dark surface such as the slate flow pane.
+loss_ink = "#88181E"
+bright_gain_ink = "#64DCA0"
+bright_loss_ink = "#FF9191"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.
@@ -186,10 +204,10 @@ candle_outline_opacity = 0.96
 candle_wick_opacity = 0.90
 
 [bookmap.colors]
-drawing_default = "#B5832B"
-drawing_buy = "#B5832B"
-drawing_sell = "#B5832B"
-drawing_vwap = "#B5832B"
+drawing_default = "#E8ECF2"
+drawing_buy = "#26A69A"
+drawing_sell = "#EF5350"
+drawing_vwap = "#8AB4F8"
 drawing_profile = "#7A8EC2"
 flow_surface = "#1e2433"
 flow_divider = "#3a4357"
@@ -291,6 +309,15 @@ candle_wick = "#B6C9D2"
 
 buy_ink = "#88CEC7"
 sell_ink = "#F6A09F"
+replay_plate = "#F0B90B"
+replay_plate_ink = "#0E121A"
+order_plate = "#10141D"
+order_plate_ink = "#D2DAE2"
+plate_gain = "#88CEC7"
+plate_loss = "#F6A09F"
+hover_fill = "#2E3648"
+control_edge = "#00000000"
+connection_action = "#7C8799"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 

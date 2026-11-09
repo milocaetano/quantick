@@ -131,7 +131,7 @@ pub fn icon_paint(
     }
     if hovered {
         return IconPaint {
-            fill: Some(palette.border()),
+            fill: Some(palette.hover_fill()),
             glyph: palette.text_primary(),
         };
     }

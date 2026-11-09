@@ -121,8 +121,8 @@ impl CurveFrame<'_> {
         }
     }
 
-    /// Diverging fill to the zero baseline: gains ground in BUY, losses in
-    /// SELL, split exactly at each crossing. Then the zero baseline over the
+    /// Diverging fill to the zero baseline: gains and losses each in their
+    /// own area colour (`paper::equity_area`), split exactly at each crossing. Then the zero baseline over the
     /// fill, and the line over everything.
     fn fill_and_line(&self, stride: usize) {
         let palette = &self.palette;
@@ -171,12 +171,8 @@ impl CurveFrame<'_> {
     fn fill_step(&self, x0: f32, x1: f32, a: f32, b: f32, zero_y: f32) {
         let palette = &self.palette;
         let fill_of = |value: f32| {
-            let color = if value >= 0.0 {
-                palette.buy()
-            } else {
-                palette.sell()
-            };
-            theme::with_opacity(color, CURVE_FILL_ALPHA)
+            let area = quantick_appearance::paper::equity_area(palette.resolved.dark, value >= 0.0);
+            theme::with_opacity(*palette.get(area), CURVE_FILL_ALPHA)
         };
         if a == 0.0 && b == 0.0 {
             // Nothing to fill on the baseline itself.
@@ -241,14 +237,16 @@ impl CurveFrame<'_> {
             egui::Stroke::new(1.0_f32, palette.sell()),
         );
         let label = view.equity.drawdown_text();
-        let galley = painter.layout_no_wrap(label, palette.mono_font(10.0), palette.chip_ink());
+        let chip = quantick_appearance::paper::drawdown_chip(palette.resolved.dark);
+        let (fill, ink) = (*palette.get(chip.fill), *palette.get(chip.ink));
+        let galley = painter.layout_no_wrap(label, palette.mono_font(10.0), ink);
         let center = egui::pos2(
             (self.x_at(peak) + trough_x) / 2.0,
             (peak_y + trough_y) / 2.0,
         );
         let bg = egui::Rect::from_center_size(center, galley.size() + egui::vec2(8.0, 4.0));
-        painter.rect_filled(bg, egui::Rounding::same(2.0), palette.sell());
-        painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, palette.chip_ink());
+        painter.rect_filled(bg, egui::Rounding::same(2.0), fill);
+        painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, ink);
     }
 
     /// Axis words: first and last trade index, with the unit between them,

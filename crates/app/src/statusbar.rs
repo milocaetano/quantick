@@ -509,11 +509,7 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
             .on_hover_text(model.side_detail.as_deref().unwrap_or(note.as_str()));
     }
     if let Some((text, sign)) = &model.sim_pnl {
-        let color = match sign {
-            std::cmp::Ordering::Greater => palette.buy(),
-            std::cmp::Ordering::Less => palette.sell(),
-            std::cmp::Ordering::Equal => palette.text_muted(),
-        };
+        let color = crate::paper_chrome::points_color(&palette, (*sign as i8).into());
         // A click-through, not just a readout: the cell summarizes a
         // position managed two levels away, so it carries the way there.
         let cell = ui

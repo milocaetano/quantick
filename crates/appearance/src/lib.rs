@@ -15,6 +15,7 @@ mod error;
 pub mod heat;
 pub mod orderflow;
 pub mod palette;
+pub mod paper;
 mod state;
 pub mod tab_strip;
 mod typography;
