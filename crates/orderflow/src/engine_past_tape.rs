@@ -58,13 +58,14 @@ impl BookEngine {
             .dot_zoom
             .as_ref()
             .map_or(0, |zoom| zoom.tape_lead_ms(window_ms));
+        let lead = (lead_ms, request.tape_lead_capped());
         if let Some(reused) = held.and_then(|held| {
             held.reused_at(
                 latest_end,
                 window_ms,
                 dots,
                 retained,
-                (&self.history, prices, settled.effective_grouping, lead_ms),
+                (&self.history, prices, settled.effective_grouping, lead),
             )
         }) {
             return Some(Arc::new(reused));
@@ -82,7 +83,7 @@ impl BookEngine {
             prices,
             settled,
             dots,
-            lead_ms,
+            lead,
         )
         .map(Arc::new)
     }

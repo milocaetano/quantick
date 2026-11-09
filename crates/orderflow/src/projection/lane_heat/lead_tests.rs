@@ -260,9 +260,11 @@ fn the_lead_is_the_painters_inset_and_never_more_than_its_cap() {
     let share = geometry(&config).lead_share();
     assert!(share > 0.0 && share <= MAX_LEAD_SHARE);
     assert_eq!(lead_ms(&config), (share * WINDOW_MS as f64).ceil() as i64);
-    // A pane one diameter wide keeps the capped lead instead of dropping it.
+    // A pane barely wider than one diameter keeps the capped lead instead of
+    // dropping it; one exactly one diameter wide has no clock to read on,
+    // and its whole inset is a labelled gap instead.
     let bubbles = config.bubbles.clone();
-    for width in [80.0, 81.0, 90.0, 120.0] {
+    for width in [81.0, 90.0, 120.0] {
         let tape = TapeHorizontalGeometry::resolve(width, LANE_HEIGHT_PX, &bubbles);
         assert!(
             tape.lead_share() <= MAX_LEAD_SHARE && tape.lead_share() > 0.0,
@@ -272,7 +274,17 @@ fn the_lead_is_the_painters_inset_and_never_more_than_its_cap() {
     }
     let closed = TapeHorizontalGeometry::resolve(80.0, LANE_HEIGHT_PX, &bubbles);
     assert_eq!(closed.span_px, 0.0);
-    assert_eq!(closed.lead_share(), MAX_LEAD_SHARE);
+    assert_eq!(closed.lead_share(), f64::INFINITY);
+    assert_eq!(
+        closed.lead_px(Some((f64::NEG_INFINITY, -1.0))),
+        Some((0.0, closed.inset_px)),
+        "the gap covers the inset"
+    );
+    assert_eq!(
+        closed.lead_px(Some((-2.0, 0.0))),
+        Some((closed.inset_px, closed.inset_px)),
+        "no band is stretched across it"
+    );
 }
 
 /// A busy book: every level changes every 37 ms from the start, enough for

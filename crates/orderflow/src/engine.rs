@@ -1150,7 +1150,8 @@ impl BookEngine {
             request.partial.as_ref(),
             live_edge,
         )
-        .with_lane_lead_ms(request.tape_lead_ms(live_edge));
+        .with_lane_lead_ms(request.tape_lead_ms(live_edge))
+        .with_lane_lead_capped(request.tape_lead_capped());
         let timeline = if self.config.native_tape() {
             timeline.with_full_lane_coverage()
         } else {

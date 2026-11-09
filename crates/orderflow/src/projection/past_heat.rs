@@ -13,9 +13,9 @@ use rust_decimal::Decimal;
 
 use super::heat_cells::{DraftCell, book_gaps, bucket_rows, finish_cells, liquidity_reference};
 use super::model::{
-    BOOK_BEYOND_LEAD, BOOK_PENDING, GapPrimitive, HeatmapCell, HeatmapProjection, PriceWindow,
+    BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BOOK_NOT_CURRENT, BOOK_PENDING, GapPrimitive, HeatmapCell,
+    HeatmapProjection, PriceWindow,
 };
-use super::tape_geometry::MAX_LEAD_SHARE;
 use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
 use crate::history::LiquidityHistory;
 
@@ -33,8 +33,11 @@ pub struct PastHeat {
     /// ([`TapeHorizontalGeometry::lead_share`](super::TapeHorizontalGeometry::lead_share));
     /// zero for a tape whose book does not share the dots' clock.
     pub lead_ms: i64,
+    /// Whether that lead stopped at its cap, short of the insets it pads:
+    /// farther out they are [`BOOK_BEYOND_LEAD`] gaps.
+    pub lead_capped: bool,
     /// Where the recorded book ended when the bands were cut: past it the
-    /// stretch is [`BOOK_PENDING`] until a re-read.
+    /// trail is [`BOOK_NOT_CURRENT`] until a re-read.
     pub recorded_until_ms: i64,
     /// The price window the bands' `y` were normalized on.
     pub prices: PriceWindow,
@@ -61,6 +64,7 @@ impl PastHeat {
             from_ms,
             until_ms,
             lead_ms: 0,
+            lead_capped: false,
             recorded_until_ms: until_ms,
             prices,
             liquidity_reference: Decimal::ZERO,
@@ -71,15 +75,17 @@ impl PastHeat {
     }
 
     /// Whether these bands still answer for `prices`, `grouping` and a lead
-    /// of `lead_ms` over `history`: their inputs besides the frozen history,
-    /// and a book recorded since a read that ended before its stretch did.
+    /// of `(lead_ms, capped)` over `history`: their inputs besides the frozen
+    /// history, and a book recorded since a read that ended before its
+    /// stretch did. A longer lead than asked still answers: what it reads
+    /// past the pane edge is cut there, so a divider drag re-reads nothing.
     #[must_use]
     pub fn fits(
         &self,
         history: &LiquidityHistory,
         prices: PriceWindow,
         grouping: EffectiveGrouping,
-        lead_ms: i64,
+        (lead_ms, capped): (i64, bool),
     ) -> bool {
         let recorded = self.recorded_until_ms >= self.until_ms
             || history
@@ -87,7 +93,8 @@ impl PastHeat {
                 .is_none_or(|latest| latest <= self.recorded_until_ms);
         self.prices == prices
             && self.effective_grouping == grouping
-            && self.lead_ms == lead_ms
+            && self.lead_ms >= lead_ms
+            && self.lead_capped == capped
             && recorded
     }
 
@@ -143,20 +150,19 @@ impl PastHeat {
                 )
             })
             .collect();
-        let (need_from, need_until) = (
-            place.time_unit(self.from_ms.min(end_ms) as f64),
-            // Past the blocks read, and in the trail past the newest
-            // recorded book; inside the window a held tape draws what was
-            // recorded, as it always has.
-            place.time_unit(self.until_ms.max(self.from_ms) as f64).min(
-                place
-                    .time_unit(self.recorded_until_ms.max(self.from_ms) as f64)
-                    .max(1.0),
-            ),
-        );
+        let read_from = place.time_unit(self.from_ms.min(end_ms) as f64);
+        let read_until = place.time_unit(self.until_ms.max(self.from_ms) as f64);
+        // The trail past the newest recorded book: no book was there to
+        // read. Inside the window a held tape draws what was recorded, as it
+        // always has.
+        let recorded = place
+            .time_unit(self.recorded_until_ms.max(self.from_ms) as f64)
+            .max(1.0)
+            .min(read_until);
         for (from, to, reason) in [
-            (f64::NEG_INFINITY, need_from, BOOK_PENDING),
-            (need_until, f64::INFINITY, BOOK_PENDING),
+            (f64::NEG_INFINITY, read_from, BOOK_PENDING),
+            (recorded, read_until, BOOK_NOT_CURRENT),
+            (read_until, f64::INFINITY, BOOK_PENDING),
         ] {
             gaps.extend(
                 place
@@ -167,7 +173,7 @@ impl PastHeat {
                     }),
             );
         }
-        if place.lead_capped() {
+        if self.lead_capped {
             for (from, to) in [
                 (f64::NEG_INFINITY, -place.lead),
                 (1.0 + place.lead, f64::INFINITY),
@@ -287,11 +293,6 @@ impl Placement {
         self.time_unit(self.from_ms + x * self.span_ms)
     }
 
-    /// Whether the lead stopped at its cap, short of the inset it pads.
-    fn lead_capped(&self) -> bool {
-        self.lead > 0.0 && self.lead >= MAX_LEAD_SHARE - 1.0 / self.window_ms
-    }
-
     /// The window units `[u0, u1]` cut into what the tape draws: the lead
     /// before the window, the window itself, and the trail after it, each
     /// only where it is not empty.
@@ -317,25 +318,31 @@ impl Placement {
     }
 }
 
-/// Read the book the history kept over `[from_ms, until_ms)`, and `lead_ms`
-/// beyond each side of it for the tape's insets ([`PastHeat::lead_ms`]),
-/// the way the live frame reads its own ([`super::heat_cells`]), on
-/// `grouping`, and coloured against these runs.
+/// Read the book the history kept over `[from_ms, until_ms)`, and `lead`'s
+/// milliseconds beyond each side of it for the tape's insets
+/// ([`PastHeat::lead_ms`]; the flag says the lead stopped at its cap), the
+/// way the live frame reads its own ([`super::heat_cells`]), on `grouping`.
+///
+/// The blocks themselves come first, as the live lane's own window does:
+/// they alone set the colour reference, and the inset bands only take the
+/// room the cell cap left them, nearest the window first. Where the read
+/// reaches before the retained book, that stretch is marked as before
+/// capture.
 #[must_use]
 pub fn project_past_heat(
     history: &LiquidityHistory,
-    (from_ms, until_ms): (i64, i64),
-    lead_ms: i64,
+    (blocks_from_ms, blocks_until_ms): (i64, i64),
+    (lead_ms, lead_capped): (i64, bool),
     prices: PriceWindow,
     grouping: EffectiveGrouping,
 ) -> PastHeat {
     let lead_ms = lead_ms.max(0);
     let (from_ms, until_ms) = (
-        from_ms.saturating_sub(lead_ms),
-        until_ms.saturating_add(lead_ms),
+        blocks_from_ms.saturating_sub(lead_ms),
+        blocks_until_ms.saturating_add(lead_ms),
     );
     let mut heat = PastHeat::empty(from_ms, until_ms, prices, grouping);
-    heat.lead_ms = lead_ms;
+    (heat.lead_ms, heat.lead_capped) = (lead_ms, lead_capped);
     let config = history.config();
     let span_ms = until_ms - from_ms;
     if !config.lane_depth_drawn() || span_ms <= 0 {
@@ -345,12 +352,11 @@ pub fn project_past_heat(
     // NOW reads its trail again as the book arrives ([`PastHeat::fits`]).
     heat.recorded_until_ms = history
         .latest_book_ms()
-        .map_or(until_ms, |latest| latest.clamp(from_ms, until_ms));
+        .map_or(from_ms, |latest| latest.clamp(from_ms, until_ms));
     let fraction =
         |time_ms: i64| (time_ms.clamp(from_ms, until_ms) - from_ms) as f64 / span_ms as f64;
-    let start_ms = history
-        .retention_start_ms()
-        .map_or(from_ms, |retained| retained.max(from_ms));
+    let retained_ms = history.retention_start_ms();
+    let start_ms = retained_ms.map_or(from_ms, |retained| retained.max(from_ms));
     let grouped = sweep_grouped_runs(
         history.runs_intersecting(start_ms, until_ms),
         history.coverage_segments(),
@@ -363,13 +369,26 @@ pub fn project_past_heat(
             price_high: prices.high,
         },
     );
-    let drafts: Vec<DraftCell> = grouped
-        .runs
-        .iter()
-        .filter_map(|run| {
-            let (y0, y1) = bucket_rows(run.price_bucket, grouping, prices)?;
-            let (x0, x1) = (fraction(run.start_ms), fraction(run.end_ms));
-            (x1 > x0).then_some(DraftCell {
+    let (blocks_x0, blocks_x1) = (fraction(blocks_from_ms), fraction(blocks_until_ms));
+    let mut blocks = Vec::with_capacity(grouped.runs.len());
+    let mut beside = Vec::new();
+    for run in &grouped.runs {
+        let Some((y0, y1)) = bucket_rows(run.price_bucket, grouping, prices) else {
+            continue;
+        };
+        let (x0, x1) = (fraction(run.start_ms), fraction(run.end_ms));
+        // Cut where the blocks begin and end, so each piece is ranked with
+        // the part of the tape it is drawn in.
+        for (low, high, inside) in [
+            (f64::NEG_INFINITY, blocks_x0, false),
+            (blocks_x0, blocks_x1, true),
+            (blocks_x1, f64::INFINITY, false),
+        ] {
+            let (x0, x1) = (x0.max(low), x1.min(high));
+            if x1 <= x0 {
+                continue;
+            }
+            let draft = DraftCell {
                 generation: run.generation,
                 side: run.side,
                 price_bucket: run.price_bucket,
@@ -382,16 +401,35 @@ pub fn project_past_heat(
                 time_averaged: false,
                 current_book: false,
                 lead_span: None,
-            })
-        })
-        .collect();
+            };
+            if inside {
+                blocks.push(draft);
+            } else {
+                beside.push(draft);
+            }
+        }
+    }
     heat.liquidity_reference =
-        liquidity_reference(config, drafts.iter().map(|draft| draft.quantity));
-    (heat.cells, _) = finish_cells(drafts, heat.liquidity_reference, config);
+        liquidity_reference(config, blocks.iter().map(|draft| draft.quantity));
+    (heat.cells, _) = finish_cells(blocks, heat.liquidity_reference, config);
+    let distance = |draft: &DraftCell| (blocks_x0 - draft.x1).max(draft.x0 - blocks_x1);
+    beside.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
+    beside.truncate(config.max_visible_cells.saturating_sub(heat.cells.len()));
+    heat.cells
+        .extend(finish_cells(beside, heat.liquidity_reference, config).0);
     if config.show_gaps {
         heat.gaps = book_gaps(history, from_ms, until_ms, |time_ms| {
             Some(fraction(time_ms))
         });
+        if let Some(retained) = retained_ms.filter(|&retained| retained > from_ms)
+            && !heat
+                .gaps
+                .iter()
+                .any(|gap| gap.precedes_capture() && gap.x1 >= fraction(retained))
+        {
+            heat.gaps
+                .push(reason_gap(0.0, fraction(retained), BEFORE_CAPTURE));
+        }
     }
     heat
 }

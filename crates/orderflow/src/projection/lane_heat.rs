@@ -21,7 +21,6 @@ use super::heat_cells::{DraftCell, PriceRows, book_gaps, finish_with_priority};
 use super::model::{
     BEFORE_CAPTURE, BOOK_BEYOND_LEAD, BookSource, GapPrimitive, HeatmapCell, PriceWindow,
 };
-use super::tape_geometry::MAX_LEAD_SHARE;
 use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep_grouped_runs};
 use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
@@ -214,7 +213,7 @@ pub(super) fn project_lane_heat(
 /// already runs across the divider and the inset. Where the lead reaches
 /// before the retained book, that stretch is marked as before capture, as
 /// the settled half marks its own oldest edge; where the lead stopped at its
-/// cap ([`MAX_LEAD_SHARE`]), the inset farther out is
+/// cap ([`MAX_LEAD_SHARE`](crate::projection::MAX_LEAD_SHARE)), the inset farther out is
 /// [`BOOK_BEYOND_LEAD`].
 pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<GapPrimitive> {
     let config = history.config();
@@ -229,8 +228,12 @@ pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> V
     ) else {
         return Vec::new();
     };
+    // A lead cut at its cap leaves the inset farther out unread: it is a
+    // gap out to the pane's edge, never a dark strip. A lane with no time
+    // span reads no lead at all, and its whole inset is that gap.
+    let capped = timeline.lane_lead_capped();
     // Gated as the lead's bands are: only a tape that draws its book.
-    if lead_ms <= 0
+    if (lead_ms <= 0 && !capped)
         || !(config.live_lane.depth_time_averaging && config.lane_depth_drawn())
         || !config.show_gaps
     {
@@ -245,24 +248,28 @@ pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> V
         .max(from_ms);
     // Read a millisecond past the opening: a gap that ends at it stays here,
     // one still open past it reads beyond zero and is the settled half's.
-    let mut gaps = book_gaps(history, captured_ms, lane_start_ms + 1, |time_ms| {
-        Some(fraction(time_ms))
-    });
+    let mut gaps = if captured_ms <= lane_start_ms {
+        book_gaps(history, captured_ms, lane_start_ms + 1, |time_ms| {
+            Some(fraction(time_ms))
+        })
+    } else {
+        Vec::new()
+    };
     gaps.retain(|gap| gap.x1 <= 0.0);
-    // A lead cut at its cap leaves the inset farther out unread: it is a
-    // gap out to the pane's edge, never a dark strip.
-    let capped = lead_ms as f64 >= MAX_LEAD_SHARE * window_ms - 1.0;
     let far = if capped {
         f64::NEG_INFINITY
     } else {
         fraction(from_ms)
     };
-    if captured_ms > from_ms && captured_ms <= lane_start_ms {
+    // Before capture comes first: a book never recorded is not one left
+    // unread. A capture that began inside the window leaves the whole lead
+    // before it.
+    if captured_ms > from_ms {
         gaps.push(GapPrimitive {
             from_generation: None,
             to_generation: Some(first.generation),
             x0: far,
-            x1: fraction(captured_ms),
+            x1: fraction(captured_ms.min(lane_start_ms)),
             reason: BEFORE_CAPTURE.to_owned(),
             lead_span: None,
         });

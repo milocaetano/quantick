@@ -126,8 +126,8 @@ impl TapeHorizontalGeometry {
     /// and trail. The inset's own share with [`LEAD_READ_MARGIN`], at most
     /// [`MAX_LEAD_SHARE`]; the inset beyond it is a labelled gap
     /// ([`BOOK_BEYOND_LEAD`](crate::projection::BOOK_BEYOND_LEAD)). A pane
-    /// with no time span left takes the cap, so the lead never falls to zero
-    /// as the span closes.
+    /// with no time span left has no clock to place depth on: its share is
+    /// infinite, which reads nothing and marks both insets as gaps.
     #[must_use]
     pub fn lead_share(self) -> f64 {
         if self.inset_px <= 0.0 {
@@ -135,15 +135,16 @@ impl TapeHorizontalGeometry {
         } else if self.span_px > 0.0 {
             (f64::from(self.inset_px / self.span_px) * LEAD_READ_MARGIN).min(MAX_LEAD_SHARE)
         } else {
-            MAX_LEAD_SHARE
+            f64::INFINITY
         }
     }
 
     /// Pixels from the lane's left edge a span `(from, to)` in lane
     /// fractions covers on the dots' clock: below zero the lead, above one
     /// the stretch past NOW. Cut at both pane edges; an infinite end reaches
-    /// the edge on its side. With no time span left the window is the one
-    /// column at the inset, so an inset holds only what lies beyond it.
+    /// the edge on its side. With no time span left every finite time sits
+    /// in the one column at the inset, so nothing is stretched across an
+    /// inset; only a span running out to infinity covers one.
     /// `None` for no span.
     #[must_use]
     pub fn lead_px(self, span: Option<(f64, f64)>) -> Option<(f32, f32)> {
@@ -151,9 +152,9 @@ impl TapeHorizontalGeometry {
         let px = |fraction: f64| {
             let x = if self.span_px > 0.0 {
                 f64::from(self.inset_px) + fraction * f64::from(self.span_px)
-            } else if fraction < 0.0 {
+            } else if fraction == f64::NEG_INFINITY {
                 0.0
-            } else if fraction > 1.0 {
+            } else if fraction == f64::INFINITY {
                 width
             } else {
                 f64::from(self.inset_px)
