@@ -1,5 +1,9 @@
 {
   "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
     "Document": {
       "properties": {
         "id": {
@@ -41,6 +45,60 @@
         "read_only"
       ],
       "type": "object"
+    },
+    "NumericInput": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NumericValue"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "NumericValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "int",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "float",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -81,6 +139,13 @@
         "null"
       ]
     },
+    "numeric_inputs": {
+      "description": "Committed numeric inputs for the open identity on the focused pane.",
+      "items": {
+        "$ref": "#/$defs/NumericInput"
+      },
+      "type": "array"
+    },
     "revision": {
       "type": "string"
     },
@@ -95,7 +160,8 @@
     "compiling",
     "revision",
     "entries",
-    "total"
+    "total",
+    "numeric_inputs"
   ],
   "title": "EditorResult",
   "type": "object"

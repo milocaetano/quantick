@@ -11,6 +11,49 @@ pub struct IndicatorSession {
     pub(crate) lane_run: FormingRun,
     pub(crate) retired_folds: u64,
 }
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    struct Silent;
+    impl SessionEffects for Silent {
+        fn event(&mut self, _: IndicatorEvent) {}
+        fn inputs_rebound(&mut self, _: crate::InputsRebound<'_>) {}
+    }
+    fn source(default: i64) -> IndicatorSource {
+        IndicatorSource::Script {
+            name: "defaults.pine".into(),
+            text: format!("length = input.int({default})\nplot(bar_index * length)\n"),
+        }
+    }
+    #[test]
+    fn reload_uses_durable_override_provenance_and_preserves_last_good_on_error() {
+        let mut session = IndicatorSession::new();
+        let slot = SlotId(0);
+        session.add(slot, source(9), &mut Silent);
+        session.reload(slot, source(17), Some(vec![]), &mut Silent);
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(17)]);
+        session.reload(
+            slot,
+            source(23),
+            Some(vec![InputValue::Int(4)]),
+            &mut Silent,
+        );
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
+        session.reload(
+            slot,
+            IndicatorSource::Script {
+                name: "defaults.pine".into(),
+                text: "plot(unknown)".into(),
+            },
+            Some(vec![]),
+            &mut Silent,
+        );
+        assert_eq!(session.slots[&slot].values, vec![InputValue::Int(4)]);
+        assert!(session.slots[&slot].stale.is_some());
+        assert_eq!(session.live_instances(), 1);
+    }
+}
 /// Worker-side bookkeeping for one slot: the host id plus what the UI is
 /// known to have, so every event is an exact delta.
 pub(crate) struct SlotMirror {
@@ -183,17 +226,16 @@ impl IndicatorSession {
         &mut self,
         slot: SlotId,
         source: IndicatorSource,
+        saved: Option<Vec<InputValue>>,
         effects: &mut impl SessionEffects,
     ) {
         let host = &mut self.host;
         let slots = &mut self.slots;
         if let Some(mirror) = slots.get_mut(&slot) {
-            // Build with the values the user set, not with the
-            // declared defaults: editing a comment in a script
-            // used to reset `len = 50` back to 20 with no
-            // message. `build_with` falls back to the defaults
-            // by itself when the input set changed.
-            match source.build_with(Some(&mirror.values), effects) {
+            // A caller with durable provenance supplies only saved overrides:
+            // an empty set adopts the edited defaults. Legacy callers retain
+            // the effective values. Both bind defensively when inputs change.
+            match source.build_with(Some(saved.as_deref().unwrap_or(&mirror.values)), effects) {
                 Ok(indicator) => {
                     let values = indicator.input_values();
                     match mirror.host_id {

@@ -213,6 +213,7 @@ pub(super) fn draw_surfaces(
         registry,
         indicators,
         tabs,
+        workspace.layouts(),
         std::mem::take(&mut asks.script_editor_actions),
         now,
     );

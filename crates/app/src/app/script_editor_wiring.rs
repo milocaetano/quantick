@@ -4,8 +4,70 @@ use crate::{
     indicator_worker::{IndicatorCommand, IndicatorSource},
     surfaces::Surfaces,
 };
+use quantick_control_schema::script_editor::{
+    NumericValue, capture_numeric_inputs, update_numeric_input,
+};
 use quantick_stores::script_library::{ScriptDocument, ScriptEditorAction, ScriptLibraryPort};
 use std::time::Instant;
+
+fn attached_target(app: &super::QuantickApp, id: &str) -> Option<super::TabSlot> {
+    app.runtime.indicators.registry.slot_kinds().iter().find_map(|(owner, kind)| {
+        (owner.workspace == app.runtime.id() && owner.tab == app.runtime.tabs.active_id()
+            && owner.side == app.active_tab().focused_side()
+            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == id))
+            .then_some(*owner)
+    })
+}
+
+pub(super) fn set_numeric_input(
+    app: &mut super::QuantickApp,
+    id: &str,
+    name: &str,
+    value: NumericValue,
+) -> Result<(), String> {
+    if !app
+        .surfaces
+        .script_editor
+        .state
+        .document
+        .as_ref()
+        .is_some_and(|document| document.id == id)
+    {
+        return Err("open the attached script before editing its inputs".into());
+    }
+    if app.surfaces.script_editor.state.dirty || app.surfaces.script_editor.state.compiling {
+        return Err("wait for source validation before editing inputs".into());
+    }
+    if app.runtime.indicators.indicator_settings.is_some() {
+        return Err("close indicator settings before editing inputs through control".into());
+    }
+    let target = attached_target(app, id).ok_or("script is not attached to the focused pane")?;
+    let view = app
+        .focused_pane()
+        .indicators
+        .all()
+        .iter()
+        .find(|view| view.slot == target.slot)
+        .ok_or("wait for the attached script to load")?;
+    if view.stale.is_some() || app.surfaces.script_editor.state.diagnostics.is_some() {
+        return Err("repair source errors before editing inputs".into());
+    }
+    let saved = super::layout_wiring::saved_inputs(
+        &app.runtime.tabs,
+        &app.runtime.indicators,
+        app.runtime.workspace.layouts(),
+        target,
+    )
+    .ok_or("script input persistence is unavailable")?;
+    let values = update_numeric_input(&view.descriptor.inputs, &saved, name, &value)?;
+    app.apply_indicator_settings_change(super::indicator_manager::SettingsChange::Inputs {
+        target,
+        slot: target.slot,
+        values,
+        commit: true,
+    });
+    Ok(())
+}
 
 pub(super) fn add_to_chart(app: &mut super::QuantickApp, id: &str) -> Result<(), String> {
     ScriptLibraryPort::read(&app.runtime.indicators.script_library, id)?;
@@ -32,15 +94,28 @@ pub(super) fn add_to_chart(app: &mut super::QuantickApp, id: &str) -> Result<(),
 pub(super) fn inspect(
     surfaces: &Surfaces,
     indicators: &IndicatorState,
+    tabs: &ArrangementHost,
+    store: &crate::workspace_store::LayoutStore,
     offset: usize,
     limit: usize,
 ) -> quantick_control_schema::script_editor::EditorResult {
-    quantick_control_schema::script_editor::capture(
+    let mut result = quantick_control_schema::script_editor::capture(
         &surfaces.script_editor.state,
         indicators.script_library.entries(),
         offset,
         limit,
-    )
+    );
+    if let Some(document) = &result.document {
+        let pane = tabs[tabs.active_index()].focused_pane();
+        if let Some((owner, _)) = indicators.registry.slot_kinds().iter().find(|(owner, kind)| {
+            owner.workspace == tabs.owner() && owner.tab == tabs.active_id() && owner.pane == pane.id
+            && matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == &document.id)
+        }) && let Some(view) = pane.indicators.all().iter().find(|view| view.slot == owner.slot)
+          && let Some(saved) = super::layout_wiring::saved_inputs(tabs, indicators, store, *owner) {
+            result.numeric_inputs = capture_numeric_inputs(&view.descriptor.inputs, &saved);
+        }
+    }
+    result
 }
 
 pub(super) fn apply(
@@ -64,6 +139,7 @@ pub(super) fn frame(
     surfaces: &mut Surfaces,
     indicators: &mut IndicatorState,
     tabs: &mut ArrangementHost,
+    store: &crate::workspace_store::LayoutStore,
     actions: Vec<ScriptEditorAction>,
     now: Instant,
 ) {
@@ -79,7 +155,7 @@ pub(super) fn frame(
                 editor.compilation = None;
                 let valid = error.is_none();
                 if editor.state.complete(revision, error) && valid {
-                    reload(indicators, tabs, &document);
+                    reload(indicators, tabs, store, &document);
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -154,22 +230,36 @@ fn observe_saved(indicators: &mut IndicatorState, document: &ScriptDocument) {
     }
 }
 
-fn reload(indicators: &IndicatorState, tabs: &mut ArrangementHost, document: &ScriptDocument) {
+fn reload(
+    indicators: &IndicatorState,
+    tabs: &mut ArrangementHost,
+    store: &crate::workspace_store::LayoutStore,
+    document: &ScriptDocument,
+) {
     for (owner, kind) in indicators.registry.slot_kinds() {
         if !matches!(kind, quantick_workspace::indicator_document::SavedKind::Script { name } if name == &document.id)
         {
             continue;
         }
+        let saved = super::layout_wiring::saved_inputs(tabs, indicators, store, *owner);
         if owner.workspace == tabs.owner()
             && let Some(tab) = tabs.by_id_mut(owner.tab)
             && let Some(pane) = tab.pane_at_mut(owner.side.index())
             && pane.id == owner.pane
         {
-            pane.indicator_worker.send(IndicatorCommand::Reload {
-                slot: owner.slot,
-                source: IndicatorSource::Script {
-                    name: document.id.clone(),
-                    text: document.source.clone(),
+            let source = IndicatorSource::Script {
+                name: document.id.clone(),
+                text: document.source.clone(),
+            };
+            pane.indicator_worker.send(match saved {
+                Some(values) => IndicatorCommand::ReloadWithInputs {
+                    slot: owner.slot,
+                    source,
+                    values,
+                },
+                None => IndicatorCommand::Reload {
+                    slot: owner.slot,
+                    source,
                 },
             });
         }

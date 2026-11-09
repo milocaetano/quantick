@@ -1,5 +1,9 @@
 {
   "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
     "EditorOperation": {
       "oneOf": [
         {
@@ -87,6 +91,31 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "set_numeric_input",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/NumericValue"
+            }
+          },
+          "required": [
+            "action",
+            "id",
+            "name",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "replace_source",
               "type": "string"
             },
@@ -123,6 +152,45 @@
           },
           "required": [
             "action"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NumericValue": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "int",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "float",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            }
+          },
+          "required": [
+            "type",
+            "value"
           ],
           "type": "object"
         }

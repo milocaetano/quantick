@@ -10709,7 +10709,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, add a library identity to the focused chart, inspect editor state or close. Built-ins are read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status and diagnostics. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
+      "description": "List the script library (1..64 entries per page), open/read source by stable filename id, create a distinct persisted editable copy, replace the open copy's source, save, add a library identity to the focused chart, set a named numeric input on the open identity attached to the focused pane, inspect editor state or close. Numeric values use explicit int/float types (float values are canonical decimal strings) and must satisfy the current declaration bounds/options. Close any settings dialog and wait for source validation before a numeric edit. Built-in source is read-only. Source is limited to 256 KiB. Edits save and validate after 350 ms idle; valid edits reload existing attached instances, errors retain last-valid chart output. Inspect reports source, revision, dirty/compiling status, diagnostics and up to 64 committed numeric inputs for the open focused attachment. Saved explicit input overrides survive source edits; untouched defaults follow source live and after restart. Copy names use letters, digits, underscores or hyphens followed by .pine. Existing names are refused, never overwritten.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10722,6 +10722,10 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "EditorOperation": {
             "oneOf": [
               {
@@ -10809,6 +10813,31 @@
                 "additionalProperties": false,
                 "properties": {
                   "action": {
+                    "const": "set_numeric_input",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/NumericValue"
+                  }
+                },
+                "required": [
+                  "action",
+                  "id",
+                  "name",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
                     "const": "replace_source",
                     "type": "string"
                   },
@@ -10849,6 +10878,45 @@
                 "type": "object"
               }
             ]
+          },
+          "NumericValue": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "int",
+                    "type": "string"
+                  },
+                  "value": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "float",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -10879,6 +10947,10 @@
       "module": "indicator",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "Document": {
             "properties": {
               "id": {
@@ -10920,6 +10992,60 @@
               "read_only"
             ],
             "type": "object"
+          },
+          "NumericInput": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/NumericValue"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          "NumericValue": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "int",
+                    "type": "string"
+                  },
+                  "value": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "float",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -10960,6 +11086,13 @@
               "null"
             ]
           },
+          "numeric_inputs": {
+            "description": "Committed numeric inputs for the open identity on the focused pane.",
+            "items": {
+              "$ref": "#/$defs/NumericInput"
+            },
+            "type": "array"
+          },
           "revision": {
             "type": "string"
           },
@@ -10974,7 +11107,8 @@
           "compiling",
           "revision",
           "entries",
-          "total"
+          "total",
+          "numeric_inputs"
         ],
         "title": "EditorResult",
         "type": "object"
@@ -10991,7 +11125,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Add-to-chart uses the existing library attachment path and is a no-op if that identity is already on the focused pane. Inspect/list reconcile current state. Editing never attaches a duplicate chart indicator.",
+      "stale_input_safety": "Open and replace set explicit state. Copy is exclusive: retry with the same idempotency key to recover the original result. Add-to-chart uses the existing library attachment path and is a no-op if that identity is already on the focused pane. Set-numeric-input commits through the existing settings Apply path; repeated explicit values preserve the same durable settings and inspect reconciles them. Inspect/list reconcile current state. Editing never attaches a duplicate chart indicator.",
       "title": "Read, copy and edit Pine indicator source",
       "version": 1
     },

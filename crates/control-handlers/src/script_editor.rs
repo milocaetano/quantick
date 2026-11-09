@@ -8,6 +8,14 @@ use quantick_control_schema::script_editor::{
 use serde_json::Value;
 
 pub trait ScriptEditorPort {
+    fn set_script_numeric_input(
+        &mut self,
+        _id: &str,
+        _name: &str,
+        _value: quantick_control_schema::script_editor::NumericValue,
+    ) -> Result<(), String> {
+        Err("numeric script inputs are not available in this build".into())
+    }
     fn add_library_script(&mut self, _id: &str) -> Result<(), String> {
         Err("library attachment is not available in this build".into())
     }
@@ -37,6 +45,14 @@ fn edit<H: ScriptEditorPort + ?Sized, A: JournalAccess>(
         return Err(ControlError::invalid_request("limit must be in 1..=64"));
     }
     match input.operation {
+        quantick_control_schema::script_editor::EditorOperation::SetNumericInput {
+            id,
+            name,
+            value,
+        } => {
+            host.set_script_numeric_input(&id, &name, value)
+                .map_err(ControlError::invalid_request)?;
+        }
         quantick_control_schema::script_editor::EditorOperation::AddToChart { id } => {
             host.add_library_script(&id)
                 .map_err(ControlError::invalid_request)?;

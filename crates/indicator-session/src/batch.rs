@@ -113,7 +113,14 @@ impl<'s> Applying<'s> {
             IndicatorCommand::SetInputs { slot, values } => {
                 self.session.set_inputs(slot, values, effects)
             }
-            IndicatorCommand::Reload { slot, source } => self.session.reload(slot, source, effects),
+            IndicatorCommand::Reload { slot, source } => {
+                self.session.reload(slot, source, None, effects)
+            }
+            IndicatorCommand::ReloadWithInputs {
+                slot,
+                source,
+                values,
+            } => self.session.reload(slot, source, Some(values), effects),
             IndicatorCommand::Remove(slot) => self.session.remove(slot),
         }
     }

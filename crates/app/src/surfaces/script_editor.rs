@@ -73,6 +73,7 @@ impl Surface for ScriptEditorSurface {
         let screen = ctx.screen_rect().size();
         egui::Window::new(format!("{} - Pine source", document.title))
             .id(egui::Id::new(self.id()))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_size(egui::vec2(
                 680.0_f32.min(screen.x - 32.0),

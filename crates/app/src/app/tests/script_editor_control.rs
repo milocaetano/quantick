@@ -120,6 +120,55 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
     let _ = unkeyed_call(&mut app, &mut client, capability, add);
     settle_indicators(&mut app);
     assert_eq!(app.active_tab().focused_pane().indicators.all().len(), 1);
+    let numeric = json!({"operation":{"action":"set_numeric_input","id":"control-copy.pine","name":"length","value":{"type":"int","value":4}}});
+    let first_numeric = keyed_call(
+        &mut app,
+        &mut client,
+        "numeric-first",
+        capability,
+        numeric.clone(),
+        "numeric-setting",
+    )
+    .0;
+    let retry_numeric = keyed_call(
+        &mut app,
+        &mut client,
+        "numeric-retry",
+        capability,
+        numeric.clone(),
+        "numeric-setting",
+    )
+    .0;
+    assert_eq!(
+        success_result(&first_numeric),
+        success_result(&retry_numeric)
+    );
+    let expected_inputs = json!([{"name":"length","value":{"type":"int","value":4}}]);
+    assert_eq!(
+        success_result(&first_numeric)["numeric_inputs"],
+        expected_inputs
+    );
+    let repeated = unkeyed_call(&mut app, &mut client, capability, numeric).0;
+    assert_eq!(success_result(&repeated)["numeric_inputs"], expected_inputs);
+    for (name, value) in [
+        ("length", json!({"type":"int","value":0})),
+        ("length", json!({"type":"float","value":"4"})),
+        ("missing", json!({"type":"int","value":4})),
+    ] {
+        let refused = unkeyed_call(&mut app, &mut client, capability, json!({"operation":{"action":"set_numeric_input","id":"control-copy.pine","name":name,"value":value}})).0;
+        assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+    }
+    let inspected = unkeyed_call(
+        &mut app,
+        &mut client,
+        capability,
+        json!({"operation":{"action":"inspect"}}),
+    )
+    .0;
+    assert_eq!(
+        success_result(&inspected)["numeric_inputs"],
+        expected_inputs
+    );
     let refused = unkeyed_call(
         &mut app,
         &mut client,

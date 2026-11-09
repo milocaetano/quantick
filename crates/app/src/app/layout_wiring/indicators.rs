@@ -15,6 +15,35 @@ use crate::pane::PaneSide;
 mod guide;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
 
+/// Read the same durable values materialization uses, never a live preview.
+pub(in crate::app) fn saved_inputs(
+    tabs: &super::super::arrangement_host::ArrangementHost,
+    indicators: &super::super::indicator_manager::IndicatorState,
+    store: &crate::workspace_store::LayoutStore,
+    owner: TabSlot,
+) -> Option<Vec<quantick_indicators::InputValue>> {
+    let pane = tabs.by_id(owner.tab)?.pane_at(owner.side.index())?;
+    if tabs.owner() != owner.workspace || pane.id != owner.pane {
+        return None;
+    }
+    let index = indicators
+        .registry
+        .layout_slots_at(owner.tab, owner.side)
+        .iter()
+        .position(|slot| *slot == owner.slot)?;
+    let layout = store.session().resolve_layout(pane.layout_id());
+    let entry = store.book().get(layout)?.indicators.get(index)?;
+    // Match restore: an unreadable set uses declared defaults as a whole.
+    Some(
+        entry
+            .inputs
+            .iter()
+            .map(SavedInput::to_value)
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default(),
+    )
+}
+
 impl LayoutAdapter<'_> {
     /// Apply an owner-validated edit through the same layout and worker ports.
     pub(in crate::app) fn apply_indicator_edit(
