@@ -137,8 +137,8 @@ pub fn descriptor() -> CapabilityDescriptor {
             symbol makes. A tab whose feed has no deal counter answers with no recording \
             and changes nothing, unless a day recorded earlier is on disk: then it lists \
             it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the \
-            standing choice the Tools menu's checkbox sets, saved with the workspace, and \
-            every answer reports it."
+            standing choice the Settings window's checkbox sets, saved with the workspace, \
+            and every answer reports it."
             .to_owned(),
         module: ModuleId::new(RECOVERY_MODULE_ID).expect("static module ID is valid"),
         input_schema: generated_schema::<DealRecordingInput>(),

@@ -52,13 +52,20 @@ impl BookEngine {
         let window_ms = self.config.lane_window_ms(reference_ms).max(1);
         let latest_end = end_ms.min(self.history.latest_ms()?);
         let retained = self.history.tape_retained_from_ms();
+        // The held book fills the tape's insets as the live one does: read
+        // as far beyond each side of the window as the view's pixels ask.
+        let lead_ms = request
+            .dot_zoom
+            .as_ref()
+            .map_or(0, |zoom| zoom.tape_lead_ms(window_ms));
+        let lead = (lead_ms, request.tape_lead_capped());
         if let Some(reused) = held.and_then(|held| {
             held.reused_at(
                 latest_end,
                 window_ms,
                 dots,
                 retained,
-                (&self.history, prices, settled.effective_grouping),
+                (&self.history, prices, settled.effective_grouping, lead),
             )
         }) {
             return Some(Arc::new(reused));
@@ -76,6 +83,7 @@ impl BookEngine {
             prices,
             settled,
             dots,
+            lead,
         )
         .map(Arc::new)
     }

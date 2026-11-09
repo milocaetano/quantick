@@ -55,6 +55,7 @@ mod history_interaction_tests;
 mod history_publication_tests;
 mod history_reach_completion_tests;
 mod history_run_edges_tests;
+mod home_tab_tests;
 mod indicator_operations_tests;
 mod indicator_recut_tests;
 mod indicators_tests;
@@ -62,10 +63,15 @@ mod input_ui_tests;
 mod journal_payload_pin_tests;
 mod launch_phase_tests;
 mod layers_tests;
+mod layout_readability_tests;
 mod live_trade_tests;
+mod market_switch_tests;
+mod market_windows_tests;
 mod menu_bar_tests;
+mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
+mod pane_focus_click_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_grid_tests;
@@ -79,9 +85,11 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
+mod tab_workspace_tests;
 mod tape_only_scale_tests;
 mod theme_menu_tests;
 mod time_strip_cursor_tests;
+mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
 mod workspace_bundle_menu_baseline_tests;
@@ -116,7 +124,79 @@ use crate::surfaces::drawing_chrome::{
 use crate::tab::BOOK_GENERATION_STRIDE;
 use crate::time_header;
 use crate::viewport::Viewport;
+use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
+
+/// The window's test doors: its entry point and its read views.
+impl QuantickApp {
+    pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
+        arrangement_adapter::ArrangementRead {
+            tabs: &self.runtime.tabs,
+            config: &self.config,
+            toolrail: &self.toolrail,
+            tz: &self.runtime.tz,
+            dock: &self.dock,
+            show_perf: self.health.show_perf,
+            record_deals: self.chrome.record_deals,
+            history: &self.runtime.history,
+            drawing_chrome: &self.drawings.chrome,
+            workspace_book: self.runtime.workspace.book.book(),
+        }
+    }
+
+    pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
+        workspace_save_adapter::WorkspaceRead {
+            arrangement: self.arrangement_state(),
+            session: self.runtime.workspace.session(),
+            replay_view: &self.replay_view,
+        }
+    }
+
+    /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
+    /// (already streaming through `feed`) and bar `spec`, with no saved
+    /// workspace to restore.
+    ///
+    /// The window itself always has one (`main` reads the file before it
+    /// spawns a feed), so this is the tests' entry point: a case about the
+    /// chart is not a case about what the last session left on disk.
+    #[must_use]
+    pub fn new(
+        config: AppConfig,
+        feed_id: impl Into<String>,
+        symbol: impl Into<String>,
+        spec: impl Into<crate::state::BarConfiguration>,
+        feed: FeedHandle,
+    ) -> Self {
+        Self::new_with_workspace(
+            config,
+            feed_id,
+            symbol,
+            spec,
+            feed,
+            ui_state::Workspace::default(),
+            AppLaunch::default(),
+        )
+    }
+
+    /// Whether the toolbar's heatmap lamp is lit.
+    ///
+    /// The *switch*, not what capture lets through it — the same reading the
+    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
+    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
+    /// for as long as book capture is starting, and forever on a source with no
+    /// book: the trader sees an unlit button, presses it, and switches the
+    /// layer they wanted *off*. The button already has an honest way to say a
+    /// source cannot fill it — `.enabled(...)` carrying its
+    /// `disabled_explanation` — so the lamp beside it answers the only other
+    /// question there is. The header takes the pane's reading directly: a
+    /// second production entry point to the same answer is how the two drift.
+    #[must_use]
+    fn heatmap_lamp_on(&self) -> bool {
+        self.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
+    }
+}
 
 /// The slot a stored fractional anchor sits on, asked of the one owner.
 ///
@@ -275,7 +355,10 @@ fn test_config() -> AppConfig {
             symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
             bubble_preset: None,
             symbol_bubble_presets: Default::default(),
+            asset_families: Vec::new(),
+            asset_aliases: Default::default(),
             symbol_asset_modes: Default::default(),
+            contract_rolls: Default::default(),
             default_layout: None,
             default_bars: None,
             record_deals: false,
@@ -560,6 +643,7 @@ fn with_flow_pane<R>(
         shared: pane::SharedInteraction::default(),
         capabilities,
         side_inferred,
+        price_tag: Default::default(),
         footprint: footprint_config,
         layers: &mut workspace.layers_mut().actions,
     };
@@ -1351,6 +1435,22 @@ pub(super) fn settle_indicators(app: &mut QuantickApp) {
     }
 }
 
+/// The set an edit on the active tab's pane on `side` writes to: the tab's own
+/// copy of the strip layout it shows. A strip layout takes no edit: it reaches
+/// every tab.
+pub(super) fn pane_set(
+    app: &QuantickApp,
+    side: PaneSide,
+) -> &[crate::indicators::state_file::SavedIndicator] {
+    let own = app
+        .active_tab()
+        .pane(side)
+        .layout_id()
+        .expect("a seeded pane");
+    let layouts = app.layout_state().layouts();
+    &layouts.get(own).expect("the tab's copy").indicators
+}
+
 /// A point inside the pane on `side`, for a click that focuses it.
 pub(super) fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
@@ -1474,10 +1574,10 @@ struct TabEnds {
 fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
     app.apply_tab_action(TabAction::New);
     assert!(
-        app.surfaces.source_picker.is_open(),
+        app.surfaces.market_palette.is_open(),
         "the + opens the picker"
     );
-    app.surfaces.source_picker.close();
+    app.surfaces.market_palette.close();
 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
@@ -1788,7 +1888,10 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbols: vec!["US500".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -1800,7 +1903,10 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbols: vec!["WIN$N".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -2736,6 +2842,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
         rgba.extend_from_slice(&[sample[0], sample[1], sample[2], 0xff]);
     }
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2746,6 +2854,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
 /// A window's worth of opaque pixels, the shape the platform hands over.
 fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2789,9 +2899,9 @@ fn attach_script_for_test(
         by_operator,
     );
     let owner = attached.target;
-    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
-        attached,
-    ));
+    app.indicator_wiring().apply_indicator_edit(
+        crate::app::indicator_manager::IndicatorEdit::Attached(attached),
+    );
     (
         owner.tab,
         crate::control::pane_side_dto(owner.side),
@@ -2812,9 +2922,9 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
         index,
     )?;
     if let Some(attached) = added.attachment {
-        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
-            attached,
-        ));
+        app.indicator_wiring().apply_indicator_edit(
+            crate::app::indicator_manager::IndicatorEdit::Attached(attached),
+        );
     }
     app.runtime.indicators.watch_attachment(added.watch);
     Some(slot)
@@ -2826,3 +2936,5 @@ mod asset_bubbles_audit_tests;
 mod asset_bubbles_tests;
 mod feed_tape_scope_tests;
 mod native_split_pane_tests;
+
+mod window_capture_tests;

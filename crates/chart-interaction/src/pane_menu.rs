@@ -163,6 +163,16 @@ pub fn inverted_entry(inverted: bool) -> Entry {
         checked: inverted, choice: MenuIntent::SetPriceInverted(!inverted), shortcut: None,
     }).hint("flip the chart upside down \u{2014} low prices at the top. Also reached by dragging the axis down until the bars flatten and turn over")
 }
+/// The axis menu's first row: the forming bar's progress on the last-price
+/// tag, a setting of the market the pane shows.
+pub fn bar_progress_entry(on: bool) -> Entry {
+    Entry::new(BAR_PROGRESS_LABEL, Kind::Check {
+        checked: on, choice: MenuIntent::SetBarProgress(!on), shortcut: None,
+    }).hint("a second line under the last price: how far the forming bar is from closing \u{2014} the count toward its target, the time left, or the running imbalance. Kept for this market")
+    .trace(Trace::Button(BAR_PROGRESS_LABEL))
+}
+/// The row's label.
+pub const BAR_PROGRESS_LABEL: &str = "Bar progress on the price tag";
 pub struct TapeFact {
     pub window: LaneWindow,
     pub reference_ms: Option<i64>,

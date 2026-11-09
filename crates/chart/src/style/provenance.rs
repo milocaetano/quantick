@@ -13,6 +13,14 @@ pub struct ChartColorOwnership {
     pub wick: Inheritance,
     pub background: Inheritance,
     pub grid: Inheritance,
+    /// The candle contour width a fresh chart takes from its theme.
+    pub outline_width: Inheritance,
+    /// The contour's opacity, likewise.
+    pub outline_opacity: Inheritance,
+    /// The wick's opacity, likewise.
+    pub wick_opacity: Inheritance,
+    /// Whether the time grid is the theme's answer or the trader's.
+    pub time_grid: Inheritance,
 }
 impl ChartColorOwnership {
     pub const fn inherited() -> Self {
@@ -25,6 +33,10 @@ impl ChartColorOwnership {
             wick: Inheritance::Theme,
             background: Inheritance::Theme,
             grid: Inheritance::Theme,
+            outline_width: Inheritance::Theme,
+            outline_opacity: Inheritance::Theme,
+            wick_opacity: Inheritance::Theme,
+            time_grid: Inheritance::Theme,
         }
     }
 }
@@ -40,8 +52,45 @@ impl ChartStyle {
         self.ownership = ChartColorOwnership {
             background: self.ownership.background,
             grid: self.ownership.grid,
+            time_grid: self.ownership.time_grid,
             ..ChartColorOwnership::default()
         };
+    }
+    /// The first theme-owned field this style changes, as a refusal naming the
+    /// ownership marker that would make the value the trader's. `stored` is the
+    /// style the pane holds and `shown` the style it paints: a value equal to
+    /// either is an echo, not an edit. A theme-owned value is replaced by the
+    /// theme on resolve, so accepting an edit would drop it silently.
+    pub fn theme_owned_edit(&self, stored: &Self, shown: &Self) -> Option<&'static str> {
+        macro_rules! owned {
+            ($marker:ident, $($path:ident).+) => {
+                if self.ownership.$marker == Inheritance::Theme
+                    && self.$($path).+ != stored.$($path).+
+                    && self.$($path).+ != shown.$($path).+
+                {
+                    return Some(concat!(
+                        stringify!($($path).+),
+                        " is owned by the theme and the new value would be ignored; ",
+                        "set ownership.",
+                        stringify!($marker),
+                        " to \"explicit\" to make it yours"
+                    ));
+                }
+            };
+        }
+        owned!(fill_opacity, candles.fill_opacity);
+        owned!(bull_fill, candles.bull_fill);
+        owned!(bear_fill, candles.bear_fill);
+        owned!(bull_outline, candles.bull_outline);
+        owned!(bear_outline, candles.bear_outline);
+        owned!(wick, candles.wick);
+        owned!(background, canvas.background);
+        owned!(grid, canvas.grid);
+        owned!(outline_width, candles.outline_width);
+        owned!(outline_opacity, candles.outline_opacity);
+        owned!(wick_opacity, candles.wick_opacity);
+        owned!(time_grid, canvas.time_grid_enabled);
+        None
     }
     /// Resolve inherited fields from a validated theme. RGB-only fields are
     /// guaranteed opaque by the appearance resolver, so no alpha is discarded.
@@ -51,6 +100,24 @@ impl ChartStyle {
             .ownership
             .fill_opacity
             .resolve(self.candles.fill_opacity, || theme.candle_fill_opacity);
+        self.candles.outline_width = self
+            .ownership
+            .outline_width
+            .resolve(self.candles.outline_width, || theme.candle_outline_width);
+        self.candles.outline_opacity = self
+            .ownership
+            .outline_opacity
+            .resolve(self.candles.outline_opacity, || {
+                theme.candle_outline_opacity
+            });
+        self.candles.wick_opacity = self
+            .ownership
+            .wick_opacity
+            .resolve(self.candles.wick_opacity, || theme.candle_wick_opacity);
+        self.canvas.time_grid_enabled = self
+            .ownership
+            .time_grid
+            .resolve(self.canvas.time_grid_enabled, || theme.chart_time_grid);
         let rgb = |token| {
             let [r, g, b, _] = theme.color(token).to_array();
             [r, g, b]
@@ -78,7 +145,7 @@ impl ChartStyle {
         self.canvas.background = self
             .ownership
             .background
-            .resolve(self.canvas.background, || rgb(Token::Canvas));
+            .resolve(self.canvas.background, || rgb(Token::ChartCanvas));
         self.canvas.grid = self
             .ownership
             .grid
@@ -99,7 +166,7 @@ mod tests {
         style.canvas.grid_enabled = false;
         for (surface, grid, background) in [
             (&light, [186, 187, 187], [255, 255, 255]),
-            (light.bookmap(), [35, 41, 54], [67, 74, 82]),
+            (light.bookmap(), [35, 41, 54], [37, 47, 55]),
             (&dark, [35, 41, 54], [19, 23, 34]),
         ] {
             style.apply_theme(surface);
@@ -143,6 +210,31 @@ mod tests {
             assert_eq!(style.ownership.fill_opacity, Inheritance::Explicit);
         }
     }
+    /// The still-forming bar is the side colour at the style's forming
+    /// opacity, through the one path both themes take: Light's grey forming
+    /// bar is its black bear fill, opaque at rest, at Dark's 0.62. Its
+    /// contour and wick are Light's black, faded by the same factor.
+    #[test]
+    fn light_forming_bar_is_the_side_colour_at_the_forming_opacity_dark_uses() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut lit = ChartStyle::default();
+        lit.apply_theme(&light);
+        let mut unlit = ChartStyle::default();
+        unlit.apply_theme(&dark);
+        assert_eq!(lit.candles.forming_opacity, unlit.candles.forming_opacity);
+        let alpha = |opacity: f32| (opacity * lit.candles.forming_opacity * 255.0).round() as u8;
+        for (up, rgb) in [(true, [76, 175, 80]), (false, [0, 0, 0])] {
+            let forming = lit.candles.resolved(up, true);
+            let [r, g, b, a] = forming.fill.unwrap();
+            assert_eq!([r, g, b], rgb, "the side colour, not a grey");
+            assert_eq!(a, alpha(lit.candles.fill_opacity));
+            assert_eq!(forming.outline[..3], [0, 0, 0]);
+            assert_eq!(forming.outline[3], alpha(lit.candles.outline_opacity));
+            let dark_fill = unlit.candles.resolved(up, true).fill.unwrap();
+            assert_eq!(dark_fill[3], alpha(unlit.candles.fill_opacity));
+        }
+    }
     #[test]
     fn width_only_edit_preserves_inheritance_and_equal_default_explicit_survives_switch() {
         let mut style = ChartStyle::default();
@@ -159,6 +251,52 @@ mod tests {
             ChartStyle::default().candles.bear_fill
         );
         assert!(!style.apply_theme(&light));
+    }
+    #[test]
+    fn fresh_charts_take_the_theme_time_grid_and_contour_until_the_trader_sets_them() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut fresh = ChartStyle::default();
+        fresh.apply_theme(&light);
+        assert!(fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.0);
+        // Pure black, one pixel: TradingView's contour and wick.
+        assert_eq!(fresh.candles.resolved(true, false).outline, [0, 0, 0, 255]);
+        assert_eq!(
+            fresh.candles.resolved(false, false).wick,
+            Some([0, 0, 0, 255])
+        );
+        fresh.apply_theme(&dark);
+        assert!(!fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.25);
+        assert_eq!(
+            fresh,
+            ChartStyle::default(),
+            "Dark resolves to the code default"
+        );
+        // The slate plot keeps Dark's contour; the time grid is Light's.
+        fresh.apply_theme(light.bookmap());
+        assert!(fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.25);
+        // Switched by hand, the answer survives every theme.
+        let mut chosen = ChartStyle::default();
+        chosen.canvas.time_grid_enabled = false;
+        chosen.ownership.time_grid = Inheritance::Explicit;
+        chosen.candles.outline_width = 2.0;
+        chosen.ownership.outline_width = Inheritance::Explicit;
+        chosen.candles.wick_opacity = 0.5;
+        chosen.ownership.wick_opacity = Inheritance::Explicit;
+        for theme in [&light, &dark] {
+            chosen.apply_theme(theme);
+            assert!(!chosen.canvas.time_grid_enabled);
+            assert_eq!(chosen.candles.outline_width, 2.0);
+            assert_eq!(chosen.candles.wick_opacity, 0.5);
+        }
+        // A preset owns the contour, never the canvas's time grid.
+        let mut preset = ChartStyle::default();
+        preset.apply_preset(CandlePreset::Classic);
+        assert_eq!(preset.ownership.outline_width, Inheritance::Explicit);
+        assert_eq!(preset.ownership.time_grid, Inheritance::Theme);
     }
     #[test]
     fn dark_is_exact_and_presets_capture_intended_fields() {
@@ -223,8 +361,11 @@ mod bookmap_tests {
         let mut flow = shared;
         flow.apply_theme(light.bookmap());
         let mut expected_flow = ChartStyle::default();
-        expected_flow.canvas.background = [0x43, 0x4A, 0x52];
+        expected_flow.canvas.background = [0x25, 0x2F, 0x37];
         expected_flow.candles.wick = [0xB6, 0xC9, 0xD2];
+        // The slate plot follows Light's time grid, so the switch that reads
+        // it and the pane that paints it never disagree.
+        expected_flow.canvas.time_grid_enabled = true;
         assert_eq!(flow, expected_flow);
         for bullish in [false, true] {
             assert_eq!(

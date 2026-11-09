@@ -4,7 +4,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 [Dark](../crates/appearance/themes/dark.toml) and
 [Light](../crates/appearance/themes/light.toml) documents use the same parser and
 resolver as an authored theme. Start with either file when writing a community
-theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
+theme. ⋮ › Settings › Display › Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
 Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a slate `#434A52` plot with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#B5832B`, buy/sell arrow marks TradingView green `#089981` and red `#F23645`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
 
@@ -73,6 +73,8 @@ groups are:
 | Keys | Meaning |
 | --- | --- |
 | `canvas`, `chrome`, `inset`, `control`, `border` | Chart background, fixed surfaces, wells, widgets and borders |
+| `toolbar_sheet`, `tab_idle_fill`, `tab_idle_outline`, `tab_band`, `home_glow` | The active market tab and toolbar row as one sheet; an idle tab's block and its 1 pt edge; the active tab's top band; the glow behind the Home Q, its alpha the peak |
+| `tab_strip`, `brand`, `replay_ink` | Market tab strip and window title area, the Home wordmark's "tick", and a replaying tab's mark and word ([decision](ux/layout-appearance-2026-11-06/README.md)) |
 | `chart_grid` | Inherited chart-grid color, independent of widget surfaces; pane opacity still applies |
 | `text_primary`, `text_muted`, `text_faint`, `text_support` | Labels, secondary text, hints and explanatory text |
 | `buy`, `sell`, `poc` | Trade direction and point of control |
@@ -100,6 +102,18 @@ Dark and Slate retain their existing grid.
 Omitting `chart_grid` preserves an explicitly supplied `control` as the grid
 default in either root or Bookmap colors; otherwise it inherits the fallback grid.
 Explicit pane colors and opacity retain their existing ownership.
+Omitting `tab_strip` takes the document's own `inset`; omitting `brand`,
+`replay_ink` or a tab token takes the bundled theme of the document's `dark`
+mode, so an authored Light file written before these tokens stays Light.
+
+## Title strip
+
+The optional `[title_strip.colors]` table paints the window's title strip (logo,
+`+`, menu and window buttons) in colours other than the root's; missing fields
+inherit the resolved root. Bundled Light uses it for the order-flow slate with
+Dark's inks, so its logo renders exactly as Dark's. Market tabs keep the root's
+colours and inks. A document without the table paints its strip in its own
+root colours.
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.
@@ -205,7 +219,7 @@ Before a builtin choice is saved, the override selects the appearance store for
 both startup reads and an explicit source apply with `persist: true`; otherwise
 that store is `appearance.toml` in the normal cockpit directory.
 
-Tools > Theme and `appearance.apply` with `builtin` save the complete bundled
+⋮ › Settings › Display › Theme and `appearance.apply` with `builtin` save the complete bundled
 source to a sibling named `<selected filename>.choice.toml`. Startup prefers this
 sibling when present, and subsequent durable source applies write that active
 choice store. The original selected document is preserved, including an authored
@@ -375,7 +389,7 @@ Choose and remember a builtin with `appearance.apply`, version 1:
 
 `builtin` accepts `dark` or `light`. Exactly one of `builtin` and `source` is
 required. The default `persist: false` remains session-only for either input.
-A persistent builtin selection uses the same protected sibling as Tools > Theme.
+A persistent builtin selection uses the same protected sibling as ⋮ › Settings › Display › Theme.
 
 Apply a session candidate with `appearance.apply`, version 1:
 

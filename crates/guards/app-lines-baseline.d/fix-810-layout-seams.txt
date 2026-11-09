@@ -1,0 +1,5 @@
+# #810: measured egui-only text backing, popup wrapping and shared-band rail painting.
+# Existing owners and contracts; no new state, port, type or headless behavior.
+crates/app +68
+!budget +68
+

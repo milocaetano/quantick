@@ -289,10 +289,13 @@ fn assert_footprint_layering(
     app.runtime.style.canvas.background = [13, 17, 23];
     app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.presentation.footprint.config = Some(crate::footprint_config::FootprintConfig {
-        style: crate::footprint_config::FootprintStyle::Split,
-        ..Default::default()
-    });
+    pane.presentation
+        .footprint
+        .config
+        .set_own(Some(crate::footprint_config::FootprintConfig {
+            style: crate::footprint_config::FootprintStyle::Split,
+            ..Default::default()
+        }));
     pane.set_layer_visible(ChartLayer::Footprint, true, &mut Default::default());
     let footprint = settled_flow_frame(app, ctx);
     let isolated = regional_circles(app, &footprint);
@@ -509,11 +512,22 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             pane.frame.candles_right,
             app.active_tab().time_pane().unwrap().frame.area,
         );
+        // The panes keep their places in every theme. Inside them Light sizes
+        // its axes as TradingView does, so only a return to Dark must give
+        // back Dark's exact chart geometry.
+        let (first_area, first_time_area) = (current_geometry.0, current_geometry.4);
+        let kept = geometry.get_or_insert((source, current_geometry));
         assert_eq!(
-            *geometry.get_or_insert(current_geometry),
-            current_geometry,
+            (kept.1.0, kept.1.4),
+            (first_area, first_time_area),
             "theme switching must preserve both pane layouts"
         );
+        if kept.0 == source {
+            assert_eq!(
+                kept.1, current_geometry,
+                "a theme gives back its own layout"
+            );
+        }
         let dark = crate::style::ChartStyle::default();
         let circles = regional_circles(&app, &output);
         assert!(!circles.is_empty(), "the fixture must paint bubbles");
@@ -529,11 +543,15 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
                 )
             })
             .collect();
-        assert_eq!(
-            bubble_geometry.get_or_insert_with(|| current_bubble_geometry.clone()),
-            &current_bubble_geometry,
-            "the slate canvas changes composited colors, never bubble geometry"
-        );
+        // Light's axes reserve their own room, so the plot (and the bubbles
+        // in it) may sit differently; a theme always gives back its own.
+        let kept = bubble_geometry.get_or_insert_with(|| (source, current_bubble_geometry.clone()));
+        if kept.0 == source {
+            assert_eq!(
+                kept.1, current_bubble_geometry,
+                "the slate canvas changes composited colors, never bubble geometry"
+            );
+        }
         if source == quantick_appearance::DARK {
             assert_eq!(
                 dark_circles.get_or_insert_with(|| circles.clone()),
@@ -571,8 +589,7 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
         let plot = if theme.dark {
             area
         } else {
-            area.shrink(crate::plot_area::PLOT_PADDING_PX)
-                .with_max_x(pane.frame.price_gutter.unwrap().left())
+            area.with_max_x(pane.frame.price_gutter.unwrap().left())
                 .with_max_y(pane.frame.time_strip.unwrap().top())
         };
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,

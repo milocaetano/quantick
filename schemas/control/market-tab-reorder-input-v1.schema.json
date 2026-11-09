@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "position": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "position"
+  ],
+  "title": "ReorderInput",
+  "type": "object"
+}

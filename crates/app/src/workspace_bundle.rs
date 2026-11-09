@@ -84,6 +84,7 @@ mod tests {
                 "layouts.toml",
                 "version = 1\nactive = 1\nnext_id = 2\n\n[[layouts]]\nid = 1\nname = \"Layout 1\"\n",
             ),
+            ("market-settings.toml", "version = 1\n"),
             ("indicator-presets.toml", "version = 1\npresets = []\n"),
             ("bubble-assets.toml", "version = 1\n"),
             (
@@ -94,6 +95,7 @@ mod tests {
             ("footprint-settings.toml", "version = 2\n\n[config]\n"),
             ("footprint-presets.toml", "version = 1\n"),
             ("candle-presets.toml", "version = 1\n"),
+            ("workspaces.toml", "version = 1\n"),
             (
                 "paper-state.toml",
                 "version = 1

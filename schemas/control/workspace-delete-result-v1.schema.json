@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a delete did.",
+  "properties": {
+    "changed": {
+      "description": "Always `true`: a name no workspace has is refused with `workspace.unknown`.",
+      "type": "boolean"
+    },
+    "kept_edits": {
+      "description": "The moved tabs that kept their edits, marked `Default •`.",
+      "items": {
+        "$ref": "#/$defs/WireU64"
+      },
+      "type": "array"
+    },
+    "moved": {
+      "description": "Every tab moved to `Default`.",
+      "items": {
+        "$ref": "#/$defs/WireU64"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "changed",
+    "moved",
+    "kept_edits"
+  ],
+  "title": "WorkspaceDeleteResult",
+  "type": "object"
+}

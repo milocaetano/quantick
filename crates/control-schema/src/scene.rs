@@ -88,6 +88,15 @@ pub const FEED_RELOAD_CONTROL_ID: &str = "feed_status.reload";
 /// The compact action bar raised by a completed secondary-button range.
 pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 
+/// Optional native window targeting for `scene.read`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SceneReadInput {
+    /// Omission pins the focused live window when the request reaches the UI thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+}
+
 /// What is on screen right now, as controls an operator can name.
 ///
 /// The tree is expressed as a flat list plus [`SceneControlSnapshot::owner`]
@@ -96,7 +105,17 @@ pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 /// into anything to find it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SceneSnapshot {
+    /// Live native market window, pinned once when this read reaches the UI thread.
+    /// Omission selects the focused live window at that admission point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
+    /// The market tab the window holds as active. While Home is the
+    /// [`Self::active_surface`] this market keeps running behind it.
     pub active_tab_id: WireU64,
+    /// What the central canvas shows.
+    #[serde(default)]
+    pub active_surface: ActiveSurfaceDto,
     /// The focused canvas, when this capture lists one.
     ///
     /// Absent while the active tab is between layouts and has no painted
@@ -122,6 +141,17 @@ pub struct SceneSnapshot {
     /// that the scene is bounded like every other projection, and a capture
     /// that met the bound says so instead of truncating in silence.
     pub coverage: AvailabilitySnapshot,
+}
+
+/// What the central canvas shows.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveSurfaceDto {
+    /// The Home page: no chart is painted and no pane is listed.
+    Home,
+    /// The chart of the active market tab.
+    #[default]
+    Market,
 }
 
 /// One control the trader can see.
@@ -280,4 +310,13 @@ pub fn pane_header_controls(
             crate::indicator_picker::PICKER_CAPABILITY_ID,
         ),
     ]
+}
+
+/// Published schemas of the observer scene read.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![(
+        "observer-scene-read-input-v1.schema.json",
+        schema::<SceneReadInput>(),
+    )]
 }

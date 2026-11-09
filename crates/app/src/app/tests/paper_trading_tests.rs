@@ -150,11 +150,15 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
         .unwrap();
     let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    let floor = app.active_tab().latest_trade_ms.expect("a print landed");
-    let live_before = app.active_tab().live_trades;
-    let lag_before = app.active_tab().latest_trade_latency_ms;
+    let floor = app
+        .active_tab()
+        .link
+        .latest_trade_ms
+        .expect("a print landed");
+    let live_before = app.active_tab().link.live_trades;
+    let lag_before = app.active_tab().link.latest_trade_latency_ms;
 
-    app.active_tab_mut().resume_floor_ms = Some(floor);
+    app.active_tab_mut().link.resume_floor_ms = Some(floor);
     let recovered = quantick_engine::Trade {
         agg_id: 2,
         timestamp_ms: floor + 4 * 60_000,
@@ -168,15 +172,15 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
 
     let tab = app.active_tab();
     assert_eq!(
-        tab.live_trades, live_before,
+        tab.link.live_trades, live_before,
         "a recovered print is history; it is not a live arrival"
     );
     assert_eq!(
-        tab.latest_trade_latency_ms, lag_before,
+        tab.link.latest_trade_latency_ms, lag_before,
         "the age of the outage is not this feed's delay"
     );
     assert_eq!(
-        tab.latest_trade_ms,
+        tab.link.latest_trade_ms,
         Some(recovered.timestamp_ms),
         "the chart still moved forward to it"
     );
@@ -373,8 +377,8 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
     assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
     // Per market. The window's own summary counter adds these up across
     // every tab, in `drain_tabs`.
-    assert_eq!(app.active_tab().live_trades, 3);
-    assert_eq!(app.active_tab().trade_arrival_ms(), Some(75));
+    assert_eq!(app.active_tab().link.live_trades, 3);
+    assert_eq!(app.active_tab().link.trade_arrival_ms(), Some(75));
     assert_eq!(app.active_tab().flow_pane.state.timeline_revision(), 3);
     assert_eq!(
         app.active_tab()

@@ -28,6 +28,7 @@ pub mod tab_drain_plan;
 pub mod tape_drag;
 
 pub mod pane;
+pub mod pane_focus;
 pub mod viewport;
 
 pub mod pane_axis;

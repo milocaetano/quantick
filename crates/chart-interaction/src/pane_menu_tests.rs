@@ -103,6 +103,16 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
             ..
         }
     ));
+    let progress = bar_progress_entry(true);
+    assert_eq!(progress.label, "Bar progress on the price tag");
+    assert!(matches!(
+        progress.kind,
+        Kind::Check {
+            checked: true,
+            choice: MenuIntent::SetBarProgress(false),
+            ..
+        }
+    ));
     let inverted = inverted_entry(false);
     assert_eq!(inverted.label, "Inverted chart");
     assert_eq!(

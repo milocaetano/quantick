@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "feed": {
+      "type": "string"
+    },
+    "from_feed": {
+      "description": "The market the tab showed before the call; the same when nothing changed.",
+      "type": "string"
+    },
+    "from_symbol": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "tab": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab",
+    "feed",
+    "symbol",
+    "from_feed",
+    "from_symbol",
+    "changed"
+  ],
+  "title": "TabMarketSetResult",
+  "type": "object"
+}

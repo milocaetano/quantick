@@ -365,6 +365,9 @@ impl MarkPort for FakeWindow {
 }
 
 impl ChartPort for FakeWindow {
+    fn price_tag_progress(&self, _tab_id: u64) -> bool {
+        true
+    }
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {
             for (slot, pane) in tab.panes.iter().enumerate() {
@@ -413,6 +416,7 @@ fn entry<'a>(tab: &'a FakeTab, slot: usize, read: &'a FakePaneRead<'a>) -> Chart
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
         pane: read,
+        market_clock_ms: None,
     }
 }
 

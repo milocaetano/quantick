@@ -1,0 +1,38 @@
+{
+  "$defs": {
+    "WindowState": {
+      "enum": [
+        "normal",
+        "maximized",
+        "minimized"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "state": {
+      "$ref": "#/$defs/WindowState"
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "WindowInput",
+  "type": "object"
+}

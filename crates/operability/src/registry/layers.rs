@@ -14,21 +14,27 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
         title: "Open a panel — session, trading or trades",
-        reach: "View menu, the dock's own strip",
+        reach: "window menu, Panels, the dock's own strip",
         keys: &[
             (Source::DockTab, "session"),
             (Source::DockTab, "trading"),
             (Source::DockTab, "trades"),
+            (Source::MenuEntry, "L2"),
+            (Source::MenuEntry, "Bubbles"),
+            (Source::MenuEntry, "Session"),
+            (Source::MenuEntry, "Paper trading"),
+            (Source::MenuEntry, "Trades"),
         ],
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
         id: "dock.toggle",
         title: "Show or hide the panels dock",
-        reach: "toolbar sidebar button, View menu, Ctrl+Shift+B",
+        reach: "toolbar sidebar button, window menu, Ctrl+Shift+B",
         keys: &[
             (Source::ToolbarAction, "ToggleDock"),
             (Source::Hotkey, "DOCK_SHORTCUT"),
+            (Source::MenuEntry, "Show panels"),
         ],
         mapping: PENDING_SURFACE,
     },
@@ -147,7 +153,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "orderflow.settings.open",
         title: "Open the order-flow panel, on the L2 or the Bubbles section if one is named",
-        reach: "the flow pane's gear and its right-click menu; View menu; a capsule glyph's right-click; Ctrl+Shift+O",
+        reach: "the flow pane's gear and its right-click menu; window menu, Panels; a capsule glyph's right-click; Ctrl+Shift+O",
         keys: &[(Source::Hotkey, "ORDERFLOW_SETTINGS_SHORTCUT")],
         mapping: capability!("orderflow.settings.open"),
     },
@@ -230,5 +236,15 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             "whole-look preset selection permits same-name reapplication",
         )],
         mapping: capability!("orderflow.bubbles.preset.apply"),
+    },
+    UiBehaviour {
+        id: "orderflow.bubbles.reset",
+        title: "Reset the bubble look to the asset's factory preset",
+        reach: "Bubbles settings, reset bubble visuals",
+        keys: &[(
+            Source::Authored,
+            "the reset button at the foot of the Bubbles settings",
+        )],
+        mapping: capability!("orderflow.bubbles.reset"),
     },
 ];

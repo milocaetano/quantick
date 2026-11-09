@@ -11,7 +11,7 @@ use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_chart::side_label::SideLabel;
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_layers::{ChartLayer, LayerActions};
+use quantick_layers::{ChartLayer, LayerActions, LayerBlock, LayerFacts};
 
 use crate::bands;
 use crate::chart::PriceScale;
@@ -69,7 +69,7 @@ pub struct ChartPane {
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
     /// Headless pane binding; the workspace session owns authoritative membership.
-    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout,
+    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout<BarConfiguration>,
     /// Whether this pane's on-chart indicator legend is folded to its count puck. Per pane, not per
     /// window: a split is two readings of the same market, and the corner pressure that makes a
     /// trader fold the flow pane's legend (bubbles, book, the position HUD) is absent on the time
@@ -209,6 +209,44 @@ impl ChartPane {
             state: &self.state,
             spec: &self.spec,
         }
+    }
+    /// The layer answers — see [`layers::PaneLayerRead`].
+    pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
+        layers::PaneLayerRead {
+            layers: &self.layers,
+            orderflow: self.orderflow.as_ref(),
+            state: &self.state,
+            footprint: &self.presentation.footprint,
+            style: &self.presentation.candles,
+            drawings: &self.drawings,
+        }
+    }
+    /// The layer switches — see [`layers::PaneLayerWrite`].
+    pub(crate) fn layer_write(&mut self) -> layers::PaneLayerWrite<'_> {
+        layers::PaneLayerWrite {
+            pane: self.id,
+            layers: &mut self.layers,
+            orderflow: self.orderflow.as_mut(),
+            state: &self.state,
+            presentation: &mut self.presentation,
+            drawings: &mut self.drawings,
+        }
+    }
+    // The hot layer calls, each one line onto the view that owns its rule.
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        self.layer_read().facts(capabilities)
+    }
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().switched_on(layer, style)
+    }
+    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().visible(layer, style)
+    }
+    pub fn layer_blocked(&self, layer: ChartLayer, feed: FeedCapabilities) -> Option<LayerBlock> {
+        self.layer_read().blocked(layer, feed)
+    }
+    pub fn set_layer_visible(&mut self, layer: ChartLayer, on: bool, out: &mut LayerActions) {
+        self.layer_write().set_visible(layer, on, out);
     }
     pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
         gesture::DrawingProjection {
@@ -392,11 +430,7 @@ impl ChartPane {
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.presentation
-            .footprint
-            .config
-            .as_ref()
-            .unwrap_or(window)
+        self.presentation.footprint.config.resolve(window)
     }
 
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
@@ -441,7 +475,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.presentation.footprint.config = config;
+        self.presentation.footprint.config.set_own(config);
     }
 
     /// An egui interaction id scoped to this pane.
@@ -473,6 +507,19 @@ impl ChartPane {
         } else {
             0.0
         }
+    }
+
+    /// The palette this pane paints with: order flow takes the plot surface's.
+    pub fn palette(&self, ctx: &egui::Context) -> std::sync::Arc<crate::theme::Palette> {
+        let get = || crate::theme::get(ctx);
+        self.orderflow
+            .as_ref()
+            .map_or_else(get, |_| crate::theme::bookmap(ctx))
+    }
+    /// The style this pane's plot paints with, from the window's `style`.
+    pub fn plot_style(&self, style: &ChartStyle, ctx: &egui::Context) -> ChartStyle {
+        let palette = self.palette(ctx);
+        self.presentation.candles.resolve(style, &palette.resolved)
     }
 
     /// The view the plot is carved for: the committed one while a close is only previewed.
@@ -567,7 +614,7 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.sync_price_axis_mode();
-        self.unhide_layer_for_armed_tool(chrome);
+        self.layer_write().unhide_for_tool(chrome);
         // The magnet applies to every anchor gesture, placement and re-drag
         // alike: a handle that snaps only while you first draw it would make
         // the second edit undo the precision of the first. An object's own
@@ -575,8 +622,7 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.frame.axis_metrics =
-            quantick_appearance::AxisMetrics::new(&crate::theme::get(ui.ctx()).resolved.typography);
+        self.frame.axis_metrics = crate::theme::get(ui.ctx()).resolved.axis_metrics();
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);
@@ -592,61 +638,7 @@ impl ChartPane {
             price_label: &self.price_band_label,
         }
         .bands(&areas);
-        // A drawing tool consumes the *primary button*, not the chart: pan, wheel zoom, pane
-        // dividers and collapse chevrons keep working while one is armed (audit S2).
-        let placement_id = self.interaction_id("drawing_placement");
-        #[cfg(any(feature = "drawing-harness", test))]
-        let hand = self
-            .gestures
-            .parked_hand
-            .map(|hand| (hand.constrain, hand.position));
-        #[cfg(not(any(feature = "drawing-harness", test)))]
-        let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
-        let options = gesture::PlacementOptions {
-            tool: chrome.toolrail.tool().drawing_tool(),
-            magnet: chrome.toolrail.magnet(),
-            constrain: if ui.input(|input| input.modifiers.shift) {
-                drawings::Constrain::Level
-            } else {
-                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
-            },
-            parked_position: hand.map(|hand| hand.1),
-        };
-        let placement = gesture_input::update_placement(
-            &mut self.gestures,
-            &mut self.drawings,
-            &gesture::DrawingProjection {
-                series: gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
-                    spec: &self.spec,
-                },
-                viewport: &self.model.viewport,
-                indicators: &self.indicators,
-            },
-            gesture_input::PlacementInput {
-                ui,
-                areas: &areas,
-                bands: &bands,
-                id: placement_id,
-                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
-            },
-            options,
-            gesture::PlacementDefaults {
-                presets: chrome.presets,
-                repeat: chrome.toolrail.repeat(),
-            },
-        );
-        if let Some(position) = placement.hover_position {
-            self.hover_pos = position.map(drawings::pos);
-        }
-        if placement.completion.arm_pointer {
-            chrome.toolrail.arm(Tool::Pointer);
-        }
-        if placement.completion.begin_text_edit {
-            *chrome.begin_text_edit = true;
-        }
-        let tool_armed = placement.tool_armed;
+        let tool_armed = self.handle_placement(ui, &areas, &bands, chrome);
         let total = self.slots();
 
         // Chart body: `canvas_gestures` pans and zooms it.
@@ -772,6 +764,71 @@ impl ChartPane {
         axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
         axes_and_panes::handle_indicator_pane_gestures(self, ui, &areas, chrome, primary_free);
+    }
+
+    /// The drawing tool's placement gesture; true while a tool is armed.
+    fn handle_placement(
+        &mut self,
+        ui: &egui::Ui,
+        areas: &PlotAreas,
+        bands: &bands::Bands,
+        chrome: &mut PaneChrome<'_>,
+    ) -> bool {
+        // A drawing tool consumes the *primary button*, not the chart: pan, wheel zoom, pane
+        // dividers and collapse chevrons keep working while one is armed (audit S2).
+        let placement_id = self.interaction_id("drawing_placement");
+        #[cfg(any(feature = "drawing-harness", test))]
+        let hand = self
+            .gestures
+            .parked_hand
+            .map(|hand| (hand.constrain, hand.position));
+        #[cfg(not(any(feature = "drawing-harness", test)))]
+        let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
+        let options = gesture::PlacementOptions {
+            tool: chrome.toolrail.tool().drawing_tool(),
+            magnet: chrome.toolrail.magnet(),
+            constrain: if ui.input(|input| input.modifiers.shift) {
+                drawings::Constrain::Level
+            } else {
+                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
+            },
+            parked_position: hand.map(|hand| hand.1),
+        };
+        let placement = gesture_input::update_placement(
+            &mut self.gestures,
+            &mut self.drawings,
+            &gesture::DrawingProjection {
+                series: gesture::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.model.viewport,
+                indicators: &self.indicators,
+            },
+            gesture_input::PlacementInput {
+                ui,
+                areas,
+                bands,
+                id: placement_id,
+                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
+            },
+            options,
+            gesture::PlacementDefaults {
+                presets: chrome.presets,
+                repeat: chrome.toolrail.repeat(),
+            },
+        );
+        if let Some(position) = placement.hover_position {
+            self.hover_pos = position.map(drawings::pos);
+        }
+        if placement.completion.arm_pointer {
+            chrome.toolrail.arm(Tool::Pointer);
+        }
+        if placement.completion.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        placement.tool_armed
     }
 
     /// The HUD anchor cached by the last draw, if the paper layer was
@@ -966,6 +1023,7 @@ impl ChartPane {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
             PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
+            PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);

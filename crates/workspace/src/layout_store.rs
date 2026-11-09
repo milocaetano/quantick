@@ -1,7 +1,8 @@
 //! Resolved layout document storage and commit policy, independent of presentation.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    layout_document::LayoutBook,
+    layout_document::{LayoutBook, LayoutId},
+    market_settings_store::MarketSettingsStore,
     session::LayoutSession,
 };
 use std::path::{Path, PathBuf};
@@ -12,12 +13,17 @@ use std::time::Instant;
 /// The pure commit policy owns the dirty/timestamp/blocked transition. This
 /// handle associates its effects with the already resolved layout path.
 pub struct LayoutStore {
-    /// The workspace's layouts: the strip's tabs, their indicator sets and
-    /// their per-market drawings. See [`crate::layout_document`].
+    /// The workspace's layouts: the strip's tabs and their indicator sets.
+    /// See [`crate::layout_document`].
     session: LayoutSession,
     /// Where the layouts persist. Handed in, never resolved here.
     path: PathBuf,
     policy: LayoutCommitPolicy,
+    /// What stays with a market whichever layout shows it.
+    market: MarketSettingsStore,
+    /// Bumped with every change the book owes the file: a cheap signal that
+    /// what a pane's layout holds may have moved.
+    revision: u64,
 }
 
 impl LayoutStore {
@@ -26,11 +32,28 @@ impl LayoutStore {
     /// `blocked` comes from the load: it is the "could not read it and could
     /// not set it aside" answer, which only the loader can give.
     pub fn new(book: LayoutBook, path: PathBuf, blocked: bool) -> Self {
+        let market = MarketSettingsStore::beside(&path);
         Self {
             session: LayoutSession::new(book),
             path,
             policy: LayoutCommitPolicy::new(blocked),
+            market,
+            revision: 0,
         }
+    }
+
+    /// The store beside `market`, which the caller opened and migrated.
+    #[must_use]
+    pub fn with_market(mut self, market: MarketSettingsStore) -> Self {
+        self.market = market;
+        self
+    }
+
+    pub fn market(&self) -> &MarketSettingsStore {
+        &self.market
+    }
+    pub fn market_mut(&mut self) -> &mut MarketSettingsStore {
+        &mut self.market
     }
 
     /// The book, for the strip, the menu and the control plane to read.
@@ -48,6 +71,8 @@ impl LayoutStore {
     /// Redirect a fixture without exposing the document or commit policy.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_path(&mut self, path: PathBuf) {
+        self.market
+            .set_path(path.with_file_name(crate::market_settings::MARKET_SETTINGS_FILE));
         self.path = path;
     }
 
@@ -70,13 +95,27 @@ impl LayoutStore {
     /// afterwards by [`Self::settle`] rather than guessed at here.
     pub fn set_book(&mut self, book: LayoutBook) {
         self.session.replace_book(book);
+        self.revision += 1;
     }
 
     pub fn settle(&mut self, changed: bool, now: Instant) {
+        self.revision += u64::from(changed);
         self.policy.settle(changed, now);
     }
     pub fn mark_changed(&mut self, now: Instant) {
+        self.revision += 1;
         self.policy.mark_changed(now);
+    }
+    /// See the field: moves whenever the book changed.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    /// After a desk is read: drop every pane's own copy that no pane holds and
+    /// no restored tab names, and owe the file the change.
+    pub fn prune_private(&mut self, named: impl IntoIterator<Item = LayoutId>, now: Instant) {
+        if self.session.prune_private(named) {
+            self.mark_changed(now);
+        }
     }
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
         self.policy.take_save(now)

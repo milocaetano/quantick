@@ -5160,6 +5160,74 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Takes a symbol the trader added back out of its feed's list and out of the added-symbols file, as Delete on its palette row does. Refused with the reason for a symbol the config file declares and for one a tab is showing; close the tab first.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "catalog.remove",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Take a market the trader added out of its venue's list.",
+        "properties": {
+          "feed": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "CatalogRemoveInput",
+        "type": "object"
+      },
+      "module": "catalog",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "feed": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "CatalogRemoveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds the symbol gone and is refused; nothing changes.",
+      "title": "Remove a market you added",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5459,6 +5527,102 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Switches the second line of the last-price tag: how far the forming bar is from closing (done/target for a count rule, the time left on the market clock for a time rule, the running total for an imbalance rule). Kept for the market the pane shows (venue and asset) and saved with the market settings; every pane of that market follows. The price axis menu's first row makes the same change. On by default.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.price_tag.progress.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "on": {
+            "description": "`true` prints the forming bar's progress under the last price.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "A pane on that tab, as `chart.summary` lists it: the setting belongs to\nthe market the pane shows, so every pane of that market follows."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab, as `chart.summary` lists it."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "on"
+        ],
+        "title": "PriceTagProgressInput",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call moved it; `false` when it already stood there.",
+            "type": "boolean"
+          },
+          "on": {
+            "description": "The market's setting as it stands after the call.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "on",
+          "changed"
+        ],
+        "title": "PriceTagProgressResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs name the market before anything changes; setting the value it already has changes nothing, and chart.summary reports it as price_tag_progress.",
+      "title": "Show bar progress on the price tag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Drive Candles/Footprint settings for one chart. Optional target uses tab_id/pane_id from chart.summary; omission uses the pinned editor or focused pane. Focus never retargets an editor; retired panes/sources require explicit reopen. Inspect returns effective_style and theme/explicit ownership; update_candles validates that complete document atomically. Apply/reset/update affect only the target and persist with its workspace. Built-in presets keep its canvas; saved presets restore its full look. Reset requires an editor on the same pane and restores its opening look. Preset names are shared; application is local. Failed preset writes are undone and retryable. Open/close only change the session window.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5503,6 +5667,14 @@
               "pane_id"
             ],
             "type": "object"
+          },
+          "StyleOwnership": {
+            "default": "explicit",
+            "enum": [
+              "theme",
+              "explicit"
+            ],
+            "type": "string"
           },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
@@ -5691,7 +5863,7 @@
               },
               "style": {
                 "additionalProperties": false,
-                "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
                 "properties": {
                   "candles": {
                     "additionalProperties": false,
@@ -5868,6 +6040,9 @@
                         "description": "Decimal [0, 1], inclusive.",
                         "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
                         "type": "string"
+                      },
+                      "time_grid_enabled": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -5881,71 +6056,43 @@
                   },
                   "ownership": {
                     "additionalProperties": false,
-                    "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+                    "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
                     "properties": {
                       "background": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bear_fill": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bear_outline": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bull_fill": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bull_outline": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "fill_opacity": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "grid": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "outline_opacity": {
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "outline_width": {
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "time_grid": {
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "wick": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "wick_opacity": {
+                        "$ref": "#/$defs/StyleOwnership"
                       }
                     },
                     "type": "object"
@@ -6013,6 +6160,14 @@
             ],
             "type": "object"
           },
+          "StyleOwnership": {
+            "default": "explicit",
+            "enum": [
+              "theme",
+              "explicit"
+            ],
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -6050,7 +6205,7 @@
             "anyOf": [
               {
                 "additionalProperties": false,
-                "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+                "description": "One pane's candle/canvas style: read effective_style, edit values and ownership, submit it whole to update_candles. A changed value on a theme-owned field is refused until its ownership is explicit. Geometry and opacity are canonical decimal strings in inclusive bounds.",
                 "properties": {
                   "candles": {
                     "additionalProperties": false,
@@ -6227,6 +6382,9 @@
                         "description": "Decimal [0, 1], inclusive.",
                         "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
                         "type": "string"
+                      },
+                      "time_grid_enabled": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -6240,71 +6398,43 @@
                   },
                   "ownership": {
                     "additionalProperties": false,
-                    "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+                    "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
                     "properties": {
                       "background": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bear_fill": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bear_outline": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bull_fill": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "bull_outline": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "fill_opacity": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "grid": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "outline_opacity": {
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "outline_width": {
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "time_grid": {
+                        "$ref": "#/$defs/StyleOwnership"
                       },
                       "wick": {
-                        "default": "explicit",
-                        "enum": [
-                          "theme",
-                          "explicit"
-                        ],
-                        "type": "string"
+                        "$ref": "#/$defs/StyleOwnership"
+                      },
+                      "wick_opacity": {
+                        "$ref": "#/$defs/StyleOwnership"
                       }
                     },
                     "type": "object"
@@ -8284,6 +8414,289 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Brings up the trader's save dialog. It takes no path: nothing is written until the trader picks one there.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.export",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the trader's file dialog came up; `false` means one already is.",
+        "properties": {
+          "opened": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "opened"
+        ],
+        "title": "DeskPickResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "While one dialog is up a repeat raises no second one and answers opened false.",
+      "title": "Export the desk to a file",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Forgets the saved startup desk; it does not come back. The charts on screen are left alone. The next launch opens on the configured default only while reopen on launch is off: with it on, closing the window saves the screen again.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.forget",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the file changed on disk; `false` says the log has the reason.",
+        "properties": {
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "written"
+        ],
+        "title": "DeskWriteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Forgetting twice leaves nothing saved either way, and the second answers written false.",
+      "title": "Forget the saved desk",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Brings up the trader's open dialog. It takes no path: the cockpit on screen stays until the trader picks a file there.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.import",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the trader's file dialog came up; `false` means one already is.",
+        "properties": {
+          "opened": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "opened"
+        ],
+        "title": "DeskPickResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "While one dialog is up a repeat raises no second one and answers opened false.",
+      "title": "Import a desk from a file",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Says whether the arrangement is kept automatically when the window closes. Off, only desk.save changes what quantick opens on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.reopen_on_launch.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Whether the next launch reopens the tabs open when the window closed.",
+        "properties": {
+          "reopen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reopen"
+        ],
+        "title": "DeskReopenInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The choice in force.",
+        "properties": {
+          "changed": {
+            "description": "Whether this call moved it; `false` for a repeat.",
+            "type": "boolean"
+          },
+          "reopen": {
+            "type": "boolean"
+          },
+          "written": {
+            "description": "Whether the file changed on disk.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reopen",
+          "changed",
+          "written"
+        ],
+        "title": "DeskReopenResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the choice it wants, so a repeat leaves the same choice and writes nothing.",
+      "title": "Reopen the last tabs on launch",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Remembers the tabs, the charts on each, the panels, the timezone and the window as what quantick opens on, as Ctrl+Shift+S does.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.save",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the file changed on disk; `false` says the log has the reason.",
+        "properties": {
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "written"
+        ],
+        "title": "DeskWriteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat writes what is on screen then, which is what the caller asked to keep.",
+      "title": "Save the desk",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Reads a bounded page of the semantic event journal after a cursor or from an explicit start, and says when older events were dropped.",
       "destructive": false,
       "dry_run_supported": false,
@@ -8807,7 +9220,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Freezes the named scopes, the events around them and the effective configuration into one hashed, redacted in-memory bundle, and answers with its manifest.",
+      "description": "Freezes named scopes, recent events and redacted configuration into one hashed in-memory bundle. Optional window_id pins a live target at UI admission; screenshot pixels and painted scene retain that target identity even if focus changes.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -8825,6 +9238,10 @@
             "maxLength": 128,
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           }
         },
@@ -8854,6 +9271,17 @@
             "default": false,
             "description": "Requires `observe.screenshot`. A capture that asks for one and cannot\nhave it says why in its coverage; it never silently answers with text\nalone.",
             "type": "boolean"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Live native market window, pinned once when this read reaches the UI thread.\nOmission selects the focused live window at that admission point."
           }
         },
         "required": [
@@ -9040,10 +9468,30 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "Physical pixels per logical point: the factor the scene's own\npoint-valued bounds were multiplied by to reach the regions below."
               },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "width_px": {
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -9265,6 +9713,16 @@
             },
             "type": "array",
             "uniqueItems": true
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -9687,7 +10145,135 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Tools menu's checkbox sets, saved with the workspace, and every answer reports it.",
+      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.contract.roll",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "from_symbol": {
+            "description": "The contract the caller read in feed.status. Naming it is what makes a\nretry safe: a second call cannot roll a contract further.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "from_symbol"
+        ],
+        "title": "ContractRollInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "False when the tab already showed the target: the feed did not move.\nThe drawings are still copied, so a tab switched there by hand gets them.",
+            "type": "boolean"
+          },
+          "drawings_carried": {
+            "description": "Drawings copied to the new contract. Zero when both contracts are one\nasset: they already share one set. Those it already held are not counted.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "feed_id": {
+            "type": "string"
+          },
+          "from_symbol": {
+            "type": "string"
+          },
+          "symbol": {
+            "description": "The contract the tab shows now.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol",
+          "from_symbol",
+          "changed",
+          "drawings_carried"
+        ],
+        "title": "ContractRollResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "The tab is on a live feed, not a recorded session.",
+          "id": "feed.contract.live_source"
+        },
+        {
+          "description": "The tab shows from_symbol, or the contract configured to follow it.",
+          "id": "feed.contract.from_symbol"
+        },
+        {
+          "description": "The feed config names a contract after from_symbol (contract_rolls).",
+          "id": "feed.contract.roll_configured"
+        },
+        {
+          "description": "The feed offers the configured next contract (symbols).",
+          "id": "feed.contract.target_offered"
+        },
+        {
+          "description": "The tab holds no paper position or working order.",
+          "id": "feed.contract.paper_flat"
+        },
+        {
+          "description": "No drawing gesture is in flight on a pane of either contract.",
+          "id": "feed.contract.no_gesture"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "from_symbol is checked against the tab before anything changes: a stale caller is refused, or answered changed:false when the tab already shows the target. A roll rebuilds the pane timelines and disarms strategies; it never touches a paper position, which refuses it.",
+      "title": "Roll the tab to its next contract",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Settings window's checkbox sets, saved with the workspace, and every answer reports it.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10672,6 +11258,17 @@
               }
             },
             "type": "object"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pinned native window identity when the host supports window targeting."
           }
         },
         "required": [
@@ -10702,6 +11299,142 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "Read diagnostics",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the active market back on screen over Home, as its chip and Ctrl+Tab do. No market changes, and on a market already it does nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "home.leave",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "HomeLeaveInput",
+        "type": "object"
+      },
+      "module": "home",
+      "output_schema": {
+        "$defs": {
+          "ActiveSurfaceDto": {
+            "description": "What the central canvas shows.",
+            "oneOf": [
+              {
+                "const": "home",
+                "description": "The Home page: no chart is painted and no pane is listed.",
+                "type": "string"
+              },
+              {
+                "const": "market",
+                "description": "The chart of the active market tab.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "active_surface": {
+            "$ref": "#/$defs/ActiveSurfaceDto"
+          }
+        },
+        "required": [
+          "active_surface"
+        ],
+        "title": "HomeLeaveResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Leaving Home twice is the same state, so a stale or repeated call can only show the active market.",
+      "title": "Leave the Home tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Shows Home over the central canvas, as the first tab, Ctrl+1 and Ctrl+Shift+H do. Every market stays open and streaming behind it, and it works during a replay. Opening or activating a market leaves Home, as home.leave does. Control-plane writes keep targeting the active market while Home shows.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "home.show",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "HomeShowInput",
+        "type": "object"
+      },
+      "module": "home",
+      "output_schema": {
+        "$defs": {
+          "ActiveSurfaceDto": {
+            "description": "What the central canvas shows.",
+            "oneOf": [
+              {
+                "const": "home",
+                "description": "The Home page: no chart is painted and no pane is listed.",
+                "type": "string"
+              },
+              {
+                "const": "market",
+                "description": "The chart of the active market tab.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "active_surface": {
+            "$ref": "#/$defs/ActiveSurfaceDto"
+          }
+        },
+        "required": [
+          "active_surface"
+        ],
+        "title": "HomeShowResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Showing Home twice is the same state, so a stale or repeated call can only show Home.",
+      "title": "Show the Home tab",
       "version": 1
     },
     {
@@ -12039,6 +12772,914 @@
       "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
       "title": "Focus a chart",
       "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Transfers the same tab to the named live window at an insertion index after excluding that tab. Empty source windows retire without closing their runtime.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.attach",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "window_id",
+          "position"
+        ],
+        "title": "AttachInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Attach a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Transfers the same tab into a new native window. The last tab can detach, retiring its empty source window while sibling windows survive.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.detach",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Detach a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Stages the same ownership token a native drag uses, without changing ownership or order. Refused while another gesture is pending. Complete through a transfer operation or cancel explicitly.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.drag.begin",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Stage a market-tab drag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Cancels the pending native or agent tab gesture, preserving every window's ownership and tab order. Inspection reports pending and cancelled state.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.drag.cancel",
+      "idempotency": "required",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "CancelInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Cancel the staged market-tab drag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Moves the same tab within its window. Position is the insertion index after excluding that tab; ownership, feeds and workers are preserved.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.reorder",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "position"
+        ],
+        "title": "ReorderInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Reorder a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Selects a tab owned by the named window without changing another window's selection or native keyboard focus.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.select",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "window_id"
+        ],
+        "title": "SelectInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Select a market tab in one window",
+      "version": 1
     },
     {
       "availability": {
@@ -13641,7 +15282,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -13762,7 +15403,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14126,7 +15767,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
+      "description": "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and its drawings stay, being the market's. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14266,6 +15907,614 @@
       "risk_reducing": false,
       "stale_input_safety": "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names.",
       "title": "Switch layout tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Retires a live native market window and appends its tabs to a surviving window without recreating sessions. The final market window is refused: process exit is outside agent authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.window.close",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omitted means the focused live market window, never a hidden root shell."
+          }
+        },
+        "title": "WindowTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Close a market window and preserve its tabs",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Requests outer origin and inner size in physical desktop pixels for the named window, or the focused window when omitted. Coordinates may be negative. The OS can clamp the requested rectangle; workspace.windows reports the actual native viewport separately. No market, feed or worker is recreated.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "layout.window.placement.set",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "placement": {
+            "$ref": "#/$defs/PhysicalPlacement"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "placement"
+        ],
+        "title": "PlacementInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "requested": {
+            "$ref": "#/$defs/PhysicalPlacement",
+            "description": "Accepted for a native frame. The OS may clamp size or placement; inspect workspace.windows."
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "window_id",
+          "requested"
+        ],
+        "title": "PlacementResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required key replays the accepted placement without issuing it again.",
+      "title": "Place a native market window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Requests normal, maximized or minimized presentation state for window_id, or the focused live market window when omitted. The result is acceptance, not an OS acknowledgement; workspace.windows reports observed state. Application exit is excluded from agent authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "layout.window.state.set",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WindowState": {
+            "enum": [
+              "normal",
+              "maximized",
+              "minimized"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/WindowState"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "WindowInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WindowState": {
+            "enum": [
+              "normal",
+              "maximized",
+              "minimized"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "requested": {
+            "$ref": "#/$defs/WindowState",
+            "description": "Accepted for the next native frame; this is not an OS acknowledgement."
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "requested"
+        ],
+        "title": "WindowResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Explicit states never toggle. A required idempotency key replays the accepted request without minimizing twice.",
+      "title": "Set native window state",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens a configured feed and symbol in a new tab on a bar and a workspace, as the Open a market palette's Enter does. A tab already showing that market on the same bar and workspace is focused instead and the answer says focused true; the other tab is never changed. With background true the tab on screen stays. An unknown feed or symbol, a bar that does not parse or that the feed cannot build, and an unknown workspace are refused before anything opens.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "market.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Open a configured market, or focus the tab that already shows it so.",
+        "properties": {
+          "background": {
+            "default": false,
+            "description": "Open without leaving the tab on screen.",
+            "type": "boolean"
+          },
+          "bar": {
+            "description": "The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,\nthe market's own: an open tab's, else the one it last closed on, else\nthe feed's `default_bars`, else the active tab's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feed": {
+            "description": "A feed id from `feed.status.sources`.",
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "workspace": {
+            "description": "A name from `workspace.list`. Left out, `Default`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "MarketOpenInput",
+        "type": "object"
+      },
+      "module": "market",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab that shows the market now.",
+        "properties": {
+          "background": {
+            "type": "boolean"
+          },
+          "bar": {
+            "type": "string"
+          },
+          "feed": {
+            "type": "string"
+          },
+          "focused": {
+            "description": "True when a tab already showed this market on this bar and workspace\nand was focused; nothing new opened.",
+            "type": "boolean"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "focused",
+          "feed",
+          "symbol",
+          "bar",
+          "workspace",
+          "background"
+        ],
+        "title": "MarketOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A keyed repeat replays the first answer. An unkeyed repeat finds the tab the first call opened and focuses it.",
+      "title": "Open a market in a tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the Open a market palette over the chart, as + and Ctrl+T do, with the field holding query, and journals market.palette.opened. Nothing opens until Enter or market.open. With switch true it opens in switch mode, as the toolbar's market button does: Enter switches the active tab (tab.market.set) or rolls it to its next contract (feed.contract.roll); refused when the active tab is a recording.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "market.palette.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Put the palette on screen.",
+        "properties": {
+          "query": {
+            "default": "",
+            "description": "What the field starts with; `>` lists commands.",
+            "type": "string"
+          },
+          "switch": {
+            "default": false,
+            "description": "Switch mode: Enter puts the active tab on the chosen market (through\n`tab.market.set`) instead of opening a tab, as the toolbar's market\nbutton does.",
+            "type": "boolean"
+          }
+        },
+        "title": "MarketPaletteOpenInput",
+        "type": "object"
+      },
+      "module": "market",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "switch": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query",
+          "switch"
+        ],
+        "title": "MarketPaletteOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Showing the palette twice is the same state, with the field reset to query.",
+      "title": "Show the Open a market palette",
       "version": 1
     },
     {
@@ -14902,6 +17151,239 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "List whole bubble presets",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Does what the Bubbles settings button reset bubble visuals does: puts back the look a fresh open of the pane's asset shows, tick spheres included. That is the preset the feed config declares for the asset as the shipped presets hold it (never the operator's edited copy of that name); without a shipped declared preset, the look the operator's presets open the asset on. Only the look, the native tape it sets included: the pane's tape-only view stays. A pane with no asset gets the code defaults and an empty preset; otherwise preset names the look worn. Changes follow the asset save switch. Read selection and effective policies in orderflow.bubbles.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.reset",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "The pane whose bubble look returns to its asset's factory preset.",
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id"
+        ],
+        "title": "ResetInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "BubbleAssetSnapshot": {
+            "description": "The asset a pane's bubble settings belong to.",
+            "properties": {
+              "key": {
+                "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+                "type": "string"
+              },
+              "save_changes": {
+                "default": true,
+                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+                "type": "boolean"
+              },
+              "save_error": {
+                "default": null,
+                "description": "Why they are not saved; absent when they are.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "saved": {
+                "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+                "type": "boolean"
+              },
+              "source": {
+                "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "preset",
+              "saved"
+            ],
+            "type": "object"
+          },
+          "TickBubbleReferenceMode": {
+            "enum": [
+              "fixed",
+              "visible_max"
+            ],
+            "type": "string"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_mode": {
+                "$ref": "#/$defs/TickBubbleReferenceMode",
+                "default": "fixed"
+              },
+              "reference_quantity": {
+                "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+                "type": "string"
+              },
+              "viewport_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Present when final visible quantities and the current camera size the spheres."
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "ViewportBubbleScaleSnapshot": {
+            "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+            "properties": {
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "x_units_per_pixel": {
+                "description": "Bars on candles; milliseconds on native Tape.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "x_units_per_pixel",
+              "price_units_per_pixel"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BubbleAssetSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "depth_time_averaging": {
+            "type": "boolean"
+          },
+          "forward_book_preview": {
+            "type": "boolean"
+          },
+          "native_tape": {
+            "type": "boolean"
+          },
+          "native_tape_requested": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "stable_size": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tick_bubbles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TickBubblesSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "changed",
+          "preset",
+          "native_tape_requested",
+          "native_tape",
+          "stable_size",
+          "depth_time_averaging",
+          "forward_book_preview"
+        ],
+        "title": "ApplyResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab/pane IDs are checked before mutation. A pane already on its factory look is a no-op answering changed false. Keyed retries replay the first answer.",
+      "title": "Reset bubble look to the asset's factory preset",
       "version": 1
     },
     {
@@ -16124,7 +18606,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
+      "description": "Names controls on the requested window_id with frame-stable IDs, selection, geometry and coded availability. Omission pins the focused live window at UI admission; a closed pinned target is refused.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -16136,9 +18618,29 @@
       "id": "scene.read",
       "idempotency": "forbidden",
       "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "title": "EmptyInput",
+        "description": "Optional native window targeting for `scene.read`.",
+        "properties": {
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omission pins the focused live window when the request reaches the UI thread."
+          }
+        },
+        "title": "SceneReadInput",
         "type": "object"
       },
       "module": "scene",
@@ -16250,6 +18752,17 @@
               }
             },
             "type": "object"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pinned native window identity when the host supports window targeting."
           }
         },
         "required": [
@@ -17244,7 +19757,97 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Captures the requested registered scopes coherently on the application thread.",
+      "description": "Opens Settings on a section, as Ctrl+Comma and the status-bar clock do. Changes no setting. The Agent access section is refused: a connection cannot bring up the switch that widens its own authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "settings.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "One section of the Settings window.",
+            "enum": [
+              "display",
+              "data",
+              "recording",
+              "agent_access"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Open the Settings window.",
+        "properties": {
+          "section": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingsSection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The section to show. Left out, Display. `agent_access` is refused."
+          }
+        },
+        "title": "SettingsOpenInput",
+        "type": "object"
+      },
+      "module": "settings",
+      "output_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "One section of the Settings window.",
+            "enum": [
+              "display",
+              "data",
+              "recording",
+              "agent_access"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The section now on screen.",
+        "properties": {
+          "section": {
+            "$ref": "#/$defs/SettingsSection"
+          }
+        },
+        "required": [
+          "section"
+        ],
+        "title": "SettingsOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening a section twice is the same state, so a stale or repeated call can only show that section.",
+      "title": "Open the Settings window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Captures the requested registered scopes coherently on the application thread. Optional window_id pins a live market window; omission pins the focused window at UI admission, before any frame wait.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -17263,6 +19866,10 @@
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
             "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -17275,6 +19882,17 @@
             "maxItems": 32,
             "minItems": 1,
             "type": "array"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Live native market window, pinned once when this read reaches the UI thread.\nOmission selects the focused live window at that admission point."
           }
         },
         "required": [
@@ -17392,6 +20010,17 @@
               }
             },
             "type": "object"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pinned native window identity when the host supports window targeting."
           }
         },
         "required": [
@@ -17419,6 +20048,329 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "Read semantic snapshot",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Closes one tab. With autosave on an edit on its way is written first and it closes at once; a tab whose copy autosave did not write (marked) asks as held edits do. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab before anything is saved or written.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "tab.close",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Close a market tab.",
+        "properties": {
+          "save": {
+            "description": "What to do with held edits: `true` saves them to the workspace first,\n`false` drops them. Left out on a tab holding edits, nothing closes.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "TabCloseInput",
+        "type": "object"
+      },
+      "module": "tab",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceSaveResult": {
+            "description": "What a save did.",
+            "properties": {
+              "changed": {
+                "description": "`false` for a repeat, which writes nothing.",
+                "type": "boolean"
+              },
+              "tabs_changed": {
+                "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "workspace",
+              "changed",
+              "tabs_changed"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab that closed, and the save made first when asked.",
+        "properties": {
+          "saved": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceSaveResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabCloseResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
+      "title": "Close a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the tab on a configured feed and symbol, as the toolbar's market button and the Open a market palette's switch mode do. It is feed.source.set under the tab's market names: the same checks, the same switch and the same `feed.source.changed` journal row naming the caller. The tab keeps its workspace and pane layout; each market keeps its own drawings, so switching back shows the first market's again. Refuses while replay owns the tab and for a pair feed.status.sources does not list. Repeating the market the tab shows is a no-op. Requires cockpit.recover like feed.source.set.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "tab.market.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Put a tab on another configured market: the toolbar's market button and\nthe palette's switch mode, as one call.",
+        "properties": {
+          "feed": {
+            "description": "A feed id from `feed.status.sources`.",
+            "type": "string"
+          },
+          "symbol": {
+            "description": "A symbol that feed offers.",
+            "type": "string"
+          },
+          "tab": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab's id, as `feed.status` reports it."
+          }
+        },
+        "required": [
+          "tab",
+          "feed",
+          "symbol"
+        ],
+        "title": "TabMarketSetInput",
+        "type": "object"
+      },
+      "module": "tab",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "feed": {
+            "type": "string"
+          },
+          "from_feed": {
+            "description": "The market the tab showed before the call; the same when nothing changed.",
+            "type": "string"
+          },
+          "from_symbol": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab",
+          "feed",
+          "symbol",
+          "from_feed",
+          "from_symbol",
+          "changed"
+        ],
+        "title": "TabMarketSetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "No expected revision is checked. A stale caller can only rebuild a chart that had already come back, or switch a tab to the pair it already shows, which changes nothing; otherwise it costs the history refetch, any open paper position — journaled, with its reason — and the tab's armed strategies. The call names the tab and the market it acted on and whether it really respawned or changed, and journals who did it (`feed.timeline.rebuilt` for a reload, `feed.source.changed` for a switch), so a caller that guessed wrong can see it did.",
+      "title": "Switch a tab to another market",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Switches one tab to a saved workspace: its charts, context intervals, indicators, layers and footprint style. Drawings, anchored studies, bar size and the paper position stay with the market. It never asks: unsaved edits on the tab are dropped and the answer says so. Discover names with workspace.list.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "tab.workspace.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Put a tab on a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TabWorkspaceSetInput",
+        "type": "object"
+      },
+      "module": "tab",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab, and whether unsaved edits were dropped by the switch.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which keeps any edits.",
+            "type": "boolean"
+          },
+          "dropped_edits": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "changed",
+          "dropped_edits"
+        ],
+        "title": "TabWorkspaceSetResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
+      "title": "Put a tab on a workspace",
       "version": 1
     },
     {
@@ -18678,6 +21630,716 @@
       "stale_input_safety": "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
       "title": "Choose the ticket's exit ladder",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, closing it or exiting asks, and a switch drops it. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.autosave.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Turn \"auto save layout changes\" on or off.",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "title": "WorkspaceAutosaveInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceSaveResult": {
+            "description": "What a save did.",
+            "properties": {
+              "changed": {
+                "description": "`false` for a repeat, which writes nothing.",
+                "type": "boolean"
+              },
+              "tabs_changed": {
+                "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "workspace",
+              "changed",
+              "tabs_changed"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The setting as it now stands, and the saves turning it on made at once.",
+        "properties": {
+          "auto_save": {
+            "type": "boolean"
+          },
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "saved": {
+            "description": "One per tab that held edits when autosave turned on.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceSaveResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "auto_save",
+          "changed",
+          "saved"
+        ],
+        "title": "WorkspaceAutosaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
+      "title": "Turn auto save layout changes on or off",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.delete",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Delete a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceDeleteInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a delete did.",
+        "properties": {
+          "changed": {
+            "description": "Always `true`: a name no workspace has is refused with `workspace.unknown`.",
+            "type": "boolean"
+          },
+          "kept_edits": {
+            "description": "The moved tabs that kept their edits, marked `Default •`.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "moved": {
+            "description": "Every tab moved to `Default`.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "changed",
+          "moved",
+          "kept_edits"
+        ],
+        "title": "WorkspaceDeleteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
+      "title": "Delete a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "workspace.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: every workspace is listed.",
+        "title": "WorkspaceListInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceEntry": {
+            "description": "One workspace and the tabs using it.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "summary": {
+                "description": "One line: the panes, each context pane's interval and the indicator\ncount, e.g. `Time 1m · Flow · 3 ind`.",
+                "type": "string"
+              },
+              "tabs": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "summary",
+              "tabs"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Every workspace, `Default` first, then by name.",
+        "properties": {
+          "workspaces": {
+            "items": {
+              "$ref": "#/$defs/WorkspaceEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workspaces"
+        ],
+        "title": "WorkspaceListResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List the workspaces",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.new",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Make a new, empty workspace and put a tab on it.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceNewInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The new workspace as stored, and whether the tab's edits were dropped.",
+        "properties": {
+          "dropped_edits": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "dropped_edits"
+        ],
+        "title": "WorkspaceNewResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+      "title": "Make a new, empty workspace for a tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Renames a workspace; the tabs on it follow. Default cannot be renamed, and an empty or taken name is refused with the reason.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.rename",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Rename a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "to"
+        ],
+        "title": "WorkspaceRenameInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The name in force.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the name already read so.",
+            "type": "boolean"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed"
+        ],
+        "title": "WorkspaceRenameResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Naming the name it already has writes nothing and answers changed false.",
+      "title": "Rename a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set drops held edits.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.revert",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "A call about one tab's copy.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "WorkspaceTabInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What the removed revert would have answered; it now always refuses.",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "changed"
+        ],
+        "title": "WorkspaceRevertResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Always refuses; nothing changes.",
+      "title": "Removed: always refuses",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Makes a workspace of what the tab shows and puts the tab on it. No other tab changes. An empty or taken name is refused with the reason.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.save_as",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Make a new workspace of a tab's copy.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceSaveAsInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a save did.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "tabs_changed": {
+            "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed",
+          "tabs_changed"
+        ],
+        "title": "WorkspaceSaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat from the tab that made the name writes nothing and answers changed false.",
+      "title": "Save a tab as a new workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.save_to",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "A call about one tab's copy.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "WorkspaceTabInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a save did.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "tabs_changed": {
+            "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed",
+          "tabs_changed"
+        ],
+        "title": "WorkspaceSaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds no edits, writes nothing and answers changed false.",
+      "title": "Save a tab's edits to its workspace",
+      "version": 1
     }
   ],
   "catalog_version": 1,
@@ -18717,6 +22379,11 @@
       "title": "Attention"
     },
     {
+      "description": "The markets each venue lists, and the ones the trader added.",
+      "id": "catalog",
+      "title": "Catalog"
+    },
+    {
       "description": "Pane framing, bar construction, and visible market coverage.",
       "id": "chart",
       "title": "Chart"
@@ -18725,6 +22392,11 @@
       "description": "Running-instance contract and authority metadata.",
       "id": "control",
       "title": "Control"
+    },
+    {
+      "description": "The open tabs, panels and window kept as what quantick opens on.",
+      "id": "desk",
+      "title": "Desk"
     },
     {
       "description": "The bounded semantic event journal and its cursor.",
@@ -18747,6 +22419,11 @@
       "title": "Health"
     },
     {
+      "description": "The Home tab, shown over the canvas while every market keeps running.",
+      "id": "home",
+      "title": "Home"
+    },
+    {
       "description": "Indicator slots, and the Quantick Pine scripts attached to them.",
       "id": "indicator",
       "title": "Indicators"
@@ -18765,6 +22442,11 @@
       "description": "The canvas: which charts are on screen, where they sit, and how wide.",
       "id": "layout",
       "title": "Layout"
+    },
+    {
+      "description": "Opening a market in a tab, and the palette that finds one.",
+      "id": "market",
+      "title": "Market"
     },
     {
       "description": "Interruptions: a popup, a toast, a sound.",
@@ -18787,6 +22469,11 @@
       "title": "Session"
     },
     {
+      "description": "The Settings window and which section it shows.",
+      "id": "settings",
+      "title": "Settings"
+    },
+    {
       "description": "Coherent multi-module semantic captures.",
       "id": "snapshot",
       "title": "Snapshot"
@@ -18795,6 +22482,11 @@
       "description": "Application build and runtime identity.",
       "id": "system",
       "title": "System"
+    },
+    {
+      "description": "What one open tab uses: the workspace it reads its market with.",
+      "id": "tab",
+      "title": "Tab"
     },
     {
       "description": "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated.",
@@ -18877,6 +22569,16 @@
         "cockpit"
       ],
       "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Overwrite or forget the desk quantick opens on, bring up the file dialogs that export or replace it, and overwrite, rename or delete a saved workspace. What is overwritten or forgotten this way does not come back.",
+      "id": "cockpit.desk",
+      "label": "Change your saved desk",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": true
     },
     {
       "default_grant": "prompt",
@@ -19196,6 +22898,26 @@
             ],
             "type": "object"
           },
+          "DrawingOriginSnapshot": {
+            "description": "Where a migration merged a drawing from. See [`DrawingSnapshot::origin`].",
+            "properties": {
+              "layout": {
+                "type": "string"
+              },
+              "pane": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "symbol": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "layout",
+              "symbol",
+              "pane"
+            ],
+            "type": "object"
+          },
           "DrawingSnapshot": {
             "properties": {
               "anchor_count": {
@@ -19251,6 +22973,18 @@
               "off_series": {
                 "description": "This pane's series does not reach the market instant an anchor was\nplaced at — the mark survived a re-cut, a rewind or a symbol switch,\nbut no longer sits on the data it was drawn against.",
                 "type": "boolean"
+              },
+              "origin": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DrawingOriginSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The layout and contract a migration merged this object from, when one\ndid. A merged market is labelled, never passed off as one history.\nOptional in the schema only so v1 readers stay compatible."
               },
               "scope": {
                 "description": "`this_chart` or `all_charts` — whether the tab's other panes show it.",
@@ -19761,6 +23495,35 @@
       ],
       "schema": {
         "$defs": {
+          "BarProgressSnapshot": {
+            "description": "The forming bar's progress in its rule's own unit.",
+            "properties": {
+              "done": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "What has accumulated: the count, the milliseconds a time bar has run,\nor an imbalance rule's signed running total."
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Where the bar closes; absent for an imbalance rule, which has no\nfixed target."
+              },
+              "unit": {
+                "description": "The unit both figures count in: `ms` for a time rule, else the rule's\nown (`ticks`, a volume or notional unit, an imbalance measure).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "done",
+              "unit"
+            ],
+            "type": "object"
+          },
           "BarSpecDto": {
             "properties": {
               "imbalance_unit": {
@@ -19844,6 +23607,17 @@
                   }
                 ]
               },
+              "bar_progress": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BarProgressSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "How far the forming bar is from closing, as the last-price tag prints\nit: a time rule's on the tab's market clock (the replay's playhead\nwhile replaying). Absent with no forming bar to read. Optional on the\nwire, as `uncounted_prints` is."
+              },
               "bar_spec": {
                 "$ref": "#/$defs/BarSpecDto"
               },
@@ -19904,6 +23678,13 @@
               "pane_index": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+              },
+              "price_tag_progress": {
+                "description": "Whether the last-price tag prints that progress: the setting of the\npane's market (`chart.price_tag.progress.set`). Optional on the wire.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
@@ -20516,6 +24297,13 @@
           },
           "FeedSourceChoice": {
             "properties": {
+              "contract_rolls": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Which contract follows which on this feed, for feed.contract.roll.",
+                "type": "object"
+              },
               "display_name": {
                 "type": "string"
               },
@@ -23947,6 +27735,21 @@
       ],
       "schema": {
         "$defs": {
+          "ActiveSurfaceDto": {
+            "description": "What the central canvas shows.",
+            "oneOf": [
+              {
+                "const": "home",
+                "description": "The Home page: no chart is painted and no pane is listed.",
+                "type": "string"
+              },
+              {
+                "const": "market",
+                "description": "The chart of the active market tab.",
+                "type": "string"
+              }
+            ]
+          },
           "AvailabilitySnapshot": {
             "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
             "properties": {
@@ -24152,8 +27955,14 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "description": "What is on screen right now, as controls an operator can name.\n\nThe tree is expressed as a flat list plus [`SceneControlSnapshot::owner`]\nrather than as nested arrays: a client that wants the tree walks the owner\nlinks, and a client that wants one control by ID does not have to descend\ninto anything to find it.",
         "properties": {
+          "active_surface": {
+            "$ref": "#/$defs/ActiveSurfaceDto",
+            "default": "market",
+            "description": "What the central canvas shows."
+          },
           "active_tab_id": {
-            "$ref": "#/$defs/WireU64"
+            "$ref": "#/$defs/WireU64",
+            "description": "The market tab the window holds as active. While Home is the\n[`Self::active_surface`] this market keeps running behind it."
           },
           "controls": {
             "items": {
@@ -24185,6 +27994,17 @@
           },
           "focused_pane_side": {
             "$ref": "#/$defs/PaneSideDto"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Live native market window, pinned once when this read reaches the UI thread.\nOmission selects the focused live window at that admission point."
           }
         },
         "required": [
@@ -24911,12 +28731,147 @@
             ],
             "type": "object"
           },
+          "MarketWindowSnapshot": {
+            "properties": {
+              "observed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NativeObservation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "None until this native viewport has supplied an observation."
+              },
+              "omitted_tabs": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ordered_tab_ids": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "maxItems": 1024,
+                "type": "array"
+              },
+              "selected_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "window_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "window_id",
+              "ordered_tab_ids",
+              "selected_tab_id",
+              "omitted_tabs"
+            ],
+            "type": "object"
+          },
+          "NativeObservation": {
+            "properties": {
+              "focused": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "inner": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maximized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "minimized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "outer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pixels_per_point": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
               "time"
             ],
             "type": "string"
+          },
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
           },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
@@ -24990,11 +28945,20 @@
               "layout": {
                 "$ref": "#/$defs/CanvasLayoutDto"
               },
+              "modified": {
+                "default": false,
+                "description": "Whether the tab holds edits it has not saved to that workspace.",
+                "type": "boolean"
+              },
               "panes": {
                 "items": {
                   "$ref": "#/$defs/WorkspacePane"
                 },
                 "type": "array"
+              },
+              "selected_in_window": {
+                "default": false,
+                "type": "boolean"
               },
               "split_fraction": {
                 "$ref": "#/$defs/CanonicalDecimal"
@@ -25004,6 +28968,38 @@
               },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "venue": {
+                "default": "",
+                "description": "The tab's venue. Additive; empty from a build that predates it.",
+                "type": "string"
+              },
+              "window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "window_index": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "workspace": {
+                "default": "",
+                "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
+                "type": "string"
               }
             },
             "required": [
@@ -25028,6 +29024,22 @@
           },
           "active_tab_index": {
             "$ref": "#/$defs/WireU64"
+          },
+          "auto_save": {
+            "default": true,
+            "description": "Whether layout edits are written into the tab's workspace as they are\nmade (`workspace.autosave.set`). Absent from an older answer: on.",
+            "type": "boolean"
+          },
+          "focused_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "history_reach": {
             "default": "",
@@ -25089,6 +29101,14 @@
             "default": false,
             "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
             "type": "boolean"
+          },
+          "windows": {
+            "default": [],
+            "description": "Native presentation order, independent of the retained runtime storage indices below.",
+            "items": {
+              "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -25106,6 +29126,248 @@
       },
       "schema_version": 1,
       "title": "Workspace summary"
+    },
+    {
+      "description": "Bounded windows, stable IDs, ordered tabs, independent selections, staged gesture state and observed native geometry. Join tab IDs with workspace.summary, chart.summary, health.summary and session.replay for runtime and processing continuity. Observations are independent of accepted requests.",
+      "id": "workspace.windows",
+      "module_id": "workspace",
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "MarketWindowSnapshot": {
+            "properties": {
+              "observed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NativeObservation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "None until this native viewport has supplied an observation."
+              },
+              "omitted_tabs": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ordered_tab_ids": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "maxItems": 1024,
+                "type": "array"
+              },
+              "selected_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "window_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "window_id",
+              "ordered_tab_ids",
+              "selected_tab_id",
+              "omitted_tabs"
+            ],
+            "type": "object"
+          },
+          "NativeObservation": {
+            "properties": {
+              "focused": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "inner": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maximized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "minimized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "outer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pixels_per_point": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "type": "object"
+          },
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "focused_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "native_drop_targeting": {
+            "description": "Windows uses an exposed same-process native target. Other platforms preserve\nsame-window reorder/detach and cancel ambiguous cross-window pointer drops.",
+            "type": "string"
+          },
+          "omitted_windows": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "presented_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "native_drop_targeting",
+          "windows",
+          "omitted_windows",
+          "drag"
+        ],
+        "title": "WindowsSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Market windows"
     }
   ]
 }

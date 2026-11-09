@@ -166,9 +166,63 @@ pub enum Token {
     DrawingVwap,
     DrawingProfile,
     ChartGrid,
+    TabStrip,
+    Brand,
+    ReplayInk,
+    ToolbarSheet,
+    TabIdleFill,
+    TabIdleOutline,
+    TabBand,
+    HomeGlow,
+    /// Ink of a light theme's axis labels. Dark writes its axes in `text_muted`.
+    AxisInk,
+    /// A light theme's rule between the plot and the price axis; transparent
+    /// draws none. Dark rules its axes in the chart grid's own colour.
+    PriceAxisRule,
+    /// A light theme's rule along the top of the time axis.
+    TimeAxisRule,
+    /// The chart's plot and axes. A document that leaves it out uses its own
+    /// `canvas`, which every other surface keeps reading.
+    ChartCanvas,
+    /// A light theme's last-price chip over a rising bar. Dark's chip wears
+    /// the candle's own outline colour.
+    LastPriceUp,
+    /// A light theme's last-price chip over a falling bar.
+    LastPriceDown,
+    /// The filled replay key: the REPLAY badge, the chosen speed and a replay
+    /// dialog's primary action. Dark's is its amber.
+    ReplayPlate,
+    /// Words on [`Token::ReplayPlate`].
+    ReplayPlateInk,
+    /// The plate a light theme lays under the chart's order and position
+    /// labels, and under the report's drawdown chip.
+    OrderPlate,
+    /// Words on [`Token::OrderPlate`].
+    OrderPlateInk,
+    /// A gain written on a dark plate in a light theme.
+    PlateGain,
+    /// A loss written on a dark plate in a light theme.
+    PlateLoss,
+    /// The fill under a hovered control or row. Dark's is its border.
+    HoverFill,
+    /// The edge of a framed control at rest; Dark's is transparent.
+    ControlEdge,
+    /// The connection screen's action (`Reconnect`): Dark keeps it in the
+    /// loading meta grey, a light theme writes it in its primary ink.
+    ConnectionAction,
+    /// A light theme's loss on its pale panels. Its `sell_ink` is the sell
+    /// side's ink, near-black like its sell candles, so a loss reads this
+    /// separate red. A dark theme writes losses in `sell`; Dark's value
+    /// mirrors it.
+    LossInk,
+    /// A light theme's gain on a dark surface such as its slate flow pane.
+    /// A dark theme writes gains in `buy`; Dark's value mirrors it.
+    BrightGainInk,
+    /// A light theme's loss on a dark surface. Dark's value mirrors `sell`.
+    BrightLossInk,
 }
 impl Token {
-    pub const ALL: [Self; 99] = [
+    pub const ALL: [Self; 125] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -268,6 +322,32 @@ impl Token {
         Self::DrawingVwap,
         Self::DrawingProfile,
         Self::ChartGrid,
+        Self::TabStrip,
+        Self::Brand,
+        Self::ReplayInk,
+        Self::ToolbarSheet,
+        Self::TabIdleFill,
+        Self::TabIdleOutline,
+        Self::TabBand,
+        Self::HomeGlow,
+        Self::AxisInk,
+        Self::PriceAxisRule,
+        Self::TimeAxisRule,
+        Self::ChartCanvas,
+        Self::LastPriceUp,
+        Self::LastPriceDown,
+        Self::ReplayPlate,
+        Self::ReplayPlateInk,
+        Self::OrderPlate,
+        Self::OrderPlateInk,
+        Self::PlateGain,
+        Self::PlateLoss,
+        Self::HoverFill,
+        Self::ControlEdge,
+        Self::ConnectionAction,
+        Self::LossInk,
+        Self::BrightGainInk,
+        Self::BrightLossInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -277,6 +357,32 @@ impl Token {
             Self::DrawingVwap => "drawing_vwap",
             Self::DrawingProfile => "drawing_profile",
             Self::ChartGrid => "chart_grid",
+            Self::TabStrip => "tab_strip",
+            Self::Brand => "brand",
+            Self::ReplayInk => "replay_ink",
+            Self::ToolbarSheet => "toolbar_sheet",
+            Self::TabIdleFill => "tab_idle_fill",
+            Self::TabIdleOutline => "tab_idle_outline",
+            Self::TabBand => "tab_band",
+            Self::HomeGlow => "home_glow",
+            Self::AxisInk => "axis_ink",
+            Self::PriceAxisRule => "price_axis_rule",
+            Self::TimeAxisRule => "time_axis_rule",
+            Self::ChartCanvas => "chart_canvas",
+            Self::LastPriceUp => "last_price_up",
+            Self::LastPriceDown => "last_price_down",
+            Self::ReplayPlate => "replay_plate",
+            Self::ReplayPlateInk => "replay_plate_ink",
+            Self::OrderPlate => "order_plate",
+            Self::OrderPlateInk => "order_plate_ink",
+            Self::PlateGain => "plate_gain",
+            Self::PlateLoss => "plate_loss",
+            Self::HoverFill => "hover_fill",
+            Self::ControlEdge => "control_edge",
+            Self::ConnectionAction => "connection_action",
+            Self::LossInk => "loss_ink",
+            Self::BrightGainInk => "bright_gain_ink",
+            Self::BrightLossInk => "bright_loss_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

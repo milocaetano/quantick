@@ -686,18 +686,19 @@ impl ToolRail {
             return;
         }
 
+        let panel_id = |name| egui::Id::new((ctx.viewport_id(), name));
         match self.dock {
-            ToolboxDock::Left => egui::SidePanel::left("drawing_toolbox_left")
+            ToolboxDock::Left => egui::SidePanel::left(panel_id("drawing_toolbox_left"))
                 .exact_width(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
-            ToolboxDock::Top => egui::TopBottomPanel::top("drawing_toolbox_top")
+            ToolboxDock::Top => egui::TopBottomPanel::top(panel_id("drawing_toolbox_top"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
-            ToolboxDock::Bottom => egui::TopBottomPanel::bottom("drawing_toolbox_bottom")
+            ToolboxDock::Bottom => egui::TopBottomPanel::bottom(panel_id("drawing_toolbox_bottom"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
@@ -771,7 +772,17 @@ impl ToolRail {
             egui::Layout::right_to_left(egui::Align::Center)
         };
 
-        ui.with_layout(leading, |ui| {
+        // Both clusters share the same cross-axis band. Sequential layout
+        // children would reserve a second row outside a top panel's paint clip.
+        let band = ui.max_rect();
+        let mut leading_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("leading")
+                .max_rect(band)
+                .layout(leading),
+        );
+        {
+            let ui = &mut leading_ui;
             ui.spacing_mut().item_spacing = egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
             ui.set_min_size(egui::Vec2::ZERO);
             self.draw_grip(ui, vertical);
@@ -812,11 +823,18 @@ impl ToolRail {
                     self.draw_more_menu(ui, drawings, stage);
                 }
             }
-        });
+        }
 
         // The trailing cluster is pinned to the rail's far end — laid from
         // that end backwards, so the flexible gap sits between the clusters.
-        ui.with_layout(trailing, |ui| {
+        let mut trailing_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("trailing")
+                .max_rect(band)
+                .layout(trailing),
+        );
+        {
+            let ui = &mut trailing_ui;
             ui.spacing_mut().item_spacing = egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
             self.draw_objects_button(ui, drawings, manager_open);
             self.draw_separator(ui, vertical);
@@ -826,8 +844,8 @@ impl ToolRail {
                 self.draw_magnet_button(ui);
                 self.draw_separator(ui, vertical);
             }
-        });
-
+        }
+        ui.advance_cursor_after_rect(band);
         self.draw_family_flyout(ui.ctx());
     }
 

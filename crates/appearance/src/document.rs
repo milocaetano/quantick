@@ -1,7 +1,11 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
 mod bookmap;
+mod chart;
+mod title_strip;
 pub use bookmap::BookmapOverride;
+pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
+pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -59,6 +63,19 @@ pub struct ThemeDocument {
     pub dark: bool,
     #[serde(default)]
     pub candle_fill_opacity: Option<f32>,
+    /// Candle contour width a fresh chart takes, in logical pixels.
+    #[serde(default)]
+    pub candle_outline_width: Option<f32>,
+    /// Candle contour and wick opacities a fresh chart takes, in `[0, 1]`.
+    #[serde(default)]
+    pub candle_outline_opacity: Option<f32>,
+    #[serde(default)]
+    pub candle_wick_opacity: Option<f32>,
+    /// Whether a fresh chart draws vertical gridlines at its time labels.
+    #[serde(default)]
+    pub chart_time_grid: Option<bool>,
+    #[serde(default)]
+    pub chart_axes: Option<ChartAxes>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
@@ -69,6 +86,8 @@ pub struct ThemeDocument {
     pub orderflow: crate::orderflow::OrderflowOverride,
     #[serde(default)]
     pub bookmap: Option<crate::BookmapOverride>,
+    #[serde(default)]
+    pub title_strip: Option<TitleStripOverride>,
 }
 
 fn dark_mode() -> bool {
@@ -121,12 +140,33 @@ impl ThemeDocument {
                 {
                     colors[Token::DrawingDefault as usize]
                 }
+                // Older themes paint the chart on their own canvas.
+                None if token == Token::ChartCanvas
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Canvas.key()) =>
+                {
+                    colors[Token::Canvas as usize]
+                }
                 // Older themes used control for both widgets and chart grids.
                 None if token == Token::ChartGrid
                     && fallback.is_some()
                     && self.colors.contains_key(Token::Control.key()) =>
                 {
                     colors[Token::Control as usize]
+                }
+                // Older themes predate the strip, brand and replay tokens: the
+                // strip is the document's own inset, the other two its own
+                // mode's bundled values, so an authored Light file stays Light.
+                None if token == Token::TabStrip
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Inset.key()) =>
+                {
+                    colors[Token::Inset as usize]
+                }
+                None if MODE_TOKENS.contains(&token)
+                    && fallback.is_some_and(|theme| theme.dark != self.dark) =>
+                {
+                    ResolvedTheme::bundled(self.dark).color(token)
                 }
                 None => fallback
                     .map(|theme| theme.color(token))
@@ -143,6 +183,7 @@ impl ThemeDocument {
         // Reject unsupported alpha before publishing any part of the theme.
         for token in [
             Token::Canvas,
+            Token::ChartCanvas,
             Token::Control,
             Token::ChartGrid,
             Token::Buy,
@@ -150,6 +191,8 @@ impl ThemeDocument {
             Token::CandleBullOutline,
             Token::CandleBearOutline,
             Token::CandleWick,
+            Token::LastPriceUp,
+            Token::LastPriceDown,
         ] {
             if colors[token as usize].to_array()[3] != 255 {
                 return Err(ThemeError::new(
@@ -174,6 +217,19 @@ impl ThemeDocument {
             name: self.name.clone(),
             dark: self.dark,
             candle_fill_opacity,
+            candle_outline_width: chart::outline_width(self.candle_outline_width, fallback)?,
+            candle_outline_opacity: chart::opacity(
+                "candle_outline_opacity",
+                self.candle_outline_opacity,
+                fallback.map(|theme| theme.candle_outline_opacity),
+            )?,
+            candle_wick_opacity: chart::opacity(
+                "candle_wick_opacity",
+                self.candle_wick_opacity,
+                fallback.map(|theme| theme.candle_wick_opacity),
+            )?,
+            chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
+            chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
             colors,
             typography: Typography::resolve(
                 &self.typography,
@@ -186,9 +242,15 @@ impl ThemeDocument {
                 .footprint_heat
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
             bookmap: None,
+            title_strip: None,
         };
         resolved.bookmap = self
             .bookmap
+            .as_ref()
+            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .transpose()?;
+        resolved.title_strip = self
+            .title_strip
             .as_ref()
             .map(|surface| surface.resolve(&resolved).map(Box::new))
             .transpose()?;
@@ -196,16 +258,53 @@ impl ThemeDocument {
     }
 }
 
+/// The tokens an older document takes from its own mode's bundled theme.
+/// Both bundled themes write every one, so resolving Light for
+/// [`ResolvedTheme::bundled`] never asks its own lock again.
+pub(crate) const MODE_TOKENS: [Token; 25] = [
+    Token::TabStrip,
+    Token::Brand,
+    Token::ReplayInk,
+    Token::ToolbarSheet,
+    Token::TabIdleFill,
+    Token::TabIdleOutline,
+    Token::TabBand,
+    Token::HomeGlow,
+    Token::AxisInk,
+    Token::PriceAxisRule,
+    Token::TimeAxisRule,
+    Token::LastPriceUp,
+    Token::LastPriceDown,
+    Token::ReplayPlate,
+    Token::ReplayPlateInk,
+    Token::OrderPlate,
+    Token::OrderPlateInk,
+    Token::PlateGain,
+    Token::PlateLoss,
+    Token::HoverFill,
+    Token::ControlEdge,
+    Token::ConnectionAction,
+    Token::LossInk,
+    Token::BrightGainInk,
+    Token::BrightLossInk,
+];
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTheme {
     pub name: String,
     pub dark: bool,
     pub candle_fill_opacity: f32,
+    pub candle_outline_width: f32,
+    pub candle_outline_opacity: f32,
+    pub candle_wick_opacity: f32,
+    pub chart_time_grid: bool,
+    pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,
     pub(crate) bookmap: Option<Box<ResolvedTheme>>,
+    pub(crate) title_strip: Option<Box<ResolvedTheme>>,
 }
 
 impl ResolvedTheme {
@@ -217,6 +316,19 @@ impl ResolvedTheme {
             ThemeDocument::parse(crate::DARK)
                 .and_then(|document| document.resolve_complete())
                 .expect("bundled Dark theme must be complete and valid")
+        })
+    }
+
+    /// The bundled theme of one mode, for values an older document of that
+    /// mode never wrote.
+    pub fn bundled(dark: bool) -> &'static Self {
+        static LIGHT: OnceLock<ResolvedTheme> = OnceLock::new();
+        if dark {
+            return Self::bundled_dark();
+        }
+        LIGHT.get_or_init(|| {
+            // Light writes the three mode tokens, so this never asks itself.
+            ResolvedTheme::parse(crate::LIGHT).expect("bundled Light theme must be valid")
         })
     }
 

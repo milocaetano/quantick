@@ -104,7 +104,7 @@ fn the_tail_before_the_canvas_never_publishes_the_offline_corner() {
     let corner = |order: &[FrameStage]| {
         let (mut app, _events, _commands, _book) = test_app();
         let ctx = egui::Context::default();
-        app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
+        app.active_tab_mut().link.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
         staged_frame(&mut app, &ctx, order);
         staged_frame(&mut app, &ctx, order);
         app.chrome_reads().feed_chip_rect()
@@ -309,14 +309,16 @@ fn the_mark_before_the_trace_loads_is_injected_back_as_a_second_mark() {
         let dir = crate::scratch::ScratchDir::new("stage-order-trace-mark");
         // A recording whose sidecar already holds one traced mark.
         let (mut app, _commands) = app_with_history(12);
-        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+        app.active_tab_mut().link.replay =
+            Some(replay_test_support::detached_link(recording_at(&dir)));
         hover_bar(&mut app, &ctx, 6);
         app.take_mark(Some("recorded".to_owned()));
         drop(app);
 
         // Replayed again, with a scenario mark due on its first frame.
         let (mut app, _commands) = app_with_history(12);
-        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+        app.active_tab_mut().link.replay =
+            Some(replay_test_support::detached_link(recording_at(&dir)));
         app.control.scenarios.queue_mark("scenario".to_owned());
         staged_frame(&mut app, &ctx, order);
         app.control
@@ -416,7 +418,7 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
         let side = PaneSide::Time(0);
         let slot = app.active_tab().pane(side).indicators.all()[0].slot;
         let tab = app.runtime.tabs.active_id();
-        app.apply_indicator_legend_action(
+        app.indicator_wiring().apply_indicator_legend_action(
             tab,
             side,
             crate::indicator_legend::LegendAction::OpenSettings(slot),
@@ -428,7 +430,8 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
             .unwrap()
             .draft[0] = InputValue::Int(37);
         let change = app.runtime.indicators.preview_settings();
-        app.apply_indicator_settings_change(change);
+        app.indicator_wiring()
+            .apply_indicator_settings_change(change);
         settle_indicators(&mut app);
         assert!(
             painted_preview_watermark(&staged_frame_at(

@@ -56,6 +56,8 @@ const fn base64_len(bytes: usize) -> usize {
 /// travel as a closure the response worker calls, beside the PNG encoding it
 /// was always going to pay for.
 pub struct RawScreenshot {
+    pub window_id: Option<WireU64>,
+    pub source_window_id: Option<WireU64>,
     pub width_px: u32,
     pub height_px: u32,
     pub pixels_per_point: f32,
@@ -108,6 +110,11 @@ pub fn encode_screenshot(
     let expected = (width_px as usize)
         .saturating_mul(height_px as usize)
         .saturating_mul(4);
+    if u64::from(width_px).saturating_mul(u64::from(height_px))
+        > quantick_control::limits::CONTROL_SCREENSHOT_MAX_PIXELS
+    {
+        return Err(screenshot_gap("exceeds_screenshot_pixel_budget"));
+    }
     if width_px == 0
         || height_px == 0
         || !raw.pixels_per_point.is_finite()
@@ -172,7 +179,14 @@ pub fn encode_screenshot(
         }
     }
 
+    if raw.window_id != raw.source_window_id
+        || scene.is_some_and(|scene| scene.window_id != raw.window_id)
+    {
+        return Err(screenshot_gap("window_identity_mismatch"));
+    }
     let descriptor = EvidenceScreenshot {
+        window_id: raw.window_id,
+        source_window_id: raw.source_window_id,
         capture_revision,
         width_px,
         height_px,

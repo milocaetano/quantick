@@ -313,5 +313,5 @@ cargo test -p quantick-engine --test forming_run
 
 # Q3's envelope harness, re-run at this SHA:
 env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
-    live_envelope_tests::tests::measure -- --ignored --nocapture --test-threads=1
+    live_envelope_tests::measure -- --ignored --nocapture --test-threads=1
 ```

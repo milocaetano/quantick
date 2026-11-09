@@ -12,6 +12,8 @@ use crate::{DrawingPayload, DrawingStyle, ToolCatalog};
 
 #[derive(Debug, Clone)]
 pub struct Drawing<T> {
+    /// Set on a drawing a migration merged in; absent on anything drawn since.
+    pub origin: Option<quantick_workspace::layout_document::SavedOrigin>,
     /// See [`DrawingId`]: identity, where the index is only position.
     pub id: DrawingId,
     /// Set when something other than the trader's hand placed this object.

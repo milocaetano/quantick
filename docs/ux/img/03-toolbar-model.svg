@@ -45,15 +45,6 @@
   </g>
   <line x1="1140" y1="96" x2="1140" y2="132" stroke="#2E3648"/>
 
-  <!-- LOOK group -->
-  <text x="1154" y="82" class="cap">LOOK</text>
-  <rect x="1154" y="100" width="30" height="28" rx="4" fill="#232936"/>
-  <g fill="none" stroke="#96A0AF" stroke-width="1.4">
-    <rect x="1162" y="106" width="6" height="10"/><line x1="1165" y1="103" x2="1165" y2="119"/>
-    <rect x="1172" y="110" width="6" height="8"/><line x1="1175" y1="107" x2="1175" y2="121"/>
-  </g>
-  <line x1="1198" y1="96" x2="1198" y2="132" stroke="#2E3648"/>
-
   <!-- PANELS group -->
   <text x="1212" y="82" class="cap">PANELS</text>
   <rect x="1212" y="100" width="30" height="28" rx="4" fill="#232936"/>
@@ -68,7 +59,7 @@
     <text x="56" y="168">SOURCE — feed and symbol, from config. During replay the two combos are replaced by the amber session label: the source is the recording.</text>
     <text x="56" y="188">HISTORY — “+ older ▾” button with the page size inside its menu, gated by the paging capability. Bars and indicators live on each pane's header line.</text>
     <text x="56" y="208">LAYERS — one icon toggle per visual layer: heatmap, bubbles, indicators. Right-click (or caret) opens that layer's dock tab. Adding a layer adds one icon, not one checkbox row.</text>
-    <text x="56" y="228">LOOK — appearance dialog (candles, canvas, grid). PANELS — show/hide the dock. Perf display moves to the status bar; it is a reading, not a control.</text>
+    <text x="56" y="228">PANELS — show/hide the dock, a tray alone at the right edge. Appearance has no button: the chart and Settings open it. Perf display moves to the status bar.</text>
   </g>
 
   <!-- ======== states strip ======== -->
@@ -119,7 +110,7 @@
     <text x="1288" y="516" font-size="14" class="m">⋯</text>
   </g>
 
-  <text x="40" y="566" font-size="11" class="cap">NARROW &lt; 1280 px — LOOK and PANELS fold into ⋯, symbol keeps its name</text>
+  <text x="40" y="566" font-size="11" class="cap">NARROW &lt; 1280 px — PANELS folds into ⋯, symbol keeps its name</text>
   <rect x="40" y="576" width="880" height="40" rx="6" fill="#171B26" stroke="#2E3648"/>
   <g font-size="11" class="t">
     <rect x="52" y="584" width="30" height="24" rx="4" fill="#232936"/><text x="60" y="600" class="m">B</text>
@@ -143,7 +134,7 @@
   </g>
 
   <g font-size="12" class="m">
-    <text x="40" y="746">Collapse order (first to fold): LOOK → PANELS → HISTORY → TRADE → feed name shrinks to its initial.</text>
+    <text x="40" y="746">Collapse order (first to fold): PANELS → HISTORY → TRADE → feed name shrinks to its initial.</text>
     <text x="40" y="766">Never folded: the symbol and the LAYERS toggles — they are the two things a trader glances at mid-session.</text>
   </g>
 </svg>

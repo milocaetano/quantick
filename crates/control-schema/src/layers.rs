@@ -86,6 +86,7 @@ impl LayerSnapshot {
                 match layer.0.persistence {
                     Persistence::Layers => "chart_layers",
                     Persistence::OrderflowPreset => "orderflow_preset",
+                    Persistence::ChartStyle => "workspace",
                 }
             }
             .to_owned(),

@@ -10,10 +10,11 @@
 //! No egui, no async here, so the ingest, dispatch and rebuild logic is
 //! unit-tested in CI.
 
+use crate::bar_progress::BarProgressReading;
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{
-    Bar, BarBuilder, BarBuilderDiagnostics, BarFootprint, BarProgress, DealSample, PriceGrid, Trade,
+    Bar, BarBuilder, BarBuilderDiagnostics, BarFootprint, DealSample, PriceGrid, Trade,
 };
 /// The bar vocabulary lives in the engine, one definition for the chart, the
 /// backtest and the bot. Re-exported so the chart's callers keep finding it
@@ -620,15 +621,14 @@ impl ChartState {
             .slot_at_time(timestamp_ms)
     }
 
-    /// How far the forming bar is from closing, in the rule's own measure, and
-    /// the unit to print it in.
+    /// How far the forming bar is from closing, with the market clock at
+    /// `clock_ms` ([`crate::bar_progress::read`]).
     ///
     /// Straight from the builder that owns the closing rule — the chart never
-    /// re-derives "a tick bar closes at N". `None` for a rule with no fixed
-    /// threshold to count toward.
+    /// re-derives "a tick bar closes at N".
     #[must_use]
-    pub fn progress(&self) -> Option<(BarProgress, &'static str)> {
-        Some((self.builder.progress()?, self.spec.kind().progress_unit()))
+    pub fn bar_progress_at(&self, clock_ms: Option<i64>) -> Option<BarProgressReading> {
+        crate::bar_progress::read(self.builder.as_ref(), &self.spec, clock_ms)
     }
 }
 
@@ -1081,11 +1081,13 @@ mod tests {
         // Prints with a rate advance the countdown in estimated deals, not
         // prints: the window's 13 deals over two contracts credit the print
         // at 1500 six and a half, past the re-anchored 4 003.
-        let (progress, unit) = s.progress().expect("a deal bar runs toward a fixed count");
-        assert_eq!(unit, "deals");
+        let progress = s
+            .bar_progress_at(None)
+            .expect("a deal bar runs toward a fixed count");
+        assert_eq!(progress.unit(), "deals");
         // From where the forming bar opened — the re-anchored 4 003 — not
         // from the previous multiple.
-        assert_eq!(progress.done, dec("6.5"));
+        assert_eq!(progress.done(), dec("6.5"));
     }
 
     #[test]

@@ -35,6 +35,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use quantick_orderflow::{HeatmapConfig, LaneWindow};
 
@@ -552,6 +553,27 @@ impl AssetBinding {
     #[must_use]
     pub fn key(&self) -> &str {
         &self.asset.key
+    }
+
+    /// The asset's factory look, which the panel's reset restores: what a
+    /// fresh open shows, nothing of the asset's own stored. The preset the
+    /// feed config declares for it comes from the shipped presets
+    /// ([`crate::bubble_presets::embedded`]), never from `presets`, the
+    /// operator's file, where that name may have been saved over; a name
+    /// not shipped, or none, opens on what `presets` gives — the operator's
+    /// own declared preset, else the file's active look. Its tick spheres
+    /// stay only where the config switches the asset's mode on.
+    #[must_use]
+    pub fn factory_look(&self, presets: &BubblePresetFile) -> BubblePreset {
+        static SHIPPED: OnceLock<BubblePresetFile> = OnceLock::new();
+        let shipped = SHIPPED.get_or_init(crate::bubble_presets::embedded);
+        let name = self.asset.preset.as_deref();
+        let source = if name.is_some_and(|name| shipped.get(name).is_some()) {
+            shipped
+        } else {
+            presets
+        };
+        declared(&self.asset, source, self.candle_default).1.look
     }
 
     /// The mode the config switches on for the asset, if any.

@@ -41,7 +41,7 @@ pub(crate) struct FakeWindow {
     dock: Dock,
     drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeSurface,
     health: super::super::super::health::HealthCounters,
-    history: super::super::super::tabs::HistorySettings,
+    history: quantick_session::HistorySettings,
     /// The assistant's popup lane, read back by the test.
     pub(crate) agent_popup: crate::surfaces::AgentPopupSurface,
     /// The acknowledgement toast, read back by the test.
@@ -91,7 +91,10 @@ impl FakeWindow {
                     symbols: vec![FAKE_SYMBOL.to_owned()],
                     bubble_preset: None,
                     symbol_bubble_presets: Default::default(),
+                    asset_families: Vec::new(),
+                    asset_aliases: Default::default(),
                     symbol_asset_modes: Default::default(),
+                    contract_rolls: Default::default(),
                     default_layout: None,
                     default_bars: None,
                     record_deals: false,
@@ -110,7 +113,7 @@ impl FakeWindow {
             dock: Dock::new(),
             drawing_chrome: Default::default(),
             health: super::super::super::health::HealthCounters::new(),
-            history: super::super::super::tabs::HistorySettings {
+            history: quantick_session::HistorySettings {
                 progressive_history: true,
                 history_reach: Default::default(),
                 history_reach_span_minutes: 60,
@@ -166,6 +169,12 @@ impl TabsMutPort for FakeWindow {
         )
     }
 }
+
+impl quantick_control_handlers::native_window::NativeWindowHost for FakeWindow {}
+impl quantick_control_handlers::home_tab::HomeTabHost for FakeWindow {}
+impl quantick_control_handlers::market_palette::MarketPaletteHost for FakeWindow {}
+impl quantick_control_handlers::desk::DeskHost for FakeWindow {}
+impl quantick_control_handlers::workspace_book::WorkspaceBookHost for FakeWindow {}
 
 impl ChromePort for FakeWindow {
     fn chrome_reads(&self) -> ChromeReads<'_> {

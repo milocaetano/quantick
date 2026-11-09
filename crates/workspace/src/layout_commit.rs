@@ -1,7 +1,7 @@
 //! Deterministic layout write decisions. The shell supplies time and executes effects.
 use std::time::{Duration, Instant};
 
-pub(crate) const LAYOUTS_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
+pub const LAYOUTS_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutSave {
     /// Nothing to write, or the debounce window has not elapsed. The pending
@@ -30,6 +30,10 @@ impl LayoutCommitPolicy {
     }
     pub fn set_blocked(&mut self, blocked: bool) {
         self.blocked = blocked;
+    }
+    #[must_use]
+    pub fn is_blocked(&self) -> bool {
+        self.blocked
     }
     /// State outright what the book owes the file, overriding anything marked
     /// while it was being put in place.

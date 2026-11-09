@@ -17,7 +17,7 @@ use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit, rgba,
 };
-use quantick_orderflow::projection::marker_band;
+use quantick_orderflow::projection::{drawn_gaps, marker_band};
 
 /// The lane depth caption's offset from the lane's left edge and chart top.
 const DEPTH_CAPTION_OFFSET: egui::Vec2 = egui::vec2(8.0, 30.0);
@@ -49,11 +49,11 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         .reserve(context.projection.cells.len().saturating_mul(12));
 
     for cell in context.projection.cells.iter() {
-        let rect = context
-            .layout
-            .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
-        // A current row with no time span only previews the book.
-        let in_lane = rect.is_positive() && (cell.x1 > cell.x0 || !cell.current_book);
+        let rect =
+            context
+                .layout
+                .heat_cell_rect(cell, style.min_cell_height, context.current_book_live);
+        let in_lane = rect.is_positive();
         if !in_lane && !cell.current_book {
             continue;
         }
@@ -70,7 +70,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.span_pane(cell.x0, cell.x1));
+            .intersect(context.layout.span_pane(cell.x0, cell.x1).union(rect));
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }
@@ -113,33 +113,36 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         );
     }
 
-    for gap in context.projection.gaps.iter() {
+    for gap in drawn_gaps(context.projection, context.current_book_live) {
         // Same two questions the reductions answer, and for the same reason: a
         // coverage gap explains a hole in the *book*, so it belongs to the pane
         // that draws one, and `show_gaps` reached only the legend until now.
-        let pane_draws_book = if context.layout.in_lane(gap.x0) {
+        let lead = context.layout.tape_x(|tape| tape.lead_px(gap.lead_span));
+        let pane_draws_book = if lead.is_some() || context.layout.in_lane(gap.x0) {
             style.lane_depth_layer
         } else {
             style.depth_layer
         };
-        if !pane_draws_book || !style.show_gaps {
+        if !pane_draws_book || !style.show_gaps || gap.lead_span.is_some() != lead.is_some() {
             continue;
         }
-        let x0 = context.layout.x(gap.x0);
-        let x1 = context.layout.x(gap.x1);
+        let (x0, x1) = lead.unwrap_or((context.layout.x(gap.x0), context.layout.x(gap.x1)));
+        let pane = lead.map_or(context.layout.span_pane(gap.x0, gap.x1), |_| {
+            context.layout.lane_rect()
+        });
         let rect = egui::Rect::from_min_max(
             egui::pos2(x0.min(x1), context.layout.chart_rect.top()),
             egui::pos2(x0.max(x1), context.layout.chart_rect.bottom()),
         )
-        .intersect(context.layout.span_pane(gap.x0, gap.x1));
+        .intersect(pane);
         if !rect.is_positive() {
             continue;
         }
-        let leading = gap.precedes_capture();
+        let leading = gap.marks_boundary_only();
         // Against its own pane, not the chart: a gap cut short by the divider
         // ends there because the pane does, and a boundary mark would claim the
         // coverage resumed at a moment it did not.
-        let marks = gap_marks(rect, context.layout.span_pane(gap.x0, gap.x1), leading);
+        let marks = gap_marks(rect, pane, leading);
         if marks.fill {
             clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
         }

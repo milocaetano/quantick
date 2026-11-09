@@ -81,10 +81,11 @@ pub fn holds_pointer(dock: &Dock, ctx: &egui::Context) -> bool {
     let Some(pointer) = ctx.pointer_latest_pos().filter(|_| dock.visible()) else {
         return false;
     };
+    let viewport = ctx.viewport_id();
     let body = dock
         .tab()
-        .map(|tab| egui::Id::new(("dock_body", tab.index())));
-    [Some(egui::Id::new("dock_strip")), body]
+        .map(|tab| egui::Id::new((viewport, "dock_body", tab.index())));
+    [Some(egui::Id::new((viewport, "dock_strip"))), body]
         .into_iter()
         .flatten()
         .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
@@ -103,7 +104,7 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
         return response;
     }
 
-    egui::SidePanel::right("dock_strip")
+    egui::SidePanel::right(egui::Id::new((ctx.viewport_id(), "dock_strip")))
         .exact_width(TAB_STRIP_WIDTH)
         .resizable(false)
         .frame(
@@ -128,6 +129,7 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
                     _ => None,
                 };
                 let button = IconButton::new(tab_icon(tab), RAIL_ICON)
+                    .strong()
                     .active(dock.tab() == Some(tab))
                     .hover_text(
                         position_hover
@@ -160,7 +162,8 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
     if let Some(tab) = dock.tab() {
         let mut open_ticket = false;
         let mut collapse = false;
-        let panel = egui::SidePanel::right(egui::Id::new(("dock_body", tab.index())))
+        let id = egui::Id::new((ctx.viewport_id(), "dock_body", tab.index()));
+        let panel = egui::SidePanel::right(id)
             .resizable(true)
             .default_width(dock.width(tab))
             .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)

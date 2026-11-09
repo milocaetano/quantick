@@ -447,7 +447,7 @@ fn the_tape_key_toggles_tape_only_and_never_opens_a_tab() {
     assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
     assert_eq!(app.runtime.tabs.len(), tabs, "it never opened a tab");
     assert!(
-        !app.surfaces.source_picker.is_open(),
+        !app.surfaces.market_palette.is_open(),
         "and never reached the source picker"
     );
 }
@@ -636,7 +636,7 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
 }
 
 fn set_capabilities(app: &mut QuantickApp, capabilities: quantick_feed::config::FeedCapabilities) {
-    app.active_tab_mut().feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
+    app.active_tab_mut().link.feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
 }
 
 /// What the data blocks leaves the capsule and the scene with its sample; the
@@ -735,16 +735,48 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
 }
 
 /// A narrow tape's header also spans the price axis, so its capsule stays;
-/// `flow_band`'s tests walk the fit's order down to nothing.
+/// `flow_band`'s tests walk the fit's order down to nothing. Narrow is
+/// measured rather than assumed: the tape's own lane is thinner than the
+/// capsule's slots, so only the axis beside it can carry them.
 #[test]
 fn a_narrow_tape_keeps_its_capsule() {
+    use quantick_chart::flow_band::{SECOND_SIDE_PAD_LEFT_PX, SIDE_PAD_RIGHT_PX};
+    use quantick_chart::pane_header::SLOT_GAP_PX;
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
+    // The tape's capsule at the default share, where all of it fits.
+    let frame = &app.active_tab().flow_pane.frame;
+    let divider = frame.lane_divider_x.expect("a tape beside the candles");
+    let slots = frame
+        .header_controls
+        .iter()
+        .filter(|(painted, rect)| {
+            matches!(painted, HeaderControl::Layer(_) | HeaderControl::Sample(_))
+                && rect.left() > divider
+        })
+        .fold(egui::Rect::NOTHING, |all, (_, rect)| all.union(*rect))
+        .width();
+    let room = SECOND_SIDE_PAD_LEFT_PX + 2.0 * SLOT_GAP_PX + slots + SIDE_PAD_RIGHT_PX;
+    let gutter = frame.price_gutter.expect("a price axis").width();
+    let chart = frame.chart_rect.expect("the pane drew").width();
+    assert!(
+        room - gutter < slots,
+        "the axis must be wide enough to carry what the lane alone cannot"
+    );
+    // Thinner than the slots, and with the axis beside it past the room.
+    let lane = (room - gutter + slots) / 2.0;
     app.active_tab_mut()
         .tape_mut()
-        .edit_config(|config| config.live_lane.width_share = 0.05);
+        .edit_config(|config| config.live_lane.width_share = lane / chart);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
+    let frame = &app.active_tab().flow_pane.frame;
+    let divider = frame.lane_divider_x.expect("still beside");
+    let axis = frame.price_gutter.expect("a price axis").left();
+    assert!(
+        axis - divider < slots,
+        "the tape alone cannot hold its capsule"
+    );
     flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
     flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
 }
@@ -1480,7 +1512,7 @@ fn a_held_tape_key_acts_once_and_never_opens_a_tab() {
         assert_eq!(view_of(&app), LaneView::TapeOnly, "a repeat moved the view");
     }
     assert_eq!(app.runtime.tabs.len(), tabs, "a repeat opened a tab");
-    assert!(!app.surfaces.source_picker.is_open());
+    assert!(!app.surfaces.market_palette.is_open());
 }
 
 fn glyph_of(app: &QuantickApp, ctx: &egui::Context, side: PaneSide) -> egui::Rect {
@@ -1869,7 +1901,7 @@ fn a_fold_follows_the_asset_and_open_follows_the_tab() {
 fn a_tab_without_its_flow_pane_has_no_gear_and_refuses_the_call() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(scene_selected(&app, GEAR), None);
@@ -1941,7 +1973,9 @@ fn run_frame_every(app: &mut QuantickApp, ctx: &egui::Context, dt: f32) {
     let _ = ctx.run(input, |ctx| app.draw_frame(ctx, now));
 }
 
-const LANDED_Y: f32 = 158.0;
+/// Where the Bubbles header rests once scrolled to the top, under the layout
+/// branch's title bar.
+const LANDED_Y: f32 = 166.0;
 
 fn bubbles_header_y(app: &QuantickApp) -> f32 {
     flow_control(app, section_control(PanelSection::Bubbles)).top()
@@ -2065,7 +2099,7 @@ fn the_settings_scope_reads_the_panel_without_a_paint() {
     let fold = json!({ "section": "bubbles", "open": false });
     settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
     assert_eq!(read(&app), (false, true, false));
-    app.active_tab_mut().set_flow_collapsed(true);
+    app.active_tab_mut().canvas.set_flow_collapsed(true);
     run_frame(&mut app, &ctx);
     assert_eq!(read(&app), (false, true, false), "nothing of it painted");
 }
@@ -2907,10 +2941,10 @@ fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
         );
     };
     open(&mut app);
-    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    assert!(app.active_tab_mut().canvas.set_flow_collapsed(true));
     run_frame(&mut app, &ctx);
     assert!(!ctx.memory(|memory| memory.any_popup_open()), "collapsed");
-    app.active_tab_mut().set_flow_collapsed(false);
+    app.active_tab_mut().canvas.set_flow_collapsed(false);
     open(&mut app);
     let first = app.runtime.tabs.active_index();
     app.arrangement_adapter()
@@ -2921,53 +2955,52 @@ fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
     assert!(!ctx.memory(|memory| memory.any_popup_open()), "another tab");
 }
 
-/// The rule under the flow pane's side headers stays as faint as a time pane's,
-/// focused or not; a focused time pane keeps its accent under its header.
+/// Once two panes share the canvas the focused one, flow or time, wears an
+/// accent frame and no other pane does; a lone pane is focused by definition
+/// and wears none.
 #[test]
-fn only_a_focused_time_pane_wears_the_accent_rule() {
+fn only_the_focused_pane_of_a_split_wears_the_accent_frame() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let accent = egui::epaint::ColorMode::Solid(crate::theme::ACCENT);
-    let rules_at = |output: &egui::FullOutput, y: f32| {
-        let rule = |shape: &egui::Shape| match shape {
-            egui::Shape::LineSegment { points, stroke } => {
-                stroke.color == accent
-                    && (points[0].y - y).abs() < 2.0
-                    && points[0].y == points[1].y
-            }
-            _ => false,
-        };
+    let accent = crate::theme::ACCENT;
+    let framed = |output: &egui::FullOutput, pane: egui::Rect| {
         output
             .shapes
             .iter()
-            .filter(|clipped| rule(&clipped.shape))
+            .filter(|clipped| match &clipped.shape {
+                egui::Shape::Rect(shape) => {
+                    shape.stroke.color == accent
+                        && shape.stroke.width >= 2.0
+                        && shape.rect.contains(pane.center())
+                }
+                _ => false,
+            })
             .count()
     };
+    let area = |app: &QuantickApp, side: PaneSide| {
+        app.active_tab()
+            .pane(side)
+            .frame
+            .chart_area
+            .expect("a drawn pane")
+    };
+    for focused in [PaneSide::Flow, PaneSide::Time(0)] {
+        app.active_tab_mut().focus = focused;
+        let output = run_frame(&mut app, &ctx);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert_eq!(
+                framed(&output, area(&app, side)),
+                usize::from(side == focused),
+                "focus on {focused:?}: the frame around {side:?}"
+            );
+        }
+    }
+    app.active_tab_mut().set_layout(CanvasLayout::Single);
+    run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
-    let flow_top = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .area
-        .expect("flow chart")
-        .top();
     assert_eq!(
-        rules_at(&output, flow_top),
+        framed(&output, area(&app, PaneSide::Flow)),
         0,
-        "the flow pane's rule stays faint"
-    );
-    app.active_tab_mut().focus = PaneSide::Time(0);
-    let output = run_frame(&mut app, &ctx);
-    let time_top = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .area
-        .expect("time chart")
-        .top();
-    assert_eq!(
-        rules_at(&output, time_top),
-        1,
-        "the time pane keeps its accent"
+        "a lone pane wears no frame"
     );
 }

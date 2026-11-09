@@ -252,6 +252,11 @@ pub struct DrawingSnapshot {
     /// placed at — the mark survived a re-cut, a rewind or a symbol switch,
     /// but no longer sits on the data it was drawn against.
     pub off_series: bool,
+    /// The layout and contract a migration merged this object from, when one
+    /// did. A merged market is labelled, never passed off as one history.
+    /// Optional in the schema only so v1 readers stay compatible.
+    #[serde(default)]
+    pub origin: Option<DrawingOriginSnapshot>,
     pub anchor_count: WireU64,
     /// True when the trader gave the object their own name. The name itself is
     /// their words and is never published.
@@ -260,6 +265,14 @@ pub struct DrawingSnapshot {
     /// Absent is the trader's own. An object an agent placed must never be
     /// indistinguishable from one the trader placed.
     pub author: Option<DrawingAuthorSnapshot>,
+}
+
+/// Where a migration merged a drawing from. See [`DrawingSnapshot::origin`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DrawingOriginSnapshot {
+    pub layout: String,
+    pub symbol: String,
+    pub pane: WireU64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

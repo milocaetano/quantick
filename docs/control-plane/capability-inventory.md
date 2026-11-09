@@ -40,16 +40,24 @@ capability that cannot change application state.
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
+| `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
+| `chart.price_tag.progress.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.settings.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.time_axis.reset` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.window.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.market` |
 | `control.describe` | 1 | `control` | yes | `observe` |
+| `desk.export` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
+| `desk.forget` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
+| `desk.import` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
+| `desk.reopen_on_launch.set` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.save` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
 | `events.read` | 1 | `events` | yes | `observe`, `observe.events` |
 | `events.wait` | 1 | `events` | yes | `observe`, `observe.events` |
 | `evidence.capture` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
 | `evidence.read` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
+| `feed.contract.roll` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `feed.deal_recording.set` | 1 | `feed` | no | `cockpit` |
 | `feed.history.cancel` | 1 | `feed` | no | `cockpit` |
 | `feed.history.load` | 1 | `feed` | no | `cockpit` |
@@ -57,6 +65,8 @@ capability that cannot change application state.
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `feed.source.set` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
+| `home.leave` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
+| `home.show` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.picker.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -68,6 +78,12 @@ capability that cannot change application state.
 | `layout.flow.expand` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.attach` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.detach` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.drag.begin` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.drag.cancel` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.reorder` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.select` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.expand` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -86,11 +102,17 @@ capability that cannot change application state.
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.rename` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.switch` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.close` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.placement.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.state.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `market.open` | 1 | `market` | no | `cockpit`, `cockpit.layout` |
+| `market.palette.open` | 1 | `market` | no | `cockpit`, `cockpit.layout` |
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `orderflow.bubbles.preset.apply` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.presets.list` | 1 | `orderflow` | yes | `observe`, `observe.orderflow` |
+| `orderflow.bubbles.reset` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.save_changes.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.size.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.tick.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
@@ -105,7 +127,11 @@ capability that cannot change application state.
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
 | `session.journal.set` | 1 | `session` | no | `cockpit` |
 | `session.pnl_display.set` | 1 | `session` | no | `cockpit` |
+| `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
+| `tab.close` | 1 | `tab` | no | `cockpit`, `cockpit.desk` |
+| `tab.market.set` | 1 | `tab` | no | `cockpit`, `cockpit.recover` |
+| `tab.workspace.set` | 1 | `tab` | no | `cockpit`, `cockpit.layout` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
 | `trade.order.cancel` | 1 | `trade` | no | `trade` |
@@ -113,5 +139,13 @@ capability that cannot change application state.
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
+| `workspace.autosave.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
+| `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.revert` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
+| `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
+| `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-89 capabilities registered.
+123 capabilities registered.

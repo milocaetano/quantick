@@ -154,7 +154,9 @@ fn a_click_off_the_canvas_then_one_on_a_candle_is_no_double_click() {
         (on_the_candle, true),
         (on_the_candle, false),
     ] {
-        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(pos, pressed)).1;
+        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(pos, pressed))
+            .1
+            .open_chart_settings;
     }
     assert!(
         ctx.input(|i| i

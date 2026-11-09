@@ -81,6 +81,10 @@ pub const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
 /// Neither `cockpit` — "never removes" — nor `cockpit.recover` — whose words
 /// are a rebuilt chart — is consent the trader gave to losing a session.
 pub const COCKPIT_JOURNAL_DELETE_PERMISSION_ID: &str = "cockpit.journal.delete";
+/// Permission for the calls that replace or remove the saved desk. Separate from
+/// `cockpit.layout` and sensitive: rearranging charts on screen must not silently
+/// also let a connection overwrite what the trader comes back to.
+pub const COCKPIT_DESK_PERMISSION_ID: &str = "cockpit.desk";
 /// The effect for deleting a journal session.
 pub const JOURNAL_DELETE_EFFECT_ID: &str = "cockpit.journal.delete";
 /// What a capability under [`JOURNAL_DELETE_EFFECT_ID`] declares it may
@@ -144,6 +148,50 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 
 /// The canvas: which charts are on screen, where and how wide.
 pub const LAYOUT_MODULE_ID: &str = "layout";
+
+/// Names that once meant something and now split, with what replaced each, and
+/// which of those are named ahead of being built (none today).
+/// A caller holding an old name is told where to go rather than that nothing
+/// by that name ever existed.
+pub const RETIRED_CAPABILITIES: &[(&str, &[&str], &[&str])] =
+    &[("workspace.save", &["desk.save", "workspace.save_to"], &[])];
+
+/// The refusal for a retired name, naming its successors in the message and in
+/// `details.successors`; `None` for any other name.
+#[must_use]
+pub fn retired_capability(id: &str) -> Option<quantick_control::error::ControlError> {
+    use quantick_control::{error::ControlError, error::codes, id::ErrorCode};
+    let (_, successors, planned) = RETIRED_CAPABILITIES
+        .iter()
+        .find(|(name, _, _)| *name == id)?;
+    let not_built = if planned.is_empty() {
+        String::new()
+    } else {
+        format!(", of which {} is not built yet", planned.join(", "))
+    };
+    let mut refusal = ControlError::new(
+        ErrorCode::new(codes::CAPABILITY_RETIRED).expect("static error code is valid"),
+        format!(
+            "{id} is retired; its successors are {}{not_built}",
+            successors.join(", ")
+        ),
+        false,
+    );
+    refusal.context.details =
+        Some(serde_json::json!({ "successors": successors, "planned": planned }));
+    Some(refusal)
+}
+
+/// The Home tab: what the central canvas shows instead of a market.
+pub const HOME_MODULE_ID: &str = "home";
+pub const SETTINGS_MODULE_ID: &str = "settings";
+pub const DESK_MODULE_ID: &str = "desk";
+/// Calls on one open tab.
+pub const TAB_MODULE_ID: &str = "tab";
+/// Opening a market, and the palette that finds one.
+pub const MARKET_MODULE_ID: &str = "market";
+/// The venues' lists of markets.
+pub const CATALOG_MODULE_ID: &str = "catalog";
 
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -265,6 +313,11 @@ pub struct EmptyInput {}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotReadInput {
+    /// Live native market window, pinned once when this read reaches the UI thread.
+    /// Omission selects the focused live window at that admission point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<quantick_control::wire::WireU64>,
+
     #[schemars(length(min = 1, max = CONTROL_MAX_SNAPSHOT_SCOPES))]
     pub scopes: Vec<SnapshotScopeId>,
 }
@@ -365,6 +418,18 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             id: permission(COCKPIT_JOURNAL_DELETE_PERMISSION_ID),
             label: "Delete trading sessions".to_owned(),
             description: "Move a saved trading session out of the trades journal into `.deleted` under the trades folder: the ledger, the report and every listing stop reading it, and only moving the file back by hand restores it. The session being traded is always refused.".to_owned(),
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
+            id: permission(COCKPIT_DESK_PERMISSION_ID),
+            label: "Change your saved desk".to_owned(),
+            description: "Overwrite or forget the desk quantick opens on, bring up the file \
+                          dialogs that export or replace it, and overwrite, rename or delete a \
+                          saved workspace. What is overwritten or forgotten this way does not \
+                          come back."
+                .to_owned(),
             sensitive: true,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
@@ -561,6 +626,39 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             title: "Layout".to_owned(),
             description: "The canvas: which charts are on screen, where they sit, and how wide."
                 .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(HOME_MODULE_ID),
+            title: "Home".to_owned(),
+            description: "The Home tab, shown over the canvas while every market keeps running."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(SETTINGS_MODULE_ID),
+            title: "Settings".to_owned(),
+            description: "The Settings window and which section it shows.".to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(DESK_MODULE_ID),
+            title: "Desk".to_owned(),
+            description: "The open tabs, panels and window kept as what quantick opens on."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(TAB_MODULE_ID),
+            title: "Tab".to_owned(),
+            description: "What one open tab uses: the workspace it reads its market with."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(MARKET_MODULE_ID),
+            title: "Market".to_owned(),
+            description: "Opening a market in a tab, and the palette that finds one.".to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(CATALOG_MODULE_ID),
+            title: "Catalog".to_owned(),
+            description: "The markets each venue lists, and the ones the trader added.".to_owned(),
         },
         ModuleDescriptor {
             id: module(NOTIFY_MODULE_ID),
@@ -829,7 +927,7 @@ pub const SNAPSHOT: ReadSpec = ReadSpec {
     id: SNAPSHOT_CAPABILITY_ID,
     module: "snapshot",
     title: "Read semantic snapshot",
-    description: "Captures the requested registered scopes coherently on the application thread.",
+    description: "Captures the requested registered scopes coherently on the application thread. Optional window_id pins a live market window; omission pins the focused window at UI admission, before any frame wait.",
     permissions: &[OBSERVE_PERMISSION_ID],
     pagination: None,
 };
@@ -867,7 +965,7 @@ pub const SCENE: ReadSpec = ReadSpec {
     id: SCENE_CAPABILITY_ID,
     module: "scene",
     title: "Read semantic scene",
-    description: "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
+    description: "Names controls on the requested window_id with frame-stable IDs, selection, geometry and coded availability. Omission pins the focused live window at UI admission; a closed pinned target is refused.",
     permissions: &[
         OBSERVE_PERMISSION_ID,
         "observe.attention",
@@ -902,7 +1000,7 @@ pub const EVIDENCE_CAPTURE: ReadSpec = ReadSpec {
     id: EVIDENCE_CAPTURE_CAPABILITY_ID,
     module: EVIDENCE_MODULE_ID,
     title: "Capture evidence",
-    description: "Freezes the named scopes, the events around them and the effective configuration into one hashed, redacted in-memory bundle, and answers with its manifest.",
+    description: "Freezes named scopes, recent events and redacted configuration into one hashed in-memory bundle. Optional window_id pins a live target at UI admission; screenshot pixels and painted scene retain that target identity even if focus changes.",
     permissions: &[OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
     pagination: None,
 };

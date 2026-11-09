@@ -80,7 +80,8 @@ impl PastTape {
     /// This stretch again for a window ending at `end_ms`, when nothing in it
     /// can change: the same blocks and rungs, every print that could join
     /// them delivered, none evicted. A held drag re-reads no history; its
-    /// book is re-read only when its price axis or grouping moved.
+    /// book is re-read only when its price axis, grouping or lead moved, or
+    /// a trail read before its book was recorded can now be read.
     #[must_use]
     pub fn reused_at(
         &self,
@@ -88,7 +89,12 @@ impl PastTape {
         window_ms: i64,
         dots: Option<&VolumeDots>,
         retained_from_ms: Option<i64>,
-        book: (&LiquidityHistory, PriceWindow, EffectiveGrouping),
+        book: (
+            &LiquidityHistory,
+            PriceWindow,
+            EffectiveGrouping,
+            (i64, bool),
+        ),
     ) -> Option<Self> {
         let rungs = rungs_of(dots);
         let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, rungs.0);
@@ -102,15 +108,19 @@ impl PastTape {
             );
         let frozen = self.settled_through_ms >= until_ms
             && retained_from_ms.is_none_or(|retained| retained <= from_ms);
-        let (history, prices, grouping) = book;
+        let (history, prices, grouping, lead) = book;
         (same && frozen).then(|| Self {
             end_ms,
             retained_from_ms,
-            heat: if self.heat.fits(prices, grouping) {
+            heat: if self.heat.fits(history, prices, grouping, lead) {
                 Arc::clone(&self.heat)
             } else {
                 Arc::new(project_past_heat(
-                    history, from_ms, until_ms, prices, grouping,
+                    history,
+                    (from_ms, until_ms),
+                    lead,
+                    prices,
+                    grouping,
                 ))
             },
             ..self.clone()
@@ -157,6 +167,7 @@ pub fn project_past_tape(
     prices: PriceWindow,
     settled: &SettledProjection,
     dots: Option<&VolumeDots>,
+    lead: (i64, bool),
 ) -> Option<PastTape> {
     let latest = history.latest_ms()?;
     let end_ms = end_ms.min(latest);
@@ -186,8 +197,8 @@ pub fn project_past_tape(
         projection: Arc::new(projection),
         heat: Arc::new(project_past_heat(
             history,
-            from_ms,
-            until_ms,
+            (from_ms, until_ms),
+            lead,
             prices,
             settled.effective_grouping,
         )),

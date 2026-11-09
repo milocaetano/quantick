@@ -167,6 +167,7 @@ impl Chart {
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,
                 lane_bars: self.geometry().lane_bars,
+                tape_lead_share: 0.0,
             }),
         }
     }

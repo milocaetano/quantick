@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether the file changed on disk; `false` says the log has the reason.",
+  "properties": {
+    "written": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "written"
+  ],
+  "title": "DeskWriteResult",
+  "type": "object"
+}

@@ -37,6 +37,7 @@ pub(crate) use control_host::{
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
+mod desk_wiring;
 pub(crate) mod drawing_controller;
 
 mod frame;
@@ -49,18 +50,23 @@ mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
+mod home_wiring;
 mod menu_bar;
+pub(crate) use menu_bar::SAVE_TO_WORKSPACE_SHORTCUT;
+pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
-mod tabs;
+mod tab_workspaces;
+pub(crate) mod title_bar;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
 mod workspace_save_adapter;
 
-// The tab lifecycle took `saved_context_intervals` with it; `workspace_restore`
-// still reaches it through `super::`.
-use tabs::saved_context_intervals;
+fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
+    let default = crate::time_header::DEFAULT_INTERVAL_MS;
+    quantick_stores::ui_state::saved_context_intervals(bars, time_bars, default)
+}
 // Named by the paper-trading and drawing tests through `use super::*`, and by
 // nothing in production outside the module that owns them, so the imports are
 // gated the way the block at the end of this list is.
@@ -101,7 +107,7 @@ use quantick_stores::bubble_asset_store::open_asset_bubbles;
 // through `use super::*`, so they stay here as gated imports rather than
 // becoming an edit to `app/tests/` — the same treatment `ChartLayer` already
 // had when `maintain_chart_layers` left for `app::chart_layers_wiring`, and
-// `heatmap_lamp_on` has now taken the last read of that one to `app::tabs`.
+// `heatmap_lamp_on` has now taken the last read of that one to `app::tests`.
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 #[cfg(test)]
@@ -139,18 +145,6 @@ const FIRST_TAB_ID: u64 = 0;
 /// every existing capture shows.
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
-/// Format the forming bar's countdown, e.g. `37/50 ticks`.
-///
-/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
-/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
-fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
-    format!(
-        "{}/{} {unit}",
-        quantick_engine::display::display_decimal(progress.done),
-        quantick_engine::display::display_decimal(progress.target)
-    )
-}
 
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
@@ -263,6 +257,7 @@ macro_rules! arrangement_adapter {
             history: &mut $app.runtime.history,
             drawing_chrome: &mut $app.drawings.chrome,
             toast: &mut $app.surfaces.toast,
+            surface: &mut $app.chrome.title_bar.surface,
         }
     }};
 }
@@ -285,27 +280,16 @@ impl QuantickApp {
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter!(self)
     }
-    #[cfg(test)]
-    pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
-        arrangement_adapter::ArrangementRead {
-            tabs: &self.runtime.tabs,
-            config: &self.config,
-            toolrail: &self.toolrail,
-            tz: &self.runtime.tz,
-            dock: &self.dock,
-            show_perf: self.health.show_perf,
-            record_deals: self.chrome.record_deals,
-            history: &self.runtime.history,
-            drawing_chrome: &self.drawings.chrome,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
-        workspace_save_adapter::WorkspaceRead {
-            arrangement: self.arrangement_state(),
-            session: self.runtime.workspace.session(),
-            replay_view: &self.replay_view,
+    fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
+        indicator_wiring::IndicatorWiring {
+            runtime: self.runtime.bound_mut(&self.presentation.binding),
+            picker: &mut self.surfaces.indicator_picker,
+            drawing_chrome: &mut self.drawings.chrome,
+            toast: &mut self.surfaces.toast,
+            rename: &mut self.chrome.layout_rename,
+            delete_confirm: &mut self.chrome.layout_delete_confirm,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &mut self.chrome.harness,
         }
     }
     pub(crate) fn workspace_save_adapter(
@@ -327,28 +311,19 @@ impl QuantickApp {
     /// Split here, once, because almost every tab operation needs both and
     /// `self.runtime.tabs[i].f(&self.config)` is a borrow error at every call site.
     pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
-        let tabs = &mut self.runtime.tabs;
-        (tabs.runtime_mut(tabs.active_index()), &self.config)
+        (self.runtime.active_tab_mut(), &self.config)
     }
 
     /// The tab on screen.
     pub(super) fn active_tab(&self) -> &Tab {
-        let tabs = &self
-            .runtime
-            .resolve(&self.presentation.binding)
-            .expect("bound workspace")
-            .tabs;
-        &tabs[tabs.active_index()]
+        self.runtime.bound(&self.presentation.binding).active_tab()
     }
 
     /// See [`Self::active_tab`].
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
-        let tabs = &mut self
-            .runtime
-            .resolve_mut(&self.presentation.binding)
-            .expect("bound workspace")
-            .tabs;
-        tabs.runtime_mut(tabs.active_index())
+        self.runtime
+            .bound_mut(&self.presentation.binding)
+            .active_tab_mut()
     }
 
     /// The pane the chrome speaks for: the active tab's focused pane (§11).
@@ -403,33 +378,6 @@ impl QuantickApp {
             ),
             None => {}
         }
-    }
-
-    /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
-    /// (already streaming through `feed`) and bar `spec`, with no saved
-    /// workspace to restore.
-    ///
-    /// The window itself always has one (`main` reads the file before it
-    /// spawns a feed), so this is the tests' entry point: a case about the
-    /// chart is not a case about what the last session left on disk.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new(
-        config: AppConfig,
-        feed_id: impl Into<String>,
-        symbol: impl Into<String>,
-        spec: impl Into<crate::state::BarConfiguration>,
-        feed: FeedHandle,
-    ) -> Self {
-        Self::new_with_workspace(
-            config,
-            feed_id,
-            symbol,
-            spec,
-            feed,
-            ui_state::Workspace::default(),
-            AppLaunch::default(),
-        )
     }
 
     /// The same, restoring `workspace` over the configured defaults.
@@ -530,13 +478,14 @@ impl QuantickApp {
         }
         crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
         let mut runtime =
-            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes);
+            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes, &config);
         let added_symbols = symbols_file::load(runtime.workspace.symbols_path());
         let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
         let mut app = Self {
             runtime,
             presentation,
             chrome: chrome::ChromeState {
+                title_bar: Default::default(),
                 #[cfg(any(feature = "scenario-harness", test))]
                 harness: Harness::capture(&launch.scenario),
                 #[cfg(any(feature = "scenario-harness", test))]
@@ -546,7 +495,7 @@ impl QuantickApp {
                 layout_rename: None,
                 layout_delete_confirm: None,
                 surface: None,
-                workspace_menu_rect: None,
+                window_menu: Default::default(),
                 history_menu_rect: None,
                 feed_chip_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
@@ -645,6 +594,7 @@ impl QuantickApp {
     /// to, which is also what every non-Windows target gets.
     pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
         self.chrome.surface = window_scale::SurfaceProbe::new(handle);
+        self.presentation.native.pump.attach(handle);
     }
 }
 
@@ -657,6 +607,7 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.presentation.native.pump.set_active(false);
         if !self.runtime.lifetime.begin_shutdown() {
             return;
         }
@@ -690,12 +641,7 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if self.chrome.harness.push_menu_input(
-            ctx,
-            raw_input,
-            self.chrome.workspace_menu_rect,
-            self.chrome.history_menu_rect,
-        ) {
+        if title_bar::push_scripted_menu(self, ctx, raw_input) {
             return;
         }
         // The parked pointer, re-delivered — before the menu branch and not

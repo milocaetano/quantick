@@ -131,8 +131,28 @@ impl RgbaExt for PremultipliedRgba {
     }
 }
 
+/// Premultiply straight RGBA bytes in place, in sRGB, as browsers do.
+pub fn premultiply_in_srgb(rgba: &mut [u8]) {
+    for texel in rgba.as_chunks_mut::<4>().0 {
+        let [r, g, b, a] = texel.map(u16::from);
+        *texel = [r * a, g * a, b * a, a * 255].map(|c| ((c + 127) / 255) as u8);
+    }
+}
+
 /// Compose a presentation opacity with configured alpha, in straight color space.
 pub fn with_opacity(color: PremultipliedRgba, opacity: u8) -> PremultipliedRgba {
+    let a = color.a();
+    if a == 0 {
+        return TRANSPARENT;
+    }
+    let [r, g, b, _] = opaque(color).to_array();
+    let alpha = (f32::from(a) * f32::from(opacity) / 255.0).round() as u8;
+    rgba_unmultiplied(r, g, b, alpha)
+}
+
+/// The colour's own hue at full opacity: what it is, apart from how faintly
+/// it is laid down. A transparent colour has no hue and answers transparent.
+pub fn opaque(color: PremultipliedRgba) -> PremultipliedRgba {
     let [r, g, b, a] = color.to_array();
     if a == 0 {
         return TRANSPARENT;
@@ -140,6 +160,5 @@ pub fn with_opacity(color: PremultipliedRgba, opacity: u8) -> PremultipliedRgba 
     let straight = |channel| {
         gamma_u8_from_linear_f32(linear_f32_from_gamma_u8(channel) / (f32::from(a) / 255.0))
     };
-    let alpha = (f32::from(a) * f32::from(opacity) / 255.0).round() as u8;
-    rgba_unmultiplied(straight(r), straight(g), straight(b), alpha)
+    PremultipliedRgba::from_rgb(straight(r), straight(g), straight(b))
 }

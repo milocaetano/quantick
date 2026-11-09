@@ -377,13 +377,14 @@ const EDITS: &[Edit] = &[
         moves_win: true,
     },
     Edit {
-        name: "the panel's defaults restored",
+        // WIN opens on its factory look, which the reset leaves as it is.
+        name: "the panel's reset to the factory look",
         apply: |app, _| {
             let tape = app.active_tab_mut().tape_mut();
             tape.press_reset_bubble_visuals_for_test();
         },
         presets: Presets::Untouched,
-        moves_win: true,
+        moves_win: false,
     },
     Edit {
         name: "the presets file edited by hand, reloaded",

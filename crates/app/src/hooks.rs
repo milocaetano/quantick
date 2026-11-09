@@ -182,16 +182,12 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         crate::surfaces::indicator_preview::HOOKS,
     ),
     (
-        "crates/app/src/surfaces/source_picker.rs",
-        crate::surfaces::source_picker::HOOKS,
+        "crates/app/src/surfaces/market_palette.rs",
+        crate::surfaces::market_palette::HOOKS,
     ),
     (
         "crates/app/src/surfaces/toast.rs",
         crate::surfaces::toast::HOOKS,
-    ),
-    (
-        "crates/app/src/surfaces/workspace_name.rs",
-        crate::surfaces::workspace_name::HOOKS,
     ),
 ];
 

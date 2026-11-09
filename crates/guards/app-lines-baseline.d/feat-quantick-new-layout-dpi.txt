@@ -1,0 +1,5 @@
+# App-owned Windows HWND subclass, UI-thread registration and DPI dispatch.
+# Native handles/default window procedures cannot live in headless domain crates.
+# Keeps backend scale events and the existing root repaint pump unchanged.
+crates/app +180
+!budget +180

@@ -120,6 +120,20 @@ impl SourceFilter {
     }
 }
 
+/// The symbol folders under the history dir, for the report's combo box.
+pub fn list_symbol_folders(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .collect();
+    folders.sort();
+    folders
+}
+
 /// Read every history file under `dir` (one symbol's folder, or all of
 /// them), remembering each row's symbol and session, and leaving out the
 /// rows of every path in `exclude` (the live session's own files — their

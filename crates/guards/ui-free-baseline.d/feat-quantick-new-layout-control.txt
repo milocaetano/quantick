@@ -1,0 +1,6 @@
+# Docking/projection lines connect app-owned TabReads and per-window
+# chrome to the headless market-window contracts. Ownership/order/cancellation
+# policy and wire-shape projection helpers remain in workspace/control-schema.
+# One transport-proof source inventory entry covers the new gateway suite.
+crates/app +9
+!budget +9

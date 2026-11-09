@@ -302,6 +302,22 @@ impl ReplayLink {
             self.status.total().saturating_sub(joined),
         )
     }
+
+    /// Where the tape's clock stands: the playhead, and the time of the
+    /// first print past the `applied` ones the chart holds.
+    ///
+    /// The chart's tape retains every print and never evicts a prefix. A
+    /// replay reset replaces it before its new backfill, so `applied` is the
+    /// cursor in this recording, a joined prior session included.
+    #[must_use]
+    pub fn clock_after(&self, applied: usize) -> (i64, Option<i64>) {
+        let next_ms = self
+            .session
+            .trades
+            .get(applied)
+            .map(|trade| trade.timestamp_ms);
+        (self.status.position_ms(), next_ms)
+    }
 }
 
 impl ReplayLink {
@@ -847,6 +863,18 @@ mod tests {
         assert_eq!(link.clock_text(Some(0.5)), "11:00:00");
         assert_eq!(link.clock_text(Some(1.0)), "12:00:00");
         assert_eq!(link.clock_text(None), "10:00:00", "holding moved nothing");
+    }
+
+    /// The tape's clock stands on the playhead, and the next print is the one
+    /// after however many the chart applied; past the end there is none.
+    #[test]
+    fn the_tape_clock_reads_the_print_after_the_applied_cursor() {
+        let link = ReplayLink::detached(Session::clone(&session(3)));
+        let start_ms = link.status.position_ms();
+        let times: Vec<i64> = link.session.trades.iter().map(|t| t.timestamp_ms).collect();
+        assert_eq!(link.clock_after(0), (start_ms, Some(times[0])));
+        assert_eq!(link.clock_after(2), (start_ms, Some(times[2])));
+        assert_eq!(link.clock_after(3), (start_ms, None));
     }
 
     /// `count` prints 10 ms apart from 10:00:00, so a session of any length

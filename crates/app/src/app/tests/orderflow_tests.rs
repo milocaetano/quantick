@@ -54,7 +54,7 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
 #[test]
 fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().feed_connection = FeedConnectionState::Connected;
+    app.active_tab_mut().link.feed_connection = FeedConnectionState::Connected;
     let trade = trade(1);
     app.active_tab_mut()
         .ingest_live_trade_at(&trade, trade.timestamp_ms + 42);
@@ -66,7 +66,12 @@ fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
         .expect("a live tape has an age");
     assert!(age < metrics::STALE_TAPE_MS);
     assert_eq!(
-        statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
+        statusbar::tape_text(
+            None,
+            app.active_tab().link.trade_arrival_ms(),
+            Some(age),
+            None
+        ),
         "clock 42 ms"
     );
 
@@ -77,12 +82,17 @@ fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
         .expect("still a tape, just an old one");
     assert!(age > metrics::STALE_TAPE_MS, "{age} ms");
     assert_eq!(
-        app.active_tab().trade_arrival_ms(),
+        app.active_tab().link.trade_arrival_ms(),
         Some(42),
         "the arrival observation is frozen, which is why it cannot report this"
     );
     assert_eq!(
-        statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
+        statusbar::tape_text(
+            None,
+            app.active_tab().link.trade_arrival_ms(),
+            Some(age),
+            None
+        ),
         "stale 60 s"
     );
 }
@@ -129,13 +139,15 @@ fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
         "with no book there is nothing to draw, which is the renderer's answer"
     );
     assert_eq!(
-        pane.layer_states(&app.runtime.style)
+        pane.layer_read()
+            .states(&app.runtime.style)
             .get(&ChartLayer::Heatmap),
         Some(&true),
         "but the file records the switch, which the shipped config left on"
     );
     assert_eq!(
-        pane.layer_states(&app.runtime.style)
+        pane.layer_read()
+            .states(&app.runtime.style)
             .get(&ChartLayer::TapeHeatmap),
         Some(&true),
         "the tape's depth layer answers to the same rule"
@@ -590,10 +602,10 @@ fn closed_depth_channel_is_reported_once_per_feed_handle() {
     drop(book_tx);
 
     app.active_tab_mut().drain_book_feed();
-    assert!(app.active_tab().book_channel_closed_reported);
+    assert!(app.active_tab().link.book_channel_closed_reported);
     app.active_tab_mut().drain_book_feed();
     assert!(
-        app.active_tab().book_channel_closed_reported,
+        app.active_tab().link.book_channel_closed_reported,
         "subsequent frames keep the one-shot diagnostic latched"
     );
 }

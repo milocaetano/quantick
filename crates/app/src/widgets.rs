@@ -131,7 +131,7 @@ pub fn icon_paint(
     }
     if hovered {
         return IconPaint {
-            fill: Some(palette.border()),
+            fill: Some(palette.hover_fill()),
             glyph: palette.text_primary(),
         };
     }
@@ -148,6 +148,8 @@ pub struct IconButton<'a> {
     dots: crate::drawings::IconDots,
     letter: Option<crate::drawings::IconLetter>,
     size: IconSize,
+    hit: egui::Vec2,
+    strong: bool,
     active: bool,
     enabled: bool,
     accent: Option<egui::Color32>,
@@ -166,6 +168,8 @@ impl<'a> IconButton<'a> {
             dots: &[],
             letter: None,
             size,
+            hit: egui::Vec2::splat(size.hit),
+            strong: false,
             active: false,
             enabled: true,
             accent: None,
@@ -202,6 +206,20 @@ impl<'a> IconButton<'a> {
     #[must_use]
     pub fn active_marker(mut self, edge: MarkerEdge) -> Self {
         self.marker_edge = Some(edge);
+        self
+    }
+
+    /// Replace the family's square hit target, for a face that is a picture.
+    #[must_use]
+    pub fn hit_size(mut self, hit: egui::Vec2) -> Self {
+        self.hit = hit;
+        self
+    }
+
+    /// Paint the idle glyph in primary ink, for a strip read at a glance.
+    #[must_use]
+    pub fn strong(mut self) -> Self {
+        self.strong = true;
         self
     }
 
@@ -251,8 +269,7 @@ impl<'a> IconButton<'a> {
         } else {
             egui::Sense::hover()
         };
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(self.size.hit, self.size.hit), sense);
+        let (rect, response) = ui.allocate_exact_size(self.hit, sense);
         if ui.is_rect_visible(rect) {
             let paint = icon_paint(
                 &palette,
@@ -263,6 +280,12 @@ impl<'a> IconButton<'a> {
                 accent,
             );
             let painter = ui.painter();
+            let idle = self.strong && self.enabled && paint.fill.is_none();
+            let ink = if idle {
+                palette.text_primary()
+            } else {
+                paint.glyph
+            };
             if let Some(fill) = paint.fill {
                 painter.rect_filled(rect, egui::Rounding::same(CORNER_RADIUS), fill);
             }
@@ -272,19 +295,12 @@ impl<'a> IconButton<'a> {
                     egui::Align2::CENTER_CENTER,
                     self.glyph,
                     egui::FontId::proportional(self.size.glyph),
-                    paint.glyph,
+                    ink,
                 );
             } else {
                 let box_rect =
                     egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(self.size.glyph));
-                paint_vector_icon(
-                    painter,
-                    box_rect,
-                    self.strokes,
-                    self.dots,
-                    self.letter,
-                    paint.glyph,
-                );
+                paint_vector_icon(painter, box_rect, self.strokes, self.dots, self.letter, ink);
             }
             if self.active
                 && let Some(edge) = self.marker_edge
@@ -374,6 +390,72 @@ pub fn paint_vector_icon(
             color,
         );
     }
+}
+
+/// Paint `prompt` centred over a scrim, above every overlay (a drawing's bar
+/// too), buttons right, Enter's in the accent; Esc and Enter press theirs.
+pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Option<usize> {
+    let (id, screen, mut chosen) = (egui::Id::new(prompt.id.as_str()), ctx.screen_rect(), None);
+    let palette = theme::get(ctx);
+    let scrim = egui::Area::new(id.with("scrim")).order(egui::Order::Tooltip);
+    scrim.fixed_pos(screen.min).show(ctx, |ui| {
+        ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag())
+    });
+    let shown = egui::Window::new(prompt.title.as_str())
+        .id(id)
+        .order(egui::Order::Tooltip)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(prompt.body.as_str());
+            if let Some(note) = &prompt.note {
+                ui.label(
+                    egui::RichText::new(note)
+                        .small()
+                        .color(palette.text_support()),
+                );
+            }
+            let (font, gap) = (egui::TextStyle::Button.resolve(ui.style()), ui.spacing());
+            let pad = gap.button_padding.x * 2.0 + gap.item_spacing.x;
+            let wide = |label: &String| {
+                let galley =
+                    ui.fonts(|f| f.layout_no_wrap(label.clone(), font.clone(), palette.accent()));
+                galley.size().x + pad
+            };
+            let width = prompt.buttons.iter().map(wide).sum::<f32>();
+            let row = egui::vec2(ui.min_rect().width().max(width), 0.0);
+            let layout = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(row, layout, |ui| {
+                for (at, label) in prompt.buttons.iter().enumerate().rev() {
+                    let button = if at == prompt.enter {
+                        accent_button(&palette, label)
+                    } else {
+                        egui::Button::new(label.as_str())
+                    };
+                    chosen = chosen.or(ui.add(button).clicked().then_some(at));
+                }
+            });
+        });
+    if let Some(shown) = shown {
+        ctx.move_to_top(shown.response.layer_id);
+    }
+    let pressed = |key| ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+    if pressed(egui::Key::Escape) {
+        Some(prompt.escape)
+    } else if pressed(egui::Key::Enter) {
+        Some(prompt.enter)
+    } else {
+        chosen
+    }
+}
+
+/// A button in the accent: Enter's answer, or the Save held edits wait for.
+pub fn accent_button(palette: &theme::Palette, label: &str) -> egui::Button<'static> {
+    let accent = palette.accent();
+    egui::Button::new(egui::RichText::new(label).color(accent))
+        .fill(theme::active_tint(accent))
+        .stroke((1.0, accent.gamma_multiply(0.5)))
 }
 
 #[cfg(test)]
@@ -568,5 +650,86 @@ mod tests {
         assert_eq!(top.height(), ACTIVE_MARKER_WIDTH_PX);
         let bottom = MarkerEdge::Bottom.bar(rect);
         assert_eq!(bottom.bottom(), rect.bottom());
+    }
+
+    /// The close prompt over a selected drawing's context bar (a Foreground
+    /// area): the prompt is the top layer where it stands, the scrim takes
+    /// the click aimed at the bar, and the buttons stand right, Enter's last.
+    #[test]
+    fn a_prompt_paints_above_and_blocks_a_foreground_overlay() {
+        let ctx = egui::Context::default();
+        let prompt = quantick_session::prompt::Prompt {
+            id: "close".to_owned(),
+            title: "Close WINZ26".to_owned(),
+            body: "This tab changed its layout since Scalp was last saved (RSI, CVD, 3 drawings)."
+                .to_owned(),
+            note: None,
+            buttons: ["Cancel", "Close without saving", "Save to Scalp"]
+                .map(str::to_owned)
+                .to_vec(),
+            enter: 2,
+            escape: 0,
+        };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let corner = egui::pos2(20.0, 20.0);
+        let frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut clicked = false;
+            let output = ctx.run(input, |ctx| {
+                let bar = egui::Area::new(egui::Id::new("context_bar"));
+                bar.order(egui::Order::Foreground)
+                    .fixed_pos(egui::Pos2::ZERO)
+                    .show(ctx, |ui| {
+                        let button = egui::Button::new("bar").min_size(screen.size());
+                        clicked = ui.add(button).clicked();
+                    });
+                let _ = ask(ctx, &prompt);
+            });
+            (clicked, output)
+        };
+        let _ = frame(Vec::new());
+        let (_, output) = frame(Vec::new());
+        let center = ctx.layer_id_at(screen.center()).expect("a layer");
+        assert_eq!(center.order, egui::Order::Tooltip, "the prompt is on top");
+        assert_eq!(center.id, egui::Id::new("close"));
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                let rect = text.galley.rect.translate(text.pos.to_vec2());
+                texts.push((text.galley.text().to_owned(), rect));
+            }
+        }
+        let at = |word: &str| {
+            let found = texts.iter().find(|(text, _)| text.starts_with(word));
+            found.map(|(_, rect)| *rect).expect(word)
+        };
+        let (body, save) = (at("This tab"), at("Save to"));
+        assert!(at("Cancel").max.x < at("Close without").min.x, "{texts:?}");
+        assert!(
+            at("Close without").max.x < save.min.x,
+            "Enter's answer last"
+        );
+        let right = (save.max.x - body.max.x).abs();
+        assert!(right < 12.0, "the row ends where the body does: {texts:?}");
+        let press = |pressed| egui::Event::PointerButton {
+            pos: corner,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = frame(vec![egui::Event::PointerMoved(corner), press(true)]);
+        let (clicked, _) = frame(vec![press(false)]);
+        assert!(!clicked, "the scrim took the click");
+        let _ = frame(Vec::new());
+        let center = ctx.layer_id_at(screen.center()).expect("a layer");
+        assert_eq!(
+            center.id,
+            egui::Id::new("close"),
+            "and the prompt stays on top"
+        );
     }
 }

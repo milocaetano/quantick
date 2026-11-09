@@ -93,6 +93,7 @@ fn a_wide_tape_rereads_in_about_linear_time() {
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: Vec::new(),
+            tape_lead_share: 0.0,
         }),
     };
     let frame = worker

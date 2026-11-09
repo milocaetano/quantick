@@ -51,7 +51,6 @@ mod frame_stages;
 mod gesture_input;
 mod history_worker;
 pub(crate) mod lane_rail;
-mod layer_painters;
 mod layers;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
@@ -119,6 +118,8 @@ pub(crate) use price_axis::PriceAxisLevel;
 #[cfg(any(feature = "drawing-harness", test))]
 pub use quantick_drawings::gesture::ParkedHand;
 pub use quantick_drawings::gesture::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
+#[cfg(test)]
+pub(crate) use render_registry::MARK_RUNS as TIME_MARK_RUNS;
 
 // The compass is painted by several of the leaves and by the axes registry,
 // which all reach it as `pane::PointerCompass`.

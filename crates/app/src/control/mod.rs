@@ -22,6 +22,7 @@ mod indicator_picker;
 mod interaction;
 pub(crate) mod inventory;
 mod price_axis;
+mod price_tag_progress;
 mod time_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
@@ -138,6 +139,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     system::register(&mut registry)?;
     quantick_control_handlers::appearance::register(&mut registry)?;
     workspace::register(&mut registry)?;
+    quantick_control_handlers::market_windows::register_scope(&mut registry)?;
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;
     health::register(&mut registry)?;

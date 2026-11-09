@@ -66,6 +66,7 @@ fn request(closed: Vec<Bar>, partial: Option<Bar>, now_ms: i64) -> ProjectionReq
             tape_level_ticks: 1,
             candle_level_ticks: 1,
             lane_bars: vec![(24_000, 30_000)],
+            tape_lead_share: 0.0,
         }),
     }
 }

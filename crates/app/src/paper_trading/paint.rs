@@ -519,14 +519,15 @@ impl PaperTrading {
         let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, pos(preview.pointer));
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
-        let stroke = egui::Stroke::new(LINE_HOVER_WIDTH_PX, color);
+        let (line, ink) = ctx.plate(color).unwrap_or((color, palette.chip_ink()));
+        let stroke = egui::Stroke::new(LINE_HOVER_WIDTH_PX, line);
         dashed_run(ctx, [start, end], stroke, ORDER_DASH_PX, ORDER_GAP_PX);
         ctx.gutter_chip(preview.pointer.y, color, &fmt_decimal(preview.price));
         // Full fill, always: while it paints, the click is already live.
         // There is no resting state to distinguish — releasing the
         // modifier is what makes the aim go away.
         ctx.painter
-            .rect_filled(label, egui::Rounding::same(3.0), color);
+            .rect_filled(label, egui::Rounding::same(3.0), line);
         let quantity = preview.quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
         let text = format!(
             "{} {} {}",
@@ -536,14 +537,14 @@ impl PaperTrading {
         );
         let galley = ctx
             .painter
-            .layout_no_wrap(text, palette.mono_font(11.0), palette.chip_ink());
+            .layout_no_wrap(text, palette.mono_font(11.0), ink);
         ctx.painter.galley(
             egui::pos2(
                 label.center().x - galley.size().x / 2.0,
                 label.center().y - galley.size().y / 2.0,
             ),
             galley,
-            palette.chip_ink(),
+            ink,
         );
         self.draw_aim_bracket(ctx, &preview);
         // The wheel is an invisible affordance, and with no strategy armed

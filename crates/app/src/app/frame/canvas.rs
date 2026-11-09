@@ -101,6 +101,9 @@ pub(super) fn overlays(
         && let Some(rect) = tab.empty_panes_rect()
     {
         let clock = (now, answers.popup_tab);
+        let owns = tab.connection.overlay_owns_canvas();
+        let palette = owns.then(|| tab.lead_pane().palette(ui.ctx()));
+        let _palette = palette.map(|palette| crate::theme::scope(ui.ctx(), palette));
         let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, clock);
         if pressed {
             answers.notice_action = feed_notice::NoticeAction::Reconnect;
@@ -123,22 +126,23 @@ fn draw_recovery_popup(
     answers: &mut CanvasAnswers,
 ) {
     let held;
-    let report =
-        match feed_notice::report(&tab.notice, stall).filter(feed_notice::Report::is_offline) {
-            Some(report) => report,
-            // Latched offline while the feed's own loop has gone back to "working":
-            // the reason it gave is gone, the door still opens.
-            None => {
-                held = format!("{feed_name} has not come back");
-                feed_notice::Report {
-                    headline: &held,
-                    next_step: Some(feed_notice::HELD_NEXT_STEP),
-                    needs_user: true,
-                    severity: feed_notice::Severity::Offline,
-                    primary: quantick_feed::stall::Recovery::Reconnect,
-                }
+    let report = match feed_notice::report(&tab.link.notice, stall)
+        .filter(feed_notice::Report::is_offline)
+    {
+        Some(report) => report,
+        // Latched offline while the feed's own loop has gone back to "working":
+        // the reason it gave is gone, the door still opens.
+        None => {
+            held = format!("{feed_name} has not come back");
+            feed_notice::Report {
+                headline: &held,
+                next_step: Some(feed_notice::HELD_NEXT_STEP),
+                needs_user: true,
+                severity: feed_notice::Severity::Offline,
+                primary: quantick_feed::stall::Recovery::Reconnect,
             }
-        };
+        }
+    };
     // A click anywhere else puts it away, measured against the rectangles that
     // were actually drawn — so a click on the edge of what the trader can see
     // is never read as a click outside it, and the popup is laid out once

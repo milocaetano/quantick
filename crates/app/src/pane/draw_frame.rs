@@ -2,10 +2,8 @@
 //! painters: [`DrawFrame`], what the frame has resolved when the layers go
 //! down, and [`AxisChips`], what the axes stand aside for.
 //!
-//! Their own module so that `draw_chart.rs` and `layer_painters.rs` both read
-//! from here and neither reads from the other: two siblings importing each
-//! other are one file with two names, and `guards/src/cycle.rs` cannot see a
-//! cycle between children of one module.
+//! Their own module so that the frame's values are read by name from one
+//! place, apart from the orchestrator in `draw_chart.rs` that builds them.
 
 use eframe::egui;
 
@@ -20,7 +18,7 @@ use super::PointerCompass;
 ///
 /// Built once per frame on the stack by [`ChartPane::draw_chart`], after the
 /// viewport is clamped and the scale is known, and lent to every painter in
-/// `layer_painters.rs` by reference. Every field is a `Copy` value or a borrow
+/// `draw_chart.rs` by reference. Every field is a `Copy` value or a borrow
 /// of something the frame already holds — nothing is cloned into it, and no
 /// bar is walked to fill it. It is the narrow context the painters read
 /// instead of the pane's whole state, and the reason they can be `&self`

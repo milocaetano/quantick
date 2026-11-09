@@ -127,6 +127,21 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     ],
 )];
 
+/// Published schemas of the bubble scale.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "orderflow-bubble-scale-input-v1.schema.json",
+            schema::<BubbleScaleInput>(),
+        ),
+        (
+            "orderflow-bubble-scale-result-v1.schema.json",
+            schema::<BubbleScaleResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

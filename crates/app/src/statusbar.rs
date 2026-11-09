@@ -3,21 +3,27 @@
 //!
 //! Three sections replace the perf overlay, the floating timezone pill and
 //! the mode text that used to be painted over candles: provenance on the
-//! left (state dot, venue, symbol, lag), content in the middle (bar spec,
-//! counts, honesty labels), machinery on the right (trades, fps, and the
-//! timezone picker). A reading that breaches its threshold turns
-//! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
+//! left (state dot, venue, symbol, lag), content in the middle (honesty
+//! labels), machinery on the right (fps and the timezone picker). What the
+//! forming bar has left lives on its own price tag, not here. A reading
+//! that breaches its threshold turns
+//! the `warn` token; narrow windows wrap cells without hiding their facts.
 //!
-//! The timezone picker is the bar's only control. It briefly had company —
-//! a `Reconnect`/`Reload` pair in the provenance section — because the notice
-//! card refused to cover a working chart, and a terminal that froze
-//! mid-session left the trader nothing to press anywhere in the window. The
-//! offline chip in the chart's bottom-right corner answers that better: it is
-//! in one place whatever the chart holds, so the pair went back out rather
-//! than stand as a second way to do the same two things.
+//! The bar's controls share one raised hover. At the left end the workspace
+//! cell opens the tab's workspace menu upward; while autosave is off and the
+//! tab holds edits it carries the amber mark and a `Save` pill (Ctrl+S). Right
+//! after it, a muted "auto save" check turns autosave on or off
+//! (`workspace.autosave.set`). The timezone picker sits at the right end. A
+//! `Reconnect`/`Reload` pair once stood in the provenance section, because
+//! the notice card refused to cover a working
+//! chart, and a terminal that froze mid-session left the trader nothing to
+//! press anywhere in the window. The offline chip in the chart's bottom-right
+//! corner answers that better: it is in one place whatever the chart holds, so
+//! the pair went back out rather than stand as a second way to do the same two
+//! things.
 //!
-//! The first cell is the window's one word on the feed's global state, in grey,
-//! and it is the recovery popup's door: see
+//! After the workspace cell comes the window's one word on the feed's global
+//! state, in grey, and it is the recovery popup's door: see
 //! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
 //! for what it opens.
 //!
@@ -35,6 +41,7 @@ use crate::timezone::TzOffset;
 use quantick_chart::connection_state::StatusWord;
 use quantick_feed::FeedLatency;
 use quantick_orderflow as orderflow;
+use quantick_session::workspace_menu::WorkspaceCommand;
 
 /// Height of the status line, in pixels (§5 zone 7).
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;
@@ -44,6 +51,10 @@ const STATE_DOT_DIAMETER_PX: f32 = 8.0;
 const CELL_SPACING_PX: f32 = 8.0;
 /// Gap between the state dot and its word, in pixels.
 const DOT_WORD_GAP_PX: f32 = 4.0;
+/// Gap between the workspace cell's name, mark and caret, in pixels.
+const WORKSPACE_GAP_PX: f32 = 4.0;
+/// The mark of a tab holding unsaved workspace edits.
+const EDITED_MARK: &str = "\u{2022}";
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +70,14 @@ pub const SAVES_OFF_LABEL: &str = "SAVES OFF";
 
 /// Everything the bar shows this frame, precomputed by the app.
 pub struct StatusModel {
+    /// The tab's workspace, the row its chip reads; `None` on Home, where
+    /// the cell is absent.
+    pub workspace: Option<String>,
+    /// Whether the tab holds unsaved workspace edits: the amber mark and the
+    /// Save pill. Never while `autosave` is on.
+    pub modified: bool,
+    /// "auto save layout changes", the checkbox after the cell.
+    pub autosave: bool,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -82,28 +101,11 @@ pub struct StatusModel {
     /// the hover: a trader mid-session needs one word to know whether to look
     /// at their terminal or at this chart, and the breakdown only when they ask.
     pub feed_latency: Option<FeedLatency>,
-    /// The bar spec, e.g. `tick(50)`.
-    pub spec_summary: String,
-    /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
-    /// rule counts toward a fixed threshold.
-    ///
-    /// Alternative bars close on activity, not on a clock, so without this the
-    /// chart never says whether the next print completes the bar or the
-    /// fiftieth does.
-    pub bar_progress: Option<String>,
     /// The deal recorder's cell — `REC 2 301 455 · 09:00:00 · file`, `REC
     /// off`, `RECORDED · day` — or none where the feed has no counter.
     pub deal_recording: Option<DealCell>,
     /// What the recorder has to say about the flow pane, beside that cell.
     pub deal_chip: Option<crate::deal_recording_ui::DealChip>,
-    /// Bars that came from the venue's own candle history, in front of
-    /// everything this app built from prints. Zero on any pane without a
-    /// venue prefix, which is every flow pane.
-    pub venue_bars: usize,
-    /// Closed bars built from backfilled history.
-    pub backfilled_bars: usize,
-    /// Closed bars built live.
-    pub live_bars: usize,
     /// Data-honesty label such as `side: inferred (tick rule)`, when the
     /// aggressor side is not venue truth.
     ///
@@ -117,12 +119,8 @@ pub struct StatusModel {
     /// while the simulator has never been touched (an idle chart owes no
     /// account line).
     pub sim_pnl: Option<(String, std::cmp::Ordering)>,
-    /// Whether the viewport follows the live edge.
-    pub follows_live: bool,
     /// Whether the price axis is auto-fitting.
     pub price_auto: bool,
-    /// Live trades ingested since the feed started.
-    pub live_trades: u64,
     /// Rolling frames per second.
     pub fps: Option<f32>,
     /// Rolling mean frame time, in milliseconds.
@@ -130,7 +128,7 @@ pub struct StatusModel {
     /// Rolling mean CPU cost per frame (update + tessellation + paint, no
     /// vsync wait), in milliseconds.
     pub frame_cpu_ms: Option<f32>,
-    /// Whether the perf readings (fps, frame time, trades) are shown
+    /// Whether the perf readings (fps, frame time, cpu) are shown
     /// (View → perf readings).
     pub show_perf: bool,
     /// Why nothing is saved this session, when nothing is (decision DS7): a
@@ -144,6 +142,19 @@ pub struct StatusModel {
 pub struct DealCell {
     pub text: String,
     pub tone: RecState,
+}
+
+impl DealCell {
+    /// The cell for the recorder the chrome sees, or none where the view
+    /// has no cell to show.
+    #[must_use]
+    pub fn of(view: Option<crate::deal_recording::RecordingView>) -> Option<Self> {
+        let view = view?;
+        Some(Self {
+            text: view.status_cell()?,
+            tone: view.state,
+        })
+    }
 }
 
 /// The tape cell: `clock 123 ms` for an unsplit wall-clock difference,
@@ -203,34 +214,40 @@ pub fn tape_tooltip(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> St
     quantick_feed::timing::tape_tooltip(arrival_ms, latency, orderflow::format_window_ms)
 }
 
-/// The bar-count cell, keeping the backfilled+live split: `240+61 bars`.
-#[must_use]
-pub fn bars_text(venue: usize, backfilled: usize, live: usize) -> String {
-    // Three sources, three counts, in the order they sit on the chart. The
-    // venue term is dropped rather than shown as zero: a chart with no venue
-    // prefix has nothing to disclose about one, and "0+" would read as a
-    // failed fetch.
-    if venue == 0 {
-        return format!("{backfilled}+{live} bars");
-    }
-    format!("{venue}v+{backfilled}+{live} bars")
-}
-
 /// What a click on the bar asked of the app this frame.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct StatusResponse {
     /// The SIM cell was clicked: open the Trading dock tab, where the
     /// position it summarizes is managed.
     pub open_trading_tab: bool,
+    /// The clock was clicked: Settings opens on Display.
+    pub open_display_settings: bool,
     /// The word was clicked: it opens and closes the recovery popup.
     pub word_clicked: bool,
     /// The word's rect while it is a door, which is the popup's anchor.
     pub word_rect: Option<egui::Rect>,
     /// The one-click Reconnect beside the word was pressed.
     pub reconnect: bool,
+    /// The workspace cell, while shown: its menu opens upward from it.
+    pub workspace_cell: Option<egui::Rect>,
+    /// The workspace cell was clicked: it opens and closes its menu.
+    pub workspace_clicked: bool,
+    /// The auto save checkbox was flipped to this.
+    pub autosave_set: Option<bool>,
+    /// The cell's Save pill was pressed.
+    pub save_clicked: bool,
 }
 
-/// What the status bar's first cell shows this frame.
+impl StatusResponse {
+    /// The workspace calls the cell's checkbox and pill asked for, in order.
+    pub fn workspace_commands(&self) -> impl Iterator<Item = WorkspaceCommand> {
+        let save = self.save_clicked.then_some(WorkspaceCommand::SaveTo);
+        save.into_iter()
+            .chain(self.autosave_set.map(WorkspaceCommand::SetAutosave))
+    }
+}
+
+/// What the feed-state cell, after the workspace cell, shows this frame.
 #[derive(Debug, Clone, Default)]
 pub struct StatusLead<'a> {
     pub word: Option<StatusWord>,
@@ -243,7 +260,7 @@ pub struct StatusLead<'a> {
 }
 
 impl<'a> StatusLead<'a> {
-    /// What the first cell shows for this tab, and the reason behind the word.
+    /// What the feed-state cell shows for this tab, and the reason behind the word.
     #[must_use]
     pub fn of(
         tab: &'a crate::tab::Tab,
@@ -255,23 +272,24 @@ impl<'a> StatusLead<'a> {
             word: tab.connection.status_word(now_ms),
             door: tab.connection.has_recovery_door(),
             open,
-            report: crate::feed_notice::report(&tab.notice, stall)
+            report: crate::feed_notice::report(&tab.link.notice, stall)
                 .filter(crate::feed_notice::Report::is_offline),
         }
     }
 }
 
-/// Draw the status bar as the window's bottom panel. `tz` is the bar's
-/// resident control, and the SIM cell clicks through to the Trading tab.
+/// Draw the status bar as the window's bottom panel. The clock clicks through
+/// to Settings, and the SIM cell to the Trading tab.
 pub fn draw(
     ctx: &egui::Context,
     model: &StatusModel,
-    tz: &mut TzOffset,
+    tz: TzOffset,
     lead: &StatusLead<'_>,
 ) -> StatusResponse {
     let palette = theme::get(ctx);
     let mut response = StatusResponse::default();
-    egui::TopBottomPanel::bottom("status_bar")
+    // PanelState lives in the shared Context, not in its native viewport.
+    egui::TopBottomPanel::bottom(egui::Id::new((ctx.viewport_id(), "status_bar")))
         .min_height(STATUS_BAR_HEIGHT)
         .frame(
             egui::Frame::none()
@@ -283,14 +301,58 @@ pub fn draw(
                 // Wrap whole facts as cells, keeping their words together.
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
+                draw_workspace(ui, model, &mut response);
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
-                draw_machinery(ui, model, tz);
+                response.open_display_settings = draw_machinery(ui, model, tz);
             });
         });
     response
+}
+
+/// `⊞ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
+/// a caret pointing where the menu opens.
+fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusResponse) {
+    let palette = theme::get(ui.ctx());
+    use quantick_control_schema::window_menu as text;
+    let Some(workspace) = &model.workspace else {
+        return;
+    };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let piece = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut job = egui::text::LayoutJob::default();
+    // A Phosphor glyph: the Body face has no U+25A6, which drew as a box.
+    job.append(icons::SQUARES_FOUR, 0.0, piece(palette.text_muted()));
+    job.append(workspace, WORKSPACE_GAP_PX, piece(palette.text_primary()));
+    if model.modified {
+        job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(palette.amber()));
+    }
+    job.append(
+        icons::CARET_UP,
+        WORKSPACE_GAP_PX,
+        piece(palette.text_muted()),
+    );
+    let cell = ui
+        .add(egui::Button::new(job).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(text::CELL_HOVER);
+    response.workspace_cell = Some(cell.rect);
+    response.workspace_clicked = cell.clicked();
+    if model.modified {
+        let shortcut = &crate::app::SAVE_TO_WORKSPACE_SHORTCUT;
+        let keys = ui.ctx().format_shortcut(shortcut);
+        let pill = ui.add(crate::widgets::accent_button(&palette, text::SAVE_PILL));
+        let hover = text::save_pill_hover(workspace, &keys);
+        response.save_clicked = pill.on_hover_text(hover).clicked();
+    }
+    let mut on = model.autosave;
+    let label = egui::RichText::new(text::AUTOSAVE_LABEL).color(palette.text_muted());
+    let check = ui.checkbox(&mut on, label);
+    let check = check.on_hover_text(text::AUTOSAVE_HOVER);
+    response.autosave_set = check.changed().then_some(on);
+    ui.separator();
 }
 
 /// The word: a grey dot and what is true of the feed. Only an attempt pulses.
@@ -408,7 +470,7 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
     });
 }
 
-/// Middle section: bar spec, counts, honesty labels and navigation hints.
+/// Middle section: honesty labels, the paper account and the axis hint.
 /// Returns whether the SIM cell was clicked.
 fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
     let palette = theme::get(ui.ctx());
@@ -420,19 +482,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
                 .color(palette.amber()),
         )
         .on_hover_text(reason);
-    }
-    ui.label(
-        egui::RichText::new(&model.spec_summary)
-            .monospace()
-            .color(palette.text_primary()),
-    );
-    if let Some(progress) = &model.bar_progress {
-        ui.label(
-            egui::RichText::new(progress)
-                .monospace()
-                .color(palette.amber()),
-        )
-        .on_hover_text("how far the forming bar is from closing");
     }
     if let Some(cell) = &model.deal_recording {
         let color = match cell.tone {
@@ -452,19 +501,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         ui.label(egui::RichText::new(&chip.text).small().color(color))
             .on_hover_text(&chip.hover);
     }
-    ui.label(
-        egui::RichText::new(bars_text(
-            model.venue_bars,
-            model.backfilled_bars,
-            model.live_bars,
-        ))
-        .monospace()
-        .color(palette.text_muted()),
-    )
-    .on_hover_text(
-        "closed bars by source, oldest first: venue candles (v), bars built \
-         from backfilled prints, bars built live",
-    );
     if let Some(note) = &model.side_note {
         // Inferred data wears the amber thread, like every not-quite-venue
         // truth on this chart. Kept short on purpose: this section shares its
@@ -473,11 +509,7 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
             .on_hover_text(model.side_detail.as_deref().unwrap_or(note.as_str()));
     }
     if let Some((text, sign)) = &model.sim_pnl {
-        let color = match sign {
-            std::cmp::Ordering::Greater => palette.buy(),
-            std::cmp::Ordering::Less => palette.sell(),
-            std::cmp::Ordering::Equal => palette.text_muted(),
-        };
+        let color = crate::paper_chrome::points_color(&palette, (*sign as i8).into());
         // A click-through, not just a readout: the cell summarizes a
         // position managed two levels away, so it carries the way there.
         let cell = ui
@@ -492,13 +524,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
             );
         sim_clicked = cell.clicked();
     }
-    if !model.follows_live {
-        ui.label(
-            egui::RichText::new("history · double-click for live")
-                .small()
-                .color(palette.text_faint()),
-        );
-    }
     if !model.price_auto {
         ui.label(
             egui::RichText::new("price: manual · double-click the axis to auto-fit")
@@ -510,26 +535,17 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
 }
 
 /// Machinery cells share the same wrapping flow as the provenance and content.
-fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
+fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: TzOffset) -> bool {
     let palette = theme::get(ui.ctx());
-    // Reserve the picker as one cell before it paints its internal button;
-    // the button's own late allocation cannot move that paint to a new row.
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.spacing().combo_width, ui.spacing().interact_size.y),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            egui::ComboBox::from_id_salt("tz_combo")
-                .selected_text(tz.label())
-                .show_ui(ui, |ui| {
-                    for offset in TzOffset::ALL {
-                        ui.selectable_value(tz, offset, offset.label());
-                    }
-                });
-        },
-    );
-    ui.label(egui::RichText::new(icons::CLOCK).color(palette.text_muted()));
+    let clock =
+        egui::RichText::new(format!("{} {}", tz.label(), icons::CLOCK)).color(palette.text_muted());
+    let clicked = ui
+        .add(egui::Button::new(clock).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Timezone and display settings")
+        .clicked();
     if !model.show_perf {
-        return;
+        return clicked;
     }
     ui.separator();
     let slow = model
@@ -553,13 +569,12 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
         .monospace()
         .color(fps_color),
     );
-    ui.separator();
-    ui.label(
-        egui::RichText::new(format!("{} trades", model.live_trades))
-            .monospace()
-            .color(palette.text_muted()),
-    );
+    clicked
 }
+
+#[cfg(test)]
+#[path = "statusbar/tests/native_layout_tests.rs"]
+mod native_layout_tests;
 
 #[cfg(test)]
 mod tests {
@@ -726,32 +741,17 @@ mod tests {
         assert_eq!(tape_text(over, None, None, None), "1× 100%");
     }
 
-    #[test]
-    fn bar_counts_keep_the_backfilled_live_split() {
-        assert_eq!(bars_text(0, 240, 61), "240+61 bars");
-        assert_eq!(bars_text(0, 0, 0), "0+0 bars");
-    }
-
-    /// A time pane standing on venue history says so, in the same cell and the
-    /// same order the chart puts the three sources in.
-    #[test]
-    fn a_venue_prefix_becomes_a_third_term() {
-        assert_eq!(bars_text(26_000, 240, 61), "26000v+240+61 bars");
-        assert_eq!(
-            bars_text(0, 240, 61),
-            "240+61 bars",
-            "a chart with no prefix discloses nothing about one; `0v+` would read as a fetch that failed"
-        );
-    }
-
     /// Lay the bar out for real, off-screen, in its live and replay shapes —
     /// every section drawn, no duplicated widget id, no panicking widget.
     #[test]
     fn the_status_bar_lays_out_against_a_real_context() {
         let ctx = egui::Context::default();
-        let mut tz = TzOffset::default();
+        let tz = TzOffset::default();
         for replaying in [false, true] {
             let model = StatusModel {
+                workspace: None,
+                modified: false,
+                autosave: true,
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -761,19 +761,12 @@ mod tests {
                 feed_arrival_ms: (!replaying).then_some(120),
                 feed_latency: None,
                 tape_age_ms: (!replaying).then_some(200),
-                spec_summary: "tick(50)".to_owned(),
-                bar_progress: Some("37/50 ticks".to_owned()),
                 deal_recording: None,
                 deal_chip: None,
-                venue_bars: 0,
-                backfilled_bars: 240,
-                live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),
                 side_detail: None,
                 sim_pnl: Some(("SIM +12.5 pts".to_owned(), std::cmp::Ordering::Greater)),
-                follows_live: false,
                 price_auto: false,
-                live_trades: 12_345,
                 fps: Some(60.0),
                 frame_avg_ms: Some(16.7),
                 frame_cpu_ms: Some(4.2),
@@ -791,7 +784,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ctx| {
-                            let response = draw(ctx, &model, &mut tz, &StatusLead::default());
+                            let response = draw(ctx, &model, tz, &StatusLead::default());
                             assert_eq!(
                                 response,
                                 StatusResponse::default(),
@@ -852,41 +845,46 @@ mod tests {
     #[test]
     fn the_quote_driven_disclosure_is_really_painted() {
         let ctx = egui::Context::default();
-        let mut tz = TzOffset::default();
         let model = StatusModel {
+            workspace: None,
+            modified: false,
+            autosave: true,
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,
             feed_arrival_ms: Some(106),
             feed_latency: None,
             tape_age_ms: Some(150),
-            spec_summary: "tick(50)".to_owned(),
-            bar_progress: Some("37/50 ticks".to_owned()),
             deal_recording: None,
             deal_chip: None,
-            venue_bars: 0,
-            backfilled_bars: 3_999,
-            live_bars: 17,
             side_note: Some("prints: quote-derived".to_owned()),
             side_detail: Some(
                 "this venue quotes prices but prints no trades: every candle is built \n                 from one synthetic print per tick"
                     .to_owned(),
             ),
             sim_pnl: None,
-            follows_live: true,
             price_auto: true,
-            live_trades: 846,
             fps: Some(60.0),
             frame_avg_ms: Some(16.7),
             frame_cpu_ms: Some(4.2),
             show_perf: false,
             saves_off: None,
         };
-        // Two passes: egui settles its layout on the second.
+        let painted = painted_text(&ctx, &model);
+        assert!(
+            painted.contains("prints: quote-derived"),
+            "the honesty label never reached the screen; painted: {painted}"
+        );
+        assert!(painted.contains("US500"), "painted: {painted}");
+    }
+
+    /// Every text the bar paints, after egui settles its layout on the
+    /// second pass.
+    fn painted_text(ctx: &egui::Context, model: &StatusModel) -> String {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let _ = draw(ctx, &model, &mut tz, &StatusLead::default());
+                let _ = draw(ctx, model, TzOffset::default(), &StatusLead::default());
             });
             painted.clear();
             for shape in output.shapes {
@@ -896,10 +894,36 @@ mod tests {
                 }
             }
         }
-        assert!(
-            painted.contains("prints: quote-derived"),
-            "the honesty label never reached the screen; painted: {painted}"
-        );
-        assert!(painted.contains("US500"), "painted: {painted}");
+        painted
+    }
+
+    /// The bar spec, the forming bar, the bar counts, the history hint and the
+    /// trade count left the line: the price tag carries the forming bar now.
+    /// What stays — workspace, feed, clock, perf, the manual-price hint — still
+    /// paints.
+    #[test]
+    fn the_trimmed_segments_are_gone_and_the_rest_stays() {
+        let ctx = egui::Context::default();
+        let model = super::native_layout_tests::model(false);
+        let model = StatusModel {
+            price_auto: false,
+            ..model
+        };
+        let painted = painted_text(&ctx, &model);
+        for gone in [
+            "tick(50)",
+            "37/50",
+            " bars",
+            "trades",
+            "double-click for live",
+        ] {
+            assert!(
+                !painted.contains(gone),
+                "{gone:?} is still painted: {painted}"
+            );
+        }
+        for kept in ["Scalp", "fps", "cpu", "price: manual", "WDOU26"] {
+            assert!(painted.contains(kept), "{kept:?} is missing: {painted}");
+        }
     }
 }

@@ -132,6 +132,10 @@ pub(crate) struct ReportState {
     /// The report filtered to the period or the calendar range — rebuilt
     /// when a filter, the timezone or the loaded history changes.
     report_view: Option<ReportView>,
+    /// Measured columns for this view and font/DPI; never financial state.
+    report_table_layout: Option<(eframe::egui::FontId, f32, f32, Vec<f32>)>,
+    /// Journal reloads invalidate the ledger's measured row geometry.
+    ledger_layout_revision: u64,
     /// The calendar: which month is on screen and which days are picked.
     calendar: CalendarState,
     /// Which civil days hold trades, for the calendar's highlighting.
@@ -196,6 +200,8 @@ impl Default for ReportState {
             report: None,
             report_generation: 0,
             report_view: None,
+            report_table_layout: None,
+            ledger_layout_revision: 0,
             calendar: CalendarState::default(),
             report_days: DayIndex::default(),
             report_days_key: None,

@@ -7,7 +7,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_paper::report::fit::{first_fact, fit_line};
+use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::ledger_rows::LedgerPage;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
@@ -18,15 +18,15 @@ use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, liv
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
-    draw_more_row, draw_open_row, push_groups, text_width,
+    draw_more_row, draw_open_row, push_groups,
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv, ReportState,
-    TOTALS_STRIP_PX,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, LoadedHistory, ReportEnv,
+    ReportState, TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{caption, list_symbol_folders, points_color};
+use crate::paper_chrome::{caption, financial_text, list_symbol_folders, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -39,6 +39,7 @@ impl ReportState {
     /// current symbol or the whole folder. The live session's own file is
     /// excluded — its trades are already in the simulator.
     pub(crate) fn reload_ledger(&mut self, env: &ReportEnv<'_>) {
+        self.ledger_layout_revision = self.ledger_layout_revision.wrapping_add(1);
         let symbol = self.ledger_scope.folder(env.symbol);
         let history = load_history(env.dir, symbol, env.session_journal_paths);
         // The strip under the list sums every saved trade, not the revealed
@@ -206,30 +207,7 @@ impl ReportState {
         // per frame as a week of them, so the untouched tail is never even
         // walked into a Vec.
         let page = LedgerPage::of(cut.kept.len(), self.ledger_pages);
-        let saved: Vec<Item<'_>> = cache
-            .map(|cache| {
-                cut.kept
-                    .iter()
-                    .rev()
-                    .take(page.shown)
-                    .map(|&index| {
-                        let row = &cache.rows[index];
-                        Item {
-                            trade: &row.trade,
-                            symbol: &row.symbol,
-                            live: None,
-                            meta: TradeMeta {
-                                session: row.session.as_ref(),
-                                trade_ref: row.trade_ref,
-                                source: row.source,
-                                tags: &row.tags,
-                                pnl: env.pnl.of(&row.symbol),
-                            },
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let saved = saved_items(cache, &cut.kept, page.shown, env.pnl);
 
         // Rows are cut newest first, so day headers open each day as the
         // list walks back in time.
@@ -242,22 +220,14 @@ impl ReportState {
             live: &live_keys,
             tz,
         };
-        let mut rows = Vec::new();
-        let mut inline_placed = false;
-        if !live.is_empty() || hidden_live > 0 {
-            rows.push(LedgerRow::Header("THIS SESSION", live.len()));
-            if hidden_live > 0 {
-                rows.push(LedgerRow::HiddenLive(hidden_live));
-            }
-            push_groups(&mut rows, &live, &view, &mut inline_placed);
-        }
-        if !saved.is_empty() {
-            rows.push(LedgerRow::Header("EARLIER SESSIONS", cut.kept.len()));
-            push_groups(&mut rows, &saved, &view, &mut inline_placed);
-        }
-        if page.remaining > 0 {
-            rows.push(LedgerRow::More(page.remaining));
-        }
+        let (rows, inline_placed) = ledger_rows(
+            &live,
+            hidden_live,
+            &saved,
+            cut.kept.len(),
+            page.remaining,
+            &view,
+        );
 
         // Totals over everything *in scope*, not everything listed: the
         // rows above are one revealed page and the strip must not swing
@@ -296,6 +266,7 @@ impl ReportState {
         let target = self.sessions.state.tag_target(self.live_pick(env), cache);
         let delete_key = self.sessions.state.key_press(false, &live_keys, cache);
         let presses = RowList {
+            layout_key: self.ledger_layout_key(env, tz, rows.len()),
             rows: &rows,
             selected: self.selected_trade,
             selected_saved: self.sessions.state.selected_saved.as_ref(),
@@ -332,6 +303,31 @@ impl ReportState {
         draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
         self.draw_ledger_disclosure(ui);
         action
+    }
+
+    /// The row list's layout identity: anything that moves a row changes it.
+    fn ledger_layout_key(&self, env: &ReportEnv<'_>, tz: TzOffset, rows: usize) -> egui::Id {
+        egui::Id::new((
+            self.ledger_layout_revision,
+            env.symbol,
+            env.dir,
+            env.session_journal_paths,
+            env.session_trades.len(),
+            rows,
+            self.ledger_pages,
+            format!(
+                "{:?}{:?}{:?}{:?}{:?}",
+                self.sessions.state.view,
+                self.collapsed_days,
+                env.pnl.key(),
+                tz,
+                self.sessions
+                    .state
+                    .edit
+                    .as_ref()
+                    .map(|edit| (std::mem::discriminant(edit), edit.session()))
+            ),
+        ))
     }
 
     /// The selected live trade's journal entry — `Some(None)` for one no
@@ -435,8 +431,7 @@ impl ReportState {
             egui::RichText::new(
                 "Close a position and it lands here - this session and every saved one.",
             )
-            .color(palette.text_support())
-            .small(),
+            .color(palette.text_support()),
         );
         ui.add_space(4.0);
         let open_ticket = ui
@@ -502,6 +497,7 @@ impl ReportState {
 /// readings a row needs to paint itself. It reports what was pressed as
 /// [`RowPresses`] and changes nothing but the inline edit's own text.
 struct RowList<'a, 'r> {
+    layout_key: egui::Id,
     rows: &'a [LedgerRow<'r>],
     selected: Option<usize>,
     selected_saved: Option<&'a (SessionKey, TradeRef)>,
@@ -541,22 +537,66 @@ struct RowPresses {
 
 impl RowList<'_, '_> {
     fn show(mut self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
-        let palette = theme::get(ui.ctx());
         let mut presses = RowPresses::default();
         let output = egui::ScrollArea::vertical()
             .id_salt("paper_trades_ledger")
             .auto_shrink([false, false])
             .max_height(list_height)
-            .show_rows(
-                ui,
-                palette.layout(LEDGER_ROW_HEIGHT_PX),
-                self.rows.len(),
-                |ui, range| {
-                    for index in range {
-                        self.row(ui, index, &mut presses);
-                    }
-                },
-            );
+            .show_viewport(ui, |ui, viewport| {
+                let palette = theme::get(ui.ctx());
+                let key = self.layout_key.with((
+                    ui.available_width().to_bits(),
+                    ui.ctx().pixels_per_point().to_bits(),
+                    format!(
+                        "{:?}{:?}{:?}",
+                        palette.mono_font(11.0),
+                        ui.style().text_styles,
+                        ui.spacing().item_spacing
+                    ),
+                ));
+                let cache_id = ui.id().with("measured_ledger_rows");
+                let cached =
+                    ui.data(|data| data.get_temp::<(egui::Id, std::sync::Arc<Vec<f32>>)>(cache_id));
+                if let Some((_, offsets)) = cached.filter(|(held_key, _)| *held_key == key) {
+                    let total = offsets.last().copied().unwrap_or_default();
+                    ui.set_height((total - ui.spacing().item_spacing.y).max(0.0));
+                    let start = offsets
+                        .partition_point(|y| *y <= viewport.min.y)
+                        .saturating_sub(1)
+                        .min(self.rows.len());
+                    let end = offsets
+                        .partition_point(|y| *y <= viewport.max.y)
+                        .min(self.rows.len());
+                    let top = ui.max_rect().top();
+                    let rect = egui::Rect::from_x_y_ranges(
+                        ui.max_rect().x_range(),
+                        top + offsets[start]..=top + offsets[end],
+                    );
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        for index in start..end {
+                            ui.push_id(index, |ui| self.row(ui, index, &mut presses));
+                        }
+                    });
+                } else {
+                    // Measure once per content/layout revision. Warm frames walk
+                    // only the visible range, even after revealing many pages.
+                    let offsets = ui
+                        .allocate_new_ui(egui::UiBuilder::new().max_rect(ui.max_rect()), |ui| {
+                            let top = ui.cursor().top();
+                            let mut offsets = Vec::with_capacity(self.rows.len() + 1);
+                            offsets.push(0.0);
+                            for index in 0..self.rows.len() {
+                                ui.push_id(index, |ui| self.row(ui, index, &mut presses));
+                                offsets.push(ui.cursor().top() - top);
+                            }
+                            offsets
+                        })
+                        .inner;
+                    ui.data_mut(|data| {
+                        data.insert_temp(cache_id, (key, std::sync::Arc::new(offsets)))
+                    });
+                }
+            });
         // Keys belong to the ledger only while the pointer is over it and
         // nothing is being typed: a trading hotkey is never taken. The
         // chart's Del and Backspace stand down while the pointer is on the
@@ -579,6 +619,8 @@ impl RowList<'_, '_> {
     }
 
     fn row(&mut self, ui: &mut egui::Ui, index: usize, presses: &mut RowPresses) {
+        #[cfg(test)]
+        layout_cache_tests::record(ui);
         let rows = self.rows;
         match &rows[index] {
             LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
@@ -670,6 +712,66 @@ enum TradePick {
     Saved(Option<(SessionKey, TradeRef)>),
 }
 
+/// The revealed page of saved rows, newest first, as list items.
+fn saved_items<'a>(
+    cache: Option<&'a LoadedHistory>,
+    kept: &[usize],
+    shown: usize,
+    pnl: PnlReader<'a>,
+) -> Vec<Item<'a>> {
+    cache
+        .map(|cache| {
+            kept.iter()
+                .rev()
+                .take(shown)
+                .map(|&index| {
+                    let row = &cache.rows[index];
+                    Item {
+                        trade: &row.trade,
+                        symbol: &row.symbol,
+                        live: None,
+                        meta: TradeMeta {
+                            session: row.session.as_ref(),
+                            trade_ref: row.trade_ref,
+                            source: row.source,
+                            tags: &row.tags,
+                            pnl: pnl.of(&row.symbol),
+                        },
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The list's rows, newest first, and whether an inline edit row was placed.
+fn ledger_rows<'a>(
+    live: &'a [Item<'a>],
+    hidden_live: usize,
+    saved: &'a [Item<'a>],
+    kept: usize,
+    remaining: usize,
+    view: &GroupView<'_>,
+) -> (Vec<LedgerRow<'a>>, bool) {
+    let mut rows = Vec::new();
+    let mut inline_placed = false;
+    if !live.is_empty() || hidden_live > 0 {
+        rows.push(LedgerRow::Header("THIS SESSION", live.len()));
+        if hidden_live > 0 {
+            rows.push(LedgerRow::HiddenLive(hidden_live));
+        }
+        push_groups(&mut rows, live, view, &mut inline_placed);
+    }
+    if !saved.is_empty() {
+        rows.push(LedgerRow::Header("EARLIER SESSIONS", kept));
+        push_groups(&mut rows, saved, view, &mut inline_placed);
+    }
+    if remaining > 0 {
+        rows.push(LedgerRow::More(remaining));
+    }
+    (rows, inline_placed)
+}
+
 /// The strip under the list: trades and win rate over everything in scope,
 /// and the net points.
 pub(super) fn draw_totals_strip(
@@ -680,45 +782,25 @@ pub(super) fn draw_totals_strip(
     rows_listed: usize,
 ) {
     let palette = theme::get(ui.ctx());
-    ui.horizontal(|ui| {
-        let win_rate = totals
-            .win_rate()
-            .map_or_else(String::new, |rate| format!(" · {rate}% win"));
-        let scope = if page.remaining > 0 {
-            // The strip counts more than the list shows, so it says so
-            // rather than letting the two look like a contradiction.
-            format!(" · {} listed", rows_listed)
-        } else {
-            String::new()
-        };
-        // The net is never cut; the win rate goes before the scope notice.
-        let font = egui::TextStyle::Monospace.resolve(ui.style());
-        let left = format!("{} trades{win_rate}{scope}", totals.trades);
-        let fit = fit_line(
-            ui.available_width(),
-            ui.spacing().item_spacing.x,
-            &[&left, &format!("{} trades{scope}", totals.trades)],
-            &[&net.0, first_fact(&net.0)],
-            |text| text_width(ui.painter(), text, &font),
-        );
-        ui.label(
-            egui::RichText::new(fit.left)
-                .monospace()
-                .color(palette.text_muted()),
-        )
-        .on_hover_text(
-            "every trade in scope - this session plus the saved history, whether or not \
-             the list has revealed it yet",
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(fit.right)
-                    .monospace()
-                    .strong()
-                    .color(points_color(&palette, net.1)),
-            );
-        });
-    });
+    let win_rate = totals
+        .win_rate()
+        .map_or_else(String::new, |rate| format!(" · {rate}% win"));
+    let scope = if page.remaining > 0 {
+        format!(" · {rows_listed} listed")
+    } else {
+        String::new()
+    };
+    ui.label(
+        egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
+            .monospace()
+            .color(palette.text_muted()),
+    );
+    ui.label(financial_text(
+        &palette,
+        &net.0,
+        palette.mono_font(12.0),
+        points_color(&palette, net.1),
+    ));
 }
 
 /// Which saved history the ledger lists. Three cases, not two: following
@@ -774,5 +856,91 @@ impl ReportState {
     /// Whether the ledger holds a read of the folder.
     pub(crate) fn ledger_loaded(&self) -> bool {
         self.history_cache.is_some()
+    }
+}
+
+#[cfg(test)]
+mod layout_cache_tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    pub(super) fn record(ui: &mut egui::Ui) {
+        ui.data_mut(|data| {
+            let id = egui::Id::new("ledger_rows_visited");
+            data.insert_temp(id, data.get_temp::<usize>(id).unwrap_or_default() + 1);
+        });
+    }
+
+    #[test]
+    fn measured_ledger_warm_frames_only_visit_the_viewport() {
+        for count in [100, 1000] {
+            let ctx = egui::Context::default();
+            let rows: Vec<_> = (0..count)
+                .map(|i| {
+                    if i % 2 == 0 {
+                        LedgerRow::Header("Session", i)
+                    } else {
+                        LedgerRow::Day(
+                            CivilDate::from_ymd(2026, 10, 21),
+                            i,
+                            (
+                                Decimal::from(i),
+                                format!(
+                                    "+{i} BRL and a complete long calculation with neutral units"
+                                ),
+                            ),
+                            false,
+                        )
+                    }
+                })
+                .collect();
+            let counter = egui::Id::new("ledger_rows_visited");
+            for (frame, width, scale, revision) in [
+                (0, 320.0, 1.0, 0),
+                (1, 320.0, 1.0, 0),
+                (2, 400.0, 1.0, 0),
+                (3, 400.0, 1.0, 0),
+                (4, 400.0, 1.5, 0),
+                (5, 400.0, 1.5, 0),
+                (6, 400.0, 1.5, 1),
+                (7, 400.0, 1.5, 1),
+            ] {
+                ctx.data_mut(|data| data.insert_temp(counter, 0_usize));
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 300.0),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let _ = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        RowList {
+                            layout_key: egui::Id::new(revision),
+                            rows: &rows,
+                            selected: None,
+                            selected_saved: None,
+                            own_symbol: None,
+                            tz: TzOffset::new(0),
+                            deletes: false,
+                            edit: &mut None,
+                            focus_edit: &mut false,
+                        }
+                        .show(ui, 220.0);
+                    });
+                });
+                let visited = ctx.data(|data| data.get_temp::<usize>(counter).unwrap());
+                if frame % 2 == 0 {
+                    assert_eq!(visited, count, "content/layout change remeasures");
+                } else {
+                    assert!(visited < 20, "warm viewport visited {visited} of 1000 rows");
+                }
+            }
+        }
     }
 }

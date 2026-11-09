@@ -78,6 +78,10 @@ pub struct PaneChrome<'a> {
     /// this label in its own legend — the status bar's note is not enough
     /// there (data honesty).
     pub side_inferred: bool,
+    /// The last-price tag's second line: the market's setting and the tab's
+    /// market clock (the replay's playhead while replaying), one for every
+    /// pane of the tab.
+    pub price_tag: quantick_chart::bar_progress::TagProgress,
     /// The window's footprint setup — the last one the trader used anywhere
     /// (env > `config/footprint.toml` > saved edits > defaults). A chart
     /// configured on its own overrides it; see

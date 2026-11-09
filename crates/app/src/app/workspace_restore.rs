@@ -106,6 +106,11 @@ impl ArrangementAdapter<'_> {
                     tab.restore_candle_styles(&saved.candle_styles);
                     let showing = index == active && crate::orderflow_panel::flow_pane_shown(tab);
                     tab.tape_mut().settings_panel = saved.restored_panel(chrome, showing);
+                    self.workspace.book.sync_mut().arrive(
+                        target.0,
+                        saved.workspace.clone(),
+                        saved.workspace_copy.clone(),
+                    );
                 }
                 RestoreEffect::CloseStale { .. } => {
                     if let Some(plan) = self.tabs.plan_restore(&step) {
@@ -128,8 +133,13 @@ impl ArrangementAdapter<'_> {
                 break;
             }
         }
+        let named = documents.iter().flat_map(ui_state::SavedTab::layout_ids);
+        self.workspace
+            .layouts_mut()
+            .prune_private(named, std::time::Instant::now());
     }
     fn adopt_workspace_settings(&mut self, workspace: &ui_state::Workspace) {
+        self.workspace.book.set_autosave(workspace.auto_save);
         self.workspace.session_mut().adopt(
             workspace.save_on_exit,
             workspace.saved.clone(),

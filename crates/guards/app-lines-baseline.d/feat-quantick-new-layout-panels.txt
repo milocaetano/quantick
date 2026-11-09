@@ -1,0 +1,4 @@
+# Native chrome panel IDs include the egui viewport to isolate cached layout.
+# These six lines are drawing-only IDs and their shared-Context explanation.
+crates/app +6
+!budget +6

@@ -14,7 +14,7 @@ use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, Order
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::projection::GapPrimitive;
 use quantick_orderflow::{
-    HeatmapConfig, LaneWindow, LiveLaneStyle, lane_window_pick, reserved_span_ms,
+    BubbleScaleTarget, HeatmapConfig, LaneWindow, LiveLaneStyle, lane_window_pick, reserved_span_ms,
 };
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
@@ -31,7 +31,9 @@ use crate::viewport::Viewport;
 #[cfg(test)]
 #[path = "orderflow_view/tests/asset_look_tests.rs"]
 mod asset_look_tests;
-mod bubble_scale;
+#[cfg(test)]
+#[path = "orderflow_view/tests/bubble_scale_tests.rs"]
+mod bubble_scale_tests;
 mod constants;
 pub(crate) mod flow_execution;
 mod frame;
@@ -326,7 +328,7 @@ impl OrderflowView {
         };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
-                .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+                .heat_cell_rect(cell, style.min_cell_height, frame.current_book_live)
                 .contains(position)
                 || preview(cell)
         })?;
@@ -1036,6 +1038,24 @@ impl OrderflowView {
         true
     }
 
+    /// Independent presentation gains on the asset appearance owner. Where a
+    /// gain may be set is `quantick_control_handlers::bubble_scale`'s rule;
+    /// which gains are admitted is `quantick_orderflow`'s.
+    pub(crate) fn bubble_display_scale(&self, target: BubbleScaleTarget) -> f32 {
+        self.config.bubbles.display_scale.get(target)
+    }
+
+    /// A refused gain changes nothing, so it never marks the asset dirty.
+    pub(crate) fn set_bubble_display_scale(
+        &mut self,
+        target: BubbleScaleTarget,
+        value: f32,
+    ) -> bool {
+        self.edit_config(|config| {
+            config.bubbles.display_scale.try_set(target, value);
+        })
+    }
+
     /// The same without a setting: a gesture, or an asset's settings worn.
     fn apply_config(&mut self, before: HeatmapConfig) -> bool {
         self.config.sanitize();
@@ -1085,6 +1105,11 @@ impl OrderflowView {
     /// clock, including BTC.
     pub(crate) fn lane_now_ms(&self) -> Option<i64> {
         self.pane_tape.lane_now_ms(self.config.native_tape())
+    }
+
+    /// The market's clock for every pane config ([`PaneTape::market_now_ms`]).
+    pub(crate) fn market_now_ms(&self) -> Option<i64> {
+        self.pane_tape.market_now_ms()
     }
 
     /// Advance the lane's clock to the host's monotonic instant
@@ -1873,7 +1898,7 @@ mod tests {
         let style =
             OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
         let position = layout
-            .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+            .heat_cell_rect(cell, style.min_cell_height, true)
             .center();
 
         let hit = view

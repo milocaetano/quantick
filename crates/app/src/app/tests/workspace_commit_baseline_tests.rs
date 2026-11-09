@@ -122,32 +122,6 @@ fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
 }
 
 #[test]
-fn commit_baseline_named_memory_changes_survive_standing_edit_refusal() {
-    let (mut app, _evt, _cmd, _book) = test_app();
-    std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
-    app.workspace_save_adapter().save_named_workspace("opening");
-    assert_eq!(app.runtime.workspace.session().bookmarks().len(), 1);
-    assert!(!app.runtime.workspace.session().saved());
-    assert_eq!(
-        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
-        FUTURE
-    );
-    app.workspace_save_adapter()
-        .delete_named_workspace("opening");
-    assert!(app.runtime.workspace.session().bookmarks().is_empty());
-    assert_eq!(
-        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
-        FUTURE
-    );
-    app.workspace_save_adapter().save_named_workspace("return");
-    app.workspace_save_adapter().save_workspace("explicit");
-    assert_eq!(
-        ui_state::load(app.runtime.workspace.ui_state_path()).saved[0].name,
-        "return"
-    );
-}
-
-#[test]
 fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
     for keep_star in [false, true] {
         let (mut app, _evt, _cmd, _book) = test_app();
