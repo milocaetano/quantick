@@ -26,8 +26,8 @@ use quantick_control::descriptor::{
 };
 use quantick_control::error::{ControlError, codes};
 use quantick_control::handshake::{
-    BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, ProtocolLimits,
-    ProtocolVersionRange, accept_handshake,
+    BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, HandshakeResponse,
+    ProtocolLimits, ProtocolVersionRange, accept_handshake,
 };
 use quantick_control::id::{ConnectionId, PermissionId, PrincipalId, ProfileId};
 use quantick_control::limits::{
@@ -71,7 +71,7 @@ use super::{
 mod answer;
 #[cfg(test)]
 pub(super) use answer::{AnswerBeforeWrite, AnswerWritten};
-use answer::{InFlightId, answer_and_release, send_response};
+use answer::{InFlightId, answer_and_release};
 
 /// Microseconds spent since `started`, saturating.
 ///
@@ -635,8 +635,7 @@ fn connection_session(
     socket_key: u64,
     authority: &Arc<ConnectionAuthority>,
 ) -> Result<(), &'static str> {
-    let (accepted, remote_actor) = accept_client(stream, socket_key, authority)?;
-    let connection_id = &remote_actor.connection_id;
+    let (handshake, actor) = accept_client(stream, socket_key, authority)?;
     // One request timeout bounds how long a frame may take to arrive once it
     // has started; a timeout with nothing received is an idle client and is
     // not an error (see the read loop in `serve_requests`).
@@ -648,41 +647,39 @@ fn connection_session(
         .map_err(|_| codes::INSTANCE_GONE)?;
 
     let writer_stream = stream.try_clone().map_err(|_| codes::INSTANCE_GONE)?;
-    let writer = Arc::new(Mutex::new(writer_stream));
-    let codec = BoundedCodec::default();
-    // Request IDs in flight on this connection (contract §5.2: a duplicate is
-    // rejected while the first is still executing). Requests that leave for
-    // the application thread and parked waits are in flight from the
-    // reader's point of view; a worker-side read is answered before the next
-    // frame is read.
-    let slots = ConnectionSlots::new(&authority.options);
+    let conn = Arc::new(Connection {
+        writer: Arc::new(Mutex::new(writer_stream)),
+        codec: BoundedCodec::default(),
+        // Request IDs in flight on this connection (contract §5.2: a
+        // duplicate is rejected while the first is still executing).
+        // Requests that leave for the application thread and parked waits
+        // are in flight from the reader's point of view; a worker-side read
+        // is answered before the next frame is read.
+        slots: ConnectionSlots::new(&authority.options),
+        handshake,
+        actor,
+        authority: Arc::clone(authority),
+    });
+    let connection_id = &conn.actor.connection_id;
     (authority.wake)();
     tracing::info!(
         target: "quantick::control",
         event_code = "CONTROL_CLIENT_CONNECTED",
         connection_id = %connection_id,
-        client_name = %remote_actor.client_name,
-        effective_profile = %accepted.effective_profile,
+        client_name = %conn.actor.client_name,
+        effective_profile = %conn.handshake.effective_profile,
         "authenticated local control client connected"
     );
-    serve_requests(
-        stream,
-        &writer,
-        &codec,
-        &slots,
-        &accepted,
-        &remote_actor,
-        authority,
-    );
+    serve_requests(stream, &conn);
     // The socket is gone: this connection's parked waits release their slots
     // at the manager's next pass instead of holding them to the deadline.
-    slots.closed.store(true, Ordering::Release);
+    conn.slots.closed.store(true, Ordering::Release);
     // This connection's principal dies with it, so nothing it recorded can
     // ever be replayed again. Freeing the entries keeps the store's cap for
     // the connections that are still running.
     authority
         .idempotency
-        .forget_principal(&remote_actor.principal_id);
+        .forget_principal(&conn.actor.principal_id);
 
     if authority
         .statuses
@@ -706,12 +703,49 @@ fn connection_session(
     Ok(())
 }
 
+/// One authenticated connection: its answer path, its slots, what its
+/// handshake granted and who it is. The reader and every thread it hands a
+/// request to share it.
+struct Connection {
+    writer: Arc<Mutex<TcpStream>>,
+    codec: BoundedCodec,
+    slots: Arc<ConnectionSlots>,
+    handshake: HandshakeResponse,
+    actor: RemoteActor,
+    authority: Arc<ConnectionAuthority>,
+}
+
+impl Connection {
+    /// Write the terminal answer to a request, releasing `in_flight` if held.
+    fn answer(&self, response: ResponseEnvelope, in_flight: Option<InFlightId>) {
+        answer_and_release(&self.writer, &self.codec, response, in_flight);
+    }
+
+    /// Answer `request` with a known error, releasing `in_flight` with it.
+    fn refuse(
+        &self,
+        request: &RequestEnvelope,
+        code: &str,
+        message: &str,
+        retryable: bool,
+        in_flight: Option<InFlightId>,
+    ) {
+        let error = known_error(code, message, retryable);
+        self.answer(failure_response(request, error), in_flight);
+    }
+
+    /// Answer `request` with retryable backpressure, releasing `in_flight`.
+    fn busy(&self, request: &RequestEnvelope, message: &str, in_flight: Option<InFlightId>) {
+        self.refuse(request, codes::BACKPRESSURE, message, true, in_flight);
+    }
+}
+
 /// Read, authenticate and admit a handshake; every refusal is answered first.
 fn accept_client(
     stream: &mut TcpStream,
     socket_key: u64,
     authority: &Arc<ConnectionAuthority>,
-) -> Result<(quantick_control::handshake::HandshakeResponse, RemoteActor), &'static str> {
+) -> Result<(HandshakeResponse, RemoteActor), &'static str> {
     stream
         .set_read_timeout(Some(authority.options.handshake_timeout))
         .map_err(|_| codes::AUTH_FAILED)?;
@@ -850,23 +884,11 @@ fn handshake_grant(
 }
 
 /// Check, prepare and dispatch each request until the socket ends.
-fn serve_requests(
-    stream: &mut TcpStream,
-    writer: &Arc<Mutex<TcpStream>>,
-    codec: &BoundedCodec,
-    slots: &Arc<ConnectionSlots>,
-    accepted: &quantick_control::handshake::HandshakeResponse,
-    remote_actor: &RemoteActor,
-    authority: &Arc<ConnectionAuthority>,
-) {
-    let connection_id = &remote_actor.connection_id;
-    let refuse = |request: &RequestEnvelope, code: &str, message: &str, retryable: bool| {
-        let error = known_error(code, message, retryable);
-        send_response(writer, codec, failure_response(request, error));
-    };
+fn serve_requests(stream: &mut TcpStream, conn: &Arc<Connection>) {
+    let (authority, connection_id) = (&conn.authority, &conn.actor.connection_id);
     let mut rate_limiter = TokenBucket::client_requests(Instant::now());
     loop {
-        let request = match codec.read_request(stream) {
+        let request = match conn.codec.read_request(stream) {
             Ok(request) => request,
             // Nothing arrived within one request timeout: an idle client, not
             // a stalled frame. The connection stays unless the gateway is
@@ -884,7 +906,7 @@ fn serve_requests(
         };
         if !rate_limiter.allow(Instant::now()) {
             let message = "client request rate limit is exhausted";
-            refuse(&request, codes::BACKPRESSURE, message, true);
+            conn.busy(&request, message, None);
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_CLIENT_RATE_LIMITED",
@@ -893,9 +915,9 @@ fn serve_requests(
             );
             continue;
         }
-        if slots.is_in_flight(&request.request_id) {
+        if conn.slots.is_in_flight(&request.request_id) {
             let message = "request_id is already in flight on this connection";
-            refuse(&request, codes::INVALID_REQUEST, message, false);
+            conn.refuse(&request, codes::INVALID_REQUEST, message, false, None);
             continue;
         }
         if authority.statuses.len()
@@ -912,49 +934,38 @@ fn serve_requests(
         }
         if request.instance_id != authority.identity.instance_id {
             let message = "request names a different running instance";
-            refuse(&request, codes::INSTANCE_GONE, message, false);
+            conn.refuse(&request, codes::INSTANCE_GONE, message, false, None);
             continue;
         }
-        if request.protocol_version != accepted.protocol_version {
+        if request.protocol_version != conn.handshake.protocol_version {
             let message = "request protocol version differs from the negotiated version";
-            refuse(&request, codes::VERSION_UNSUPPORTED, message, false);
+            conn.refuse(&request, codes::VERSION_UNSUPPORTED, message, false, None);
             continue;
         }
         let prepared = match authority
             .contract
-            .prepare(request.clone(), &accepted.effective_scopes)
+            .prepare(request.clone(), &conn.handshake.effective_scopes)
         {
             Ok(prepared) => prepared,
             Err(error) => {
-                send_response(writer, codec, failure_response(&request, error));
+                conn.answer(failure_response(&request, error), None);
                 continue;
             }
         };
         let ticket = match idempotency::admitted(
             &authority.idempotency,
             &authority.identity.instance_id,
-            &remote_actor.principal_id,
+            &conn.actor.principal_id,
             &prepared.envelope,
             metrics::wall_clock_ms(),
         ) {
             Ok(ticket) => ticket,
             Err(answered) => {
-                send_response(writer, codec, *answered);
+                conn.answer(*answered, None);
                 continue;
             }
         };
-        dispatch_prepared(
-            prepared,
-            ticket,
-            None,
-            connection_id,
-            remote_actor,
-            accepted,
-            codec,
-            writer,
-            slots,
-            authority,
-        );
+        dispatch_prepared(prepared, ticket, None, conn);
     }
 }
 
@@ -964,32 +975,16 @@ pub(super) fn activity_status_high_watermark(max_connections: usize) -> usize {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dispatch_prepared(
     prepared: PreparedRequest,
     ticket: Option<IdempotencyTicket>,
     in_flight: Option<InFlightId>,
-    connection_id: &ConnectionId,
-    remote_actor: &RemoteActor,
-    handshake: &quantick_control::handshake::HandshakeResponse,
-    codec: &BoundedCodec,
-    writer: &Arc<Mutex<TcpStream>>,
-    slots: &Arc<ConnectionSlots>,
-    authority: &Arc<ConnectionAuthority>,
+    conn: &Arc<Connection>,
 ) {
+    let (authority, handshake) = (&conn.authority, &conn.handshake);
     if let PreparedDispatch::Parked(wait) = &prepared.dispatch {
         let wait = wait.clone();
-        dispatch_parked_wait(
-            prepared,
-            wait,
-            connection_id,
-            remote_actor,
-            handshake,
-            codec,
-            writer,
-            slots,
-            authority,
-        );
+        dispatch_parked_wait(prepared, wait, conn);
         return;
     }
     // A wait that parked under this ID hands its `in_flight` here: the ID
@@ -999,19 +994,8 @@ fn dispatch_prepared(
         &authority.global_in_flight,
         CONTROL_MAX_BUFFERED_RESPONSE_SLOTS,
     ) {
-        answer_and_release(
-            writer,
-            codec,
-            failure_response(
-                &prepared.envelope,
-                known_error(
-                    codes::BACKPRESSURE,
-                    "global buffered response capacity is full",
-                    true,
-                ),
-            ),
-            in_flight,
-        );
+        let message = "global buffered response capacity is full";
+        conn.busy(&prepared.envelope, message, in_flight);
         return;
     }
     if let Some(result) = prepared.dispatch.execute_worker(
@@ -1027,42 +1011,32 @@ fn dispatch_prepared(
                 .idempotency
                 .record(ticket, &response, metrics::wall_clock_ms());
         }
-        answer_and_release(writer, codec, response, in_flight);
+        conn.answer(response, in_flight);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         return;
     }
     if !try_reserve_in_flight(
-        &slots.in_flight,
+        &conn.slots.in_flight,
         authority.options.max_in_flight_per_connection,
     ) {
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        answer_and_release(
-            writer,
-            codec,
-            failure_response(
-                &prepared.envelope,
-                known_error(
-                    codes::BACKPRESSURE,
-                    "connection in-flight request capacity is full",
-                    true,
-                ),
-            ),
-            in_flight,
-        );
+        let message = "connection in-flight request capacity is full";
+        conn.busy(&prepared.envelope, message, in_flight);
         return;
     }
 
     let envelope = prepared.envelope.clone();
-    let in_flight = in_flight.unwrap_or_else(|| InFlightId::track(slots, &envelope.request_id));
+    let in_flight =
+        in_flight.unwrap_or_else(|| InFlightId::track(&conn.slots, &envelope.request_id));
     // Handed over through a slot the worker takes it from, so a worker that
     // cannot start leaves it here, to be released with the refusal.
     let handoff = Arc::new(Mutex::new(Some(in_flight)));
     let worker_in_flight = Arc::clone(&handoff);
     let (response_tx, response_rx) = bounded(1);
     let deadline = Instant::now() + authority.options.request_timeout;
-    let response_writer = Arc::clone(writer);
-    let response_codec = codec.clone();
-    let response_slots = Arc::clone(slots);
+    let response_writer = Arc::clone(&conn.writer);
+    let response_codec = conn.codec.clone();
+    let response_slots = Arc::clone(&conn.slots);
     let response_global_in_flight = Arc::clone(&authority.global_in_flight);
     let contract = Arc::clone(&authority.contract);
     let response_ticket = ticket.clone();
@@ -1111,31 +1085,21 @@ fn dispatch_prepared(
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
-        slots.in_flight.fetch_sub(1, Ordering::AcqRel);
+        conn.slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        answer_and_release(
-            writer,
-            codec,
-            failure_response(
-                &envelope,
-                known_error(
-                    codes::BACKPRESSURE,
-                    "response worker could not be created",
-                    true,
-                ),
-            ),
-            InFlightId::take(&handoff),
-        );
+        let message = "response worker could not be created";
+        let in_flight = InFlightId::take(&handoff);
+        conn.busy(&envelope, message, in_flight);
         return;
     }
 
     let actor = matches!(prepared.dispatch, PreparedDispatch::Action(_))
-        .then(|| Box::new(remote_actor.context(&prepared.envelope)));
+        .then(|| Box::new(conn.actor.context(&prepared.envelope)));
     let ui_request = UiRequest {
         window_id: None,
         prepared,
         actor,
-        connection_id: connection_id.clone(),
+        connection_id: conn.actor.connection_id.clone(),
         grant_generation: authority.grant_generation,
         deadline,
         started: request_started,
@@ -1167,18 +1131,8 @@ fn dispatch_prepared(
 /// waiter manager — holding one global and one per-connection parked slot
 /// and its request ID, nothing else — and run the bounded read through the
 /// ordinary UI path when woken or timed out.
-#[allow(clippy::too_many_arguments)]
-fn dispatch_parked_wait(
-    prepared: PreparedRequest,
-    wait: ParkedWait,
-    connection_id: &ConnectionId,
-    remote_actor: &RemoteActor,
-    handshake: &quantick_control::handshake::HandshakeResponse,
-    codec: &BoundedCodec,
-    writer: &Arc<Mutex<TcpStream>>,
-    slots: &Arc<ConnectionSlots>,
-    authority: &Arc<ConnectionAuthority>,
-) {
+fn dispatch_parked_wait(prepared: PreparedRequest, wait: ParkedWait, conn: &Arc<Connection>) {
+    let (authority, slots) = (&conn.authority, &conn.slots);
     let instance_id = authority.identity.instance_id.clone();
     let position = match resolve_event_read(
         &instance_id,
@@ -1188,7 +1142,7 @@ fn dispatch_parked_wait(
     ) {
         Ok(position) => position,
         Err(error) => {
-            send_response(writer, codec, failure_response(&prepared.envelope, error));
+            conn.answer(failure_response(&prepared.envelope, error), None);
             return;
         }
     };
@@ -1214,46 +1168,19 @@ fn dispatch_parked_wait(
     };
     if authority.journal_signal.next_sequence() > target {
         // Already behind the journal: no parking, just the read.
-        dispatch_prepared(
-            to_read(false),
-            // `events.wait` declares `Forbidden`, so no key survived `prepare`.
-            None,
-            None,
-            connection_id,
-            remote_actor,
-            handshake,
-            codec,
-            writer,
-            slots,
-            authority,
-        );
+        // `events.wait` declares `Forbidden`, so no key survived `prepare`.
+        dispatch_prepared(to_read(false), None, None, conn);
         return;
     }
+    let full = "parked waiter capacity is full";
     if !try_reserve_in_flight(&slots.parked, CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION) {
-        send_response(
-            writer,
-            codec,
-            failure_response(
-                &envelope,
-                known_error(
-                    codes::BACKPRESSURE,
-                    "this connection's parked waiter capacity is full",
-                    true,
-                ),
-            ),
-        );
+        let message = "this connection's parked waiter capacity is full";
+        conn.busy(&envelope, message, None);
         return;
     }
     if !try_reserve_in_flight(&authority.parked_waiters, CONTROL_MAX_PARKED_WAITERS) {
         slots.parked.fetch_sub(1, Ordering::AcqRel);
-        send_response(
-            writer,
-            codec,
-            failure_response(
-                &envelope,
-                known_error(codes::BACKPRESSURE, "parked waiter capacity is full", true),
-            ),
-        );
+        conn.busy(&envelope, full, None);
         return;
     }
     let (wake_tx, wake_rx) = bounded(1);
@@ -1270,64 +1197,34 @@ fn dispatch_parked_wait(
     {
         authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
         slots.parked.fetch_sub(1, Ordering::AcqRel);
-        send_response(
-            writer,
-            codec,
-            failure_response(
-                &envelope,
-                known_error(codes::BACKPRESSURE, "parked waiter capacity is full", true),
-            ),
-        );
+        conn.busy(&envelope, full, None);
         return;
     }
     // Parked: the ID is in flight until the read is answered (contract §5.2).
     let in_flight = InFlightId::track(slots, &envelope.request_id);
-    let thread_authority = Arc::clone(authority);
-    let thread_connection_id = connection_id.clone();
-    let thread_remote_actor = remote_actor.clone();
-    let thread_handshake = handshake.clone();
-    let thread_codec = codec.clone();
-    let thread_writer = Arc::clone(writer);
-    let thread_slots = Arc::clone(slots);
-    let thread_envelope = envelope.clone();
+    let thread_conn = Arc::clone(conn);
+    let parked = envelope.clone();
     let spawned = thread::Builder::new()
         .name("quantick-control-wait".to_owned())
         .spawn(move || {
             let reason = wake_rx.recv().unwrap_or(WakeReason::Shutdown);
-            thread_authority
-                .parked_waiters
-                .fetch_sub(1, Ordering::AcqRel);
-            thread_slots.parked.fetch_sub(1, Ordering::AcqRel);
+            let conn = thread_conn;
+            conn.authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
+            conn.slots.parked.fetch_sub(1, Ordering::AcqRel);
             match reason {
                 // Nobody is listening: release the ID and write nothing.
                 WakeReason::Disconnected => drop(in_flight),
-                _ if thread_slots.closed.load(Ordering::Acquire) => drop(in_flight),
-                WakeReason::Shutdown => answer_and_release(
-                    &thread_writer,
-                    &thread_codec,
-                    failure_response(
-                        &thread_envelope,
-                        known_error(
-                            codes::INSTANCE_GONE,
-                            "local access was disabled while the wait was parked",
-                            true,
-                        ),
-                    ),
-                    Some(in_flight),
-                ),
-                WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
-                    to_read(reason == WakeReason::TimedOut),
-                    // Same read, same `Forbidden` declaration.
-                    None,
-                    Some(in_flight),
-                    &thread_connection_id,
-                    &thread_remote_actor,
-                    &thread_handshake,
-                    &thread_codec,
-                    &thread_writer,
-                    &thread_slots,
-                    &thread_authority,
-                ),
+                _ if conn.slots.closed.load(Ordering::Acquire) => drop(in_flight),
+                WakeReason::Shutdown => {
+                    let message = "local access was disabled while the wait was parked";
+                    let in_flight = Some(in_flight);
+                    conn.refuse(&parked, codes::INSTANCE_GONE, message, true, in_flight);
+                }
+                // Same read, same `Forbidden` declaration.
+                WakeReason::Woken | WakeReason::TimedOut => {
+                    let read = to_read(reason == WakeReason::TimedOut);
+                    dispatch_prepared(read, None, Some(in_flight), &conn);
+                }
             }
         });
     if spawned.is_err() {
@@ -1342,18 +1239,8 @@ fn dispatch_parked_wait(
             event_code = "CONTROL_WAIT_THREAD_FAILED",
             "could not create a parked-wait thread"
         );
-        send_response(
-            writer,
-            codec,
-            failure_response(
-                &envelope,
-                known_error(
-                    codes::BACKPRESSURE,
-                    "parked-wait worker could not be created",
-                    true,
-                ),
-            ),
-        );
+        let message = "parked-wait worker could not be created";
+        conn.busy(&envelope, message, None);
     }
 }
 
