@@ -365,8 +365,8 @@ pub struct ContextBar {
     rect: Option<egui::Rect>,
     /// The open popover's Area — see [`Self::owns_press`].
     popover_layer: Option<egui::Id>,
-    /// What [`Self::owns_press`] decided when the current press began.
-    press_owned: Option<bool>,
+    /// What [`Self::owns_press`] decided, keyed by the press's start time.
+    press_owned: Option<(f64, bool)>,
     /// The colour popover shows the full picker inline: egui's own picker
     /// popup is a second Area, and a press inside it closed this popover.
     custom_open: bool,
@@ -486,23 +486,30 @@ impl ContextBar {
         self.rect
     }
 
-    /// Whether the press began on the bar or its open popover's layer — a drag
-    /// there is not a chart drag. Decided where the press landed and held to
-    /// the release: a grip drag moves the bar, and egui calls the release a drag.
+    /// Whether the press (origin, start time) began on the bar or its open
+    /// popover's layer — a drag there is not a chart drag. Decided once per
+    /// press and held to the release: a grip drag moves the bar, and egui
+    /// calls the release a drag. Keyed by start time, so a release this never
+    /// saw cannot hand its answer to the next press.
     pub fn owns_press(
         &mut self,
-        origin: Option<egui::Pos2>,
+        press: Option<(egui::Pos2, f64)>,
         current: Option<egui::Rect>,
         layer: Option<egui::LayerId>,
     ) -> bool {
-        let Some(origin) = origin else {
-            return self.press_owned.take().unwrap_or(false);
+        let Some((origin, started)) = press else {
+            return self.press_owned.take().is_some_and(|(_, owned)| owned);
         };
-        let popover = self.popover_layer;
-        let on_popover = popover.is_some() && layer.is_some_and(|layer| Some(layer.id) == popover);
-        *self
-            .press_owned
-            .get_or_insert_with(|| on_popover || current.is_some_and(|rect| rect.contains(origin)))
+        if let Some((at, owned)) = self.press_owned
+            && at == started
+        {
+            return owned;
+        }
+        let popover = self.popover_layer.filter(|_| self.open != Popover::None);
+        let owned = layer.is_some_and(|layer| Some(layer.id) == popover)
+            || current.is_some_and(|rect| rect.contains(origin));
+        self.press_owned = Some((started, owned));
+        owned
     }
 
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
@@ -1855,6 +1862,38 @@ mod tests {
             popover_position(slot, tall, bounds).y,
             slot.bottom() + POPOVER_GAP_PX
         );
+    }
+
+    #[test]
+    fn a_press_is_owned_once_and_never_inherited_by_the_next() {
+        let mut bar = ContextBar::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 30.0));
+        let moved = rect.translate(egui::vec2(300.0, 0.0));
+        let on_bar = Some((egui::pos2(10.0, 10.0), 1.0));
+        assert!(bar.owns_press(on_bar, Some(rect), None));
+        assert!(
+            bar.owns_press(on_bar, Some(moved), None),
+            "a grip drag keeps the press it began with"
+        );
+        // The release this never saw: the next press is decided afresh.
+        assert!(!bar.owns_press(Some((egui::pos2(10.0, 10.0), 2.0)), Some(moved), None));
+        assert!(!bar.owns_press(None, Some(moved), None));
+
+        let id = egui::Id::new("popover");
+        let layer = Some(egui::LayerId::new(egui::Order::Foreground, id));
+        bar.popover_layer = Some(id);
+        let elsewhere = Some((egui::pos2(500.0, 500.0), 3.0));
+        assert!(
+            !bar.owns_press(elsewhere, Some(rect), layer),
+            "a closed popover owns nothing"
+        );
+        bar.open = Popover::Color;
+        assert!(bar.owns_press(Some((egui::pos2(500.0, 500.0), 4.0)), Some(rect), layer));
+        assert!(
+            bar.owns_press(None, Some(rect), None),
+            "the release frame is still owned"
+        );
+        assert!(bar.press_owned.is_none());
     }
 
     #[test]
