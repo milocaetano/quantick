@@ -350,10 +350,10 @@ impl Placement {
 /// way the live frame reads its own ([`super::heat_cells`]), on `grouping`.
 ///
 /// The blocks themselves come first, as the live lane's own window does:
-/// they alone set the colour reference, and the inset bands only take the
-/// room the cell cap left them, nearest the window first. Where the read
-/// reaches before the retained book, that stretch is marked as before
-/// capture.
+/// they alone set the colour reference and keep the whole cell cap. The
+/// inset bands take a cap of their own, nearest the window first, and the
+/// insets past it are [`BOOK_BEYOND_LEAD`] gaps. Where the read reaches
+/// before the retained book, that stretch is marked as before capture.
 #[must_use]
 pub fn project_past_heat(
     history: &LiquidityHistory,
@@ -438,15 +438,31 @@ pub fn project_past_heat(
     heat.liquidity_reference =
         liquidity_reference(config, blocks.iter().map(|draft| draft.quantity));
     (heat.cells, _) = finish_cells(blocks, heat.liquidity_reference, config);
+    // The insets read up to eight windows a side, so they take a budget of
+    // their own, nearest the window first: the window's bands never give up
+    // room to them, and whatever lies past the budget is a labelled gap,
+    // never a dark strip.
     let distance = |draft: &DraftCell| (blocks_x0 - draft.x1).max(draft.x0 - blocks_x1);
     beside.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
-    beside.truncate(config.max_visible_cells.saturating_sub(heat.cells.len()));
+    let budget = config.max_visible_cells;
+    let unread = (budget > 0 && beside.len() > budget).then(|| {
+        let reach = distance(&beside[budget]);
+        beside.retain(|draft| distance(draft) < reach);
+        reach
+    });
     heat.cells
         .extend(finish_cells(beside, heat.liquidity_reference, config).0);
     if config.show_gaps {
         heat.gaps = book_gaps(history, from_ms, until_ms, |time_ms| {
             Some(fraction(time_ms))
         });
+        if let Some(reach) = unread {
+            for (x0, x1) in [(0.0, blocks_x0 - reach), (blocks_x1 + reach, 1.0)] {
+                if x1 > x0 {
+                    heat.gaps.push(reason_gap(x0, x1, BOOK_BEYOND_LEAD));
+                }
+            }
+        }
         if let Some(retained) = retained_ms.filter(|&retained| retained > from_ms)
             && !heat
                 .gaps

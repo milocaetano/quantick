@@ -245,7 +245,23 @@ fn the_held_lead_never_moves_the_windows_own_bands() {
         let lead = lead_at(&config, 310.0);
         assert!(lead.0 > 0);
         let padded = read(lead);
-        assert!(padded.cells.len() <= cap, "one cap for both");
+        assert!(padded.cells.len() <= 2 * cap, "a cap for each");
+        // A cap the insets outgrow leaves no dark strip: past it is a gap.
+        let width = 310.0;
+        let geometry = TapeHorizontalGeometry::from_config(&config, width, LANE_HEIGHT_PX).unwrap();
+        let mut marks = book(painted(geometry, &padded.cells, 1, false));
+        marks.extend(gap_px(geometry, &padded.gaps, 1));
+        let (left, right) = edges(&marks, width);
+        assert!(
+            left.is_some() && right.is_some(),
+            "cap {cap}: {left:?} {right:?}"
+        );
+        if cap == 2 {
+            assert!(
+                padded.gaps.iter().any(|gap| gap.reason == BOOK_BEYOND_LEAD),
+                "the insets past the cap are labelled"
+            );
+        }
         assert_eq!(inside(padded), inside(read((0, false))), "cap {cap}");
     }
 }
