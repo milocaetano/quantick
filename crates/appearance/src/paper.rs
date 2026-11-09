@@ -73,7 +73,7 @@ pub const fn on_plate(sign: Ordering, ink: Token) -> Token {
 
 /// One of the trade ledger's row kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LedgerRow {
+pub enum RowKind {
     /// A civil day's band.
     Day,
     /// A Live or Replay session inside its day.
@@ -97,6 +97,8 @@ pub struct RowLook {
     pub hover_fill: Option<Token>,
     /// The outline a hovered or focused row adds.
     pub hover_edge: Option<Token>,
+    /// The ink a row's marks (the source glyph) take instead of their own.
+    pub mark: Option<Token>,
 }
 
 /// The width of a day band's left rule, in logical pixels.
@@ -104,42 +106,47 @@ pub const DAY_EDGE_PX: f32 = 3.0;
 
 /// The look of one ledger row kind in a theme of the given mode.
 #[must_use]
-pub const fn ledger_row(dark: bool, row: LedgerRow) -> RowLook {
+pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
     let hover = crate::widget::hover_fill(dark);
     match row {
-        LedgerRow::Day => RowLook {
+        RowKind::Day => RowLook {
             fill: Some(Token::Control),
             edge: Some(Token::TextPrimary),
             ink: Token::TextPrimary,
             pnl: None,
             hover_fill: Some(hover),
             hover_edge: None,
+            mark: None,
         },
-        LedgerRow::Session if dark => RowLook {
+        RowKind::Session if dark => RowLook {
             fill: Some(Token::Control),
             edge: None,
             ink: Token::TextPrimary,
             pnl: Some([Token::BuyInk, Token::SellInk]),
             hover_fill: Some(hover),
             hover_edge: None,
+            mark: None,
         },
         // A plate cannot lift onto a paler fill without losing its inks, so
         // a hovered one is outlined instead.
-        LedgerRow::Session => RowLook {
+        RowKind::Session => RowLook {
             fill: Some(Token::ReplayPlate),
             edge: None,
             ink: Token::ReplayPlateInk,
             pnl: Some([Token::PlateGain, Token::PlateLoss]),
             hover_fill: None,
             hover_edge: Some(Token::Accent),
+            // Replay's amber play glyph sinks into the near-black plate.
+            mark: Some(Token::ReplayPlateInk),
         },
-        LedgerRow::Trade { long } => RowLook {
+        RowKind::Trade { long } => RowLook {
             fill: None,
             edge: Some(if long { Token::Buy } else { Token::Sell }),
             ink: Token::TextPrimary,
             pnl: None,
             hover_fill: Some(hover),
             hover_edge: None,
+            mark: None,
         },
     }
 }

@@ -33,7 +33,7 @@ fn plate_inks_read_on_their_plates_in_both_themes() {
         }
         let chip = drawdown_chip(theme.dark);
         assert_reads(&theme, chip.ink, chip.fill, 4.5);
-        let session = ledger_row(theme.dark, LedgerRow::Session);
+        let session = ledger_row(theme.dark, RowKind::Session);
         let fill = session.fill.unwrap();
         for sign in [Ordering::Greater, Ordering::Less, Ordering::Equal] {
             assert_reads(&theme, session.pnl_ink(sign).unwrap(), fill, 4.5);
@@ -129,18 +129,18 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
                 look.edge.map(|token| theme.color(token)),
             )
         };
-        let day = paint(LedgerRow::Day);
-        let session = paint(LedgerRow::Session);
-        let trade = paint(LedgerRow::Trade { long: true });
+        let day = paint(RowKind::Day);
+        let session = paint(RowKind::Session);
+        let trade = paint(RowKind::Trade { long: true });
         assert_ne!(day, session, "{}", theme.name);
         assert_ne!(session, trade, "{}", theme.name);
         assert_ne!(day, trade, "{}", theme.name);
-        let short = paint(LedgerRow::Trade { long: false });
+        let short = paint(RowKind::Trade { long: false });
         assert_ne!(trade.1, short.1, "the side rail tells the sides apart");
         for row in [
-            LedgerRow::Day,
-            LedgerRow::Session,
-            LedgerRow::Trade { long: true },
+            RowKind::Day,
+            RowKind::Session,
+            RowKind::Trade { long: true },
         ] {
             let look = ledger_row(theme.dark, row);
             assert_reads(&theme, look.ink, look.fill.unwrap_or(Token::Chrome), 4.5);
@@ -150,15 +150,18 @@ fn ledger_rows_paint_three_distinct_fills_and_edges() {
         }
     }
     let light = ResolvedTheme::parse(LIGHT).unwrap();
-    let day = ledger_row(false, LedgerRow::Day);
+    let day = ledger_row(false, RowKind::Day);
     assert_eq!(light.color(day.fill.unwrap()), crate::color::WHITE);
     assert_eq!(day.edge, Some(Token::TextPrimary));
-    let session = ledger_row(false, LedgerRow::Session);
+    let session = ledger_row(false, RowKind::Session);
     assert_eq!(
         light.color(session.fill.unwrap()),
         PremultipliedRgba::from_rgb(0x20, 0x20, 0x20)
     );
-    let dark_session = ledger_row(true, LedgerRow::Session);
+    let mark = session.mark.unwrap();
+    assert_reads(&light, mark, session.fill.unwrap(), 4.5);
+    let dark_session = ledger_row(true, RowKind::Session);
+    assert_eq!(dark_session.mark, None, "Dark keeps the amber play glyph");
     assert_eq!(dark_session.fill, Some(Token::Control));
     assert_eq!(dark_session.pnl, Some([Token::BuyInk, Token::SellInk]));
 }
