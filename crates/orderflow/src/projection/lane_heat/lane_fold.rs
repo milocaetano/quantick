@@ -362,7 +362,13 @@ impl Fold {
             let Some(row) = self.rows.get(&key) else {
                 continue;
             };
+            // A row first seen after the lead ends has no bin in it: its
+            // range would start past its end, which `BTreeMap::range` panics
+            // on, taking the book worker down with it.
             let bins = bin_start(low.max(from_ms), width_ms)..high.min(until_ms);
+            if bins.is_empty() {
+                continue;
+            }
             for (&bin, &weighted) in row.bins.range(bins) {
                 // The bin's mean over all of it, as the window reads the same
                 // bin where it crosses the opening; only the drawing is cut.

@@ -308,3 +308,47 @@ fn a_held_lead_before_the_retained_book_is_marked() {
         );
     }
 }
+
+/// A level first seen inside the window, on a book over the cell cap so
+/// the lead is averaged on fine bins: its bins start after the lead ends,
+/// and the book worker must read past it rather than panic on an inverted
+/// range.
+#[test]
+fn a_level_first_seen_inside_the_window_never_stops_the_averaged_lead() {
+    let config = config(MAX_BUBBLE_MAX_RADIUS, 20);
+    let mut history = history_from(0, config);
+    // Enough churn inside the window to overflow the cap, little enough
+    // that the fold keeps its finest bins.
+    let mut id = 13;
+    for step in 1..=30_i64 {
+        history
+            .apply_delta(
+                LATEST_BOOK_MS + step,
+                &quantick_orderbook::BookDelta::new(
+                    id,
+                    id,
+                    vec![level(95, if step % 2 == 0 { 10 } else { 500 })],
+                    vec![],
+                ),
+            )
+            .unwrap();
+        id += 1;
+    }
+    // Seen inside the window, then changed: a closed run whose first bin
+    // starts well after the lead ends.
+    for (time_ms, quantity) in [(NOW_MS - 60, 40), (NOW_MS - 40, 400)] {
+        history
+            .apply_delta(
+                time_ms,
+                &quantick_orderbook::BookDelta::new(id, id, vec![level(97, quantity)], vec![]),
+            )
+            .unwrap();
+        id += 1;
+    }
+    let timeline = timeline(1_000);
+    let (cells, _, _) = project_lane_heat(&history, &timeline, prices(), grouping(), 130.into());
+    assert!(
+        cells.iter().any(|cell| cell.time_averaged),
+        "the cap averages"
+    );
+}
