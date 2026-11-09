@@ -73,6 +73,14 @@ to their owners and records intentional renderer/authored-value exclusions.
 | [`pine-dialect.md`](pine-dialect.md) | The Quantick Pine reference: the Pine v5 subset, the order-flow builtins, what is deliberately absent |
 | [`indicator-system-plan.md`](indicator-system-plan.md) | The indicator runtime's design record (implemented, M1–M5) |
 
+## Using the chart
+
+| Document | What it covers |
+| --- | --- |
+| [`liquidity-map.md`](liquidity-map.md) | The L2 liquidity heatmap and aggression bubbles: data-honesty rules, settings, memory budgets, environment variables |
+| [`market-replay.md`](market-replay.md) | Replaying recorded sessions: the transport bar, the session file format, importing MT5 recordings |
+| [`candle-appearance.md`](candle-appearance.md) | Candle presets, colours and paint order |
+
 ## Chart and order-flow design
 
 | Document | What it covers |
