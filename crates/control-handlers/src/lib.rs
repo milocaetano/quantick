@@ -25,6 +25,7 @@ pub mod bubble_scale;
 pub mod chart;
 pub mod connection;
 pub mod contract_roll;
+pub mod deal_recording;
 pub mod desk;
 pub mod dock;
 pub mod feed_source;
