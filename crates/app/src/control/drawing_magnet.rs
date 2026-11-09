@@ -5,7 +5,6 @@ pub(crate) use quantick_control_schema::drawing_magnet::*;
 
 use crate::app::{GatewayPort, TabsMutPort, TabsPort, ToolRailPort};
 
-use super::price_axis::invalid;
 use crate::drawings::DrawingId;
 
 use quantick_control::{
@@ -15,13 +14,26 @@ use quantick_control::{
 };
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
-use quantick_control_handlers::drawing_scope as scope;
+use quantick_control_handlers::{drawing_magnet as magnet, drawing_scope as scope};
 use serde_json::Value;
 
 use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
 
+/// Dock the magnet's two calls and `annotate.drawing_scope.set`, each decided
+/// in `quantick_control_handlers`: the rail's switch and one drawing's own,
+/// the switch its context bar flips, and where that drawing shows.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(rail_descriptor(), set)
+    registry.register(rail_descriptor(), set)?;
+    registry.register(object_descriptor(), set_object)?;
+    registry.register(scope::descriptor(), set_scope)
+}
+
+/// Record a call's result under `ANNOTATE_MODULE_ID`.
+fn journal<'a>(
+    access: &'a mut ControlAccess,
+    actor: &'a ActorContext,
+) -> impl FnOnce(&'static str, Value) -> WireU64 + 'a {
+    |kind, value| access.append_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value))
 }
 
 fn set<P: ToolRailPort + ?Sized>(
@@ -30,26 +42,11 @@ fn set<P: ToolRailPort + ?Sized>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input: DrawingMagnetInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let result = DrawingMagnetResult {
-        enabled: input.enabled,
-        changed: app.set_drawing_magnet(input.enabled),
-    };
-    let payload = serde_json::json!({ "drawing_magnet": result });
-    access.append_event(NewEvent::by(
-        ANNOTATE_MODULE_ID,
-        DRAWING_MAGNET_EVENT_KIND,
-        actor,
-        payload,
-    ));
-    serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
-}
-
-/// Dock `annotate.drawing_magnet.set`: one drawing's own magnet, the switch
-/// its context bar flips.
-pub(crate) fn register_object(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(object_descriptor(), set_object)
+    magnet::set_rail(
+        input,
+        |on| app.set_drawing_magnet(on),
+        journal(access, actor),
+    )
 }
 
 fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
@@ -58,30 +55,19 @@ fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input: ObjectMagnetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
-    let pane = super::price_axis::pane(app, input.tab_id, input.pane_id)?;
-    let id = DrawingId(input.drawing_id.get());
-    let changed = pane.drawings.set_own_magnet(id, input.enabled);
-    let result = input.result(changed.map_err(|tool| input.refusal(tool))?);
-    let payload = input.event_payload(result.changed);
-    access.append_event(NewEvent::by(
-        ANNOTATE_MODULE_ID,
-        OBJECT_MAGNET_EVENT_KIND,
-        actor,
-        payload,
-    ));
-    serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
+    magnet::set_object(
+        input,
+        move |tab, pane| Ok(&mut super::price_axis::pane(app, tab, pane)?.drawings),
+        journal(access, actor),
+    )
 }
 
-/// `annotate.drawing_scope.set`, decided in `quantick_control_handlers`.
-pub(crate) fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
+fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let journal =
-        |kind, value| access.append_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, value));
     scope::call(
         input,
         move |tab, pane| {
@@ -89,7 +75,7 @@ pub(crate) fn set_scope<P: TabsPort + TabsMutPort + ?Sized>(
             let bars = pane.layout.drawings_spec.unwrap_or(*pane.state.spec());
             Ok((&mut pane.drawings, bars.to_config_string()))
         },
-        journal,
+        journal(access, actor),
     )
 }
 
@@ -134,11 +120,5 @@ where
     let Some(actor) = access.hand_actor() else {
         return;
     };
-    let payload = input.event_payload(true);
-    access.append_event(NewEvent::by(
-        ANNOTATE_MODULE_ID,
-        OBJECT_MAGNET_EVENT_KIND,
-        &actor,
-        payload,
-    ));
+    journal(access, &actor)(OBJECT_MAGNET_EVENT_KIND, input.event_payload(true));
 }

@@ -73,9 +73,6 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::pnl_display::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
     super::drawing_magnet::register(&mut registry)?;
-    super::drawing_magnet::register_object(&mut registry)?;
-    let scope = quantick_control_handlers::drawing_scope::descriptor();
-    registry.register(scope, super::drawing_magnet::set_scope)?;
     super::chart_settings::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
     super::indicator_picker::register(&mut registry)?;
