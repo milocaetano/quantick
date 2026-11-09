@@ -37,3 +37,6 @@ pub mod libraries;
 pub mod semantics;
 pub mod types;
 pub mod version;
+
+#[cfg(test)]
+mod library_fixtures;

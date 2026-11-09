@@ -8,7 +8,9 @@
 //! [`crate::indicator_worker`] commands, and a change to what a slot is has
 //! to be made in one file rather than found in six places in `app.rs`.
 
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 use eframe::egui;
 
@@ -24,9 +26,6 @@ use crate::pane::PaneSide;
 use quantick_chart::indicator_registry::{IndicatorAttachment, IndicatorHost, IndicatorRegistry};
 
 use super::TabSlot;
-
-/// How often the hot-reload poll checks script files for changes.
-const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 
 /// The indicator feature adapter: library, settings, presets and polling clock.
 /// The headless registry owns identities, provenance and deferred view state.
@@ -612,50 +611,6 @@ impl IndicatorState {
             }
             None => None,
         }
-    }
-    pub(super) fn log_reload(owner: TabSlot, name: &str) {
-        tracing::info!(target: "quantick::app", schema_version = 1_u8,
-            event_code = "INDICATOR_SCRIPT_RELOAD", script = %name, tab = owner.tab,
-            pane = ?owner.side, action = "recompile_and_replay", "indicator script changed on disk");
-    }
-
-    pub(super) fn poll_script_files(&mut self) -> Vec<(TabSlot, String, String)> {
-        if self.registry.script_files().is_empty()
-            || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
-        {
-            return Vec::new();
-        }
-        self.last_script_poll = Instant::now();
-        let mut reloads: Vec<(TabSlot, String, String)> = Vec::new();
-        for watch in 0..self.registry.script_files().len() {
-            let (owner, index, seen_mtime) = self.registry.script_files()[watch];
-            let Some((path, mtime)) = self.script_library.file_info(index) else {
-                continue;
-            };
-            if mtime == seen_mtime {
-                continue;
-            }
-            self.registry.observe_script(owner, mtime);
-            match std::fs::read_to_string(&path) {
-                Ok(text) => {
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| path.display().to_string());
-                    reloads.push((owner, name, text));
-                }
-                Err(error) => tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "INDICATOR_SCRIPT_UNREADABLE",
-                    script = %path.display(),
-                    error = %error,
-                    action = "reload_skipped",
-                    "cannot re-read a changed indicator script"
-                ),
-            }
-        }
-        reloads
     }
 }
 

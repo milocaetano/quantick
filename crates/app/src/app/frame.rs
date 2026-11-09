@@ -350,7 +350,7 @@ impl QuantickApp {
     /// right dock. The chart keeps whatever remains.
     fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
         scratch.background = Some(pane::background_color(&self.runtime.style));
-        self.surfaces.indicator_picker.capture_keyboard(ctx);
+        self.surfaces.capture_keyboard(ctx);
         // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
@@ -383,7 +383,7 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
-                indicators: &self.runtime.indicators,
+                indicators: &mut self.runtime.indicators,
                 alert_failure: self.audio.alert_failure.as_deref(),
                 workspace: &self.runtime.workspace,
                 style: &self.runtime.style,

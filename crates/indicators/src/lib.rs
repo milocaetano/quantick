@@ -68,3 +68,6 @@ pub use output::{
     CandlePlotSpec, CandleSample, FillSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotBuffer,
     PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8, resolve_bar_paint,
 };
+
+#[cfg(test)]
+mod library_fixtures;

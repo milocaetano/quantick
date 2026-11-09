@@ -140,6 +140,14 @@ pub(crate) trait IndicatorPickerPort {
 
 /// Indicator scripts an operator attaches and detaches.
 pub(crate) trait ScriptsPort {
+    /// Editor actions share one value lane with the surface. Unavailable in the skeleton.
+    fn edit_script(
+        &mut self,
+        _action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        Err("script editing is not available in this build".into())
+    }
+
     /// Attach `source` to the focused pane of the tab on screen, as an
     /// operator's or the trader's own; answers where it landed.
     fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot;
@@ -804,6 +812,18 @@ impl IndicatorPickerPort for QuantickApp {
 }
 
 impl ScriptsPort for QuantickApp {
+    fn edit_script(
+        &mut self,
+        action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        super::script_editor_wiring::apply(
+            &mut self.surfaces,
+            &mut self.runtime.indicators,
+            &mut self.runtime.tabs,
+            action,
+        )
+    }
+
     fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
         let runtime = self
             .runtime
@@ -983,5 +1003,14 @@ impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
             &mut self.runtime,
             &mut self.drawings.presets,
         );
+    }
+}
+
+impl quantick_control_handlers::script_editor::ScriptEditorPort for ControlWindow {
+    fn script_editor(
+        &mut self,
+        action: quantick_stores::script_library::ScriptEditorAction,
+    ) -> Result<Option<quantick_stores::script_library::ScriptDocument>, String> {
+        self.edit_script(action)
     }
 }

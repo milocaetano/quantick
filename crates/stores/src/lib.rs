@@ -44,3 +44,5 @@ pub mod symbols_file;
 pub mod ui_state;
 
 pub mod indicator_picker;
+
+pub mod script_editor;
