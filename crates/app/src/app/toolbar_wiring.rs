@@ -78,9 +78,21 @@ impl QuantickApp {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
+        let viewport = ctx.viewport_id();
+        let menu = &self.chrome.window_menu;
+        let mut toolbar_door = None;
+        let window_menu = toolbar::WindowMenuDoor {
+            open: menu.opened_from(viewport, super::menu_bar::MenuDoor::Toolbar),
+            hover: format!(
+                "Window menu ({})",
+                super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
+            ),
+            rect: &mut toolbar_door,
+        };
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
+            window_menu,
             layout_preset: Some(tab.canvas.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
@@ -107,8 +119,14 @@ impl QuantickApp {
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
         self.chrome.history_menu_rect = history_menu_rect;
+        self.chrome.window_menu.toolbar_door = toolbar_door;
         for action in actions {
-            self.apply_toolbar_action(action);
+            if action == ToolbarAction::ToggleWindowMenu {
+                let menu = &mut self.chrome.window_menu;
+                menu.toggle_from(viewport, super::menu_bar::MenuDoor::Toolbar, false);
+            } else {
+                self.apply_toolbar_action(action);
+            }
         }
     }
 
@@ -153,6 +171,8 @@ impl QuantickApp {
             }
             ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
+            // Carried out by `draw_toolbar`, which knows the window.
+            ToolbarAction::ToggleWindowMenu => {}
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.

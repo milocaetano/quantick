@@ -18,7 +18,7 @@ use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
-pub(in crate::app) use menus::{KEBAB_GLYPH, WindowMenuState};
+pub(in crate::app) use menus::{KEBAB_GLYPH, MenuDoor, WindowMenuState};
 
 mod commands;
 mod menus;
@@ -252,7 +252,10 @@ impl QuantickApp {
             apply_menu_command_on(self, ctx, command);
         }
 
-        self.chrome.title_bar.menu_open = self.chrome.window_menu.is_open_on(ctx.viewport_id());
+        self.chrome.title_bar.menu_open = self
+            .chrome
+            .window_menu
+            .opened_from(ctx.viewport_id(), MenuDoor::Kebab);
         self.chrome.title_bar.agent_on = self
             .control
             .control_access
@@ -382,7 +385,11 @@ impl QuantickApp {
 
 /// The menu's panes, each handed exactly the state it shows.
 fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    let Some(kebab) = app.chrome.title_bar.control_rect(KEBAB_CONTROL) else {
+    let door = match app.chrome.window_menu.door() {
+        MenuDoor::Kebab => app.chrome.title_bar.control_rect(KEBAB_CONTROL),
+        MenuDoor::Toolbar => app.chrome.window_menu.toolbar_door,
+    };
+    let Some(door) = door else {
         return;
     };
     let mut state = std::mem::take(&mut app.chrome.window_menu);
@@ -402,7 +409,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         recent: app.runtime.workspace.recent_on_disk(),
         focus_live_row: std::cell::Cell::new(false),
     }
-    .show(ctx, &mut state, kebab, commands);
+    .show(ctx, &mut state, door, commands);
     app.chrome.window_menu = state;
 }
 

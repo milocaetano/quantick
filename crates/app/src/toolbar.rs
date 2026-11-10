@@ -1,18 +1,19 @@
 //! The context toolbar: *what am I looking at* on the left, *what is drawn
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
-//! Left to right, each group behind a full-height separator: the layout
-//! picker wearing a miniature of the layout on screen; the tab's market as a
+//! Left to right, each group behind a full-height separator: `≡`, a second
+//! door to the window menu the title bar's `⋮` opens; the tab's market as a
 //! dropdown button that opens the palette in switch mode (or the amber
 //! session label while replaying), with REC beside it; HISTORY (a
 //! `+ older ▾` split button whose menu holds the page size). Free space,
 //! then right-aligned TRADE — the simulated BUY/SELL market buttons
-//! (`docs/ux/paper-trading.md`) — and, alone at the edge, PANELS (dock
-//! show/hide, a tray). Appearance has no toolbar button: the chart
+//! (`docs/ux/paper-trading.md`) — the layout picker wearing a miniature of
+//! the layout on screen, and, alone at the edge, PANELS (dock show/hide, a
+//! tray). Appearance has no toolbar button: the chart
 //! itself and the Settings window open it. The toolbar never wraps:
 //! [`collapse_plan`] folds groups into the `⋯` overflow menu in the §6 order —
 //! PANELS → HISTORY → TRADE → the feed name shrinks to its initial. The symbol
-//! and the layout picker never fold. Bars, indicators and layers
+//! the layout picker and `≡` never fold. Bars, indicators and layers
 //! belong to each pane, on its header line (`crate::pane_header`).
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
@@ -30,7 +31,7 @@ use quantick_chart::toolbar_collapse::{
 use quantick_engine::bar_selection::BarInputAvailability;
 pub(crate) mod bar_parameters;
 use crate::theme;
-use crate::widgets::{IconButton, RAIL_ICON};
+use crate::widgets::{IconButton, RAIL_ICON, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::RunStatus;
 use quantick_paper::desk::{
@@ -47,13 +48,18 @@ pub const TOOLBAR_HEIGHT: f32 = 44.0;
 const DOCK_INSET_PX: f32 = (RAIL_ICON.hit - 16.0) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
-/// The row's padding: 22 px to the miniature's frame, 12 px after the tray's glyph.
+/// The row's padding: `≡` centred on the tool rail's column 22 px in, 12 px
+/// after the tray's glyph.
 const ROW_MARGIN: egui::Margin = egui::Margin {
-    left: 22.0 - FACE_INSET_PX,
+    left: 22.0 - TOOLBAR_ICON.hit / 2.0,
     right: 12.0 - DOCK_INSET_PX,
     top: 0.0,
     bottom: 0.0,
 };
+
+/// What `≡` and its separator take from the row, beside what the collapse
+/// plan counts.
+const WINDOW_MENU_RUN_PX: f32 = TOOLBAR_ICON.hit + SEPARATOR_AIR_PX * 2.0 + SEPARATOR_WIDTH_PX;
 
 /// Gap between History's main button and its caret, in pixels.
 const HISTORY_SPLIT_GAP_PX: f32 = 6.0;
@@ -66,9 +72,22 @@ pub struct ReplaySource {
     pub hover: String,
 }
 
+/// The toolbar's `≡`: the window menu the title bar's `⋮` opens, one door
+/// nearer the chart.
+pub struct WindowMenuDoor<'a> {
+    /// Whether the menu is up and hangs from this button.
+    pub open: bool,
+    /// The button's hover, shortcut included.
+    pub hover: String,
+    /// Where the button ended up, written back so the menu hangs from it.
+    pub rect: &'a mut Option<egui::Rect>,
+}
+
 /// The toolbar's view of the app: fields it edits directly, and read-only
 /// context for gating and display.
 pub struct ToolbarModel<'a> {
+    /// The `≡` at the row's left end.
+    pub window_menu: WindowMenuDoor<'a>,
     /// The arrangement the canvas is showing, if it still matches a registered
     /// preset. `None` marks a custom row and lights no cell.
     pub layout_preset: Option<&'static crate::canvas_layout::LayoutPreset>,
@@ -162,6 +181,8 @@ pub enum ToolbarAction {
     LoadOlderCandles,
     /// Show or hide the dock.
     ToggleDock,
+    /// Open or close the window menu, hung from the toolbar's `≡`.
+    ToggleWindowMenu,
     /// Add a native indicator, by its catalog id
     /// (`quantick_indicators::native`). One variant for every native there
     /// will ever be — the menu is drawn from the catalog, so the toolbar
@@ -206,20 +227,22 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             } else {
                 0.0
             };
-            let plan = collapse_plan(ui.available_width() - rec_width, W_TRADE);
+            let plan = collapse_plan(
+                ui.available_width() - rec_width - WINDOW_MENU_RUN_PX,
+                W_TRADE,
+            );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                if let Some(preset) = crate::layout_picker::draw(
-                    ui,
-                    crate::layout_picker::PickerModel {
-                        current: model.layout_preset,
-                        open: model.layout_picker_open,
-                        request_open: model.layout_picker_request_open,
-                    },
-                ) {
-                    actions.push(ToolbarAction::SetLayout(preset));
+                let door = &mut model.window_menu;
+                let list = IconButton::new(icons::LIST, TOOLBAR_ICON)
+                    .active(door.open)
+                    .hover_text(&door.hover)
+                    .show(ui);
+                *door.rect = Some(list.rect);
+                if list.clicked() {
+                    actions.push(ToolbarAction::ToggleWindowMenu);
                 }
-                row_separator(ui, SEPARATOR_AIR_PX - FACE_INSET_PX, SEPARATOR_AIR_PX);
+                row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing.x = MARKET_REC_GAP_PX;
                     draw_source(ui, model, plan, &mut actions);
@@ -242,8 +265,23 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                             actions.push(ToolbarAction::ToggleDock);
                         }
                     }
+                    row_separator(
+                        ui,
+                        SEPARATOR_AIR_PX - DOCK_INSET_PX,
+                        SEPARATOR_AIR_PX - FACE_INSET_PX,
+                    );
+                    if let Some(preset) = crate::layout_picker::draw(
+                        ui,
+                        crate::layout_picker::PickerModel {
+                            current: model.layout_preset,
+                            open: model.layout_picker_open,
+                            request_open: model.layout_picker_request_open,
+                        },
+                    ) {
+                        actions.push(ToolbarAction::SetLayout(preset));
+                    }
                     if plan.trade_inline {
-                        row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
+                        row_separator(ui, SEPARATOR_AIR_PX - FACE_INSET_PX, SEPARATOR_AIR_PX);
                         draw_trade(ui, &model.paper, &mut actions);
                         row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                     }
@@ -988,6 +1026,11 @@ mod tests {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
                     let mut layout_picker_open = false;
                     let mut model = ToolbarModel {
+                        window_menu: WindowMenuDoor {
+                            open: false,
+                            hover: String::new(),
+                            rect: &mut None,
+                        },
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
@@ -1041,6 +1084,11 @@ mod tests {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 let mut layout_picker_open = false;
                 let mut model = ToolbarModel {
+                    window_menu: WindowMenuDoor {
+                        open: false,
+                        hover: String::new(),
+                        rect: &mut None,
+                    },
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
@@ -1141,6 +1189,11 @@ mod tests {
             let output = ctx.run(input(), |ctx| {
                 let mut layout_picker_open = false;
                 let mut model = ToolbarModel {
+                    window_menu: WindowMenuDoor {
+                        open: false,
+                        hover: String::new(),
+                        rect: &mut None,
+                    },
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,

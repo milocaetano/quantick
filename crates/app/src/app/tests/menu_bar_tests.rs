@@ -399,3 +399,31 @@ fn the_panel_rows_open_the_order_flow_panel_only_on_a_shown_flow_pane() {
     assert!(!app.chrome.window_menu.open);
     assert!(app.active_tab().tape().settings_panel.is_open());
 }
+
+#[test]
+fn the_toolbar_list_opens_the_same_menu_rightwards_from_the_left_edge() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let list = app.chrome.window_menu.toolbar_door.expect("the toolbar drew its list button");
+    assert!(
+        list.right() < kebab(&app).left(),
+        "the list sits at the toolbar's left end"
+    );
+    click_sized(&mut app, &ctx, TEST_WINDOW, list.center());
+    let output = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&output, "Save desk")
+        .unwrap_or_else(|| panic!("the menu is up: {:?}", painted_text(&output)));
+    assert!(row.x > list.left(), "the menu hangs rightwards from the list");
+    assert!(row.y > list.bottom(), "the menu drops below the toolbar");
+    assert!(
+        !app.chrome.title_bar.kebab_pressed,
+        "the title bar's button is not the one that opened it"
+    );
+    click_sized(&mut app, &ctx, TEST_WINDOW, list.center());
+    let output = run_frame(&mut app, &ctx);
+    assert!(
+        painted_text_center(&output, "Save desk").is_none(),
+        "a second click closes it"
+    );
+}
