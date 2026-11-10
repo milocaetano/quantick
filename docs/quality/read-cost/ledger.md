@@ -110,3 +110,4 @@ a bound.
 | 786 | 2026-11-07 | feat/venue-candles-per-interval | main | 27169 | 28 | `crates/app/src/tab/feed.rs` (1015) |
 | 880 | 2026-11-10 | feat/864-toolbar-capsule | feature/workspace-canvas | 49784 | 41 | `crates/app/src/pane_header.rs` (970) |
 | 886 | 2026-11-10 | feat/865-pane-menu | feature/workspace-canvas | 29586 | 28 | `crates/app/src/tab/feed.rs` (967) |
+| 891 | 2026-11-10 | feat/866-floating-panes | feature/workspace-canvas | 45738 | 61 | `crates/app/src/control/gateway/server.rs` (1082) |
