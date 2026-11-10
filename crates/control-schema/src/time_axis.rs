@@ -40,7 +40,7 @@ pub enum TimeAxisTarget {
     /// the last price framed at mid-height once the next frame fits the
     /// live view — what a double-click on open canvas does.
     LiveCentre,
-    /// [`Self::LiveCentre`] with the candles twice as wide, up to the widest
+    /// `live_centre` with the candles twice as wide, up to the widest
     /// a candle may be — what a triple-click on open canvas does. Each call
     /// zooms again: retry it under an idempotency key.
     LiveCentreZoomIn,

@@ -14,8 +14,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     registry.register(descriptor(), reset)
 }
 
-/// Through [`crate::pane::ChartPane::reset_time_axis`], the gesture's own
-/// path and eligibility, so the call and the strip cannot drift.
+/// The gestures' own paths and eligibility, so the call and the clicks cannot drift.
 fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     _access: &mut ControlAccess,
@@ -28,20 +27,14 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_axis(tape),
         TimeAxisTarget::LiveOverview => !tape && pane.model.live_overview(),
-        to @ (TimeAxisTarget::LiveCentre | TimeAxisTarget::LiveCentreZoomIn) => {
-            if !tape {
-                pane.model
-                    .live_centre(to == TimeAxisTarget::LiveCentreZoomIn);
-            }
-            !tape
-        }
+        TimeAxisTarget::LiveCentre => !tape && pane.model.live_centre(false),
+        TimeAxisTarget::LiveCentreZoomIn => !tape && pane.model.live_centre(true),
     };
     input.to.outcome(applied).map_err(invalid)?;
     let viewport = super::chart::viewport_snapshot(pane);
-    let (tab_id, pane_id) = (input.tab_id, input.pane_id);
     serde_json::to_value(TimeAxisResetResult {
-        tab_id,
-        pane_id,
+        tab_id: input.tab_id,
+        pane_id: input.pane_id,
         viewport,
     })
     .map_err(invalid)

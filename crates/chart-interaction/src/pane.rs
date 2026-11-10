@@ -108,12 +108,14 @@ impl Model {
     /// [`crate::viewport::MAX_CANDLE_WIDTH`], when `zoom_in` — with the last
     /// price centred by the next frame: the canvas's double click, its triple
     /// click with `zoom_in`, and `chart.time_axis.reset`'s live centre.
-    pub fn live_centre(&mut self, zoom_in: bool) {
+    /// Always applies, laid out or not: `true`, as the named call reports it.
+    pub fn live_centre(&mut self, zoom_in: bool) -> bool {
         self.viewport.snap_to_live();
         if zoom_in {
             self.viewport.zoom(crate::viewport::TRIPLE_CLICK_ZOOM);
         }
         self.live_centre = true;
+        true
     }
 
     /// Whether a return to live is waiting for the frame to centre the last
@@ -472,7 +474,9 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
                     // Open canvas, a divider or a drawing: live at the
                     // trader's own spacing, the price centred; the triple
                     // zooms in too.
-                    (_, Some(repeat)) => model.live_centre(repeat == CanvasRepeat::Triple),
+                    (_, Some(repeat)) => {
+                        model.live_centre(repeat == CanvasRepeat::Triple);
+                    }
                     // The live chip.
                     (_, None) => model.viewport.snap_to_live(),
                 }
@@ -795,11 +799,11 @@ mod tests {
         let mut model = Model::default();
         model.viewport.set_px_per_bar(12.0);
         model.viewport.pan_pixels(300.0, 400);
-        model.live_centre(false);
+        assert!(model.live_centre(false));
         assert!(model.viewport.follows_live());
         assert_eq!(model.viewport.px_per_bar(), 12.0);
         assert!(model.take_live_centre());
-        model.live_centre(true);
+        assert!(model.live_centre(true));
         assert_eq!(model.viewport.px_per_bar(), 24.0);
         assert!(model.take_live_centre());
     }
