@@ -18,6 +18,7 @@
 
 use quantick_chart::geometry as chart;
 
+pub mod alert_geometry;
 pub mod avwap;
 pub mod frvp;
 pub mod gesture;

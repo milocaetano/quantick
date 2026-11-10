@@ -63,6 +63,7 @@ pub(crate) trait ControlPort:
     + ChromePort
     + HealthPort
     + AlertsPort
+    + quantick_control_handlers::alerts::AlertDefinitionsPort
     + LayoutPort
     + PaperPort
     + LayersPort
@@ -81,6 +82,7 @@ impl<T> ControlPort for T where
         + ChromePort
         + HealthPort
         + AlertsPort
+        + quantick_control_handlers::alerts::AlertDefinitionsPort
         + LayoutPort
         + PaperPort
         + LayersPort

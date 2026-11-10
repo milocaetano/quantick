@@ -1,6 +1,6 @@
 //! Lifecycle, delivery and durable readback contracts.
 use crate::input::{AlertInput, BarIdentity, ResetReason, Unavailable};
-use crate::spec::{AlertId, AlertSpec, MarketRef};
+use crate::spec::{AlertId, AlertSpec, Expiration, ExpirationChoice, MarketRef};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +180,9 @@ pub struct AlertBook {
 impl AlertBook {
     pub fn evaluate(&mut self, _input: &AlertInput<'_>, _out: &mut impl AlertEventSink) {}
 
+    /// Expiration advances without inventing a price observation on quiet tape.
+    pub fn tick(&mut self, _utc_ms: i64, _session_ms: u64) {}
+
     pub fn command(
         &mut self,
         _command: AlertCommand,
@@ -189,6 +192,27 @@ impl AlertBook {
     }
 
     pub fn validate(&self, _spec: &AlertSpec) -> Result<(), AlertError> {
+        Err(AlertError::Unavailable)
+    }
+
+    pub fn editor(&self, _draft: AlertSpec) -> Result<EditorView, AlertError> {
+        Err(AlertError::Unavailable)
+    }
+
+    pub fn resolve_expiration(
+        &self,
+        _choice: ExpirationChoice,
+        _utc_ms: i64,
+        _display_offset_minutes: i32,
+    ) -> Result<Expiration, AlertError> {
+        Err(AlertError::Unavailable)
+    }
+
+    pub fn record_delivery(
+        &mut self,
+        _sequence: u64,
+        _outcome: DeliveryOutcome,
+    ) -> Result<(), AlertError> {
         Err(AlertError::Unavailable)
     }
 

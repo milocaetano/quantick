@@ -43,6 +43,7 @@ pub(super) fn open_requested_strategy_popups(
 
 /// What the surfaces' environment is read from.
 pub(super) struct SurfaceOwners<'a> {
+    pub alerts: &'a mut quantick_alerts::AlertBook,
     pub indicators: &'a mut IndicatorState,
     pub store: &'a crate::workspace_store::LayoutStore,
     pub alert_failure: Option<&'a str>,
@@ -61,6 +62,7 @@ pub(super) fn draw_surfaces(
     owners: SurfaceOwners<'_>,
 ) -> SurfaceResponse {
     let SurfaceOwners {
+        alerts,
         indicators,
         store,
         alert_failure,
@@ -162,6 +164,7 @@ pub(super) fn draw_surfaces(
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
+            alerts: Some(alerts),
             picker_pane_id: focused_pane.id,
             picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
@@ -205,6 +208,9 @@ pub(super) fn draw_surfaces(
     );
     if let Some(request) = asks.bar_switch.take() {
         apply_bar_switch(tabs, &mut registry.toast, request);
+    }
+    if let Some(request) = asks.alerts.take() {
+        let _ = registry.alerts.apply(alerts, *request);
     }
     asks
 }

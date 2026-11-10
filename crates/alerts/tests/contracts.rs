@@ -41,9 +41,20 @@ fn contract_second_consumer() {
     let mut fake = FakeConsumer::default();
     let mut bounded = BoundedEvents::new(1);
     book.evaluate(&input, &mut fake);
+    book.tick(100, 100);
     book.evaluate(&input, &mut bounded);
     assert_eq!(fake.delivered, 0);
     assert!(bounded.is_empty());
+    assert_eq!(
+        book.resolve_expiration(ExpirationChoice::EndOfDay, 100, -180),
+        Err(AlertError::Unavailable)
+    );
+    assert_eq!(
+        book.record_delivery(1, DeliveryOutcome::Delivered),
+        Err(AlertError::Unavailable)
+    );
+    assert_eq!(book.views(), Err(AlertError::Unavailable));
+    assert_eq!(book.history(0, 10), Err(AlertError::Unavailable));
     assert_eq!(
         book.command(AlertCommand::ClearHistory, 100),
         Err(AlertError::Unavailable)

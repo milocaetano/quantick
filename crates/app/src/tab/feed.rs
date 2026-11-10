@@ -42,6 +42,8 @@ struct LiveTradeOwners<'a> {
     flow: &'a mut crate::pane::ChartPane,
     context: &'a mut [crate::pane::ChartPane],
     pending_sounds: &'a mut Vec<crate::audio::Cue>,
+    observer: &'a mut dyn super::alerts::Observer,
+    received_at_ms: i64,
 }
 
 impl LiveTradeOwners<'_> {
@@ -58,7 +60,24 @@ impl LiveTradeOwners<'_> {
                 LiveTradeStage::PaperTrade => self.paper.on_trade(trade),
                 LiveTradeStage::PaneTrades => {
                     for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
-                        pane.ingest_live_trade(trade);
+                        pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
+                            self.observer.pane(
+                                pane.into(),
+                                Some(super::alerts::Observation {
+                                    trade,
+                                    received_at_ms: self.received_at_ms,
+                                    close: Some((bar, slot)),
+                                }),
+                            );
+                        });
+                        self.observer.pane(
+                            (&*pane).into(),
+                            Some(super::alerts::Observation {
+                                trade,
+                                received_at_ms: self.received_at_ms,
+                                close: None,
+                            }),
+                        );
                     }
                 }
                 LiveTradeStage::StrategyEvaluation => {
@@ -99,7 +118,7 @@ impl Tab {
             Item = quantick_chart_interaction::source_drain_plan::SourceDrainStage,
         >,
     ) {
-        self.drain_feed_with_stages(tab_id, wall_clock_ms, stages);
+        self.drain_feed_with_stages(tab_id, wall_clock_ms, stages, &mut ());
     }
     /// A tab intake whose stages run in the given order, for the
     /// mutant-order proofs; production drains only through the validated plan.
@@ -110,7 +129,7 @@ impl Tab {
         policy: HistoryPolicy,
         stages: impl IntoIterator<Item = TabDrainStage>,
     ) {
-        self.drain_frame_with_stages(tab_id, config, policy, stages);
+        self.drain_frame_with_stages(tab_id, config, policy, stages, &mut ());
     }
     /// *Load older candles* judged on `capabilities`, as the toolbar
     /// presses it; reports whether the request went out.
@@ -138,7 +157,7 @@ impl Tab {
         stages: impl IntoIterator<Item = LiveTradeStage>,
         clock: impl FnMut() -> i64,
     ) {
-        self.ingest_live_trade_with_stages(trade, trade.timestamp_ms, stages, clock);
+        self.ingest_live_trade_with_stages(trade, trade.timestamp_ms, stages, clock, &mut ());
     }
 }
 
@@ -456,8 +475,21 @@ impl Tab {
     /// Production drains only through the validated plan; tests replay a
     /// swapped order through these same stage bodies, via the `#[cfg(test)]`
     /// door, to show what the declaration prevents.
+    #[cfg(test)]
     pub fn drain_frame(&mut self, tab_id: u64, config: &AppConfig, policy: HistoryPolicy) {
-        self.drain_frame_with_stages(tab_id, config, policy, TabDrainPlan::stages());
+        self.drain_frame_observed(tab_id, config, policy, &mut ());
+    }
+
+    pub(crate) fn drain_frame_observed(
+        &mut self,
+        tab_id: u64,
+        config: &AppConfig,
+        policy: HistoryPolicy,
+        observer: &mut dyn super::alerts::Observer,
+    ) {
+        self.observe_alert_lifecycle(observer);
+        self.drain_frame_with_stages(tab_id, config, policy, TabDrainPlan::stages(), observer);
+        self.observe_alert_lifecycle(observer);
     }
 
     fn drain_frame_with_stages(
@@ -466,10 +498,16 @@ impl Tab {
         config: &AppConfig,
         policy: HistoryPolicy,
         stages: impl IntoIterator<Item = TabDrainStage>,
+        observer: &mut dyn super::alerts::Observer,
     ) {
         for stage in stages {
             match stage {
-                TabDrainStage::ReceiveSource => self.drain_feed(tab_id),
+                TabDrainStage::ReceiveSource => self.drain_feed_with_stages(
+                    tab_id,
+                    metrics::wall_clock_ms,
+                    quantick_chart_interaction::source_drain_plan::SourceDrainPlan::stages(),
+                    observer,
+                ),
                 TabDrainStage::ApplyIndicatorResults => {
                     for pane in self.panes_mut() {
                         pane.apply_indicator_events();
@@ -499,18 +537,19 @@ impl Tab {
         }
     }
 
-    /// Drain every feed event available this frame into the engine, tracking the
-    /// observed arrival latency and live-trade counts for the metrics.
+    #[cfg(test)]
     pub fn drain_feed(&mut self, tab_id: u64) {
         self.drain_feed_with_clock(tab_id, metrics::wall_clock_ms);
     }
 
     /// Clock-injected drain used to prove that one UI cycle is one observation.
+    #[cfg(test)]
     pub fn drain_feed_with_clock(&mut self, tab_id: u64, wall_clock_ms: impl FnMut() -> i64) {
         self.drain_feed_with_stages(
             tab_id,
             wall_clock_ms,
             quantick_chart_interaction::source_drain_plan::SourceDrainPlan::stages(),
+            &mut (),
         );
     }
 
@@ -521,6 +560,7 @@ impl Tab {
         stages: impl IntoIterator<
             Item = quantick_chart_interaction::source_drain_plan::SourceDrainStage,
         >,
+        observer: &mut dyn super::alerts::Observer,
     ) {
         use quantick_chart_interaction::source_drain_plan::SourceDrainStage;
         let mut live = false;
@@ -531,7 +571,7 @@ impl Tab {
                     self.paper.set_symbol(&self.symbol);
                 }
                 SourceDrainStage::ReceiveAvailable => {
-                    live = self.receive_available(tab_id, &mut wall_clock_ms);
+                    live = self.receive_available(tab_id, &mut wall_clock_ms, observer);
                     self.poll_history_publication();
                 }
                 SourceDrainStage::PublishLatestPartial => {
@@ -556,7 +596,12 @@ impl Tab {
 
     // This is still the explicit Tab ingress boundary, not a second interpreter.
     // The bool requests one final partial publication, not worker completion.
-    fn receive_available(&mut self, tab_id: u64, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
+    fn receive_available(
+        &mut self,
+        tab_id: u64,
+        mut wall_clock_ms: impl FnMut() -> i64,
+        observer: &mut dyn super::alerts::Observer,
+    ) -> bool {
         let mut live = false;
         let (mut received_at_ms, mut refilled) = (None, 0);
         // Venue candles landing before the first print meet it at the seam.
@@ -564,6 +609,7 @@ impl Tab {
         loop {
             match self.link.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
+                    observer.reset(quantick_alerts::ResetReason::Hydration);
                     self.loading.end(LoadingTask::History);
                     // A session that resumed onto a kept timeline opens by
                     // replaying its recent window, which the chart already
@@ -586,6 +632,7 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
+                    observer.reset(quantick_alerts::ResetReason::Hydration);
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
                     // The MetaTrader bridge delivers its recovery window on
@@ -628,6 +675,7 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
+                    observer.reset(quantick_alerts::ResetReason::Hydration);
                     // What is left of the fill, so the chart and an operator
                     // reading the control plane can both say how much of the
                     // session is still arriving instead of watching a number
@@ -661,7 +709,7 @@ impl Tab {
                         continue;
                     }
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
-                    self.ingest_live_trade_at(&trade, received_at_ms);
+                    self.ingest_live_trade_observed(&trade, received_at_ms, observer);
                     live = true;
                 }
                 Ok(FeedEvent::LiveBatch(trades)) => {
@@ -672,7 +720,7 @@ impl Tab {
                         }
                         let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
                         for trade in &trades {
-                            self.ingest_live_trade_at(trade, received_at_ms);
+                            self.ingest_live_trade_observed(trade, received_at_ms, observer);
                         }
                         live = true;
                     }
@@ -688,6 +736,7 @@ impl Tab {
                     self.link.feed_integrity.last_refill = Some(fill)
                 }
                 Ok(FeedEvent::Refilled(trades)) => {
+                    observer.reset(quantick_alerts::ResetReason::Hydration);
                     self.link.resume_floor_ms = None; // the feed owns the seam
                     live |= self.ingest_unheard(&trades, false);
                     refilled += trades.len();
@@ -695,7 +744,10 @@ impl Tab {
                         break; // the rest waits, in order, for the next frame
                     }
                 }
-                Ok(FeedEvent::Reset) => self.reset_market_state(true),
+                Ok(FeedEvent::Reset) => {
+                    observer.reset(quantick_alerts::ResetReason::ReplaySeek);
+                    self.reset_market_state(true);
+                }
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
@@ -806,12 +858,23 @@ impl Tab {
     ///
     /// The transport observation is the window's; what the trade does to the
     /// bars, the tape and the indicators is the pane's.
+    #[cfg(test)]
     pub fn ingest_live_trade_at(&mut self, trade: &quantick_engine::Trade, received_at_ms: i64) {
+        self.ingest_live_trade_observed(trade, received_at_ms, &mut ());
+    }
+
+    fn ingest_live_trade_observed(
+        &mut self,
+        trade: &quantick_engine::Trade,
+        received_at_ms: i64,
+        observer: &mut dyn super::alerts::Observer,
+    ) {
         self.ingest_live_trade_with_stages(
             trade,
             received_at_ms,
             LiveTradePlan::stages(),
             metrics::wall_clock_ms,
+            observer,
         );
     }
 
@@ -821,7 +884,9 @@ impl Tab {
         received_at_ms: i64,
         stages: impl IntoIterator<Item = LiveTradeStage>,
         clock: impl FnMut() -> i64,
+        observer: &mut dyn super::alerts::Observer,
     ) {
+        self.observe_alert_lifecycle(observer);
         self.link.latest_trade_latency_ms =
             metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
         self.link.latest_trade_ms = Some(trade.timestamp_ms);
@@ -835,6 +900,8 @@ impl Tab {
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
             pending_sounds: &mut self.pending_alarm_sounds,
+            observer,
+            received_at_ms,
         }
         .execute(trade, stages, clock);
     }

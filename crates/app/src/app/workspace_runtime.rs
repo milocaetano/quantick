@@ -11,6 +11,7 @@ use quantick_workspace::lifetime::{
 };
 
 pub(super) struct WorkspaceRuntime {
+    pub(super) alerts: super::alerts_runtime::Runtime,
     pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
     pub(super) appearance: quantick_stores::appearance::AppearanceStore,
     pub(super) lifetime: WorkspaceLifetime,
@@ -37,6 +38,10 @@ impl WorkspaceRuntime {
         let indicator_presets_path = crate::indicators::preset_file::default_path();
         let layouts = super::layout_wiring::open_layout_store(config);
         Self {
+            alerts: super::alerts_runtime::Runtime::new(
+                super::alerts_runtime::path(),
+                crate::metrics::wall_clock_ms(),
+            ),
             chart_theme: Default::default(),
             appearance: crate::theme::store::load(),
             lifetime: WorkspaceLifetime::new(super::WORKSPACE_ID),
@@ -98,14 +103,16 @@ impl WorkspaceRuntime {
 
     /// Intake follows workspace ownership even while no native view can paint.
     pub(super) fn drain_tabs(&mut self, config: &crate::config::AppConfig) -> u64 {
+        self.alerts.begin_frame();
         let active = self.tabs.active_id();
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.link.live_trades;
             let policy = self.history.policy(self.tz, tab_id == active);
-            tab.drain_frame(tab_id, config, policy);
+            tab.drain_frame_observed(tab_id, config, policy, &mut self.alerts);
             trades += tab.link.live_trades - before;
         }
+        self.alerts.end_frame();
         trades
     }
 

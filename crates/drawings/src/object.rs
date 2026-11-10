@@ -139,7 +139,6 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
         // rename is an edit the undo history records.
         self.name == other.name
             && self.author == other.author
-            && self.durable_identity == other.durable_identity
             && self.tool == other.tool
             && self.points == other.points
             && self.band == other.band
