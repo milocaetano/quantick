@@ -240,7 +240,7 @@ matrix fails the build.
 | `drawing_tool` | 22 |
 | `rail_tool` | 2 |
 | `toolbox_dock` | 3 |
-| `layout_preset` | 4 |
+| `layout_preset` | 16 |
 | `notice_action` | 2 |
 | `hotkey` | 25 |
 | `menu_entry` | 46 |

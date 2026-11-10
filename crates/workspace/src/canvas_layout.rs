@@ -61,92 +61,9 @@ impl PaneIdAllocator {
     }
 }
 
-/// What a pane is *for*.
-///
-/// Decides which layers it may draw and how it is seeded — never where it
-/// sits. Position is the row's business, and a kind that knew its own column
-/// could not be moved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaneKind {
-    /// The order-flow pane: the liquidity heatmap, the aggression bubbles and
-    /// the tape. quantick's protagonist.
-    Flow,
-    /// A timeframe pane: candles, indicators and drawings over time bars.
-    Time,
-    /// A kind that exists only under test, to prove that the layout engine
-    /// does not decide anything from a pane's kind.
-    ///
-    /// This is not decoration. If `split_row`, `resolve_shares` or any other
-    /// function that carves the row matched exhaustively on `PaneKind`, this
-    /// variant would fail to compile the moment it was added — so the fact
-    /// that the test build compiles at all *is* the proof that a new kind
-    /// costs a table entry and nothing else.
-    #[cfg(test)]
-    Fake,
-}
-
-/// One named arrangement of panes.
-///
-/// A preset is a *seed and a recogniser*, not a state: applying one lays its
-/// kinds out left to right, and a row that still matches a preset's kinds
-/// reports that preset's name. Keeping it out of the state is what lets a
-/// trader drag a divider without the layout losing its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LayoutPreset {
-    /// The stable wire name — what a config file, the `QUANTICK_LAYOUT` hook,
-    /// a saved workspace and the control plane all call this layout. Never the
-    /// label: that is prose a reader sees, and rewording it must not move an
-    /// operator's ground.
-    pub id: &'static str,
-    /// What the picker and the menu call it.
-    pub label: &'static str,
-    /// The panes it lays out, left to right.
-    pub kinds: &'static [PaneKind],
-}
-
-/// Every layout the canvas can draw, in picker order.
-///
-/// **This table is the registry.** Adding an arrangement is an entry here; no
-/// function that carves the canvas may grow a case for it. The rule that keeps
-/// the heatmap the protagonist lives here too, as data rather than as a check
-/// somewhere in the layout engine: where a preset holds a flow pane, the flow
-/// pane is *last*, so context charts default to the left of it.
-pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
-    LayoutPreset {
-        id: "flow",
-        label: "Flow",
-        kinds: &[PaneKind::Flow],
-    },
-    LayoutPreset {
-        id: "time",
-        label: "Timeframe",
-        kinds: &[PaneKind::Time],
-    },
-    LayoutPreset {
-        id: "time+flow",
-        label: "Timeframe + Flow",
-        kinds: &[PaneKind::Time, PaneKind::Flow],
-    },
-    LayoutPreset {
-        id: "time+time+flow",
-        label: "2 Timeframes + Flow",
-        kinds: &[PaneKind::Time, PaneKind::Time, PaneKind::Flow],
-    },
-];
-
-/// The preset `id` names, if the registry has one.
-#[must_use]
-pub fn preset(id: &str) -> Option<&'static LayoutPreset> {
-    LAYOUT_PRESETS.iter().find(|preset| preset.id == id.trim())
-}
-
-/// Most panes one tab's canvas may hold at once.
-///
-/// A cap rather than a policy: every pane is a second `ChartState` cut from
-/// the one tape, so the per-trade cost is linear in this number. Four is what
-/// the shipped presets need with one spare; raising it is a deliberate act
-/// that should come with the measurement that justifies it.
-pub const MAX_CANVAS_PANES: usize = 4;
+pub use crate::canvas::{
+    LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, preset,
+};
 
 /// Most context panes one tab may stack beside the flow pane.
 ///
@@ -461,12 +378,8 @@ mod kind_tests {
     /// adding it would have stopped the build.
     #[test]
     fn a_pane_kind_the_engine_has_never_heard_of_lays_out_anyway() {
-        let preset = LayoutPreset {
-            id: "fake+fake+flow",
-            label: "Fake",
-            kinds: &[PaneKind::Fake, PaneKind::Fake, PaneKind::Flow],
-        };
-        let widths = vec![PaneWidth::Auto; preset.kinds.len()];
+        let kinds = [PaneKind::Fake, PaneKind::Fake, PaneKind::Flow];
+        let widths = vec![PaneWidth::Auto; kinds.len()];
         let mut shares = vec![0.0_f32; widths.len()];
         resolve_shares(&widths, 1000.0, &mut shares);
         let spent: f32 = shares.iter().sum();
