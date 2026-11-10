@@ -16,16 +16,15 @@ pub(crate) fn pane_side_dto(side: PaneSide) -> PaneSideDto {
     }
 }
 
-impl From<CanvasLayout> for CanvasLayoutDto {
-    fn from(layout: CanvasLayout) -> Self {
-        match layout {
-            CanvasLayout::Single => Self::Flow,
-            CanvasLayout::Time => Self::Time,
-            CanvasLayout::TimeAndFlow => Self::TimeAndFlow,
-            CanvasLayout::TimeTimeAndFlow => Self::TimeTimeAndFlow,
-            CanvasLayout::Preset(preset) => {
-                CanvasLayout::from(crate::config::DeclaredLayout::nearest(preset)).into()
-            }
+/// The wire's word for `layout`: a registry entry reads as its nearest word.
+pub(crate) fn layout_dto(layout: CanvasLayout) -> CanvasLayoutDto {
+    match layout {
+        CanvasLayout::Single => CanvasLayoutDto::Flow,
+        CanvasLayout::Time => CanvasLayoutDto::Time,
+        CanvasLayout::TimeAndFlow => CanvasLayoutDto::TimeAndFlow,
+        CanvasLayout::TimeTimeAndFlow => CanvasLayoutDto::TimeTimeAndFlow,
+        CanvasLayout::Preset(preset) => {
+            layout_dto(crate::config::DeclaredLayout::nearest(preset).into())
         }
     }
 }

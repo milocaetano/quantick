@@ -12,6 +12,8 @@ use super::tree::{CanvasRect, PaneSlot, PaneTree};
 /// One docked pane of the tree, ready to paint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TreeBand {
+    /// The pane this band draws.
+    pub slot: PaneSlot,
     /// The built time chart this slot shows; `None` for the flow pane.
     pub seat: Option<usize>,
     /// Where it draws: its tree rectangle less half a divider on each seam.
@@ -34,11 +36,55 @@ pub fn tree_bands(
     area: CanvasRect,
     divider: f32,
 ) -> Vec<TreeBand> {
+    let panes = seated(state, seats);
+    let seat = |slot| seat_of(&panes, seats, slot);
+    (state.rects(area).into_iter())
+        .filter_map(|(slot, rect)| {
+            Some(TreeBand {
+                slot,
+                seat: seat(slot)?,
+                rect: inset_seams(rect, area, divider),
+                minimized: state.mode(slot) == Some(PaneMode::Minimized),
+            })
+        })
+        .collect()
+}
+
+/// The built chart `slot` shows: `Some(None)` for the flow pane, `None` for
+/// a slot the window has no pane for.
+///
+/// Slots map to the window's charts by kind: the flow slot is the flow pane,
+/// and each time slot keeps the chart `seats` gave it, so removing one chart
+/// never moves another onto a different one.
+pub fn slot_seat(
+    state: &CanvasState,
+    seats: &mut Vec<(PaneSlot, usize)>,
+    slot: PaneSlot,
+) -> Option<Option<usize>> {
+    seat_of(&seated(state, seats), seats, slot)
+}
+
+/// The slot that shows built chart `seat` (`None` for the flow pane): the
+/// inverse of [`slot_seat`].
+pub fn seat_slot(
+    state: &CanvasState,
+    seats: &mut Vec<(PaneSlot, usize)>,
+    seat: Option<usize>,
+) -> Option<PaneSlot> {
+    let panes = seated(state, seats);
+    let mut slots = panes.iter().map(|(slot, ..)| *slot);
+    slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
+}
+
+/// `state`'s panes, with `seats` brought up to date: gone slots dropped,
+/// new time slots seated on the lowest free chart.
+fn seated(
+    state: &CanvasState,
+    seats: &mut Vec<(PaneSlot, usize)>,
+) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
     let panes = state.panes();
     let time = |slot: PaneSlot| {
-        panes
-            .iter()
-            .any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
+        (panes.iter()).any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
     };
     seats.retain(|(slot, _)| time(*slot));
     for (slot, kind, _) in &panes {
@@ -47,23 +93,19 @@ pub fn tree_bands(
             seats.push((*slot, free.unwrap_or_default()));
         }
     }
-    let flow = panes
-        .iter()
-        .find(|(_, kind, _)| *kind != PaneKind::Time)
-        .map(|(slot, ..)| *slot);
-    let seat = |slot: PaneSlot| match seats.iter().find(|(held, _)| *held == slot) {
+    panes
+}
+
+fn seat_of(
+    panes: &[(PaneSlot, PaneKind, PaneMode)],
+    seats: &[(PaneSlot, usize)],
+    slot: PaneSlot,
+) -> Option<Option<usize>> {
+    let flow = panes.iter().find(|(_, kind, _)| *kind != PaneKind::Time);
+    match seats.iter().find(|(held, _)| *held == slot) {
         Some((_, seat)) => Some(Some(*seat)),
-        None => (flow == Some(slot)).then_some(None),
-    };
-    (state.rects(area).into_iter())
-        .filter_map(|(slot, rect)| {
-            Some(TreeBand {
-                seat: seat(slot)?,
-                rect: inset_seams(rect, area, divider),
-                minimized: state.mode(slot) == Some(PaneMode::Minimized),
-            })
-        })
-        .collect()
+        None => (flow.map(|(held, ..)| *held) == Some(slot)).then_some(None),
+    }
 }
 
 /// `rect` less half a `divider` on every edge inside `area`.

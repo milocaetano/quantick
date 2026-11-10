@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 /// change adds now take theirs in [`layout`].
 #[cfg(test)]
 use crate::canvas_layout::PaneIdAllocator;
-use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
+use crate::canvas_layout::{MAX_CANVAS_PANES, MAX_CONTEXT_PANES};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
@@ -62,105 +62,7 @@ const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
 /// short enough that it is a mark on the rail rather than the rail itself.
 const RAIL_GRIP_HEIGHT_PX: f32 = 24.0;
 
-/// How many charts a tab's canvas shows for its market (§11), and which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CanvasLayout {
-    /// The flow pane alone — quantick's default and its identity.
-    #[default]
-    Single,
-    /// The time pane alone: a full-window timeframe chart, header included,
-    /// with no split. The flow pane keeps being fed off screen, exactly as
-    /// the time pane does while Single is showing.
-    Time,
-    /// Time pane left, flow pane right, on a draggable divider.
-    TimeAndFlow,
-    /// Two time panes stacked in the left column, flow pane right: the
-    /// registry's "2 stacked + Flow".
-    TimeTimeAndFlow,
-    /// Any other registry entry, drawn from its pane tree.
-    Preset(&'static LayoutPreset),
-}
-
-impl CanvasLayout {
-    /// The registry entry this layout is a name for.
-    ///
-    /// The one place a variant is turned into panes. Everything that wants to
-    /// know what a layout *holds* reads the table through here rather than
-    /// matching on the variant, so an arrangement added to the registry does
-    /// not have to be taught to every caller one at a time.
-    #[must_use]
-    pub fn preset(self) -> &'static LayoutPreset {
-        let id = match self {
-            CanvasLayout::Single => "flow",
-            CanvasLayout::Time => "time",
-            CanvasLayout::TimeAndFlow => "time+flow",
-            CanvasLayout::TimeTimeAndFlow => "stack2+flow",
-            CanvasLayout::Preset(preset) => return preset,
-        };
-        canvas_layout::preset(id).expect("every canvas layout names a registered preset")
-    }
-
-    /// The layout a registry entry names. The inverse of [`Self::preset`]:
-    /// the four arrangements the column painter draws keep their variants,
-    /// every other entry is drawn from its tree.
-    #[must_use]
-    pub fn from_preset(preset: &'static LayoutPreset) -> Self {
-        match preset.id {
-            "flow" => CanvasLayout::Single,
-            "time" => CanvasLayout::Time,
-            "time+flow" => CanvasLayout::TimeAndFlow,
-            "stack2+flow" => CanvasLayout::TimeTimeAndFlow,
-            _ => CanvasLayout::Preset(preset),
-        }
-    }
-
-    /// The panes this layout draws, left to right.
-    #[must_use]
-    pub fn kinds(self) -> &'static [PaneKind] {
-        self.preset().kinds
-    }
-
-    /// Whether this layout draws the time pane at all.
-    #[must_use]
-    pub fn shows_time(self) -> bool {
-        self.kinds().contains(&PaneKind::Time)
-    }
-
-    /// Whether this layout draws the flow pane at all.
-    #[must_use]
-    pub fn shows_flow(self) -> bool {
-        self.kinds().contains(&PaneKind::Flow)
-    }
-}
-
-impl From<crate::config::DeclaredLayout> for CanvasLayout {
-    fn from(declared: crate::config::DeclaredLayout) -> Self {
-        match declared {
-            crate::config::DeclaredLayout::Flow => CanvasLayout::Single,
-            crate::config::DeclaredLayout::Time => CanvasLayout::Time,
-            crate::config::DeclaredLayout::TimeAndFlow => CanvasLayout::TimeAndFlow,
-            crate::config::DeclaredLayout::TimeTimeAndFlow => CanvasLayout::TimeTimeAndFlow,
-        }
-    }
-}
-
-/// The way back, for the saved workspace ([`crate::ui_state`]), which has to
-/// write a layout out in the vocabulary a config reads.
-///
-/// A canvas layout a config should not name would have to answer for itself
-/// here — which is the point of keeping the two enums apart, and the reason
-/// this conversion is total today and may not always be.
-impl From<CanvasLayout> for crate::config::DeclaredLayout {
-    fn from(layout: CanvasLayout) -> Self {
-        match layout {
-            CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
-            CanvasLayout::Time => crate::config::DeclaredLayout::Time,
-            CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
-            CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
-            CanvasLayout::Preset(preset) => crate::config::DeclaredLayout::nearest(preset),
-        }
-    }
-}
+pub use crate::canvas_layout::CanvasLayout;
 
 /// One open market. See the module docs for what does and does not live here.
 /// One frame's answer, for both panes, to "what shared mark of the *other*

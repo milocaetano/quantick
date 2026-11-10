@@ -18,7 +18,7 @@ use quantick_control_schema::canvas::{
 };
 use quantick_workspace::canvas::{
     self, CanvasRect, CanvasRefusal, CanvasState, Corner, Edge, FloatHost, LayoutPreset, PaneKind,
-    PaneMode,
+    PaneMenuItem, PaneMode, RemoveAnswer,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -366,6 +366,77 @@ pub fn act(
         CanvasAct::Return { slot } => state.return_to_canvas(slot, area).map(on(slot)),
     };
     acted.map_err(|refusal| refused(&refusal))
+}
+
+/// What the window does after its canvas drew: the act `picked`, a ⋯ row
+/// or a strip's restore, takes, or, to remove a chart the `saved` workspace
+/// holds, the dialog raised into `removing`; with nothing picked and no
+/// dialog up, Esc restores a maximized chart. A dialog over a chart the
+/// canvas no longer holds, or with no save behind it, is dropped.
+#[must_use]
+pub fn menu_step(
+    picked: Option<(u32, PaneMenuItem)>,
+    escape: bool,
+    removing: &mut Option<u32>,
+    state: &CanvasState,
+    saved: Option<&CanvasState>,
+) -> Option<CanvasAct> {
+    if removing.is_some_and(|slot| !state.holds(slot) || saved.is_none()) {
+        *removing = None;
+    }
+    let Some((slot, item)) = picked else {
+        let maximized = state.maximized().filter(|_| escape && removing.is_none());
+        return maximized.map(|slot| CanvasAct::Restore { slot });
+    };
+    Some(match item {
+        PaneMenuItem::Minimize => CanvasAct::Minimize { slot },
+        PaneMenuItem::Maximize => CanvasAct::Maximize { slot },
+        PaneMenuItem::Restore => CanvasAct::Restore { slot },
+        PaneMenuItem::Remove
+            if saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, slot)) =>
+        {
+            *removing = Some(slot);
+            return None;
+        }
+        PaneMenuItem::Remove => CanvasAct::Remove {
+            slot,
+            confirm: true,
+        },
+    })
+}
+
+/// The capability that does what `item` does.
+#[must_use]
+pub const fn item_capability(item: PaneMenuItem) -> &'static str {
+    match item {
+        PaneMenuItem::Minimize => MINIMIZE_CAPABILITY_ID,
+        PaneMenuItem::Maximize => MAXIMIZE_CAPABILITY_ID,
+        PaneMenuItem::Restore => RESTORE_CAPABILITY_ID,
+        PaneMenuItem::Remove => REMOVE_CAPABILITY_ID,
+    }
+}
+
+/// The capability a dialog answer runs; Cancel runs none.
+#[must_use]
+pub const fn answer_capability(answer: RemoveAnswer) -> Option<&'static str> {
+    match answer {
+        RemoveAnswer::MinimizeInstead => Some(MINIMIZE_CAPABILITY_ID),
+        RemoveAnswer::Cancel => None,
+        RemoveAnswer::Remove => Some(REMOVE_CAPABILITY_ID),
+    }
+}
+
+/// What the remove dialog's `answer` does to `slot`; Cancel does nothing.
+#[must_use]
+pub fn confirmed(answer: RemoveAnswer, slot: u32) -> Option<CanvasAct> {
+    match answer {
+        RemoveAnswer::MinimizeInstead => Some(CanvasAct::Minimize { slot }),
+        RemoveAnswer::Cancel => None,
+        RemoveAnswer::Remove => Some(CanvasAct::Remove {
+            slot,
+            confirm: true,
+        }),
+    }
 }
 
 /// The answer to a canvas act: whether it changed, the slot, and the canvas

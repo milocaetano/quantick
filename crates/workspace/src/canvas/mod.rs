@@ -12,18 +12,27 @@
 //! - [`drop`]: the one rule that decides what a drop does.
 //! - [`widgets`]: what the add button offers.
 //! - [`bands`]: what the window paints a canvas from and compares it by.
+//! - [`menu`]: a chart's ⋯ menu, its folded strip and the remove dialog.
 
 pub mod bands;
 pub mod drop;
+pub mod menu;
 pub mod presets;
 pub mod state;
 pub mod tree;
 pub mod widgets;
 
-pub use bands::{LayoutMarks, Signal, TreeBand, inset_seams, same_layout, signal, tree_bands};
+pub use bands::{
+    LayoutMarks, Signal, TreeBand, inset_seams, same_layout, seat_slot, signal, slot_seat,
+    tree_bands,
+};
 pub use drop::{
     Corner, DOCK_EDGE_BAND_PX, DropTarget, Edge, PARK_CORNER_PX, PARK_MARGIN_PX, drop_target,
     park_rect,
+};
+pub use menu::{
+    PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, menu_hook, pane_menu,
+    remove_prompt, strip_label,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
@@ -39,6 +48,8 @@ pub use widgets::{WIDGETS, WidgetSpec, widget};
 mod bands_tests;
 #[cfg(test)]
 mod drop_tests;
+#[cfg(test)]
+mod menu_tests;
 #[cfg(test)]
 mod state_tests;
 #[cfg(test)]

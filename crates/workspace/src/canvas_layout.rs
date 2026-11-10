@@ -65,6 +65,20 @@ pub use crate::canvas::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, preset,
 };
 
+pub mod column;
+pub mod named;
+pub mod split;
+pub mod stack;
+#[cfg(test)]
+mod stack_tests;
+
+pub use column::{ColumnFrame, column_frame};
+pub use named::CanvasLayout;
+pub use split::{Span, Split, split};
+pub use stack::{
+    ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame,
+};
+
 /// Most context panes one tab may stack beside the flow pane.
 ///
 /// One fewer than [`MAX_CANVAS_PANES`], because the flow pane is always one of

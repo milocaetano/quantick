@@ -219,3 +219,70 @@ fn malformed_canvas_calls_never_reach_the_canvas() {
     assert!(host.acts.is_empty());
     assert_eq!(host.menu_opened, 0);
 }
+
+/// A menu row takes the capability's own act; Remove asks first only for a
+/// chart the save holds; Esc restores a maximized chart while no dialog is
+/// up; the dialog's answers act or do nothing.
+#[test]
+fn menu_rows_and_dialog_answers_take_the_capabilities_acts() {
+    use crate::canvas::{confirmed, menu_step};
+    use quantick_workspace::canvas::{CanvasState, PaneMenuItem, RemoveAnswer, preset};
+    let saved = CanvasState::from_preset(preset("time+flow").unwrap());
+    let mut live = saved.clone();
+    let mut removing = None;
+    let step = |picked, escape, live: &CanvasState, removing: &mut Option<u32>| {
+        menu_step(picked, escape, removing, live, Some(&saved))
+    };
+    let minimize = Some((0, PaneMenuItem::Minimize));
+    let act = step(minimize, false, &live, &mut removing);
+    assert_eq!(act, Some(CanvasAct::Minimize { slot: 0 }));
+    let restore = Some((0, PaneMenuItem::Restore));
+    let act = step(restore, false, &live, &mut removing);
+    assert_eq!(act, Some(CanvasAct::Restore { slot: 0 }));
+    assert_eq!(
+        step(None, true, &live, &mut removing),
+        None,
+        "nothing to restore"
+    );
+    live.maximize(1).unwrap();
+    let act = step(None, true, &live, &mut removing);
+    assert_eq!(act, Some(CanvasAct::Restore { slot: 1 }), "Esc restores");
+
+    let remove = Some((0, PaneMenuItem::Remove));
+    assert_eq!(step(remove, false, &live, &mut removing), None);
+    assert_eq!(removing, Some(0), "a saved chart asks first");
+    assert_eq!(
+        step(None, true, &live, &mut removing),
+        None,
+        "Esc is the dialog's"
+    );
+    let area = quantick_workspace::canvas::CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let added = live
+        .add(quantick_workspace::canvas::PaneKind::Time, area)
+        .unwrap();
+    let quiet = Some(CanvasAct::Remove {
+        slot: added,
+        confirm: true,
+    });
+    let remove_added = Some((added, PaneMenuItem::Remove));
+    assert_eq!(step(remove_added, false, &live, &mut removing), quiet);
+    assert_eq!(
+        menu_step(remove_added, false, &mut None, &live, None),
+        quiet
+    );
+    live.remove(0).unwrap();
+    assert_eq!(step(None, false, &live, &mut removing), None);
+    assert_eq!(removing, None, "a dialog over a gone chart drops");
+    let mut asked = Some(1);
+    assert_eq!(menu_step(None, false, &mut asked, &live, None), None);
+    assert_eq!(asked, None, "a dialog with no save behind it drops");
+
+    let minimized = Some(CanvasAct::Minimize { slot: 0 });
+    assert_eq!(confirmed(RemoveAnswer::MinimizeInstead, 0), minimized);
+    assert_eq!(confirmed(RemoveAnswer::Cancel, 0), None);
+    let removed = Some(CanvasAct::Remove {
+        slot: 0,
+        confirm: true,
+    });
+    assert_eq!(confirmed(RemoveAnswer::Remove, 0), removed);
+}

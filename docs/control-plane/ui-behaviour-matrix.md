@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 116 |
+| Reachable by capability | 120 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **170** |
+| **Total** | **174** |
 
-98 of the 170 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+98 of the 174 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 76 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -95,6 +95,10 @@ The three exclusion classes are closed:
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | the capsule's layout popover, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply`, `canvas.layout.pick` | — |
 | `canvas.window_menu.open` | Open the window menu from the toolbar's list door | the toolbar's list door at its left end | `canvas.window_menu.open` | — |
+| `canvas.pane.minimize` | Fold a chart to a strip at its edge | a chart header's ⋯ menu, Minimize; the remove dialog's Minimize instead | `canvas.pane.minimize` | — |
+| `canvas.pane.maximize` | Fill the canvas with one chart | a chart header's ⋯ menu, Maximize | `canvas.pane.maximize` | — |
+| `canvas.pane.restore` | Bring a folded or maximized chart back to its place | a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas | `canvas.pane.restore` | — |
+| `canvas.pane.remove` | Remove a chart from the canvas, asking first when the save holds it | a chart header's ⋯ menu, Remove chart, then the dialog's Remove | `canvas.pane.remove` | — |
 | `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -246,7 +250,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 72 |
+| `authored` | 76 |
 
 ## Appendix: rows no registry stands behind
 
@@ -282,6 +286,10 @@ declares nothing here is a guard failure.
 | `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
+| `canvas.pane.minimize` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.maximize` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.restore` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.remove` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |

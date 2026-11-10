@@ -49,6 +49,7 @@ pub(crate) mod home;
 pub(crate) mod indicator_picker;
 pub(crate) mod indicator_preview;
 pub(crate) mod market_palette;
+pub(crate) mod remove_chart;
 pub(crate) mod script_editor;
 pub(crate) mod strategy_popup;
 pub(crate) mod toast;
