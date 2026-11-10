@@ -75,6 +75,16 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     if let Some(side) = app.active_tab_mut().take_indicator_picker_request() {
         app.indicator_wiring().open_indicator_picker_on(side);
     }
+    // Esc restores a maximized chart only when nothing else wants the key.
+    let canvas = &app.active_tab().canvas;
+    let escape = canvas.state.maximized().is_some()
+        && canvas.menus.removing.is_none()
+        && !ctx.wants_keyboard_input()
+        && !ctx.memory(|memory| memory.any_popup_open())
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if canvas.menus.picked.is_none() && canvas.menus.removing.is_none() && !escape {
+        return;
+    }
     let saved = saved_recipe(app).map(recipe_state);
     let book = &app.runtime.workspace.book;
     let (name, autosave) = (
@@ -82,7 +92,6 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         book.autosave(),
     );
     let canvas = &mut app.active_tab_mut().canvas;
-    let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
     let (picked, menus) = (canvas.menus.picked.take(), &mut canvas.menus);
     let mut act = canvas::menu_step(
         picked,

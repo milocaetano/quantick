@@ -11,12 +11,18 @@ fn canvas(id: &str) -> CanvasState {
 fn the_menu_offers_restore_size_only_while_the_chart_fills_the_canvas() {
     let mut state = canvas("time+flow");
     let rows = pane_menu(&state, 0);
-    let labels = rows.map(PaneMenuItem::label);
+    let labels: Vec<_> = rows.iter().map(|item| item.label()).collect();
     assert_eq!(labels, ["Minimize", "Maximize", "Remove chart"]);
     state.maximize(0).unwrap();
     assert_eq!(pane_menu(&state, 0)[1], PaneMenuItem::Restore);
     assert_eq!(pane_menu(&state, 0)[1].label(), "Restore size");
     assert_eq!(pane_menu(&state, 1)[1], PaneMenuItem::Maximize);
+    let lone = canvas("flow");
+    assert_eq!(
+        pane_menu(&lone, 0),
+        [PaneMenuItem::Maximize],
+        "the last chart stays"
+    );
     for item in rows.into_iter().chain([PaneMenuItem::Restore]) {
         assert_eq!(PaneMenuItem::parse(item.id()), Some(item));
     }

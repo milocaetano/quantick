@@ -116,7 +116,7 @@ fn hang(
         });
     let pointer = ctx.input(|input| input.pointer.any_click());
     let outside = !shown.response.contains_pointer() && !response.contains_pointer();
-    let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    let escape = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if (pointer && outside) || escape || menus.picked.is_some() {
         menus.open = None;
     }

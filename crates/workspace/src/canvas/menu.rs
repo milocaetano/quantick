@@ -65,16 +65,27 @@ pub fn menu_hook(value: &str) -> Option<(PaneSlot, Option<PaneMenuItem>)> {
     Some((slot.trim().parse().ok()?, row))
 }
 
-/// The rows of `slot`'s menu, top to bottom; a separator stands before the
-/// last. A maximized chart offers "Restore size" where Maximize stood.
+/// The rows of `slot`'s menu, top to bottom; a separator stands before
+/// Remove. A maximized chart offers "Restore size" where Maximize stood, and
+/// a row the canvas would refuse (folding or removing its last open chart)
+/// is left out rather than offered and refused.
 #[must_use]
-pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> [PaneMenuItem; 3] {
+pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
     let second = if state.maximized() == Some(slot) {
         PaneMenuItem::Restore
     } else {
         PaneMenuItem::Maximize
     };
-    [PaneMenuItem::Minimize, second, PaneMenuItem::Remove]
+    let minimize = state.clone().minimize(slot).is_ok();
+    let remove = state.clone().remove(slot).is_ok();
+    let rows = [
+        (PaneMenuItem::Minimize, minimize),
+        (second, true),
+        (PaneMenuItem::Remove, remove),
+    ];
+    rows.into_iter()
+        .filter_map(|(item, offered)| offered.then_some(item))
+        .collect()
 }
 
 /// The name a folded chart's strip writes along itself: its kind, its bars

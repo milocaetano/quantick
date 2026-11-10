@@ -273,6 +273,9 @@ fn menu_rows_and_dialog_answers_take_the_capabilities_acts() {
     live.remove(0).unwrap();
     assert_eq!(step(None, false, &live, &mut removing), None);
     assert_eq!(removing, None, "a dialog over a gone chart drops");
+    let mut asked = Some(1);
+    assert_eq!(menu_step(None, false, &mut asked, &live, None), None);
+    assert_eq!(asked, None, "a dialog with no save behind it drops");
 
     let minimized = Some(CanvasAct::Minimize { slot: 0 });
     assert_eq!(confirmed(RemoveAnswer::MinimizeInstead, 0), minimized);

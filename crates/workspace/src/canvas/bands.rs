@@ -36,7 +36,8 @@ pub fn tree_bands(
     area: CanvasRect,
     divider: f32,
 ) -> Vec<TreeBand> {
-    let mut seat = |slot| slot_seat(state, seats, slot);
+    let panes = seated(state, seats);
+    let seat = |slot| seat_of(&panes, seats, slot);
     (state.rects(area).into_iter())
         .filter_map(|(slot, rect)| {
             Some(TreeBand {
@@ -60,24 +61,7 @@ pub fn slot_seat(
     seats: &mut Vec<(PaneSlot, usize)>,
     slot: PaneSlot,
 ) -> Option<Option<usize>> {
-    let panes = state.panes();
-    let time = |slot: PaneSlot| {
-        panes
-            .iter()
-            .any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
-    };
-    seats.retain(|(slot, _)| time(*slot));
-    for (slot, kind, _) in &panes {
-        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
-            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
-            seats.push((*slot, free.unwrap_or_default()));
-        }
-    }
-    let flow = panes.iter().find(|(_, kind, _)| *kind != PaneKind::Time);
-    match seats.iter().find(|(held, _)| *held == slot) {
-        Some((_, seat)) => Some(Some(*seat)),
-        None => (flow.map(|(held, ..)| *held) == Some(slot)).then_some(None),
-    }
+    seat_of(&seated(state, seats), seats, slot)
 }
 
 /// The slot that shows built chart `seat` (`None` for the flow pane): the
@@ -87,9 +71,41 @@ pub fn seat_slot(
     seats: &mut Vec<(PaneSlot, usize)>,
     seat: Option<usize>,
 ) -> Option<PaneSlot> {
-    (state.panes().into_iter())
-        .map(|(slot, ..)| slot)
-        .find(|slot| slot_seat(state, seats, *slot) == Some(seat))
+    let panes = seated(state, seats);
+    let mut slots = panes.iter().map(|(slot, ..)| *slot);
+    slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
+}
+
+/// `state`'s panes, with `seats` brought up to date: gone slots dropped,
+/// new time slots seated on the lowest free chart.
+fn seated(
+    state: &CanvasState,
+    seats: &mut Vec<(PaneSlot, usize)>,
+) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
+    let panes = state.panes();
+    let time = |slot: PaneSlot| {
+        (panes.iter()).any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
+    };
+    seats.retain(|(slot, _)| time(*slot));
+    for (slot, kind, _) in &panes {
+        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
+            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
+            seats.push((*slot, free.unwrap_or_default()));
+        }
+    }
+    panes
+}
+
+fn seat_of(
+    panes: &[(PaneSlot, PaneKind, PaneMode)],
+    seats: &[(PaneSlot, usize)],
+    slot: PaneSlot,
+) -> Option<Option<usize>> {
+    let flow = panes.iter().find(|(_, kind, _)| *kind != PaneKind::Time);
+    match seats.iter().find(|(held, _)| *held == slot) {
+        Some((_, seat)) => Some(Some(*seat)),
+        None => (flow.map(|(held, ..)| *held) == Some(slot)).then_some(None),
+    }
 }
 
 /// `rect` less half a `divider` on every edge inside `area`.

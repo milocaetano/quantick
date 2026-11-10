@@ -13,11 +13,23 @@ use crate::canvas_layout::{self, PaneKind, RowAreas};
 use crate::pane::{ChartPane, PaneSide};
 
 /// The stack's frame for a column drawn at `column` holding `panes`.
-pub(super) fn stack_frame(column: egui::Rect, panes: &[ChartPane]) -> StackFrame {
-    StackFrame {
-        column: CanvasRect::new(column.left(), column.top(), column.width(), column.height()),
-        pane_ids: panes.iter().map(|pane| pane.id).collect(),
-    }
+/// Record the stack as drawn at `column` holding `panes`, reusing the
+/// frame's storage; `None` when the column is not drawn.
+pub(super) fn show_stack(
+    stack: &mut ContextStack,
+    column: Option<egui::Rect>,
+    panes: &[ChartPane],
+) {
+    let Some(at) = column else {
+        stack.frame = None;
+        return;
+    };
+    let column = CanvasRect::new(at.left(), at.top(), at.width(), at.height());
+    let pane_ids = Vec::new();
+    let frame = stack.frame.get_or_insert(StackFrame { column, pane_ids });
+    frame.column = column;
+    frame.pane_ids.clear();
+    frame.pane_ids.extend(panes.iter().map(|pane| pane.id));
 }
 
 impl TabCanvas {

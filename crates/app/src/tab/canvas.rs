@@ -256,8 +256,7 @@ impl Tab {
         #[cfg(test)]
         self.context_dividers.clear();
         let shown = &self.time_panes[..context_shown.min(self.time_panes.len())];
-        self.canvas.context_stack.frame =
-            (frame.time_area).map(|column| super::context_resize::stack_frame(column, shown));
+        super::context_resize::show_stack(&mut self.canvas.context_stack, frame.time_area, shown);
         if let Some(column) = frame.time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to

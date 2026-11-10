@@ -141,18 +141,25 @@ impl Tab {
 
     /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".
     fn strip_name(&self, side: PaneSide) -> String {
-        let (kind, bars) = match side {
+        let (kind, identity, pane) = match side {
             PaneSide::Time(seat) => (
                 PaneKind::Time,
-                self.time_panes
-                    .get(seat)
-                    .map(|pane| pane.spec.spec().parameter_summary()),
+                PaneIdentity::Time,
+                self.time_panes.get(seat),
             ),
             PaneSide::Flow => (
                 PaneKind::Flow,
-                Some(PaneHeader::of(PaneIdentity::OrderFlow, self.flow_pane.spec.spec()).bars_text),
+                PaneIdentity::OrderFlow,
+                Some(&self.flow_pane),
             ),
         };
+        let spec = pane.map(|pane| pane.spec.spec());
+        // The header's own words; a header whose presets name the interval
+        // writes it out here, where no preset stands beside it.
+        let bars = spec.map(|spec| match PaneHeader::of(identity, spec) {
+            header if header.presets => spec.parameter_summary(),
+            header => header.bars_text,
+        });
         strip_label(kind, &bars.unwrap_or_default(), &self.symbol)
     }
 }

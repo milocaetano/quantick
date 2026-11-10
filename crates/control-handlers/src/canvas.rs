@@ -372,7 +372,7 @@ pub fn act(
 /// or a strip's restore, takes, or, to remove a chart the `saved` workspace
 /// holds, the dialog raised into `removing`; with nothing picked and no
 /// dialog up, Esc restores a maximized chart. A dialog over a chart the
-/// canvas no longer holds is dropped.
+/// canvas no longer holds, or with no save behind it, is dropped.
 #[must_use]
 pub fn menu_step(
     picked: Option<(u32, PaneMenuItem)>,
@@ -381,7 +381,7 @@ pub fn menu_step(
     state: &CanvasState,
     saved: Option<&CanvasState>,
 ) -> Option<CanvasAct> {
-    if removing.is_some_and(|slot| !state.holds(slot)) {
+    if removing.is_some_and(|slot| !state.holds(slot) || saved.is_none()) {
         *removing = None;
     }
     let Some((slot, item)) = picked else {
