@@ -8,7 +8,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::pnl::PnlReader;
-use quantick_paper::report::ledger_rows::LedgerPage;
+pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
+use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting};
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
 };
@@ -18,7 +19,7 @@ use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, liv
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
-    draw_more_row, draw_open_row, push_groups,
+    draw_more_row, draw_open_row, framed,
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
@@ -29,6 +30,7 @@ use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, financial_text, list_symbol_folders, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl ReportState {
     // ------------------------------------------------------------------
@@ -141,7 +143,7 @@ impl ReportState {
             .draw_filter_row(ui, self.history_cache.as_ref(), tz);
         self.sessions
             .state
-            .ensure_cut(self.history_cache.as_ref(), tz);
+            .ensure_cut(self.history_cache.as_ref(), env.live_closes(), tz);
         ui.horizontal(|ui| {
             ui.label(caption(&palette, "TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -154,8 +156,7 @@ impl ReportState {
         // history must never hide the trade you are in.
         if let Some(open) = &env.open {
             ui.label(caption(&palette, "OPEN"));
-            let symbol = (!env.symbol.is_empty()).then_some(env.symbol);
-            draw_open_row(ui, open, symbol);
+            draw_open_row(ui, open, env.pnl.of(env.symbol), env.symbol);
         }
 
         let saved_len = self
@@ -252,10 +253,6 @@ impl ReportState {
         let rows_listed = live.len() + saved.len();
         let list_height = (ui.available_height() - palette.layout(TOTALS_STRIP_PX) * 3.0)
             .max(palette.layout(LEDGER_ROW_HEIGHT_PX));
-        // Session rows carry the chart's own instrument; a ledger row that
-        // does not name its market is unreadable the moment a second tab
-        // exists.
-        let own_symbol = (!env.symbol.is_empty()).then_some(env.symbol);
         if rows.is_empty() {
             ui.label(
                 egui::RichText::new("Nothing matches the filter.")
@@ -270,7 +267,7 @@ impl ReportState {
             rows: &rows,
             selected: self.selected_trade,
             selected_saved: self.sessions.state.selected_saved.as_ref(),
-            own_symbol,
+            chart: env.symbol,
             tz,
             deletes: delete_key.is_some(),
             edit: &mut self.sessions.state.edit,
@@ -501,7 +498,9 @@ struct RowList<'a, 'r> {
     rows: &'a [LedgerRow<'r>],
     selected: Option<usize>,
     selected_saved: Option<&'a (SessionKey, TradeRef)>,
-    own_symbol: Option<&'a str>,
+    /// The chart's instrument: this session's rows are on it, and a row
+    /// names its own only where it is another.
+    chart: &'a str,
     tz: TzOffset,
     /// Del over the list would start a delete, so the list takes the key.
     deletes: bool,
@@ -538,6 +537,7 @@ struct RowPresses {
 impl RowList<'_, '_> {
     fn show(mut self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
         let mut presses = RowPresses::default();
+        let nests = nesting(self.rows);
         let output = egui::ScrollArea::vertical()
             .id_salt("paper_trades_ledger")
             .auto_shrink([false, false])
@@ -554,6 +554,9 @@ impl RowList<'_, '_> {
                         ui.spacing().item_spacing
                     ),
                 ));
+                // Rows meet edge to edge, so a card's border runs unbroken;
+                // [`Self::row`] spaces the rows outside the cards.
+                ui.spacing_mut().item_spacing.y = 0.0;
                 let cache_id = ui.id().with("measured_ledger_rows");
                 let cached =
                     ui.data(|data| data.get_temp::<(egui::Id, std::sync::Arc<Vec<f32>>)>(cache_id));
@@ -573,8 +576,8 @@ impl RowList<'_, '_> {
                         top + offsets[start]..=top + offsets[end],
                     );
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-                        for index in start..end {
-                            ui.push_id(index, |ui| self.row(ui, index, &mut presses));
+                        for (index, nest) in nests.iter().enumerate().take(end).skip(start) {
+                            ui.push_id(index, |ui| self.row(ui, index, *nest, &mut presses));
                         }
                     });
                 } else {
@@ -585,8 +588,10 @@ impl RowList<'_, '_> {
                             let top = ui.cursor().top();
                             let mut offsets = Vec::with_capacity(self.rows.len() + 1);
                             offsets.push(0.0);
-                            for index in 0..self.rows.len() {
-                                ui.push_id(index, |ui| self.row(ui, index, &mut presses));
+                            for (index, nest) in nests.iter().enumerate() {
+                                ui.push_id(index, |ui| {
+                                    self.row(ui, index, *nest, &mut presses);
+                                });
                                 offsets.push(ui.cursor().top() - top);
                             }
                             offsets
@@ -618,9 +623,21 @@ impl RowList<'_, '_> {
         presses
     }
 
-    fn row(&mut self, ui: &mut egui::Ui, index: usize, presses: &mut RowPresses) {
+    /// One row inside the day card and session box `nest` places it in;
+    /// a spaced one takes a card's gap under the last card, else the style's.
+    fn row(&mut self, ui: &mut egui::Ui, index: usize, nest: RowNest, presses: &mut RowPresses) {
         #[cfg(test)]
         layout_cache_tests::record(ui);
+        framed(ui, &ledger_frame(nest.day, nest.session), |ui| {
+            self.row_body(ui, index, presses)
+        });
+        let gap = ui.ctx().style().spacing.item_spacing.y;
+        if nest.spaced {
+            ui.add_space(if nest.day.is_some() { CARD_GAP_PX } else { gap });
+        }
+    }
+
+    fn row_body(&mut self, ui: &mut egui::Ui, index: usize, presses: &mut RowPresses) {
         let rows = self.rows;
         match &rows[index] {
             LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
@@ -648,7 +665,7 @@ impl RowList<'_, '_> {
                     ui,
                     trade,
                     *meta,
-                    self.own_symbol,
+                    (self.chart, self.chart),
                     is_selected,
                     true,
                     self.tz,
@@ -666,8 +683,9 @@ impl RowList<'_, '_> {
             LedgerRow::Earlier(symbol, trade, meta) => {
                 let pick = meta.session.map(|key| (key.clone(), meta.trade_ref));
                 let is_selected = pick.is_some() && pick.as_ref() == self.selected_saved;
+                let on_chart = (*symbol, self.chart);
                 let response =
-                    draw_ledger_row(ui, trade, *meta, Some(symbol), is_selected, false, self.tz);
+                    draw_ledger_row(ui, trade, *meta, on_chart, is_selected, false, self.tz);
                 if response.clicked {
                     presses.select_saved = Some(if is_selected { None } else { pick.clone() });
                 }
@@ -744,34 +762,6 @@ fn saved_items<'a>(
         .unwrap_or_default()
 }
 
-/// The list's rows, newest first, and whether an inline edit row was placed.
-fn ledger_rows<'a>(
-    live: &'a [Item<'a>],
-    hidden_live: usize,
-    saved: &'a [Item<'a>],
-    kept: usize,
-    remaining: usize,
-    view: &GroupView<'_>,
-) -> (Vec<LedgerRow<'a>>, bool) {
-    let mut rows = Vec::new();
-    let mut inline_placed = false;
-    if !live.is_empty() || hidden_live > 0 {
-        rows.push(LedgerRow::Header("THIS SESSION", live.len()));
-        if hidden_live > 0 {
-            rows.push(LedgerRow::HiddenLive(hidden_live));
-        }
-        push_groups(&mut rows, live, view, &mut inline_placed);
-    }
-    if !saved.is_empty() {
-        rows.push(LedgerRow::Header("EARLIER SESSIONS", kept));
-        push_groups(&mut rows, saved, view, &mut inline_placed);
-    }
-    if remaining > 0 {
-        rows.push(LedgerRow::More(remaining));
-    }
-    (rows, inline_placed)
-}
-
 /// The strip under the list: trades and win rate over everything in scope,
 /// and the net points.
 pub(super) fn draw_totals_strip(
@@ -801,41 +791,6 @@ pub(super) fn draw_totals_strip(
         palette.mono_font(12.0),
         points_color(&palette, net.1),
     ));
-}
-
-/// Which saved history the ledger lists. Three cases, not two: following
-/// the chart is what the panel opens on, but a trader reviewing yesterday
-/// wants to name an instrument without retuning the chart to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum LedgerScope {
-    /// Whatever the chart is showing — the panel's default, and the only
-    /// one that moves when the chart does.
-    Chart,
-    /// One named instrument, whatever the chart shows.
-    Symbol(String),
-    /// Every instrument in the folder, mixed into one timeline.
-    All,
-}
-
-impl LedgerScope {
-    /// The symbol folder to read, or `None` for the whole folder.
-    pub(super) fn folder<'a>(&'a self, chart: &'a str) -> Option<&'a str> {
-        match self {
-            Self::Chart => Some(chart),
-            Self::Symbol(symbol) => Some(symbol.as_str()),
-            Self::All => None,
-        }
-    }
-
-    /// What the picker shows for this scope.
-    pub(super) fn label(&self, chart: &str) -> String {
-        match self {
-            Self::Chart if chart.is_empty() => "This chart".to_owned(),
-            Self::Chart => format!("This chart · {chart}"),
-            Self::Symbol(symbol) => symbol.clone(),
-            Self::All => "All symbols".to_owned(),
-        }
-    }
 }
 
 /// What the Trades ledger asked of its host.
@@ -925,7 +880,7 @@ mod layout_cache_tests {
                             rows: &rows,
                             selected: None,
                             selected_saved: None,
-                            own_symbol: None,
+                            chart: "",
                             tz: TzOffset::new(0),
                             deletes: false,
                             edit: &mut None,

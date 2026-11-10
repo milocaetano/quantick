@@ -1,5 +1,5 @@
 //! The paper-trading surfaces' colour decisions: the chart's order plates,
-//! the ledger's three row kinds and the report's equity paint, so every
+//! the ledger's nested cards and the report's equity paint, so every
 //! painter of them reads the same answer and a test grades it headless.
 //!
 //! Light writes its chart levels on one near-black plate and lets only the
@@ -73,119 +73,278 @@ pub const fn close_glyph_alpha(hovered: bool) -> u8 {
     if hovered { 255 } else { 150 }
 }
 
-/// One of the trade ledger's row kinds.
+/// One of the trade ledger's row kinds. Each day is a card, each session a
+/// box inside its card, each trade a row inside its box: the borders say
+/// what holds what, in both themes, and only the tokens' values differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// A civil day's band; a folded one dims its words.
-    Day { folded: bool },
-    /// A Live or Replay session inside its day.
+    /// A civil day's header, the top of its card.
+    Day,
+    /// A Live or Replay session's header, the top of its box.
     Session,
     /// A closed or open trade.
     Trade { long: bool },
 }
 
-/// How a ledger row is painted: three kinds, three drawings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How a ledger row is painted.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RowLook {
-    /// The band behind the row; `None` leaves the panel showing.
+    /// The row's own plate; `None` leaves its card or box showing.
     pub fill: Option<Token>,
     /// The rule down the row's left edge.
     pub edge: Option<Token>,
+    /// The leading words: the date, the session, the side and size.
     pub ink: Token,
-    /// Gain and loss inks of a row that writes its own; `None` takes the
-    /// panel's signed-amount inks.
-    pub pnl: Option<[Token; 2]>,
+    /// The words behind them: prices, the detail line, counts.
+    pub detail: Token,
+    /// Gain and loss inks of the row's signed amounts.
+    pub pnl: [Token; 2],
     /// The fill a hovered or focused row takes instead of its own.
     pub hover_fill: Option<Token>,
-    /// The outline a hovered or focused row adds.
-    pub hover_edge: Option<Token>,
+    /// The fill a selected row takes.
+    pub selected_fill: Option<Token>,
     /// The ink a row's marks (the source glyph) take instead of their own.
     pub mark: Option<Token>,
+    /// The corner radius of the row's plate or hover fill.
+    pub radius: f32,
 }
 
-/// The width of a day band's left rule, in logical pixels.
-pub const DAY_EDGE_PX: f32 = 3.0;
+/// Corner radius of a day card, in logical pixels.
+pub const CARD_RADIUS_PX: f32 = 6.0;
+/// Corner radius of a session box.
+pub const SESSION_RADIUS_PX: f32 = 5.0;
+/// Corner radius of a trade row's plate.
+pub const TRADE_RADIUS_PX: f32 = 3.0;
+/// Width of a trade row's side rule.
+pub const TRADE_EDGE_PX: f32 = 3.0;
+/// The space under each trade row's plate.
+pub const TRADE_GAP_PX: f32 = 3.0;
+/// The space above each day card.
+pub const CARD_GAP_PX: f32 = 8.0;
+/// How far a session box (or a trade no session holds) stands in from its
+/// card's sides, and the space under the box inside the card.
+pub const SESSION_INSET_PX: f32 = 8.0;
+/// The box's own padding under its last row.
+pub const SESSION_PAD_PX: f32 = 4.0;
+/// How far a trade row stands in from its session box's sides.
+pub const TRADE_INSET_PX: f32 = 5.0;
+/// The fold caret's size: larger than the words it leads.
+pub const CARET_PX: f32 = 14.0;
+/// The size of a row's leading line, and of its detail line.
+pub const TITLE_PX: f32 = 11.0;
+pub const DETAIL_PX: f32 = 10.0;
+/// The space between a trade's two lines.
+pub const LINE_GAP_PX: f32 = 2.0;
+/// The space between a line's left words and its right-hand figure.
+pub const SIDE_GAP_PX: f32 = 8.0;
+/// A day header's words inside its card.
+pub const DAY_PAD: Margin = Margin {
+    left: 10.0,
+    right: 10.0,
+    top: 9.0,
+    bottom: 9.0,
+};
+/// A session header's words inside its box.
+pub const SESSION_HEAD_PAD: Margin = Margin {
+    left: 9.0,
+    right: 9.0,
+    top: 7.0,
+    bottom: 5.0,
+};
+/// A trade's words inside its plate, the left counted from its side rule.
+pub const TRADE_PAD: Margin = Margin {
+    left: 9.0,
+    right: 10.0,
+    top: 6.0,
+    bottom: 6.0,
+};
 
-/// The look of one ledger row kind in a theme of the given mode.
+/// The look of one ledger row kind. Light and Dark share the structure; a
+/// loss is Dark's soft sell ink and Light's own loss ink, and Light marks a
+/// replay in its violet replay ink, never Dark's amber.
 #[must_use]
 pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
-    let hover = Token::HoverFill;
+    let base = RowLook {
+        fill: None,
+        edge: None,
+        ink: Token::TextPrimary,
+        detail: Token::TextMuted,
+        pnl: [
+            Token::BuyInk,
+            if dark { Token::SellInk } else { Token::LossInk },
+        ],
+        hover_fill: Some(Token::HoverFill),
+        selected_fill: None,
+        mark: None,
+        radius: CARD_RADIUS_PX,
+    };
     match row {
-        RowKind::Day { folded } => RowLook {
-            fill: Some(Token::Control),
-            edge: Some(Token::TextPrimary),
-            ink: if folded {
-                Token::TextMuted
-            } else {
-                Token::TextPrimary
-            },
-            pnl: None,
-            hover_fill: Some(hover),
-            hover_edge: None,
-            mark: None,
-        },
-        RowKind::Session if dark => RowLook {
-            fill: Some(Token::Control),
-            edge: None,
-            ink: Token::TextPrimary,
-            pnl: Some([Token::BuyInk, Token::SellInk]),
-            hover_fill: Some(hover),
-            hover_edge: None,
-            mark: None,
-        },
-        // A plate cannot lift onto a paler fill without losing its inks, so
-        // a hovered one is outlined instead.
+        RowKind::Day => base,
         RowKind::Session => RowLook {
-            fill: Some(Token::ReplayPlate),
-            edge: None,
-            ink: Token::ReplayPlateInk,
-            pnl: Some([Token::PlateGain, Token::PlateLoss]),
-            hover_fill: None,
-            hover_edge: Some(Token::Accent),
-            // Replay's amber play glyph sinks into the near-black plate.
-            mark: Some(Token::ReplayPlateInk),
+            mark: if dark { None } else { Some(Token::ReplayInk) },
+            radius: SESSION_RADIUS_PX,
+            ..base
         },
         RowKind::Trade { long } => RowLook {
-            fill: None,
+            fill: Some(Token::LedgerCard),
             edge: Some(if long { Token::Buy } else { Token::Sell }),
-            ink: Token::TextPrimary,
-            pnl: None,
-            hover_fill: Some(hover),
-            hover_edge: None,
-            mark: None,
+            selected_fill: Some(Token::LedgerSelection),
+            mark: if dark { None } else { Some(Token::ReplayInk) },
+            radius: TRADE_RADIUS_PX,
+            ..base
         },
     }
 }
 
 impl RowLook {
-    /// The band under the row: the hover fill while `lit`, when it has one.
+    /// The plate under the row: the selection, else the hover fill while
+    /// `lit`, else its own.
     #[must_use]
-    pub fn fill_at(&self, lit: bool) -> Option<Token> {
-        self.hover_fill.filter(|_| lit).or(self.fill)
+    pub fn fill_at(&self, lit: bool, selected: bool) -> Option<Token> {
+        self.selected_fill
+            .filter(|_| selected)
+            .or(self.hover_fill.filter(|_| lit))
+            .or(self.fill)
     }
 
-    /// The outline a `lit` row adds.
+    /// The secondary words' ink: a selected row lifts them to its primary
+    /// ink, which keeps 4.5:1 on the selection where the muted ink would not.
     #[must_use]
-    pub fn outline_at(&self, lit: bool) -> Option<Token> {
-        self.hover_edge.filter(|_| lit)
-    }
-
-    /// The corner radius: a ruled row is square, a plate rounded.
-    #[must_use]
-    pub fn rounding(&self) -> f32 {
-        if self.edge.is_some() { 0.0 } else { 3.0 }
-    }
-
-    /// The ink of a signed amount on this row, when the row writes its own.
-    #[must_use]
-    pub const fn pnl_ink(&self, sign: Ordering) -> Option<Token> {
-        match (self.pnl, sign) {
-            (Some([gain, _]), Ordering::Greater) => Some(gain),
-            (Some([_, loss]), Ordering::Less) => Some(loss),
-            (Some(_), Ordering::Equal) => Some(self.ink),
-            (None, _) => None,
+    pub fn detail_at(&self, selected: bool) -> Token {
+        if selected && self.selected_fill.is_some() {
+            self.ink
+        } else {
+            self.detail
         }
     }
+
+    /// The ink of a signed amount on this row.
+    #[must_use]
+    pub const fn pnl_ink(&self, sign: Ordering) -> Token {
+        match sign {
+            Ordering::Greater => self.pnl[0],
+            Ordering::Less => self.pnl[1],
+            Ordering::Equal => self.ink,
+        }
+    }
+}
+
+/// Where a row stands in one container, a day card or a session box, as
+/// `[opens, closes]`: its first row opens the container, its last closes
+/// it. The ledger's nesting (`paper::report::ledger_rows::RowNest`) hands
+/// these over as they are.
+pub type Ends = [bool; 2];
+
+/// Space around a rectangle, in logical pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Margin {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+/// One container's slice behind one row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameLayer {
+    pub fill: Token,
+    pub stroke: Token,
+    pub radius: f32,
+    /// The slice, inset from the row's rectangle.
+    pub inset: Margin,
+    /// Whether this row opens or closes the container: only those ends are
+    /// rounded and stroked across.
+    pub ends: Ends,
+}
+
+impl FrameLayer {
+    /// The slice's top and bottom corner radii: rounded only at the ends
+    /// this row closes.
+    #[must_use]
+    pub fn corners(&self) -> [f32; 2] {
+        self.ends
+            .map(|closes| if closes { self.radius } else { 0.0 })
+    }
+
+    /// How far the container's outline runs past the slice above and below:
+    /// past an end this row leaves open, so a clip to the row keeps only
+    /// its sides there.
+    #[must_use]
+    pub fn reach(&self) -> [f32; 2] {
+        self.ends
+            .map(|closes| if closes { 0.0 } else { self.radius + 1.0 })
+    }
+}
+
+/// What a row paints behind its content, outermost first, and where its
+/// content stands inside its rectangle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowFrame {
+    pub layers: [Option<FrameLayer>; 2],
+    pub content: Margin,
+}
+
+/// The frame of a row inside `day`'s card and, when it has one, `session`'s
+/// box. A row in neither (a caption, the "show older" control) is bare.
+#[must_use]
+pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
+    let mut frame = RowFrame {
+        layers: [None, None],
+        content: Margin::default(),
+    };
+    let Some(day) = day else {
+        return frame;
+    };
+    let [day_opens, day_closes] = day;
+    let top = if day_opens { CARD_GAP_PX } else { 0.0 };
+    frame.layers[0] = Some(FrameLayer {
+        fill: Token::LedgerCard,
+        stroke: Token::LedgerCardEdge,
+        radius: CARD_RADIUS_PX,
+        inset: Margin {
+            top,
+            ..Margin::default()
+        },
+        ends: day,
+    });
+    frame.content.top = top;
+    let side = match session {
+        Some(session) => {
+            let [opens, closes] = session;
+            let below = if closes { SESSION_INSET_PX } else { 0.0 };
+            frame.layers[1] = Some(FrameLayer {
+                fill: Token::LedgerSession,
+                stroke: Token::LedgerSessionEdge,
+                radius: SESSION_RADIUS_PX,
+                inset: Margin {
+                    left: SESSION_INSET_PX,
+                    right: SESSION_INSET_PX,
+                    top,
+                    bottom: below,
+                },
+                ends: session,
+            });
+            frame.content.bottom = if closes { below + SESSION_PAD_PX } else { 0.0 };
+            // The session's header spans its box; its trades stand in.
+            if opens {
+                SESSION_INSET_PX
+            } else {
+                SESSION_INSET_PX + TRADE_INSET_PX
+            }
+        }
+        // The day's header spans its card.
+        None if day_opens => 0.0,
+        // A trade no session holds stands where a box would.
+        None => {
+            if day_closes {
+                frame.content.bottom = SESSION_INSET_PX;
+            }
+            SESSION_INSET_PX
+        }
+    };
+    frame.content.left = side;
+    frame.content.right = side;
+    frame
 }
 
 /// The report's equity area above (`gain`) or below its baseline. Light's

@@ -2,8 +2,7 @@
 /// Fixed ledger row height — two lines plus their padding, held constant so
 /// the trade list can virtualise through `ScrollArea::show_rows`.
 pub const LEDGER_ROW_HEIGHT_PX: f32 = 34.0;
-/// The side rail on ledger rows — the position HUD card's rail width.
-pub const SIDE_RAIL_WIDTH_PX: f32 = 3.0;
+
 /// Height reserved under the ledger for the pinned totals strip.
 pub const TOTALS_STRIP_PX: f32 = 26.0;
 

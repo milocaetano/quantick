@@ -14,12 +14,12 @@ use rust_decimal::Decimal;
 
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
-use super::rows::ledger_detail;
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
 use quantick_paper::pnl::PnlReader;
+use quantick_paper::report::ledger_rows::trade_detail as ledger_detail;
 
 mod ledger_keys_tests;
 mod narrow_ledger_tests;

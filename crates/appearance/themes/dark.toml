@@ -160,6 +160,13 @@ connection_action = "#7C8799"
 loss_ink = "#EF5350"
 bright_gain_ink = "#26A69A"
 bright_loss_ink = "#EF5350"
+# The trade ledger: a day card one step above the chrome, a bluish session
+# box inside it, and the selected trade (docs/layout/trades, option 3).
+ledger_card = "#1E2330"
+ledger_card_edge = "#2E3648"
+ledger_session = "#262E40"
+ledger_session_edge = "#34405A"
+ledger_selection = "#2B3F63"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

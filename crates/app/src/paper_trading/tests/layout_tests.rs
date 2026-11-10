@@ -3,7 +3,9 @@ use super::*;
 use crate::paper_chrome::position_word;
 use eframe::egui;
 
-fn check_shapes(shapes: &[egui::epaint::ClippedShape], width: f32) -> String {
+/// Every text painted, checked: inside `width` and its clip, over no other
+/// text, and - with `one_row` - never wrapped.
+fn check_shapes(shapes: &[egui::epaint::ClippedShape], width: f32, one_row: bool) -> String {
     let mut text = String::new();
     let mut painted: Vec<(&str, egui::Rect)> = Vec::new();
     for clipped in shapes {
@@ -11,6 +13,11 @@ fn check_shapes(shapes: &[egui::epaint::ClippedShape], width: f32) -> String {
             if shape.galley.text().is_empty() {
                 continue;
             }
+            assert!(
+                !one_row || shape.galley.rows.len() == 1,
+                "{} wraps at {width}",
+                shape.galley.text()
+            );
             let bounds = shape.visual_bounding_rect();
             assert!(
                 bounds.right() <= width + 1.0,
@@ -49,7 +56,7 @@ fn check_shapes(shapes: &[egui::epaint::ClippedShape], width: f32) -> String {
 fn paper_values_and_actions_fit_narrow_panels() {
     for light in [false, true] {
         for scale in [1.0, 1.25, 1.5, 2.0] {
-            for width in [320.0, 400.0, 520.0] {
+            for width in [280.0, 320.0, 400.0, 520.0] {
                 for side in [Side::Buy, Side::Sell] {
                     let ctx = egui::Context::default();
                     let mut appearance = quantick_appearance::Appearance::default();
@@ -70,11 +77,25 @@ fn paper_values_and_actions_fit_narrow_panels() {
                     paper.market(side);
                     paper.on_trade(&print(3, 123456799));
                     let open_text = paper.account.open_pnl_text().unwrap();
-                    let closed_text = paper
+                    // A trade row writes its leading figure on line one and
+                    // the one that keeps it honest on line two; the open
+                    // row words its figures the same way.
+                    let (closed_lead, closed_check) = paper
                         .account
                         .symbol_pnl()
-                        .closed(&paper.session_trades()[0]);
+                        .closed_split(&paper.session_trades()[0]);
+                    let summary = paper.account.position_summary().unwrap();
+                    let (open_lead, open_check) = paper
+                        .account
+                        .symbol_pnl()
+                        .row_split(summary.open_points.unwrap(), summary.quantity);
+                    // Logical width: the ledger keeps its figures whole
+                    // down to a 280 px dock; the ticket is checked from 320.
+                    let logical = width / scale;
                     for ledger in [false, true] {
+                        if !ledger && width < 320.0 {
+                            continue;
+                        }
                         let mut words = String::new();
                         for _ in 0..3 {
                             let mut input = egui::RawInput {
@@ -100,22 +121,31 @@ fn paper_values_and_actions_fit_narrow_panels() {
                                         }
                                     });
                             });
-                            words = check_shapes(&output.shapes, width);
+                            words = check_shapes(&output.shapes, width, ledger);
+                        }
+                        if ledger {
+                            // The ledger never wraps: at a width its whole
+                            // figures fit, they stay whole and the words
+                            // give way at their end.
+                            if logical >= 280.0 {
+                                assert!(words.contains(position_word(side)), "{words}");
+                                for half in [&closed_lead, &closed_check, &open_lead, &open_check] {
+                                    assert!(
+                                        words.contains(half.as_str()),
+                                        "complete calculation {half}: {words}"
+                                    );
+                                }
+                            }
+                            continue;
                         }
                         assert!(words.contains(position_word(side)), "{words}");
                         assert!(
                             words.contains(&open_text),
                             "complete open calculation: {words}"
                         );
-                        if ledger {
-                            assert!(
-                                words.contains(&closed_text),
-                                "complete closed calculation: {words}"
-                            );
-                        }
                         assert!(words.contains("123456799"), "entry stays complete: {words}");
                         assert!(!words.contains("1234567…"), "no price elision");
-                        if !ledger {
+                        {
                             for label in [
                                 "SL",
                                 "TP",

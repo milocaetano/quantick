@@ -220,6 +220,17 @@ pub enum Token {
     BrightGainInk,
     /// A light theme's loss on a dark surface. Dark's value mirrors `sell`.
     BrightLossInk,
+    /// The trade ledger's day card, one step off the panel; its trade
+    /// rows wear it too.
+    LedgerCard,
+    /// The day card's one-pixel border.
+    LedgerCardEdge,
+    /// A session's box inside its day card.
+    LedgerSession,
+    /// The session box's one-pixel border.
+    LedgerSessionEdge,
+    /// The selected trade row.
+    LedgerSelection,
     /// The order-flow pane's band, under its mark and keys: its own fill, apart
     /// from `flow_surface`, which also paints the side headers and the axis strip.
     FlowBand,
@@ -233,7 +244,7 @@ pub enum Token {
     FlowGearInk,
 }
 impl Token {
-    pub const ALL: [Self; 130] = [
+    pub const ALL: [Self; 135] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -359,6 +370,11 @@ impl Token {
         Self::LossInk,
         Self::BrightGainInk,
         Self::BrightLossInk,
+        Self::LedgerCard,
+        Self::LedgerCardEdge,
+        Self::LedgerSession,
+        Self::LedgerSessionEdge,
+        Self::LedgerSelection,
         Self::FlowBand,
         Self::FlowKeyLitDot,
         Self::FlowKeyUnlitDot,
@@ -399,6 +415,11 @@ impl Token {
             Self::LossInk => "loss_ink",
             Self::BrightGainInk => "bright_gain_ink",
             Self::BrightLossInk => "bright_loss_ink",
+            Self::LedgerCard => "ledger_card",
+            Self::LedgerCardEdge => "ledger_card_edge",
+            Self::LedgerSession => "ledger_session",
+            Self::LedgerSessionEdge => "ledger_session_edge",
+            Self::LedgerSelection => "ledger_selection",
             Self::FlowBand => "flow_band",
             Self::FlowKeyLitDot => "flow_key_lit_dot",
             Self::FlowKeyUnlitDot => "flow_key_unlit_dot",

@@ -120,6 +120,8 @@ pub struct SessionInfo {
     pub net: Decimal,
     /// When its first trade closed — the moment its file was named after.
     pub first_closed_ms: Option<i64>,
+    /// Its first entry and its last exit: the span its label writes.
+    pub span: Option<(i64, i64)>,
     /// Each tagged trade's tags.
     pub tags: BTreeMap<TradeRef, Vec<String>>,
 }
@@ -139,6 +141,7 @@ impl SessionInfo {
                 net.saturating_add(trade.pnl_points)
             }),
             first_closed_ms: parsed.trades.iter().map(|trade| trade.closed_ms).min(),
+            span: span_of(&parsed.trades),
             tags: parsed.tags.clone(),
         }
     }
@@ -156,26 +159,20 @@ impl SessionInfo {
         Some(Self::of(key.clone(), symbol, &parsed, live))
     }
 
-    /// The trader's name, or the default every unnamed session wears.
+    /// What names this session everywhere - its header in the ledger, the
+    /// search box, the delete confirm and the control plane's listing:
+    /// [`session_title`] of its [`Self::stem`] and its span,
+    /// `Replay · rerun 2 · 12:16–13:56`.
     #[must_use]
     pub fn label(&self, tz: TzOffset) -> String {
-        self.name.clone().unwrap_or_else(|| self.default_label(tz))
+        session_title(&self.stem(), self.span, tz)
     }
 
-    /// `Replay · 13:05 · rerun 2`: where the trades came from, when the
-    /// first one closed in the display timezone, and which run of the same
-    /// tape this file is.
+    /// The label without its clock: the trader's name, or where the trades
+    /// came from and which run of the same tape this file is.
     #[must_use]
-    pub fn default_label(&self, tz: TzOffset) -> String {
-        let mut label = source_word(self.source).to_owned();
-        if let Some(first) = self.first_closed_ms {
-            let (.., hour, minute, _) = civil_utc(first.saturating_add(tz.offset_ms()));
-            label.push_str(&format!(" · {hour:02}:{minute:02}"));
-        }
-        if let Some(rerun) = self.key.rerun() {
-            label.push_str(&format!(" · rerun {rerun}"));
-        }
-        label
+    pub fn stem(&self) -> String {
+        session_stem(self.name.as_deref(), self.source, &self.key)
     }
 
     /// The tags this session's file gives one of its trades.
@@ -194,8 +191,9 @@ pub struct JournaledTrade {
     pub trade: TradeRef,
 }
 
-/// A session's label as the ledger shows it, and lowercased once for the
-/// search box rather than once per row it is matched against.
+/// A session's label as the ledger shows it ([`SessionInfo::label`]), and
+/// lowercased once for the search box rather than once per row it is
+/// matched against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionLabel {
     pub text: String,
@@ -209,6 +207,81 @@ impl SessionLabel {
         let folded = text.to_lowercase();
         Self { text, folded }
     }
+}
+
+/// A session's name without its clock: the trader's `name`, else its
+/// `source`'s word and, for the same tape traded again, `· rerun N`.
+#[must_use]
+pub fn session_stem(name: Option<&str>, source: Option<SessionSource>, key: &SessionKey) -> String {
+    name.map_or_else(
+        || {
+            let rerun = key
+                .rerun()
+                .map_or_else(String::new, |rerun| format!(" · rerun {rerun}"));
+            format!("{}{rerun}", source_word(source))
+        },
+        str::to_owned,
+    )
+}
+
+/// `Live · 12:16–13:56`: a session's `stem`, then its first entry and its
+/// last exit in the display timezone; the stem alone without a span.
+#[must_use]
+pub fn session_title(stem: &str, span: Option<(i64, i64)>, tz: TzOffset) -> String {
+    match span {
+        Some((from, to)) => format!(
+            "{stem} · {}\u{2013}{}",
+            clock_minute(from, tz),
+            clock_minute(to, tz)
+        ),
+        None => stem.to_owned(),
+    }
+}
+
+/// A [`session_title`] split into its stem and its span with the separator
+/// before it (` · 09:04–12:02`), so a narrow header can cut the stem and
+/// keep the clock. A title without a span is all stem.
+#[must_use]
+pub fn title_span(title: &str) -> (&str, &str) {
+    let is_span = |tail: &str| {
+        tail.contains('\u{2013}')
+            && tail
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == ':' || c == '\u{2013}')
+    };
+    match title.rsplit_once(" · ") {
+        Some((stem, tail)) if is_span(tail) => title.split_at(stem.len()),
+        _ => (title, ""),
+    }
+}
+
+/// The first entry and the last exit among `trades`.
+#[must_use]
+pub fn span_of<'t>(trades: impl IntoIterator<Item = &'t ClosedTrade>) -> Option<(i64, i64)> {
+    trades.into_iter().fold(None, widen)
+}
+
+/// `span` stretched to hold `trade`.
+fn widen(span: Option<(i64, i64)>, trade: &ClosedTrade) -> Option<(i64, i64)> {
+    Some(
+        span.map_or((trade.opened_ms, trade.closed_ms), |(from, to)| {
+            (from.min(trade.opened_ms), to.max(trade.closed_ms))
+        }),
+    )
+}
+
+/// `HH:MM` of `timestamp_ms` in the display timezone.
+#[must_use]
+pub fn clock_minute(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (.., hour, minute, _) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{hour:02}:{minute:02}")
+}
+
+/// `HH:MM:SS` of `timestamp_ms` in the display timezone.
+#[must_use]
+pub fn clock_second(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (.., hour, minute, second) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{hour:02}:{minute:02}:{second:02}")
 }
 
 /// The word a session's source reads as.
@@ -335,16 +408,29 @@ impl LedgerMatcher {
     }
 }
 
-/// The label each session of `history` wears in `tz`.
+/// The label each session wears in `tz`: every session of `history`, its
+/// span stretched by the closes in `live` (a file read before its newest
+/// close), and a session only `live` holds yet.
 #[must_use]
-pub fn session_labels(
-    history: &super::LoadedHistory,
+pub fn session_labels<'t>(
+    history: Option<&super::LoadedHistory>,
+    live: impl IntoIterator<Item = (&'t SessionKey, Option<SessionSource>, &'t ClosedTrade)>,
     tz: TzOffset,
 ) -> BTreeMap<SessionKey, SessionLabel> {
-    history
-        .sessions
-        .iter()
-        .map(|(key, info)| (key.clone(), SessionLabel::new(info.label(tz))))
+    let mut parts: BTreeMap<SessionKey, (String, Option<(i64, i64)>)> = history
+        .into_iter()
+        .flat_map(|history| &history.sessions)
+        .map(|(key, info)| (key.clone(), (info.stem(), info.span)))
+        .collect();
+    for (key, source, trade) in live {
+        let (_, span) = parts
+            .entry(key.clone())
+            .or_insert_with(|| (session_stem(None, source, key), None));
+        *span = widen(*span, trade);
+    }
+    parts
+        .into_iter()
+        .map(|(key, (stem, span))| (key, SessionLabel::new(session_title(&stem, span, tz))))
         .collect()
 }
 
@@ -419,7 +505,7 @@ pub fn summarize_sessions<'a>(
     tz: TzOffset,
     live: &BTreeSet<SessionKey>,
 ) -> (Vec<SessionSummary<'a>>, usize) {
-    let labels = session_labels(history, tz);
+    let labels = session_labels(Some(history), std::iter::empty(), tz);
     let matcher = filter.matcher(tz);
     let mut kept: BTreeMap<&SessionKey, (usize, Decimal, i64)> = BTreeMap::new();
     let mut hidden = 0usize;
@@ -491,9 +577,11 @@ pub struct SessionGroup {
     pub key: Option<SessionKey>,
     pub count: usize,
     pub net: Decimal,
-    /// The same net in every figure, and as the session row reads it.
+    /// The same net in every figure.
     pub pnl: PnlTotal,
-    pub net_text: String,
+    /// The leading figure alone, as the session row writes it; the day
+    /// above carries the pair.
+    pub lead: String,
     /// The sign of the row's leading figure, which its colour follows.
     pub tint: Decimal,
     /// Positions in the grouped input, in input order.
@@ -561,7 +649,7 @@ pub fn group_by_day_and_session<'a>(
                     count: 0,
                     net: Decimal::ZERO,
                     pnl: PnlTotal::default(),
-                    net_text: String::new(),
+                    lead: String::new(),
                     tint: Decimal::ZERO,
                     items: Vec::new(),
                     row: SessionRow::Bare,
@@ -578,7 +666,8 @@ pub fn group_by_day_and_session<'a>(
         for day in &mut days {
             (day.net_text, day.tint) = reader.worded(&day.pnl);
             for session in &mut day.sessions {
-                (session.net_text, session.tint) = reader.worded(&session.pnl);
+                session.lead = reader.word_split(&session.pnl).0;
+                session.tint = reader.tint(&session.pnl);
             }
         }
     }
