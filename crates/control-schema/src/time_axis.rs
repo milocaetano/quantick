@@ -47,6 +47,13 @@ pub enum TimeAxisTarget {
 }
 
 impl TimeAxisTarget {
+    /// Whether this target frames the last price at mid-height, which the
+    /// pane's next drawn frame does once it fits the live view.
+    #[must_use]
+    pub fn centres(self) -> bool {
+        matches!(self, Self::LiveCentre | Self::LiveCentreZoomIn)
+    }
+
     /// `Ok` when a reset to this target `applied`, else why it was refused.
     pub fn outcome(self, applied: bool) -> Result<(), &'static str> {
         match (applied, self) {
@@ -55,9 +62,9 @@ impl TimeAxisTarget {
             (false, Self::LiveOverview) => {
                 Err("the live overview needs the candles' axis on a laid-out pane")
             }
-            (false, Self::LiveCentre | Self::LiveCentreZoomIn) => {
-                Err("the live centre moves the candles' axis only")
-            }
+            (false, Self::LiveCentre | Self::LiveCentreZoomIn) => Err(
+                "the live centre moves the candles' axis only, and a tape-only pane shows no candles",
+            ),
         }
     }
 }
@@ -76,7 +83,13 @@ pub enum TimeAxis {
 pub struct TimeAxisResetResult {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
+    /// The pane's view as the call left it. After a live centre the price
+    /// range is still the one before it: see `price_centre_pending`.
     pub viewport: ViewportSnapshot,
+    /// `true` after `live_centre` and `live_centre_zoom_in`: the pane frames
+    /// the last price at mid-height on its next drawn frame, since only that
+    /// frame fits the live view; `snapshot.read` reads the centred range back.
+    pub price_centre_pending: bool,
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
@@ -84,8 +97,8 @@ pub fn descriptor() -> CapabilityDescriptor {
         TIME_AXIS_RESET_CAPABILITY_ID,
         MODULE_ID,
         "Reset a pane's time axis",
-        "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does; that never moves the right edge or the other axis. With `to: live_overview` on the candles it returns them to the live edge at the overview spacing instead. With `to: live_centre` it returns them to the live edge at the spacing they have and, from the next frame, holds a price range centred on the last price that keeps every visible bar — what a double-click on open canvas does; `to: live_centre_zoom_in` also doubles the spacing, up to the widest candle — what a triple-click there does.",
-        "Stable tab and pane IDs select one axis; every target but `live_centre_zoom_in` is idempotent, which zooms again on each call, so retry it under an idempotency key. The result reports the spacing, the live follow and the tape window after it; the centred price range reads back from the next frame.",
+        "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does; that never moves the right edge or the other axis. With `to: live_overview` on the candles it returns them to the live edge at the overview spacing instead. With `to: live_centre` on a pane that shows candles (not tape only) it returns them to the live edge at the spacing they have and, from the next frame, holds a price range centred on the last price that keeps every visible bar — what a double-click on open canvas does; `to: live_centre_zoom_in` also doubles the spacing, up to the widest candle — what a triple-click there does.",
+        "Stable tab and pane IDs select one axis; every target but `live_centre_zoom_in` is idempotent, which zooms again on each call, so retry it under an idempotency key. The result reports the spacing, the live follow and the tape window after it; after a live centre `price_centre_pending` is true and the centred price range reads back from the next frame.",
     )
 }
 

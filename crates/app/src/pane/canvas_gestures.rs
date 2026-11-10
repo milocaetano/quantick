@@ -102,7 +102,10 @@ impl ChartPane {
         let click = WindowClick::of(any_click, on_canvas, repeat);
         let pass = ui.ctx().cumulative_pass_nr();
         if let Some(repeat) = self.model.double_click.observe(pass, click) {
-            let at = chart.interact_pointer_pos();
+            // The triple zooms where its double centred: no target read off the view it moved.
+            let at = chart
+                .interact_pointer_pos()
+                .filter(|_| repeat == CanvasRepeat::Double);
             let overlay = at
                 .and_then(|position| self.hit_test().overlay_plot_at(position))
                 .map(|slot| slot.0);
@@ -157,6 +160,13 @@ impl ChartPane {
             None => self.model.viewport.reset_zoom(),
         }
         true
+    }
+
+    /// Back to live with the last price centred — `zoom_in`, the candles twice
+    /// as wide — as the canvas's double and triple click do; `false`, and
+    /// nothing moves, in tape only, where those clicks land on the tape.
+    pub(crate) fn live_centre(&mut self, zoom_in: bool) -> bool {
+        !self.tape_modes().0 && self.model.live_centre(zoom_in)
     }
 
     /// Up and down pans the shared price axis wherever the drag is; sideways

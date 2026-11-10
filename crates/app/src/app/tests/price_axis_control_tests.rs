@@ -317,6 +317,7 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     let payload =
         |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis});
     let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
+    assert_eq!(success_result(&candles)["price_centre_pending"], false);
     let spacing = success_result(&candles)["viewport"]["pixels_per_bar"].clone();
     assert_eq!(spacing.as_str().unwrap().parse::<f32>().unwrap(), opened);
     assert_ne!(
@@ -365,6 +366,8 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
         viewport.pan_pixels(640.0, 200);
         assert!(!viewport.follows_live());
         let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles", to));
+        // The result is the call's moment: the centring is the next frame's.
+        assert_eq!(success_result(&candles)["price_centre_pending"], true);
         let viewport = &success_result(&candles)["viewport"];
         assert_eq!(viewport["follows_live"], true, "{to}");
         let px = viewport["pixels_per_bar"].as_str().unwrap();
@@ -388,6 +391,53 @@ fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
         assert!(low <= auto.0 && high >= auto.1, "{to}: no bar clipped");
         let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape", to));
         assert_eq!(error_code(&tape), Some(codes::INVALID_REQUEST), "{to}");
+    }
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// Tape only has no candles to centre: the canvas's double click there is
+/// the tape's, so the call refuses the live centre and moves nothing.
+#[test]
+fn the_live_centre_call_refuses_a_tape_only_pane() {
+    const RESET: &str = "chart.time_axis.reset";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    enable_tape(&mut app);
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        quantick_layers::OrderflowSwitch::TapeOnly,
+        true,
+    );
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane_id = pane.id;
+    pane.model.viewport.pan_pixels(640.0, 200);
+    let before = pane.price_view.manual_range();
+    let directory = gateway_test_directory("time-axis-live-centre-tape-only");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab_id = app.runtime.tabs.active_id().to_string();
+    for to in ["live_centre", "live_centre_zoom_in"] {
+        let payload =
+            json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": "candles", "to": to});
+        let (refused, _) = unkeyed_call(&mut app, &mut client, RESET, payload);
+        assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST), "{to}");
+        let message = &response_error(&refused).message;
+        assert!(message.contains("tape-only"), "{to}: {message}");
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        assert!(!pane.model.viewport.follows_live(), "{to}: nothing moved");
+        assert_eq!(
+            pane.price_view.manual_range(),
+            before,
+            "{to}: nor the price"
+        );
     }
     disable_test_gateway(&mut app, &ctx);
 }

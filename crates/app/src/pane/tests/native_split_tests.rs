@@ -138,7 +138,7 @@ fn a_native_split_pane_fits_the_shared_axis_to_visible_candles_and_tape() {
         layout.start = start;
         layout.end = end;
         layout.fit_slots = (start, end);
-        let (frame, _, _) = layout
+        let (frame, ..) = layout
             .resolve(
                 &painter,
                 Series {

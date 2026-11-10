@@ -124,6 +124,13 @@ impl Model {
         std::mem::take(&mut self.live_centre)
     }
 
+    /// A new series: the time view from scratch, and no centring the old
+    /// series asked for.
+    pub fn reset_series_view(&mut self) {
+        self.viewport = Viewport::new();
+        self.live_centre = false;
+    }
+
     /// Back to live at the overview spacing across [`Self::candles_px`]:
     /// `chart.time_axis.reset`'s live overview. `false`, and nothing moves,
     /// before a frame laid the candles out.
@@ -208,11 +215,15 @@ impl CanvasRepeat {
 /// two anchors of a quickly placed line, would otherwise read as a double
 /// click on the chart once the tool disarms — and open the settings or move
 /// the view the trader just drew on. A triple counts only after the canvas's
-/// own double click did.
+/// own double click centred the live price.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DoubleClickGate {
     previous_on_canvas: bool,
-    double_counted: bool,
+    /// What the canvas's previous click counted as.
+    counted: Option<CanvasRepeat>,
+    /// The counted double click centred the live price (the reducer sets
+    /// it): only that double's third click zooms in.
+    centred: bool,
     last_pass: Option<u64>,
 }
 
@@ -247,29 +258,35 @@ impl DoubleClickGate {
     /// Feed every frame the canvas runs: `pass` is the toolkit's frame
     /// counter, `click` this frame's click. Answers the canvas's own repeat
     /// the frame holds: a double click whose two clicks were the canvas's, a
-    /// triple whose double was. A frame the canvas missed (another tab, a
-    /// hidden pane) forgets the earlier clicks: whatever the window was
-    /// clicked on meanwhile went unseen.
+    /// triple whose double centred the price. The toolkit counts a pair that
+    /// follows a recent single click as a triple: when that pair's first
+    /// click counted nothing, it is the double. A frame the canvas missed
+    /// (another tab, a hidden pane) forgets the earlier clicks: whatever the
+    /// window was clicked on meanwhile went unseen.
     pub fn observe(&mut self, pass: u64, click: WindowClick) -> Option<CanvasRepeat> {
         let unbroken = self
             .last_pass
             .is_some_and(|last| pass == last || pass == last + 1);
         self.last_pass = Some(pass);
         let previous = self.previous_on_canvas && unbroken;
-        let double_counted = self.double_counted && unbroken;
+        let counted = self.counted.filter(|_| previous);
+        let centred = self.centred && counted == Some(CanvasRepeat::Double);
         let repeat = match click {
+            WindowClick::Canvas {
+                repeat: Some(CanvasRepeat::Triple),
+            } if centred => Some(CanvasRepeat::Triple),
             WindowClick::Canvas {
                 repeat: Some(CanvasRepeat::Double),
             } if previous => Some(CanvasRepeat::Double),
             WindowClick::Canvas {
                 repeat: Some(CanvasRepeat::Triple),
-            } if double_counted => Some(CanvasRepeat::Triple),
+            } if previous && counted.is_none() => Some(CanvasRepeat::Double),
             _ => None,
         };
-        (self.previous_on_canvas, self.double_counted) = match click {
-            WindowClick::None => (previous, double_counted),
-            WindowClick::Elsewhere => (false, false),
-            WindowClick::Canvas { .. } => (true, repeat == Some(CanvasRepeat::Double)),
+        (self.previous_on_canvas, self.counted, self.centred) = match click {
+            WindowClick::None => (previous, counted, centred),
+            WindowClick::Elsewhere => (false, None, false),
+            WindowClick::Canvas { .. } => (true, repeat, false),
         };
         repeat
     }
@@ -455,27 +472,26 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
             canvas,
             repeat,
         } => {
-            // The tape and an overlay answered the double click; the third
-            // click asks nothing more of them.
-            let triple = repeat == Some(CanvasRepeat::Triple);
-            if tape {
-                if !triple {
-                    effects.push(Effect::TapeLive);
-                }
+            // The gate counts a third click only after a double click that
+            // centred (`DoubleClickGate`), so the triple has one meaning
+            // whatever its pointer lands on in the view that double moved.
+            if repeat == Some(CanvasRepeat::Triple) {
+                model.live_centre(true);
+            } else if tape {
+                effects.push(Effect::TapeLive);
             } else if let Some(slot) = overlay {
-                if !triple {
-                    model.pending_settings = Some(slot);
-                }
+                model.pending_settings = Some(slot);
             } else {
                 match (canvas, repeat) {
                     // The candle is what the trader means to change: the
                     // settings open over a view left where it was put.
                     (Some(CanvasHit::Candle), _) => {}
                     // Open canvas, a divider or a drawing: live at the
-                    // trader's own spacing, the price centred; the triple
-                    // zooms in too.
-                    (_, Some(repeat)) => {
-                        model.live_centre(repeat == CanvasRepeat::Triple);
+                    // trader's own spacing, the price centred, and the third
+                    // click may zoom in.
+                    (_, Some(_)) => {
+                        model.live_centre(false);
+                        model.double_click.centred = true;
                     }
                     // The live chip.
                     (_, None) => model.viewport.snap_to_live(),
@@ -728,69 +744,50 @@ mod tests {
         }
     }
     /// The candle, the tape and an overlay answered the double click; the
-    /// third click asks nothing more of them.
+    /// third click after them is no triple. Only a double click that centred
+    /// arms one, and the triple then zooms whatever its pointer lands on.
     #[test]
-    fn a_triple_click_repeats_nothing_on_the_candle_tape_or_overlay() {
-        let mut model = Model::default();
-        model.viewport.set_px_per_bar(20.0);
-        model.viewport.pan_pixels(300.0, 400);
-        let before = (
-            model.viewport.px_per_bar(),
-            model.viewport.right_edge_bar(400),
-        );
+    fn a_triple_click_follows_only_a_double_click_that_centred() {
+        const TRIPLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Triple),
+        };
+        let double = |tape, overlay, canvas| Intent::ReturnToLive {
+            tape,
+            overlay,
+            canvas,
+            repeat: Some(CanvasRepeat::Double),
+        };
         assert!(!CanvasRepeat::Triple.opens_chart_settings(Some(CanvasHit::Candle)));
-        let candle = update(
-            &mut model,
-            canvas_repeat(Some(CanvasHit::Candle), CanvasRepeat::Triple),
-        );
-        let tape = update(
-            &mut model,
-            Intent::ReturnToLive {
-                tape: true,
-                overlay: None,
-                canvas: None,
-                repeat: Some(CanvasRepeat::Triple),
-            },
-        );
-        let overlay = update(
-            &mut model,
-            Intent::ReturnToLive {
-                tape: false,
-                overlay: Some(7),
-                canvas: None,
-                repeat: Some(CanvasRepeat::Triple),
-            },
-        );
-        assert!(candle.is_empty() && tape.is_empty() && overlay.is_empty());
-        assert_eq!(model.pending_settings, None, "no second overlay dialog");
-        assert_eq!(
-            (
-                model.viewport.px_per_bar(),
-                model.viewport.right_edge_bar(400)
-            ),
-            before
-        );
-        assert!(!model.take_live_centre());
+        for (target, armed) in [
+            (double(false, None, Some(CanvasHit::Candle)), false),
+            (double(true, None, None), false),
+            (double(false, Some(7), None), false),
+            (double(false, None, Some(CanvasHit::Empty)), true),
+            (double(false, None, None), true),
+        ] {
+            let mut model = Model::default();
+            model.viewport.set_px_per_bar(20.0);
+            let gate = &mut model.double_click;
+            assert_eq!(gate.observe(1, WindowClick::Canvas { repeat: None }), None);
+            let pair = WindowClick::Canvas {
+                repeat: Some(CanvasRepeat::Double),
+            };
+            assert_eq!(gate.observe(2, pair), Some(CanvasRepeat::Double));
+            let _ = update(&mut model, target.clone());
+            let triple = model.double_click.observe(3, TRIPLE);
+            assert_eq!(triple.is_some(), armed, "{target:?}");
+            if let Some(repeat) = triple {
+                let _ = update(&mut model, canvas_repeat(None, repeat));
+                assert_eq!(model.viewport.px_per_bar(), 40.0, "{target:?}");
+            }
+        }
         // Their double clicks are what they always were.
-        let tape = update(
-            &mut model,
-            Intent::ReturnToLive {
-                tape: true,
-                overlay: None,
-                canvas: None,
-                repeat: Some(CanvasRepeat::Double),
-            },
+        let mut model = Model::default();
+        assert_eq!(
+            update(&mut model, double(true, None, None)),
+            [Effect::TapeLive]
         );
-        assert_eq!(tape, [Effect::TapeLive]);
-        let _ = update(
-            &mut model,
-            Intent::ReturnToLive {
-                tape: false,
-                overlay: Some(7),
-                canvas: None,
-                repeat: Some(CanvasRepeat::Double),
-            },
-        );
+        let _ = update(&mut model, double(false, Some(7), None));
         assert_eq!(model.pending_settings, Some(7));
     }
     /// The named call's two centred returns are the gestures' own.
@@ -852,15 +849,45 @@ mod tests {
         assert_eq!(canvas.observe(1, SINGLE), None);
         assert_eq!(canvas.observe(2, DOUBLE), Some(CanvasRepeat::Double));
         assert_eq!(canvas.observe(3, WindowClick::None), None);
-        assert_eq!(canvas.observe(4, TRIPLE), Some(CanvasRepeat::Triple));
-        let mut rail = DoubleClickGate::default();
-        assert_eq!(rail.observe(1, WindowClick::Elsewhere), None);
-        assert_eq!(rail.observe(2, DOUBLE), None, "refused double");
-        assert_eq!(rail.observe(3, TRIPLE), None, "so no triple");
+        assert_eq!(canvas.observe(4, TRIPLE), None, "the double did not centre");
+        let mut centred = DoubleClickGate::default();
+        assert_eq!(centred.observe(1, SINGLE), None);
+        assert_eq!(centred.observe(2, DOUBLE), Some(CanvasRepeat::Double));
+        centred.centred = true;
+        assert_eq!(centred.observe(3, WindowClick::None), None);
+        assert_eq!(centred.observe(4, TRIPLE), Some(CanvasRepeat::Triple));
+        assert_eq!(centred.observe(5, TRIPLE), None, "one triple a run");
         let mut missed = DoubleClickGate::default();
         assert_eq!(missed.observe(1, SINGLE), None);
         assert_eq!(missed.observe(2, DOUBLE), Some(CanvasRepeat::Double));
+        missed.centred = true;
         assert_eq!(missed.observe(5, TRIPLE), None, "frames went unseen");
+    }
+    /// The toolkit counts a pair that follows a recent click as the run's
+    /// third click: when the pair's first click counted no double, the pair
+    /// is the canvas's double click.
+    #[test]
+    fn a_triple_whose_pair_counted_no_double_is_the_double_click() {
+        const SINGLE: WindowClick = WindowClick::Canvas { repeat: None };
+        const DOUBLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Double),
+        };
+        const TRIPLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Triple),
+        };
+        let double = Some(CanvasRepeat::Double);
+        let mut late = DoubleClickGate::default();
+        assert_eq!(late.observe(1, SINGLE), None, "a click");
+        assert_eq!(late.observe(2, SINGLE), None, "past the delay");
+        assert_eq!(late.observe(3, TRIPLE), double, "and the pair's second");
+        let mut rail = DoubleClickGate::default();
+        assert_eq!(rail.observe(1, WindowClick::Elsewhere), None);
+        assert_eq!(rail.observe(2, DOUBLE), None, "refused double");
+        assert_eq!(rail.observe(3, TRIPLE), double, "two canvas clicks");
+        let mut off = DoubleClickGate::default();
+        assert_eq!(off.observe(1, SINGLE), None);
+        assert_eq!(off.observe(2, WindowClick::Elsewhere), None);
+        assert_eq!(off.observe(3, TRIPLE), None, "one canvas click");
     }
     /// A canvas click, then frames the pane never ran (a tab switch, where
     /// any click went unseen): the next canvas click is no double click.

@@ -5,6 +5,9 @@
 use super::*;
 use quantick_orderflow::tape_view::TapeEnd;
 
+#[path = "canvas_click_tests.rs"]
+mod canvas_click;
+
 const CAPABILITY: &str = "chart.tape_view.set";
 /// The first print the fixture's tape retains: `trade(201)`.
 const RETAINED_FROM: i64 = 21_100;

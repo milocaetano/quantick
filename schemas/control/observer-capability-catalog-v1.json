@@ -6912,7 +6912,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does; that never moves the right edge or the other axis. With `to: live_overview` on the candles it returns them to the live edge at the overview spacing instead. With `to: live_centre` it returns them to the live edge at the spacing they have and, from the next frame, holds a price range centred on the last price that keeps every visible bar — what a double-click on open canvas does; `to: live_centre_zoom_in` also doubles the spacing, up to the widest candle — what a triple-click there does.",
+      "description": "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does; that never moves the right edge or the other axis. With `to: live_overview` on the candles it returns them to the live edge at the overview spacing instead. With `to: live_centre` on a pane that shows candles (not tape only) it returns them to the live edge at the spacing they have and, from the next frame, holds a price range centred on the last price that keeps every visible bar — what a double-click on open canvas does; `to: live_centre_zoom_in` also doubles the spacing, up to the widest candle — what a triple-click there does.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -7177,17 +7177,23 @@
           "pane_id": {
             "$ref": "#/$defs/WireU64"
           },
+          "price_centre_pending": {
+            "description": "`true` after `live_centre` and `live_centre_zoom_in`: the pane frames\nthe last price at mid-height on its next drawn frame, since only that\nframe fits the live view; `snapshot.read` reads the centred range back.",
+            "type": "boolean"
+          },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
           },
           "viewport": {
-            "$ref": "#/$defs/ViewportSnapshot"
+            "$ref": "#/$defs/ViewportSnapshot",
+            "description": "The pane's view as the call left it. After a live centre the price\nrange is still the one before it: see `price_centre_pending`."
           }
         },
         "required": [
           "tab_id",
           "pane_id",
-          "viewport"
+          "viewport",
+          "price_centre_pending"
         ],
         "title": "TimeAxisResetResult",
         "type": "object"
@@ -7203,7 +7209,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs select one axis; every target but `live_centre_zoom_in` is idempotent, which zooms again on each call, so retry it under an idempotency key. The result reports the spacing, the live follow and the tape window after it; the centred price range reads back from the next frame.",
+      "stale_input_safety": "Stable tab and pane IDs select one axis; every target but `live_centre_zoom_in` is idempotent, which zooms again on each call, so retry it under an idempotency key. The result reports the spacing, the live follow and the tape window after it; after a live centre `price_centre_pending` is true and the centred price range reads back from the next frame.",
       "title": "Reset a pane's time axis",
       "version": 1
     },

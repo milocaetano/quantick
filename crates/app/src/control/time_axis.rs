@@ -27,8 +27,7 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_axis(tape),
         TimeAxisTarget::LiveOverview => !tape && pane.model.live_overview(),
-        TimeAxisTarget::LiveCentre => !tape && pane.model.live_centre(false),
-        TimeAxisTarget::LiveCentreZoomIn => !tape && pane.model.live_centre(true),
+        centre => !tape && pane.live_centre(centre == TimeAxisTarget::LiveCentreZoomIn),
     };
     input.to.outcome(applied).map_err(invalid)?;
     let viewport = super::chart::viewport_snapshot(pane);
@@ -36,6 +35,7 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
         tab_id: input.tab_id,
         pane_id: input.pane_id,
         viewport,
+        price_centre_pending: input.to.centres(),
     })
     .map_err(invalid)
 }
