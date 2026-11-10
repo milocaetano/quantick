@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
+use crate::toolrail::ToolboxDock;
 pub use quantick_stores::ui_state::*;
 
 // Each twin converts both ways here, beside the vocabulary it belongs to,
@@ -41,23 +42,21 @@ impl SavedFocusExt for SavedFocus {
     }
 }
 
-impl From<crate::toolrail::ToolboxDock> for SavedRailDock {
-    fn from(dock: crate::toolrail::ToolboxDock) -> Self {
-        match dock {
-            crate::toolrail::ToolboxDock::Left => Self::Left,
-            crate::toolrail::ToolboxDock::Top => Self::Top,
-            crate::toolrail::ToolboxDock::Bottom => Self::Bottom,
-        }
+/// The saved word for the rail's dock.
+pub(crate) const fn saved_rail_dock(dock: ToolboxDock) -> SavedRailDock {
+    match dock {
+        ToolboxDock::Left => SavedRailDock::Left,
+        ToolboxDock::Top => SavedRailDock::Top,
+        ToolboxDock::Bottom => SavedRailDock::Bottom,
     }
 }
 
-impl From<SavedRailDock> for crate::toolrail::ToolboxDock {
-    fn from(dock: SavedRailDock) -> Self {
-        match dock {
-            SavedRailDock::Left | SavedRailDock::Right => Self::Left,
-            SavedRailDock::Top => Self::Top,
-            SavedRailDock::Bottom => Self::Bottom,
-        }
+/// The rail's dock for a saved word; the retired right dock opens left.
+pub(crate) const fn rail_dock(saved: SavedRailDock) -> ToolboxDock {
+    match saved {
+        SavedRailDock::Left | SavedRailDock::Right => ToolboxDock::Left,
+        SavedRailDock::Top => ToolboxDock::Top,
+        SavedRailDock::Bottom => ToolboxDock::Bottom,
     }
 }
 
