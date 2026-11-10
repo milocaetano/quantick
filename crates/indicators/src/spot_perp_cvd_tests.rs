@@ -1,10 +1,10 @@
-use quantick_engine::{Bar, BarBuilder as _, Side, Trade, TimeBarBuilder};
+use quantick_engine::{Bar, BarBuilder as _, Side, TimeBarBuilder, Trade};
 use rust_decimal::Decimal;
 
+use crate::IndicatorHost;
 use crate::native::Cvd;
 use crate::output::PlotId;
 use crate::spot_perp_cvd::{CvdPoint, OppositeSpan, spot_perp_cvd};
-use crate::IndicatorHost;
 
 const MINUTE_MS: i64 = 60_000;
 

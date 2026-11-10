@@ -115,9 +115,6 @@ fn no_prints_reads_as_zero_totals_and_empty_buckets() {
     );
     assert_eq!(
         model.buckets,
-        vec![
-            bucket(10_740_000, "0", "0"),
-            bucket(10_800_000, "0", "0")
-        ]
+        vec![bucket(10_740_000, "0", "0"), bucket(10_800_000, "0", "0")]
     );
 }

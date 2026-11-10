@@ -3,7 +3,7 @@
 //! footer.
 
 use quantick_appearance::Token;
-use quantick_civil::{TzOffset, civil_utc};
+use quantick_civil::TzOffset;
 use quantick_engine::Side;
 use quantick_orderflow::widgets::big_trades::{
     BIG_TRADES_WINDOW_MS, BigTrade, BigTrades, MIN_NOTIONAL_PRESETS,
@@ -11,7 +11,7 @@ use quantick_orderflow::widgets::big_trades::{
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use super::{WidgetCell, price_text};
+use super::{WidgetCell, amount, clock_text, price_text};
 use crate::footprint_projection::fmt_qty;
 
 /// What the pane says before any tape arrives.
@@ -167,8 +167,6 @@ fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout) -> BigTr
     } else {
         Token::TextMuted
     };
-    let (_, _, _, hour, minute, second) =
-        civil_utc(row.timestamp_ms.saturating_add(layout.tz.offset_ms()));
     let share = if largest > Decimal::ZERO {
         (row.notional / largest)
             .to_f64()
@@ -178,10 +176,7 @@ fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout) -> BigTr
         0.0
     };
     BigTradeRowView {
-        time: WidgetCell::new(
-            format!("{hour:02}:{minute:02}:{second:02}"),
-            Token::TextFaint,
-        ),
+        time: WidgetCell::new(clock_text(row.timestamp_ms, layout.tz), Token::TextFaint),
         side: WidgetCell::new(
             match row.side {
                 Side::Buy => "BUY",
@@ -216,8 +211,4 @@ fn preset_label(value: u32) -> String {
         v if v >= 1_000 && v % 1_000 == 0 => format!("{}k", v / 1_000),
         v => v.to_string(),
     }
-}
-
-fn amount(value: Decimal, unit: NotionalUnit) -> String {
-    format!("{}{}", unit.prefix, fmt_qty(value))
 }
