@@ -23,7 +23,10 @@ use quantick_control::{
 
 use serde_json::Value;
 
-use crate::{canvas_layout, tab::CanvasLayout};
+use crate::{
+    canvas_layout,
+    tab::{CanvasLayout, Tab},
+};
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION},
@@ -261,6 +264,13 @@ fn result<P: TabsPort + ?Sized>(
     })
 }
 
+/// The tab at `index` for a write, refused if it closed while the call ran.
+fn tab_mut<P: TabsMutPort + ?Sized>(app: &mut P, index: usize) -> Result<&mut Tab, ControlError> {
+    app.tabs_mut()
+        .tab_at_mut(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))
+}
+
 fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     _access: &mut ControlAccess,
@@ -282,10 +292,7 @@ fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
             preset.id
         ))
     })?;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     let changed = tab.canvas.layout != layout;
     tab.set_layout(layout);
     result(app, index, changed)
@@ -320,10 +327,7 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
     let input: ResizeInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     // The descriptor promises a call cannot reach a width a hand could not,
     // and that promise moved when the floor did: `clamp_pane_fraction` is a
     // 0..1 sanity clamp now, and the width floor lives in the splitter, which
@@ -378,10 +382,7 @@ fn set_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
     let input: TabTarget = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input)?;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     // The same call the divider drag, the rail and the menu take.
     let changed = tab.canvas.set_context_collapsed(collapsed);
     result(app, index, changed)
@@ -413,10 +414,7 @@ fn set_flow_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
     let input: TabTarget = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input)?;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     if !tab.canvas.layout.shows_flow() || !tab.canvas.layout.shows_time() {
         return Err(ControlError::invalid_request(
             "the flow pane has no right rail in this layout",
@@ -436,10 +434,7 @@ fn focus<P: TabsPort + TabsMutPort + ?Sized>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(
             "this tab has no pane at address {pane}"
@@ -484,10 +479,7 @@ fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
                 .to_owned(),
         ));
     }
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     let Some(chart) = tab.pane_at_mut(pane) else {
         return Err(ControlError::invalid_request(format!(
             "this tab has no context chart at address {pane}"
@@ -517,10 +509,7 @@ fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
         .map_err(|error| ControlError::invalid_request(format!("invalid bar spec: {error}")))?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
-    let tab = app
-        .tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab = tab_mut(app, index)?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(
             "this tab has no pane at address {pane}"

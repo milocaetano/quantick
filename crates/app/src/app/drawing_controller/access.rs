@@ -139,6 +139,14 @@ impl<'a> DrawingAccess<'a> {
         let active = self.tabs.active_index();
         self.tabs.runtime_mut(active).paper.cancel_interaction()
     }
+    pub(super) fn drawing_at(
+        &self,
+        tab: u64,
+        side: PaneSide,
+        index: usize,
+    ) -> Option<&drawings::Drawing> {
+        self.tabs.by_id(tab)?.pane(side).drawings.items().get(index)
+    }
     pub(super) fn record(
         &mut self,
         tab: u64,

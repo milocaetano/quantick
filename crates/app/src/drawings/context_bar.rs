@@ -23,7 +23,7 @@
 use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use smallvec::SmallVec;
+pub use quantick_drawings::context_bar::{Capabilities, Slot, slots};
 
 use super::action_bar::ActionBarIntent;
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
@@ -87,114 +87,20 @@ pub const TRANSIENT_SUPPRESS_MS: u64 = 200;
 /// session, and a slider on a 32 px slot is a slider nobody can aim at.
 pub const WIDTH_STEPS_PX: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
 
-/// One cell of the bar, in paint order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slot {
-    Grip,
-    /// Present only for an object an operator other than the trader placed:
-    /// the chart says whose hand it was before the trader acts on it.
-    Author,
-    /// Arm the tool that drew this object again, so the next stroke starts
-    /// from the bar the release just opened instead of from the rail.
-    DrawAgain,
-    Color,
-    Width,
-    /// Type/glyph size, for the tools drawn as glyphs rather than strokes.
-    GlyphSize,
-    Separator,
-    Duplicate,
-    Lock,
-    /// This object's own OHLC magnet, for the tools the magnet moves.
-    Magnet,
-    Hide,
-    Sharing,
-    Settings,
-    Delete,
-}
-
-impl Slot {
-    /// Horizontal room this cell takes.
-    #[must_use]
-    pub fn width(self) -> f32 {
-        match self {
-            Self::Grip => GRIP_WIDTH_PX,
-            Self::Separator => SEPARATOR_WIDTH_PX,
-            _ => TOOLRAIL_ICON.hit,
-        }
-    }
-}
-
-/// What the selected object can actually be asked for. The bar is built from
-/// this and nothing else — an unsupported property is absent, never a grey
-/// button, which is the rule [`quantick_drawings::MarkTool`] already states for
-/// the inspector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Capabilities {
-    pub stroke_width: bool,
-    pub glyph_size: bool,
-    /// Whether this object was placed by something other than the trader.
-    pub authored: bool,
-    /// Whether the gear earns its slot. It does not when the inspector is
-    /// pinned: its destination is already on screen.
-    pub settings: bool,
-    /// Whether this drawing has enough market-time information to be shown
-    /// on the tab's other charts.
-    pub sharing: bool,
-    /// Whether the OHLC magnet moves this object's anchors: a tool that
-    /// snaps by its own rule has no magnet to switch.
-    pub magnet: bool,
-    /// Whether this object's tool is one the trader keeps drawing with —
-    /// a freehand stroke — so the bar offers to arm it again.
-    pub draw_again: bool,
-}
-
-/// The cells of a bar for an object with these capabilities.
-///
-/// A `SmallVec`, not a `Vec`: this is rebuilt on every frame something is
-/// selected, and the bar never holds more cells than fit inline.
+/// Horizontal room a cell takes.
 #[must_use]
-pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
-    let mut slots = SmallVec::from_slice(&[Slot::Grip]);
-    if caps.authored {
-        slots.push(Slot::Author);
-        slots.push(Slot::Separator);
+pub fn slot_width(slot: Slot) -> f32 {
+    match slot {
+        Slot::Grip => GRIP_WIDTH_PX,
+        Slot::Separator => SEPARATOR_WIDTH_PX,
+        _ => TOOLRAIL_ICON.hit,
     }
-    if caps.draw_again {
-        slots.push(Slot::DrawAgain);
-        slots.push(Slot::Separator);
-    }
-    slots.push(Slot::Color);
-    if caps.stroke_width {
-        slots.push(Slot::Width);
-    }
-    if caps.glyph_size {
-        slots.push(Slot::GlyphSize);
-    }
-    slots.push(Slot::Separator);
-    slots.push(Slot::Duplicate);
-    slots.push(Slot::Lock);
-    if caps.magnet {
-        slots.push(Slot::Magnet);
-    }
-    slots.push(Slot::Hide);
-    if caps.sharing {
-        slots.push(Slot::Sharing);
-    }
-    if caps.settings {
-        slots.push(Slot::Settings);
-    }
-    // The hairline before the trash is not decoration. It turns the 4 px gap
-    // into 9 px, so a hand that misses the gear by a few pixels lands on
-    // nothing instead of on the one irreversible button.
-    slots.push(Slot::Separator);
-    slots.push(Slot::Delete);
-    slots
 }
 
 /// Size of a bar made of these cells.
 #[must_use]
 pub fn bar_size(slots: &[Slot]) -> egui::Vec2 {
-    let content: f32 = slots.iter().map(|slot| slot.width()).sum();
+    let content: f32 = slots.iter().map(|slot| slot_width(*slot)).sum();
     let gaps = ITEM_GAP_PX * (slots.len().saturating_sub(1)) as f32;
     egui::vec2(2.0f32.mul_add(BAR_PAD_X_PX, content + gaps), BAR_HEIGHT_PX)
 }
@@ -1552,7 +1458,11 @@ mod tests {
             assert_eq!(bar_size(&cells).y, BAR_HEIGHT_PX);
             for cell in cells {
                 if !matches!(cell, Slot::Grip | Slot::Separator) {
-                    assert_eq!(cell.width(), TOOLRAIL_ICON.hit, "{cell:?} lost its target");
+                    assert_eq!(
+                        slot_width(cell),
+                        TOOLRAIL_ICON.hit,
+                        "{cell:?} lost its target"
+                    );
                 }
             }
         }
