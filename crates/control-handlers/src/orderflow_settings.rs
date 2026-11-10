@@ -2,8 +2,9 @@
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::orderflow_settings::{
-    AssetFolds, OrderFlowPanel, PanelSection, SettingsCloseInput, SettingsOpenInput,
-    SettingsResult, SettingsSectionInput, close_descriptor, open_descriptor, section_descriptor,
+    AssetFolds, OrderFlowPanel, PanelSection, SettingsCloseInput, SettingsLightsInput,
+    SettingsOpenInput, SettingsResult, SettingsSectionInput, close_descriptor, lights_descriptor,
+    open_descriptor, section_descriptor,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -15,6 +16,8 @@ pub struct PanelSeat<'a> {
     pub asset: &'a str,
     /// The tab is showing its flow pane, which the panel is attached to.
     pub flow_shown: bool,
+    /// The theme authors a lit flow pane, so the bulb is offered.
+    pub lights_offered: bool,
 }
 
 /// The tab a call names.
@@ -27,7 +30,8 @@ pub fn register<D: ActionDock<H, A>, H: OrderflowSettingsPort + ?Sized, A>(
 ) -> Result<(), RegistryError> {
     registry.register(open_descriptor(), open)?;
     registry.register(close_descriptor(), close)?;
-    registry.register(section_descriptor(), set_section)
+    registry.register(section_descriptor(), set_section)?;
+    registry.register(lights_descriptor(), set_lights)
 }
 
 fn open<H: OrderflowSettingsPort + ?Sized, A>(
@@ -77,6 +81,23 @@ fn set_section<H: OrderflowSettingsPort + ?Sized, A>(
     answer(input.tab_id, &seat, changed)
 }
 
+fn set_lights<H: OrderflowSettingsPort + ?Sized, A>(
+    host: &mut H,
+    _access: &mut A,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: SettingsLightsInput = parse(input)?;
+    let seat = host.panel_seat(input.tab_id.get())?;
+    if !seat.lights_offered {
+        return Err(ControlError::invalid_request(
+            "the theme authors no lit order-flow surface, so the flow pane has no lights to switch",
+        ));
+    }
+    let changed = seat.panel.set_lights(input.on);
+    answer(input.tab_id, &seat, changed)
+}
+
 fn answer(
     tab: quantick_control::wire::WireU64,
     seat: &PanelSeat<'_>,
@@ -109,6 +130,7 @@ mod tests {
         panel: OrderFlowPanel,
         folds: AssetFolds,
         flow_shown: bool,
+        lights_offered: bool,
     }
 
     impl Tab {
@@ -117,6 +139,7 @@ mod tests {
                 panel: OrderFlowPanel::default(),
                 folds: AssetFolds::default(),
                 flow_shown,
+                lights_offered: true,
             }
         }
     }
@@ -128,6 +151,7 @@ mod tests {
                 folds: &mut self.folds,
                 asset: BTC,
                 flow_shown: self.flow_shown,
+                lights_offered: self.lights_offered,
             })
         }
     }
@@ -183,5 +207,33 @@ mod tests {
         assert_eq!(shut["changed"], true);
         let again = close(&mut tab, &mut (), &actor(), &json!({"tab_id": "1"})).expect("closed");
         assert_eq!(again["changed"], false);
+    }
+
+    #[test]
+    fn the_lights_switch_read_back_retry_safely_and_refuse_a_theme_without_them() {
+        let mut tab = Tab::showing_flow(true);
+        let on = json!({"tab_id": "1", "on": true});
+        let first = set_lights(&mut tab, &mut (), &actor(), &on).expect("lit");
+        assert_eq!(first["lights_on"], true);
+        assert_eq!(first["changed"], true);
+        let again = set_lights(&mut tab, &mut (), &actor(), &on).expect("lit");
+        assert_eq!(again["lights_on"], true);
+        assert_eq!(again["changed"], false);
+        assert!(tab.panel.lights_on());
+        let bad = json!({"tab_id": "1", "on": "bright"});
+        assert!(set_lights(&mut tab, &mut (), &actor(), &bad).is_err());
+        assert!(tab.panel.lights_on(), "a refused call keeps nothing");
+        let off = json!({"tab_id": "1", "on": false});
+        let dark = set_lights(&mut tab, &mut (), &actor(), &off).expect("off");
+        assert_eq!(
+            (dark["lights_on"].clone(), dark["changed"].clone()),
+            (json!(false), json!(true))
+        );
+
+        let mut dark_theme = Tab::showing_flow(true);
+        dark_theme.lights_offered = false;
+        let refused = set_lights(&mut dark_theme, &mut (), &actor(), &on).expect_err("refused");
+        assert!(refused.message.contains("lit order-flow surface"));
+        assert!(!dark_theme.panel.lights_on());
     }
 }

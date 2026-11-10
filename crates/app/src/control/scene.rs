@@ -467,6 +467,9 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
             // What a side shows, whatever its key reads, as its tooltip says.
             let description = match control {
                 HeaderControl::Side(side) => Some(side_description(side).to_owned()),
+                HeaderControl::Settings(
+                    quantick_workspace::orderflow_panel::PanelControl::Lights,
+                ) => Some(quantick_workspace::orderflow_panel::LIGHTS_DESCRIPTION.to_owned()),
                 _ => None,
             };
             let (label, role, selected, blocked, capability) = match control {

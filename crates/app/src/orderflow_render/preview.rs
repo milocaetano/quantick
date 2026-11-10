@@ -30,7 +30,11 @@ use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba}
 ///
 /// Painted back to front: the frame and grid, the resting walls, the price
 /// path, the two reductions, the sample prints and the legend.
-pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::Response {
+pub(crate) fn draw_preview(
+    ui: &mut egui::Ui,
+    config: &HeatmapConfig,
+    lights: bool,
+) -> egui::Response {
     let width = ui.available_width().clamp(0.0, 680.0);
     let desired = egui::vec2(width, crate::theme::get(ui.ctx()).label_space(196.0));
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
@@ -38,7 +42,7 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         return response;
     }
 
-    let canvas = PreviewCanvas::new(ui, rect, config);
+    let canvas = PreviewCanvas::new(ui, rect, config, lights);
     canvas.draw_frame();
     canvas.draw_resting_walls(config.opacity);
     canvas.draw_price_path();
@@ -81,8 +85,9 @@ struct PreviewCanvas {
 }
 
 impl PreviewCanvas {
-    fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let appearance = crate::theme::bookmap(ui.ctx());
+    fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig, lights: bool) -> Self {
+        let surface = quantick_appearance::ChartSurface::pane(Some(lights));
+        let appearance = crate::theme::surface(ui.ctx(), surface);
         let mut style =
             OrderflowRenderStyle::from_config(config, appearance.canvas().to_array()).sanitized();
         style.resolve_palette(config.palette, &appearance.resolved.orderflow);
@@ -502,7 +507,8 @@ mod surface_tests {
         let visuals = ctx.style().visuals.clone();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let canvas = PreviewCanvas::new(ui, ui.max_rect(), &HeatmapConfig::default());
+                let canvas =
+                    PreviewCanvas::new(ui, ui.max_rect(), &HeatmapConfig::default(), false);
                 assert_eq!(canvas.style.canvas_background, surface.canvas().to_array());
                 assert_ne!(canvas.style.canvas_background, root.canvas().to_array());
                 assert_eq!(

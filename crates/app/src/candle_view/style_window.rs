@@ -27,22 +27,23 @@ pub struct StylePanelResponse {
 pub fn draw_style_contents(
     ui: &mut egui::Ui,
     style: &mut ChartStyle,
-    bookmap: bool,
+    surface: quantick_appearance::ChartSurface,
 ) -> StylePanelResponse {
     let mut response = StylePanelResponse::default();
-    let palette = if bookmap {
-        crate::theme::bookmap(ui.ctx())
-    } else {
+    let paper = !surface.is_flow();
+    let palette = if paper {
         crate::theme::get(ui.ctx())
+    } else {
+        crate::theme::surface(ui.ctx(), surface)
     };
-    draw_preview(ui, style, &palette, !bookmap);
+    draw_preview(ui, style, &palette, paper);
     ui.separator();
     draw_body_settings(
         ui,
         &mut style.candles,
         &mut style.ownership,
         &mut response.changed,
-        !bookmap,
+        paper,
     );
     ui.separator();
     draw_outline_settings(

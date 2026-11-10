@@ -87,6 +87,7 @@ groups are:
 | `flow_key_lit_dot`, `flow_key_up_ink` | A shown side's key: its glowing dot and white word; the gear's ink while hovered or open |
 | `flow_key_unlit_dot`, `flow_key_unlit_ink` | A hidden side's key: its grey dot and muted word |
 | `flow_gear_ink`, `flow_key_down`, `flow_key_down_shade` | The bare gear's ink, and the well with its top shade it sinks into while the settings are open |
+| `flow_bulb_lit` | The bulb beside the gear while the flow pane's lights are on; at rest it wears `flow_gear_ink` |
 | `flow_key_down_rim`, `flow_key_down_ink`, `flow_key_up_top`, `flow_key_up_bottom`, `flow_key_up_lip`, `flow_key_up_edge`, `flow_key_up_shadow` | Accepted legacy v1 keys; the band's keys no longer paint a body |
 | `bare_hover`, `float_shadow` | Control hover and floating surface shadows |
 | `capsule_fill`, `capsule_border`, `capsule_shadow` | Accepted legacy v1 keys; docked layer capsules no longer paint a separate case |
@@ -187,9 +188,20 @@ must be opaque because bubble overrides, saved looks and the thermal pipeline
 use RGB there; validation rejects unsupported alpha before publication. Other
 palette fields preserve premultiplied alpha.
 
-`[orderflow].ramp` has nine opaque colors at fixed intensity positions
-`0, .09, .22, .38, .55, .70, .83, .93, 1`. Missing colors or the ramp inherit
-Dark independently. Heat cells, preview and legend sample the same resolved
+`[orderflow].ramp` has nine opaque colors, by default at the intensity positions
+`0, .09, .22, .38, .55, .70, .83, .93, 1`; `ramp_stops` places them elsewhere,
+from 0 to 1, each past the one before. `buy_rim` and `sell_rim`, written
+together, draw flat bubbles ringed in them. Missing colors or the ramp inherit
+Dark independently.
+
+## Lit flow surface
+
+The optional `[lit_flow]` table is the order-flow pane with its lights on, picked
+by the bulb beside the band's gear (`orderflow.settings.lights.set`). Its
+`[lit_flow.colors]` and `[lit_flow.orderflow]` derive from the root theme, not
+from `[bookmap]`, so drawings, VWAP and plot inks are the root's paper colors.
+Its order-flow palette outranks a palette the pane picked for the island. A theme
+without the table offers no bulb; the bundled Light authors it, Dark does not. Heat cells, preview and legend sample the same resolved
 ramp; the live strip and bubble controls read the same selected palette.
 
 Fresh order-flow settings, the shipped `default` preset, and the four shipped

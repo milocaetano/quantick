@@ -34,6 +34,9 @@ flow_key_lit_dot = "#3AF0B2"
 flow_key_unlit_dot = "#6B7482"
 flow_key_unlit_ink = "#9AA3B0"
 flow_gear_ink = "#C9CFD8"
+# Dark offers no bulb (it authors no [lit_flow]); the token is here so a theme
+# derived from this file is complete.
+flow_bulb_lit = "#EAF4FF"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
 candle_preview_background = "#0C0F16"
 candle_preview_bid = "#14B9E6"

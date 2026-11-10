@@ -178,6 +178,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: capability!("orderflow.settings.section.set"),
     },
     UiBehaviour {
+        id: "orderflow.settings.lights.set",
+        title: "Switch the order-flow pane's lights: white with a plum wall, or the dark island",
+        reach: "the light bulb beside the gear on the flow pane's ORDER FLOW band, Light theme only",
+        keys: &[(
+            Source::Authored,
+            "the bulb is drawn by the flow pane's band, beside the gear, not a registry entry",
+        )],
+        mapping: capability!("orderflow.settings.lights.set"),
+    },
+    UiBehaviour {
         id: "orderflow.tape.view.set",
         title: "Show the trail and tape, the trail alone or the tape alone",
         reach: "pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane",

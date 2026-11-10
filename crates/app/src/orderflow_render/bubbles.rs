@@ -310,7 +310,10 @@ fn draw_bubble_with_light_offset(
     let hollow = bubbles.hollow_small_buys
         && matches!(side, Side::Buy)
         && radius < bubbles.readable_min_radius;
-    let sphere = !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
+    // A palette that rims its bubbles (the lit flow pane's) draws them flat.
+    let flat_rim = colors.flat_rim(side);
+    let sphere =
+        !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere && flat_rim.is_none();
     // The halo says "this one is big", so it is gated on size rather than
     // merely scaled with it: the top rung of the φ ladder, `max / φ`. Under a
     // gate it is a handful of prints a minute; under none it was a fog beneath
@@ -396,7 +399,7 @@ fn draw_bubble_with_light_offset(
         let rim = if sphere {
             sphere_edge_color(color, bubbles.sphere_shading)
         } else {
-            color
+            flat_rim.unwrap_or(color)
         };
         painter.circle_stroke(
             center,

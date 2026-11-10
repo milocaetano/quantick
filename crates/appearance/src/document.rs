@@ -2,10 +2,12 @@
 
 mod bookmap;
 mod chart;
+mod lit_flow;
 mod plot_ink;
 mod title_strip;
 pub use bookmap::BookmapOverride;
 pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
+pub use lit_flow::{ChartSurface, LitFlowOverride};
 pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
@@ -92,6 +94,9 @@ pub struct ThemeDocument {
     pub bookmap: Option<crate::BookmapOverride>,
     #[serde(default)]
     pub title_strip: Option<TitleStripOverride>,
+    /// The order-flow pane with its lights on; without it no bulb is offered.
+    #[serde(default)]
+    pub lit_flow: Option<LitFlowOverride>,
 }
 
 fn dark_mode() -> bool {
@@ -256,6 +261,7 @@ impl ThemeDocument {
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
             bookmap: None,
             title_strip: None,
+            lit_flow: None,
             root_colors: None,
         };
         // A surface the document leaves out is the root itself, unless the
@@ -275,6 +281,15 @@ impl ThemeDocument {
             .title_strip
             .clone()
             .or_else(|| root_inks.then(TitleStripOverride::default))
+            .map(|surface| {
+                surface
+                    .resolve(&resolved)
+                    .map(|theme| resolved.derive(theme))
+            })
+            .transpose()?;
+        resolved.lit_flow = self
+            .lit_flow
+            .as_ref()
             .map(|surface| {
                 surface
                     .resolve(&resolved)
@@ -340,6 +355,7 @@ pub struct ResolvedTheme {
     pub orderflow: crate::orderflow::OrderflowAppearance,
     pub(crate) bookmap: Option<Box<ResolvedTheme>>,
     pub(crate) title_strip: Option<Box<ResolvedTheme>>,
+    pub(crate) lit_flow: Option<Box<ResolvedTheme>>,
 }
 
 impl ResolvedTheme {

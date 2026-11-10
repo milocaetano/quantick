@@ -1,6 +1,6 @@
 //! Per-pane appearance and stable editor addressing, independent of focus.
 use crate::style::ChartStyle;
-use quantick_appearance::{Inheritance, ResolvedTheme};
+use quantick_appearance::{ChartSurface, Inheritance, ResolvedTheme};
 
 /// Runtime identity, never a mutable pane position or the active tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,15 +9,16 @@ pub struct StyleTarget {
     pub pane_id: u64,
 }
 
-/// The inherited palette of the addressed chart, including its Bookmap surface.
+/// The inherited palette of the addressed chart, on the surface it paints:
+/// paper, the flow pane's island, or the flow pane lit.
 #[derive(Clone, Copy)]
 pub struct StyleSurface<'a> {
     theme: &'a ResolvedTheme,
 }
 impl<'a> StyleSurface<'a> {
-    pub fn new(theme: &'a ResolvedTheme, bookmap: bool) -> Self {
+    pub fn new(theme: &'a ResolvedTheme, surface: impl Into<ChartSurface>) -> Self {
         Self {
-            theme: if bookmap { theme.bookmap() } else { theme },
+            theme: theme.surface(surface.into()),
         }
     }
     pub fn resolve(self, mut style: ChartStyle) -> ChartStyle {
@@ -71,9 +72,9 @@ impl PaneStyle {
         &self,
         legacy: &ChartStyle,
         theme: &ResolvedTheme,
-        bookmap: bool,
+        surface: impl Into<ChartSurface>,
     ) -> ChartStyle {
-        self.resolve(legacy, if bookmap { theme.bookmap() } else { theme })
+        self.resolve(legacy, theme.surface(surface.into()))
     }
     pub fn grid(&self, legacy: &ChartStyle) -> bool {
         self.authored.unwrap_or(*legacy).canvas.grid_enabled
@@ -86,8 +87,8 @@ impl PaneStyle {
     /// Take the theme this pane paints with, so the switches that read the
     /// pane answer what its paint shows. The window calls it for every pane
     /// at the start of each frame, beside the egui palette.
-    pub fn follow_theme(&mut self, theme: &ResolvedTheme, bookmap: bool) {
-        let theme = if bookmap { theme.bookmap() } else { theme };
+    pub fn follow_theme(&mut self, theme: &ResolvedTheme, surface: impl Into<ChartSurface>) {
+        let theme = theme.surface(surface.into());
         self.theme_time_grid = theme.chart_time_grid;
     }
     /// The vertical grid this pane shows: the trader's answer where the

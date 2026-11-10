@@ -28,6 +28,8 @@ pub struct BubbleColors<C> {
     pub separator: C,
     pub crown_buy: C,
     pub crown_sell: C,
+    /// Flat bubbles ringed in these, buy then sell, where the palette says so.
+    pub flat_rims: Option<[C; 2]>,
 }
 
 impl<C: Copy> BubbleColors<C> {
@@ -57,7 +59,16 @@ impl<C: Copy> BubbleColors<C> {
             separator: palette.separator,
             crown_buy: crown_of(buy),
             crown_sell: crown_of(sell),
+            flat_rims: palette.flat_rims,
         }
+    }
+
+    /// The rim a flat bubble on `side` wears, where the palette rims them.
+    pub fn flat_rim(&self, side: Side) -> Option<C> {
+        self.flat_rims.map(|[buy, sell]| match side {
+            Side::Buy => buy,
+            Side::Sell => sell,
+        })
     }
 
     /// The fill of a print on `side`.

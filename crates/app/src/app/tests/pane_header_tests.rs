@@ -3206,3 +3206,6 @@ fn only_the_focused_pane_of_a_split_wears_the_accent_frame() {
         "a lone pane wears no frame"
     );
 }
+
+#[path = "flow_lights_tests.rs"]
+mod flow_lights_tests;

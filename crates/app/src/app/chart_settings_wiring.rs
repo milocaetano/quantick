@@ -34,7 +34,7 @@ impl LayerWiring<'_> {
         Ok(pane
             .presentation
             .candles
-            .resolve_surface(self.style, theme, pane.orderflow.is_some()))
+            .resolve_surface(self.style, theme, pane.surface()))
     }
     fn set_style_at(&mut self, target: StyleTarget, style: ChartStyle) -> Result<(), PresetError> {
         self.target_pane(target)?;
@@ -80,7 +80,9 @@ impl LayerWiring<'_> {
         let surface = quantick_chart::pane_style::StyleSurface::new(
             self.appearance.resolved(),
             self.target_pane(target)
-                .is_ok_and(|pane| pane.orderflow.is_some()),
+                .map_or(quantick_appearance::ChartSurface::Paper, |pane| {
+                    pane.surface()
+                }),
         );
         let applied = settings::apply(
             &mut self.chart_settings.session,

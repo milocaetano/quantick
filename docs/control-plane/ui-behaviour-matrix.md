@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 115 |
+| Reachable by capability | 116 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **169** |
+| **Total** | **170** |
 
-97 of the 169 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 170 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 73 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -112,6 +112,7 @@ The three exclusion classes are closed:
 | `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; window menu, Panels; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
 | `orderflow.settings.close` | Close the order-flow panel | the panel's ×; the gear's left click; Ctrl+Shift+O | `orderflow.settings.close` | — |
 | `orderflow.settings.section.set` | Fold or open a section of the order-flow panel, for the asset on screen | a click on the section's header in the panel | `orderflow.settings.section.set` | — |
+| `orderflow.settings.lights.set` | Switch the order-flow pane's lights: white with a plum wall, or the dark island | the light bulb beside the gear on the flow pane's ORDER FLOW band, Light theme only | `orderflow.settings.lights.set` | — |
 | `orderflow.tape.view.set` | Show the trail and tape, the trail alone or the tape alone | pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
@@ -245,7 +246,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 72 |
+| `authored` | 73 |
 
 ## Appendix: rows no registry stands behind
 
@@ -290,6 +291,7 @@ declares nothing here is a guard failure.
 | `orderflow.tape.market_fold.set` | the per-asset checkbox in the Bubbles settings is not a pane header control |
 | `orderflow.settings.close` | the panel's close button is drawn by the panel, not a pane header entry |
 | `orderflow.settings.section.set` | the panel's collapsible headers are drawn by the panel, not a pane header entry |
+| `orderflow.settings.lights.set` | the bulb is drawn by the flow pane's band, beside the gear, not a registry entry |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |

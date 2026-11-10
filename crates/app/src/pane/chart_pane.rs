@@ -512,9 +512,13 @@ impl ChartPane {
     /// The palette this pane paints with: order flow takes the plot surface's.
     pub fn palette(&self, ctx: &egui::Context) -> std::sync::Arc<crate::theme::Palette> {
         let get = || crate::theme::get(ctx);
-        self.orderflow
-            .as_ref()
-            .map_or_else(get, |_| crate::theme::bookmap(ctx))
+        let flow = |_| crate::theme::surface(ctx, self.surface());
+        self.orderflow.as_ref().map_or_else(get, flow)
+    }
+    /// The theme surface this pane paints on: paper, or the flow pane lit or not.
+    pub fn surface(&self) -> quantick_appearance::ChartSurface {
+        let lights = |view: &OrderflowView| view.settings_panel.lights_on();
+        quantick_appearance::ChartSurface::pane(self.orderflow.as_ref().map(lights))
     }
     /// The style this pane's plot paints with, from the window's `style`.
     pub fn plot_style(&self, style: &ChartStyle, ctx: &egui::Context) -> ChartStyle {
@@ -1359,6 +1363,11 @@ impl ChartPane {
                 actions.open_layer_tab = Some(toggle.layer());
             }
             HeaderIntent::ToggleSettings => actions.toggle_settings = true,
+            HeaderIntent::SetLights(on) => {
+                if let Some(owner) = self.orderflow.as_mut() {
+                    owner.settings_panel.set_lights(on);
+                }
+            }
             HeaderIntent::SetLaneWindow(window) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_live_lane_window(window);

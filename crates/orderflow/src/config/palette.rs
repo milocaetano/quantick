@@ -41,8 +41,18 @@ impl PaletteChoice {
             _ => HeatmapTheme::Bookmap,
         }
     }
+    /// The choice in force over `inherited`: a palette bound to its surface
+    /// (the lit flow pane's) outranks one picked for another ground.
+    #[must_use]
+    pub fn under(self, inherited: &OrderflowAppearance) -> Self {
+        if inherited.surface_bound {
+            Self::Inherited
+        } else {
+            self
+        }
+    }
     pub fn resolve(self, inherited: &OrderflowAppearance) -> OrderflowAppearance {
-        match self {
+        match self.under(inherited) {
             Self::Inherited => *inherited,
             Self::Snapshot(palette) => palette,
             Self::Historical(theme) => {
@@ -72,6 +82,7 @@ impl PaletteChoice {
 }
 impl OrderflowRenderStyle {
     pub fn resolve_palette(&mut self, choice: PaletteChoice, inherited: &OrderflowAppearance) {
+        let choice = choice.under(inherited);
         self.theme = choice.historical();
         self.palette = match choice {
             PaletteChoice::Historical(_) => None,
@@ -98,6 +109,7 @@ impl OrderflowRenderStyle {
                 legend_text: rgba(p.legend_text),
                 legend_background: rgba(p.legend_background),
                 legend_border: rgba(p.legend_border),
+                flat_rims: p.flat_rims.map(|rims| rims.map(&rgba)),
             },
             None => Palette::for_theme(self.theme, rgba),
         }
@@ -106,15 +118,11 @@ impl OrderflowRenderStyle {
         let Some(p) = self.palette else {
             return super::theme::thermal_rgb(self.theme, intensity);
         };
-        let positions = [0.00, 0.09, 0.22, 0.38, 0.55, 0.70, 0.83, 0.93, 1.00];
         let t = finite_unit(intensity);
-        for i in 1..positions.len() {
-            if t <= positions[i] {
-                return mix_rgb(
-                    p.ramp[i - 1],
-                    p.ramp[i],
-                    (t - positions[i - 1]) / (positions[i] - positions[i - 1]),
-                );
+        for i in 1..p.ramp.len() {
+            let (from, to) = (p.ramp_stop(i - 1), p.ramp_stop(i));
+            if t <= to {
+                return mix_rgb(p.ramp[i - 1], p.ramp[i], (t - from) / (to - from));
             }
         }
         p.ramp[8]
@@ -249,5 +257,43 @@ mod decoration_tests {
                 .separator,
             [0, 0, 0, 170]
         );
+    }
+}
+
+#[cfg(test)]
+mod lit_tests {
+    use super::*;
+    use quantick_appearance::{ChartSurface, LIGHT, ResolvedTheme};
+
+    /// The lit flow pane's palette outranks any the pane picked for the island,
+    /// reads its ramp on its own stops and rims its bubbles; the island keeps
+    /// the trader's pick.
+    #[test]
+    fn the_lit_palette_outranks_a_picked_one_and_reads_its_own_stops() {
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        let lit = light.surface(ChartSurface::LitFlow).orderflow;
+        let island = light.bookmap().orderflow;
+        let picks = [
+            PaletteChoice::Inherited,
+            PaletteChoice::Snapshot(island),
+            PaletteChoice::Historical(HeatmapTheme::HighContrast),
+        ];
+        for choice in picks {
+            let mut style = OrderflowRenderStyle::default();
+            style.resolve_palette(choice, &lit);
+            assert_eq!(style.palette, Some(lit), "{choice:?}");
+            assert_eq!(choice.resolve(&lit), lit);
+            assert_eq!(choice.under(&island), choice);
+        }
+        let mut style = OrderflowRenderStyle::default();
+        style.resolve_palette(PaletteChoice::Inherited, &lit);
+        assert_eq!(style.thermal_rgb(0.0), [255, 255, 255]);
+        assert_eq!(style.thermal_rgb(0.15), [0xF1, 0xF2, 0xF4]);
+        assert_eq!(style.thermal_rgb(0.90), [0x8A, 0x2C, 0x7C]);
+        assert_eq!(style.thermal_rgb(1.0), [0x3A, 0x0A, 0x33]);
+        let rims = Some([[0x0A, 0x63, 0x44, 255], [0x8F, 0x1B, 0x27, 255]]);
+        assert_eq!(style.colors(|c| c).flat_rims, rims);
+        style.resolve_palette(PaletteChoice::Inherited, &island);
+        assert_eq!(style.colors(|c| c).flat_rims, None);
     }
 }

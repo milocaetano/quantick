@@ -13,6 +13,11 @@
         "l2_open": {
           "type": "boolean"
         },
+        "lights_on": {
+          "default": false,
+          "description": "The flow pane's lights, kept with the tab whatever the theme; only a\ntheme that authors a lit surface (Light) paints them.",
+          "type": "boolean"
+        },
         "open": {
           "type": "boolean"
         },

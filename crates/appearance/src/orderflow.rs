@@ -9,6 +9,9 @@ pub struct OrderflowOverride {
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     pub ramp: Option<[ColorValue; 9]>,
+    /// Where each ramp colour sits along the intensity, from 0 to 1: the
+    /// first at 0, the last at 1, each past the one before.
+    pub ramp_stops: Option<[f32; 9]>,
 }
 
 /// Exact premultiplied palette bytes plus an opaque thermal ramp.
@@ -36,6 +39,33 @@ pub struct OrderflowAppearance {
     pub preview_grid: [u8; 4],
     pub preview_path: [u8; 4],
     pub ramp: [[u8; 3]; 9],
+    /// Where each ramp colour sits, in thousandths of the intensity.
+    #[serde(
+        default = "legacy_ramp_stops",
+        skip_serializing_if = "is_legacy_ramp_stops"
+    )]
+    pub ramp_stops: [u16; 9],
+    /// Flat bubbles ringed in these rims, buy then sell; `None` keeps the
+    /// look's own render mode and its side-coloured rims. Shading drawn for a
+    /// dark ground muddies on white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flat_rims: Option<[[u8; 4]; 2]>,
+    /// Drawn for the surface it was resolved on: a pane's own palette choice,
+    /// picked for another ground, yields to it. Never saved.
+    #[serde(skip)]
+    pub surface_bound: bool,
+}
+
+/// The positions every ramp had before themes could author them, in thousandths.
+pub const LEGACY_RAMP_STOPS: [u16; 9] = [0, 90, 220, 380, 550, 700, 830, 930, 1000];
+/// One whole intensity in the units [`OrderflowAppearance::ramp_stops`] counts.
+pub const RAMP_STOP_UNIT: f32 = 1000.0;
+
+const fn legacy_ramp_stops() -> [u16; 9] {
+    LEGACY_RAMP_STOPS
+}
+fn is_legacy_ramp_stops(stops: &[u16; 9]) -> bool {
+    *stops == LEGACY_RAMP_STOPS
 }
 
 /// Missing version-1 snapshot fields retain the historical decoration.
@@ -101,6 +131,22 @@ impl OrderflowOverride {
             preview_grid: color("preview_grid", fallback.map(|old| old.preview_grid), false)?,
             preview_path: color("preview_path", fallback.map(|old| old.preview_path), false)?,
             ramp: fallback.map_or([[0; 3]; 9], |old| old.ramp),
+            ramp_stops: fallback.map_or(LEGACY_RAMP_STOPS, |old| old.ramp_stops),
+            flat_rims: None,
+            surface_bound: false,
+        };
+        resolved.flat_rims = match (colors.remove("buy_rim"), colors.remove("sell_rim")) {
+            (Some(buy), Some(sell)) => Some([
+                buy.resolve("orderflow.colors.buy_rim")?.to_array(),
+                sell.resolve("orderflow.colors.sell_rim")?.to_array(),
+            ]),
+            (None, None) => fallback.and_then(|old| old.flat_rims),
+            _ => {
+                return Err(ThemeError::new(
+                    "orderflow.colors.buy_rim",
+                    "buy_rim and sell_rim are authored together",
+                ));
+            }
         };
         if let Some(key) = colors.keys().next() {
             return Err(ThemeError::new(
@@ -130,11 +176,43 @@ impl OrderflowOverride {
             }
             None => {}
         }
+        if let Some(stops) = &self.ramp_stops {
+            resolved.ramp_stops = ramp_stops(stops)?;
+        }
         Ok(resolved)
     }
 }
 
+/// Authored positions in thousandths: 0 first, 1 last, each past the one before.
+fn ramp_stops(stops: &[f32; 9]) -> Result<[u16; 9], ThemeError> {
+    let invalid = || {
+        ThemeError::new(
+            "orderflow.ramp_stops",
+            "must run from 0 to 1, each stop past the one before",
+        )
+    };
+    let mut thousandths = [0_u16; 9];
+    for (slot, stop) in thousandths.iter_mut().zip(stops) {
+        if !stop.is_finite() || !(0.0..=1.0).contains(stop) {
+            return Err(invalid());
+        }
+        // In range, so the rounded value fits.
+        *slot = (stop * RAMP_STOP_UNIT).round() as u16;
+    }
+    let rising = thousandths.windows(2).all(|pair| pair[0] < pair[1]);
+    if thousandths[0] != 0 || thousandths[8] != 1000 || !rising {
+        return Err(invalid());
+    }
+    Ok(thousandths)
+}
+
 impl OrderflowAppearance {
+    /// Where ramp colour `index` sits along the intensity, from 0 to 1.
+    #[must_use]
+    pub fn ramp_stop(&self, index: usize) -> f32 {
+        f32::from(self.ramp_stops[index]) / RAMP_STOP_UNIT
+    }
+
     pub fn validate(&self) -> Result<(), ThemeError> {
         for (key, rgba) in [
             ("buy", self.buy),

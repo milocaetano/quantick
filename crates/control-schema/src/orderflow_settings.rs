@@ -9,7 +9,9 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use quantick_stores::ui_state::{AssetFolds, OrderFlowPanel, PanelControl, PanelSection};
+pub use quantick_stores::ui_state::{
+    AssetFolds, LIGHTS_DESCRIPTION, LIGHTS_NAME, OrderFlowPanel, PanelControl, PanelSection,
+};
 
 use crate::readback::{EVERY_OPTIONAL_TEST, Readback, snapshot};
 use crate::scene::SceneRoleDto;
@@ -17,6 +19,7 @@ use crate::scene::SceneRoleDto;
 pub const OPEN_CAPABILITY_ID: &str = "orderflow.settings.open";
 pub const CLOSE_CAPABILITY_ID: &str = "orderflow.settings.close";
 pub const SECTION_CAPABILITY_ID: &str = "orderflow.settings.section.set";
+pub const LIGHTS_CAPABILITY_ID: &str = "orderflow.settings.lights.set";
 /// The panel's state, read off the tab: no paint needed, unlike the scene's controls.
 pub const SETTINGS_SCOPE_ID: &str = "orderflow.settings";
 
@@ -60,6 +63,14 @@ pub struct SettingsSectionInput {
     pub open: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsLightsInput {
+    pub tab_id: WireU64,
+    /// On paints the flow pane on the theme's lit surface; off, its dark island.
+    pub on: bool,
+}
+
 /// The panel after a call, whichever one it was.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsResult {
@@ -69,6 +80,9 @@ pub struct SettingsResult {
     pub open: bool,
     pub l2_open: bool,
     pub bubbles_open: bool,
+    /// The flow pane's lights: the bulb beside the gear.
+    #[serde(default)]
+    pub lights_on: bool,
     pub changed: bool,
 }
 
@@ -88,6 +102,7 @@ impl SettingsResult {
             open: panel.is_open(),
             l2_open: folds.section_open(asset, PanelSection::L2),
             bubbles_open: folds.section_open(asset, PanelSection::Bubbles),
+            lights_on: panel.lights_on(),
             changed,
         }
     }
@@ -108,6 +123,10 @@ pub struct TabSettingsSnapshot {
     pub open: bool,
     pub l2_open: bool,
     pub bubbles_open: bool,
+    /// The flow pane's lights, kept with the tab whatever the theme; only a
+    /// theme that authors a lit surface (Light) paints them.
+    #[serde(default)]
+    pub lights_on: bool,
 }
 
 impl TabSettingsSnapshot {
@@ -120,6 +139,7 @@ impl TabSettingsSnapshot {
             open: panel.is_open(),
             l2_open: folds.section_open(asset, PanelSection::L2),
             bubbles_open: folds.section_open(asset, PanelSection::Bubbles),
+            lights_on: panel.lights_on(),
         }
     }
 }
@@ -160,6 +180,13 @@ pub fn scene_row(
             false,
             None,
             CLOSE_CAPABILITY_ID,
+        ),
+        PanelControl::Lights => (
+            LIGHTS_NAME,
+            SceneRoleDto::Toggle,
+            panel.lights_on(),
+            None,
+            LIGHTS_CAPABILITY_ID,
         ),
     }
 }
@@ -209,6 +236,15 @@ pub fn section_descriptor() -> CapabilityDescriptor {
     )
 }
 
+pub fn lights_descriptor() -> CapabilityDescriptor {
+    durable_descriptor::<SettingsLightsInput>(
+        LIGHTS_CAPABILITY_ID,
+        "Switch the order-flow pane's lights",
+        "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Refused while the theme authors no lit surface (Dark). Kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
+        "A stable tab ID selects the tab; repeating a value has no further effect, and the result and the orderflow.settings scope report it.",
+    )
+}
+
 const fn readback(
     capability: &'static str,
     field: &'static str,
@@ -234,6 +270,11 @@ pub const READBACKS: &[Readback] = &[
         CLOSE_CAPABILITY_ID,
         "tabs[].open",
         "the tab's row no longer reads open",
+    ),
+    readback(
+        LIGHTS_CAPABILITY_ID,
+        "tabs[].lights_on",
+        "the tab's row reads the value asked for",
     ),
     readback(
         SECTION_CAPABILITY_ID,
@@ -281,6 +322,33 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn the_lights_name_their_tab_and_a_value_and_nothing_else() {
+        let input: SettingsLightsInput =
+            serde_json::from_str(r#"{"tab_id":"1","on":true}"#).unwrap();
+        assert!(input.on);
+        for bad in [
+            r#"{"tab_id":"1"}"#,
+            r#"{"on":true}"#,
+            r#"{"tab_id":"1","on":"yes"}"#,
+            r#"{"tab_id":"1","on":true,"theme":"light"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<SettingsLightsInput>(bad).is_err(),
+                "{bad}"
+            );
+        }
+        let mut panel = OrderFlowPanel::default();
+        panel.set_lights(true);
+        let folds = AssetFolds::default();
+        let row = TabSettingsSnapshot::read(WireU64::new(1), "BTCUSDT", &panel, &folds);
+        assert!(row.lights_on);
+        let scene = scene_row(PanelControl::Lights, &panel, &folds, "BTCUSDT");
+        assert_eq!(scene.0, LIGHTS_NAME);
+        assert!(scene.2);
+        assert_eq!(scene.4, LIGHTS_CAPABILITY_ID);
     }
 
     #[test]

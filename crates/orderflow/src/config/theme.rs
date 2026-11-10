@@ -278,6 +278,9 @@ pub struct Palette<C> {
     pub legend_border: C,
     pub preview_grid: C,
     pub preview_path: C,
+    /// Flat bubbles ringed in these rims, buy then sell; `None` keeps the
+    /// look's render mode and its side-coloured rims.
+    pub flat_rims: Option<[C; 2]>,
 }
 
 impl<C> Palette<C> {
@@ -300,6 +303,7 @@ impl<C> Palette<C> {
                 legend_text: rgba([225, 230, 239, 255]),
                 legend_background: rgba([8, 12, 23, 225]),
                 legend_border: rgba([130, 145, 170, 90]),
+                flat_rims: None,
             },
             HeatmapTheme::HighContrast => Self {
                 crown_backing: rgba(quantick_appearance::orderflow::legacy_crown_backing()),
@@ -318,6 +322,7 @@ impl<C> Palette<C> {
                 legend_text: rgba([255, 255, 255, 255]),
                 legend_background: rgba([0, 0, 0, 238]),
                 legend_border: rgba([175, 175, 175, 255]),
+                flat_rims: None,
             },
             HeatmapTheme::ColorBlind => Self {
                 crown_backing: rgba(quantick_appearance::orderflow::legacy_crown_backing()),
@@ -336,6 +341,7 @@ impl<C> Palette<C> {
                 legend_text: rgba([232, 232, 226, 255]),
                 legend_background: rgba([10, 11, 25, 230]),
                 legend_border: rgba([165, 166, 180, 100]),
+                flat_rims: None,
             },
         }
     }

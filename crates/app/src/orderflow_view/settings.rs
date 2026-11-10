@@ -174,7 +174,7 @@ impl OrderflowView {
         ui.small(
             "A bite means a compatible L2 reduction; a violet tail is an unattributed withdrawal.",
         );
-        draw_preview(ui, &self.config).on_hover_text(
+        draw_preview(ui, &self.config, self.settings_panel.lights_on()).on_hover_text(
                     "Deterministic preview: persistent wall, aligned depletion, full withdrawal and clustered trades.",
                 );
         ui.separator();
@@ -226,7 +226,7 @@ impl OrderflowView {
                     "Confirmed executions from the trade stream. Colour is the aggressor side; area is quantity.",
                 );
         ui.small("This layer is independent: it keeps drawing with L2 capture off.");
-        draw_preview(ui, &self.config).on_hover_text(
+        draw_preview(ui, &self.config, self.settings_panel.lights_on()).on_hover_text(
                     "Deterministic preview: every control below shows its effect here, without waiting for a trade.",
                 );
         ui.separator();

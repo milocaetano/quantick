@@ -49,7 +49,7 @@ pub use quantick_workspace::arrangement_document::{
     SavedChrome, SavedDockTab, SavedFocus, SavedRailDock, SavedTab,
 };
 pub use quantick_workspace::orderflow_panel::{
-    AssetFolds, OrderFlowPanel, PanelControl, PanelSection,
+    AssetFolds, LIGHTS_DESCRIPTION, LIGHTS_NAME, OrderFlowPanel, PanelControl, PanelSection,
 };
 
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
