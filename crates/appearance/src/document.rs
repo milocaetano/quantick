@@ -167,6 +167,14 @@ impl ThemeDocument {
                 {
                     colors[Token::Inset as usize]
                 }
+                // Older themes painted the order-flow band on their own frame,
+                // under their own flow inks: the band stays that frame.
+                None if token == Token::FlowBand
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::FlowSurface.key()) =>
+                {
+                    colors[Token::FlowSurface as usize]
+                }
                 None if MODE_TOKENS.contains(&token)
                     && fallback.is_some_and(|theme| theme.dark != self.dark) =>
                 {

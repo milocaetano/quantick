@@ -24,9 +24,8 @@ pub use ink::relative_luminance;
 // The anchored VWAP's colour, painted by the headless tool; pinned to it here.
 #[cfg(test)]
 pub use palette::{
-    ACCENT, AMBER, BORDER, BUY, CANVAS, CASING, CHIP_INK, CHROME, CONTROL, DRAW_CYAN,
-    FLOW_KEY_DOWN, FLOW_KEY_DOWN_RIM, FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_LIP, FLOW_KEY_UP_SHADOW,
-    FLOW_KEY_UP_TOP, FLOW_SURFACE, POC, SELL, TEXT_MUTED, TEXT_PRIMARY, WARN,
+    ACCENT, AMBER, BORDER, BUY, CANVAS, CASING, CHIP_INK, CHROME, CONTROL, DRAW_CYAN, FLOW_SURFACE,
+    POC, SELL, TEXT_MUTED, TEXT_PRIMARY, WARN,
 };
 pub use quantick_appearance::palette::CASING_EXTRA_PX;
 

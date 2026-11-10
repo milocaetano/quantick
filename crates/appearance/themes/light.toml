@@ -20,8 +20,8 @@ drawing_vwap = "#2B3640"
 drawing_profile = "#7A8EC2"
 flow_surface = "#EEEBE7"
 flow_divider = "#BDBBB7"
-flow_ink = "#242424"
-flow_key_down = "#DEDBD7"
+flow_ink = "#F2F4F7"
+flow_key_down = "#2B3037"
 flow_key_down_shade = { premultiplied = [0, 0, 0, 25] }
 flow_key_down_rim = { premultiplied = [30, 30, 30, 90] }
 flow_key_down_ink = "#4a4a4a"
@@ -30,8 +30,15 @@ flow_key_up_bottom = "#E3E0DC"
 flow_key_up_lip = { premultiplied = [200, 200, 200, 200] }
 flow_key_up_edge = { premultiplied = [35, 35, 35, 100] }
 flow_key_up_shadow = { premultiplied = [0, 0, 0, 35] }
-flow_key_up_ink = "#242424"
-flow_band_rule = "#C8C6C2"
+flow_key_up_ink = "#FFFFFF"
+# The band is graphite with light ink over the pale side headers; its keys
+# carry no body, a dot lit or unlit beside the word, and the gear is bare.
+flow_band_rule = "#3A3F45"
+flow_band = "#4A5059"
+flow_key_lit_dot = "#3AF0B2"
+flow_key_unlit_dot = "#6B7482"
+flow_key_unlit_ink = "#9AA3B0"
+flow_gear_ink = "#C9CFD8"
 trade_selection_halo = "#24588740"
 candle_preview_background = "#FFFCF7"
 candle_preview_bid = "#157EAE"
@@ -235,6 +242,11 @@ flow_key_up_edge = { premultiplied = [0, 0, 0, 153] }
 flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
 flow_key_up_ink = "#ffffff"
 flow_band_rule = "#2e3648"
+flow_band = "#1e2433"
+flow_key_lit_dot = "#3AF0B2"
+flow_key_unlit_dot = "#6B7482"
+flow_key_unlit_ink = "#9AA3B0"
+flow_gear_ink = "#C9CFD8"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
 candle_preview_background = "#252F37"
 candle_preview_bid = "#14B9E6"

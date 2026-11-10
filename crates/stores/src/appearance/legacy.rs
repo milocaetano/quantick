@@ -17,8 +17,10 @@
 //! the per-surface recolour).
 //! 9c443e08: Light 7670bb0679eb7630d2fd9552668e2c7bf085a126 (main's green and red marks).
 //! 297976ae: Light 297976ae72c4051982c403be035816877a4bc9d3 (warm toolbar row, blue VWAP).
+//! 4b4dbe17: Light 71e8ab1f4fb71f8ee5428c5a6053a0299125eaa3 and 1a94dcf5: Light
+//! c69fb362b9b7209da2a0d45653a7ec73923af00c (the pale order-flow band, before graphite).
 
-const LIGHT_SOURCES: [&str; 13] = [
+const LIGHT_SOURCES: [&str; 15] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
@@ -32,6 +34,8 @@ const LIGHT_SOURCES: [&str; 13] = [
     include_str!("legacy-light-fe595c70.toml"),
     include_str!("legacy-light-9c443e08.toml"),
     include_str!("legacy-light-297976ae.toml"),
+    include_str!("legacy-light-4b4dbe17.toml"),
+    include_str!("legacy-light-1a94dcf5.toml"),
 ];
 const DARK_SOURCES: [&str; 5] = [
     include_str!("legacy-dark-66aa9abc.toml"),

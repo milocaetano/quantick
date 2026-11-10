@@ -594,7 +594,7 @@ impl Tab {
         );
         if let Some(job_slot) = &job_slot {
             let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right() - capsule_px;
-            crate::loading::draw_slot(ui, right, strip, job_slot);
+            crate::loading::draw_slot(ui, right, strip, job_slot, None);
         }
         #[cfg(test)]
         if slot == 0 {

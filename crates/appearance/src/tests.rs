@@ -181,8 +181,18 @@ fn bundled_light_changes_every_semantic_color_and_preserves_readable_text() {
     let dark = ResolvedTheme::default();
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     assert!(!light.dark);
+    // The order-flow band's keys and gear read the same on both bands, as the
+    // trader chose them.
+    let shared = [
+        Token::FlowKeyLitDot,
+        Token::FlowKeyUnlitDot,
+        Token::FlowKeyUpInk,
+        Token::FlowKeyUnlitInk,
+        Token::FlowGearInk,
+    ];
     for token in Token::ALL {
-        assert_ne!(light.color(token), dark.color(token), "{}", token.key());
+        let same = light.color(token) == dark.color(token);
+        assert_eq!(same, shared.contains(&token), "{}", token.key());
     }
     for background in [Token::Canvas, Token::Chrome, Token::Inset] {
         for text in [Token::TextPrimary, Token::TextMuted, Token::TextSupport] {
@@ -911,4 +921,26 @@ fn a_default_drawing_colour_takes_the_surface_role_and_an_authored_one_does_not(
         let born = dark.color(role);
         assert_eq!(dark.bookmap().legible_drawing_as(born, role), born);
     }
+}
+
+/// A document that predates `flow_band` keeps its band on its own
+/// `flow_surface`, under its own inks; an authored band wins, and a document
+/// that authors neither takes the fallback's band with the fallback's inks.
+#[test]
+fn the_flow_band_defaults_to_the_documents_own_flow_surface() {
+    let band = |colors: &str| {
+        let source = format!("version = 1\nname = \"Custom\"\ndark = false\n[colors]\n{colors}");
+        let theme = ResolvedTheme::parse(&source).unwrap();
+        theme.color(Token::FlowBand).to_array()
+    };
+    assert_eq!(
+        band("flow_surface = \"#123456\"\n"),
+        [0x12, 0x34, 0x56, 255]
+    );
+    assert_eq!(
+        band("flow_surface = \"#123456\"\nflow_band = \"#654321\"\n"),
+        [0x65, 0x43, 0x21, 255]
+    );
+    let dark = ResolvedTheme::default();
+    assert_eq!(band(""), dark.color(Token::FlowBand).to_array());
 }

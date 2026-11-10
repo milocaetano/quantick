@@ -82,9 +82,12 @@ groups are:
 | `candle_bull_outline`, `candle_bear_outline`, `candle_wick` | Default candle contours and neutral wick |
 | `accent`, `pane_mark`, `pane_action`, `off` | Selection, pane headings/actions and manually disabled layers |
 | `amber`, `warn`, `rec` | Provenance, errors and recording status |
-| `flow_surface`, `flow_divider`, `flow_ink`, `flow_band_rule` | Order-flow frame, divider, band heading and closing rule |
-| `flow_key_down`, `flow_key_down_shade`, `flow_key_down_rim`, `flow_key_down_ink` | Unlit side keys: surface, top shade, rim and text |
-| `flow_key_up_top`, `flow_key_up_bottom`, `flow_key_up_lip`, `flow_key_up_edge`, `flow_key_up_shadow`, `flow_key_up_ink` | Lit side keys: gradient, top highlight, under-edge, shadow and text |
+| `flow_surface`, `flow_divider` | Order-flow frame (side headers and axis strip) and divider |
+| `flow_band`, `flow_ink`, `flow_band_rule` | Order-flow band fill, its heading (and the rule after it, the status words and the connection chip) and its closing rule |
+| `flow_key_lit_dot`, `flow_key_up_ink` | A shown side's key: its glowing dot and white word; the gear's ink while hovered or open |
+| `flow_key_unlit_dot`, `flow_key_unlit_ink` | A hidden side's key: its grey dot and muted word |
+| `flow_gear_ink`, `flow_key_down`, `flow_key_down_shade` | The bare gear's ink, and the well with its top shade it sinks into while the settings are open |
+| `flow_key_down_rim`, `flow_key_down_ink`, `flow_key_up_top`, `flow_key_up_bottom`, `flow_key_up_lip`, `flow_key_up_edge`, `flow_key_up_shadow` | Accepted legacy v1 keys; the band's keys no longer paint a body |
 | `bare_hover`, `float_shadow` | Control hover and floating surface shadows |
 | `capsule_fill`, `capsule_border`, `capsule_shadow` | Accepted legacy v1 keys; docked layer capsules no longer paint a separate case |
 | `seam_line`, `seam_label`, `day_rule`, `gap_line`, `gap_label` | Tape provenance, day changes and missing-data marks |
@@ -105,6 +108,8 @@ Explicit pane colors and opacity retain their existing ownership.
 Omitting `tab_strip` takes the document's own `inset`; omitting `brand`,
 `replay_ink` or a tab token takes the bundled theme of the document's `dark`
 mode, so an authored Light file written before these tokens stays Light.
+Omitting `flow_band` takes the document's own `flow_surface`, so a file written
+before the band had its own fill keeps a band its own flow inks read on.
 
 ## Title strip
 

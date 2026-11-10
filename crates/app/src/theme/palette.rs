@@ -20,10 +20,4 @@ pub const TEXT_MUTED: Color32 = rendered(quantick_appearance::palette::TEXT_MUTE
 pub const TEXT_PRIMARY: Color32 = rendered(quantick_appearance::palette::TEXT_PRIMARY);
 
 pub const FLOW_SURFACE: Color32 = Color32::from_rgb(30, 36, 51);
-pub const FLOW_KEY_DOWN: Color32 = Color32::from_rgb(20, 25, 36);
-pub const FLOW_KEY_DOWN_RIM: Color32 = Color32::from_black_alpha(102);
-pub const FLOW_KEY_UP_TOP: Color32 = Color32::from_rgb(61, 72, 94);
-pub const FLOW_KEY_UP_BOTTOM: Color32 = Color32::from_rgb(46, 55, 73);
-pub const FLOW_KEY_UP_LIP: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
-pub const FLOW_KEY_UP_SHADOW: Color32 = Color32::from_black_alpha(128);
 pub const WARN: Color32 = rendered(quantick_appearance::palette::WARN);

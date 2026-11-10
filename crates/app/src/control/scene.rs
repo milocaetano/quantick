@@ -55,7 +55,7 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment};
+use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
 use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
@@ -270,6 +270,7 @@ fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         controls.push(SceneControlSnapshot {
             control_id: control.action.control_id().to_owned(),
             label: control.action.label().to_owned(),
+            description: None,
             role: if arms {
                 SceneRoleDto::Tool
             } else {
@@ -317,6 +318,7 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
         controls.push(SceneControlSnapshot {
             control_id: format!("tab.{}.context_divider.{upper}.{lower}", tab_id),
             label: format!("Resize context panes {upper} and {lower}"),
+            description: None,
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,
@@ -368,6 +370,7 @@ fn push_tab_strip(
             // assistant that named a tab something the trader cannot see
             // would be describing a different screen.
             label: tab.chip_label().to_owned(),
+            description: None,
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,
@@ -427,6 +430,7 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
         controls.push(SceneControlSnapshot {
             control_id: format!("tab_strip.{id}"),
             label: label.to_owned(),
+            description: None,
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,
@@ -460,6 +464,11 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let folds = app.tab_reads().tabs().panel_folds();
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
+            // What a side shows, whatever its key reads, as its tooltip says.
+            let description = match control {
+                HeaderControl::Side(side) => Some(side_description(side).to_owned()),
+                _ => None,
+            };
             let (label, role, selected, blocked, capability) = match control {
                 HeaderControl::Side(side) => {
                     let segment = pane
@@ -507,6 +516,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
             controls.push(SceneControlSnapshot {
                 control_id: format!("pane.{}.header.{}", pane.id, control.id_in_header()),
                 label: label.to_owned(),
+                description,
                 role,
                 owner: SceneOwnerSnapshot {
                     kind: SceneOwnerKindDto::Tab,
@@ -531,6 +541,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
         controls.push(SceneControlSnapshot {
             control_id: format!("pane.{}.lane_rail", pane.id),
             label: quantick_chart::pane_header::rail_word(closed).to_owned(),
+            description: None,
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,
@@ -567,6 +578,7 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
         controls.push(SceneControlSnapshot {
             control_id: rail_control_id(&control),
             label: control.label.to_owned(),
+            description: None,
             role: SceneRoleDto::Tool,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::ToolRail,
@@ -585,6 +597,7 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
         controls.push(SceneControlSnapshot {
             control_id: format!("{TOOL_RAIL_OWNER_ID}.toggle.magnet"),
             label: "Snap anchors to OHLC".to_owned(),
+            description: None,
             role: SceneRoleDto::Toggle,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::ToolRail,
@@ -610,6 +623,7 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
         controls.push(SceneControlSnapshot {
             control_id: dock_tab_control_id(tab),
             label: tab.title().to_owned(),
+            description: None,
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Dock,
@@ -635,6 +649,7 @@ fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot
         controls.push(SceneControlSnapshot {
             control_id: section.control_id().to_owned(),
             label: section.title().to_owned(),
+            description: None,
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 // The published kinds are closed; Settings opens from the strip.
@@ -675,6 +690,7 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
             .feed_word()
             .unwrap_or(crate::feed_notice::OFFLINE_LABEL)
             .to_owned(),
+        description: None,
         role: SceneRoleDto::Toggle,
         owner: owner(),
         selected: popup_open,
@@ -705,6 +721,7 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         controls.push(SceneControlSnapshot {
             control_id: control_id.to_owned(),
             label: recovery.label().to_owned(),
+            description: None,
             role: SceneRoleDto::Action,
             owner: owner(),
             // Which of the two leads is the application's judgement about
@@ -740,6 +757,7 @@ fn push_panes(
         controls.push(SceneControlSnapshot {
             control_id: pane_canvas_control_id(pane.id),
             label: format!("{} chart", side.title()),
+            description: None,
             role: SceneRoleDto::Canvas,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,

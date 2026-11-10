@@ -231,9 +231,20 @@ pub enum Token {
     LedgerSessionEdge,
     /// The selected trade row.
     LedgerSelection,
+    /// The order-flow pane's band, under its mark and keys: its own fill, apart
+    /// from `flow_surface`, which also paints the side headers and the axis strip.
+    FlowBand,
+    /// A band key's dot while its side is shown.
+    FlowKeyLitDot,
+    /// A band key's dot while its side is not shown.
+    FlowKeyUnlitDot,
+    /// A band key's word while its side is not shown.
+    FlowKeyUnlitInk,
+    /// The band's settings gear at rest.
+    FlowGearInk,
 }
 impl Token {
-    pub const ALL: [Self; 130] = [
+    pub const ALL: [Self; 135] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -364,6 +375,11 @@ impl Token {
         Self::LedgerSession,
         Self::LedgerSessionEdge,
         Self::LedgerSelection,
+        Self::FlowBand,
+        Self::FlowKeyLitDot,
+        Self::FlowKeyUnlitDot,
+        Self::FlowKeyUnlitInk,
+        Self::FlowGearInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -404,6 +420,11 @@ impl Token {
             Self::LedgerSession => "ledger_session",
             Self::LedgerSessionEdge => "ledger_session_edge",
             Self::LedgerSelection => "ledger_selection",
+            Self::FlowBand => "flow_band",
+            Self::FlowKeyLitDot => "flow_key_lit_dot",
+            Self::FlowKeyUnlitDot => "flow_key_unlit_dot",
+            Self::FlowKeyUnlitInk => "flow_key_unlit_ink",
+            Self::FlowGearInk => "flow_gear_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

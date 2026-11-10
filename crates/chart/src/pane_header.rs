@@ -223,7 +223,7 @@ pub fn view_name(view: LaneView) -> &'static str {
     }
 }
 
-/// A side's word beside its glyph, and its switch's name in the scene.
+/// A side's word beside its dot, and its switch's name in the scene.
 #[must_use]
 pub fn side_word(side: LaneSide) -> &'static str {
     match side {
@@ -232,15 +232,30 @@ pub fn side_word(side: LaneSide) -> &'static str {
     }
 }
 
-/// How a segment of the view control is inked.
+/// What a side shows, in the words its key's tooltip and the scene both carry.
+pub const TRAIL_DESCRIPTION: &str = "Bars with order flow drawn on them: aggression bubbles and the order book (L2) on tick, volume or time bars. Choose the bar type in the TRAIL header.";
+/// What the tape shows.
+pub const TAPE_DESCRIPTION: &str = "Trades as they print, second by second, newest at the right. Aggression bubbles sized by quantity over the order book; green buys at the ask, red sells at the bid. No bars.";
+
+/// A side's description: the tooltip's second line and the scene's description.
+#[must_use]
+pub fn side_description(side: LaneSide) -> &'static str {
+    match side {
+        LaneSide::Trail => TRAIL_DESCRIPTION,
+        LaneSide::Tape => TAPE_DESCRIPTION,
+    }
+}
+
+/// How a segment of the view control is inked. No key wears a body: the dot
+/// beside the word carries the state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentInk {
-    /// Its side is chosen: white ink on a key raised off the band.
+    /// Its side is chosen: a lit dot with a soft glow, white ink.
     Lit,
-    /// Its side is not chosen: muted ink on a dark key sunk into the band.
+    /// Its side is not chosen: a grey dot, muted ink.
     Unlit,
-    /// The tape's, while the market holds it folded: the one red control, a sunk
-    /// key with a red rim, red ink and a dot.
+    /// The tape's, while the market holds it folded: the one red control, a red
+    /// dot and red ink.
     MarketClosed,
 }
 
@@ -342,6 +357,12 @@ impl SideSegment {
     pub fn note(self) -> Option<&'static str> {
         self.refusal.map(SideRefusal::note)
     }
+
+    /// What its side shows, whatever the key reads.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        side_description(self.side)
+    }
 }
 
 /// A rail's name in the scene: what a click on it brings back.
@@ -370,31 +391,61 @@ pub const MARKET_FOLD_SETTING_HOVER: &str = "beside the candles, while the feed 
 /// What the tape's segment reads while the market holds it away.
 pub const MARKET_CLOSED_WORD: &str = "Market closed";
 
-/// Width of a key's glyph.
+/// Width of the gear's glyph.
 pub const SEGMENT_GLYPH_PX: f32 = 14.0;
+/// Diameter of a key's dot, which stands where a glyph would.
+pub const KEY_DOT_PX: f32 = 5.0;
 /// A key's height on the band: the Trail and Tape keys and the gear alike.
 pub const SEGMENT_HEIGHT_PX: f32 = 20.0;
 /// The gap between the Trail and Tape keys; no frame encloses the pair.
-pub const SEGMENT_GAP_PX: f32 = 1.0;
-/// A key's padding either side of its glyph, with its word or without it.
-const SEGMENT_PAD_PX: f32 = 10.0;
-/// The gap between a key's glyph and its word.
+pub const SEGMENT_GAP_PX: f32 = 4.0;
+/// A worded key's padding either side of its dot.
+const SEGMENT_PAD_PX: f32 = 4.0;
+/// The gap between a key's dot and its word.
 pub const SEGMENT_WORD_GAP_PX: f32 = 5.0;
-/// The gear's key: its glyph and 5 px either side.
-pub const GEAR_KEY_PX: f32 = 2.0 * 5.0 + SEGMENT_GLYPH_PX;
+/// The gear's key: its glyph and 3 px either side, with no body.
+pub const GEAR_KEY_PX: f32 = 2.0 * 3.0 + SEGMENT_GLYPH_PX;
+/// What the gear takes off the band's right end: the group gap and its key.
+pub const GEAR_END_PX: f32 = GROUP_GAP_PX + GEAR_KEY_PX;
+/// The rule between the mark and the keys: 1 px wide, this tall.
+pub const MARK_RULE_PX: f32 = 1.0;
+pub const MARK_RULE_HEIGHT_PX: f32 = 14.0;
 
-/// A key's width: its glyph alone, or with a word this wide beside it.
+/// What the mark takes on the band, its text this wide: the text, a group gap
+/// and the rule after it. No mark, no rule.
+#[must_use]
+pub fn mark_px(text_px: f32) -> f32 {
+    if text_px > 0.0 {
+        text_px + GROUP_GAP_PX + MARK_RULE_PX
+    } else {
+        0.0
+    }
+}
+
+/// A key's width: its padded dot and a word this wide beside it, or, with no
+/// word, a bare key as wide as it is tall, so a hand still hits the small dot.
 #[must_use]
 pub fn segment_px(word_px: Option<f32>) -> f32 {
     word_px.map_or(SEGMENT_BARE_PX, |word| {
-        SEGMENT_BARE_PX + SEGMENT_WORD_GAP_PX + word
+        SEGMENT_DOT_PX + SEGMENT_WORD_GAP_PX + word
     })
 }
 
-const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_PX + SEGMENT_GLYPH_PX;
+/// Where a key's dot centres, from the key's left edge: in its own padding
+/// beside a word, or in the middle of a bare key.
+#[must_use]
+pub fn key_dot_inset(worded: bool) -> f32 {
+    if worded {
+        SEGMENT_DOT_PX / 2.0
+    } else {
+        SEGMENT_BARE_PX / 2.0
+    }
+}
 
-/// What the words beside the glyphs add to the right end, these words being
-/// this wide.
+const SEGMENT_DOT_PX: f32 = 2.0 * SEGMENT_PAD_PX + KEY_DOT_PX;
+const SEGMENT_BARE_PX: f32 = SEGMENT_HEIGHT_PX;
+
+/// What the words beside the dots add to the band, these words being this wide.
 #[must_use]
 pub fn side_words_px(words: [f32; 2]) -> f32 {
     words
@@ -496,11 +547,10 @@ pub struct HeaderFit {
     pub side_words: bool,
 }
 
-/// Width of the header's right end at its barest: the two keys without their
-/// words, and the gear's. The strip glyph lives in the trail's capsule, the one
-/// side it draws on.
-pub const FLOW_CONTROLS_PX: f32 =
-    2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GROUP_GAP_PX + GEAR_KEY_PX;
+/// What the band always keeps, at its barest: the two keys without their words
+/// on the left, then the gear's end at the right. The strip glyph lives in the
+/// trail's capsule, the one side it draws on.
+pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GEAR_END_PX;
 
 impl HeaderControl {
     /// A section's header, as the flow pane's line lists it, on screen or not.
@@ -554,9 +604,10 @@ pub fn layer_section(layer: ChartLayer) -> PanelSection {
 pub struct HeaderWidths {
     pub strip: f32,
     pub mark: f32,
-    /// The right end at its barest, its own gap included; zero without a tape.
+    /// The band's keys and gear at their barest ([`FLOW_CONTROLS_PX`]), the
+    /// gap between them included; zero without a tape.
     pub controls: f32,
-    /// What the words beside the view control's glyphs add to the right end.
+    /// What the words beside the keys' dots add to the band.
     pub side_words: f32,
     pub slot: f32,
     pub chip_with_words: f32,
@@ -913,7 +964,7 @@ mod tests {
         HeaderWidths {
             strip,
             mark: 70.0,
-            controls: FLOW_CONTROLS_PX + GROUP_GAP_PX,
+            controls: FLOW_CONTROLS_PX,
             side_words: 0.0,
             slot: 120.0,
             chip_with_words: 150.0,
@@ -1095,15 +1146,43 @@ mod tests {
         assert_eq!(BubbleSample::Candle.name(), "Bubble size on the trail");
     }
 
-    /// The bare right end is what the words add to: the two keys 1 px apart with
-    /// no frame, then the gear's key, and no strip glyph. A key is padded 3 x 10.
+    /// The bare band is what the words add to: two bodiless keys 4 px apart, each
+    /// a 20 px target round its dot, then the bare gear. A worded key pads its
+    /// 5 px dot 4 either side. The mark brings its rule.
     #[test]
-    fn the_right_end_measures_its_parts() {
-        assert_eq!(segment_px(None), 10.0 + 14.0 + 10.0);
-        assert_eq!(segment_px(Some(30.0)), 34.0 + 5.0 + 30.0);
-        assert_eq!(side_words_px([30.0, 40.0]), 35.0 + 45.0);
-        assert_eq!(FLOW_CONTROLS_PX, 68.0 + 1.0 + 8.0 + 24.0);
+    fn the_band_measures_its_parts() {
+        assert_eq!(segment_px(None), 20.0, "a hand still hits a bare key");
+        assert_eq!(segment_px(Some(30.0)), 13.0 + 5.0 + 30.0);
+        assert_eq!((key_dot_inset(true), key_dot_inset(false)), (6.5, 10.0));
+        assert_eq!(side_words_px([30.0, 40.0]), 28.0 + 38.0);
+        assert_eq!(FLOW_CONTROLS_PX, 40.0 + 4.0 + 8.0 + 20.0);
+        assert_eq!(GEAR_END_PX, 8.0 + 20.0);
         assert_eq!(SEGMENT_HEIGHT_PX, 3.0 + 14.0 + 3.0);
+        assert_eq!(mark_px(70.0), 70.0 + 8.0 + 1.0);
+        assert_eq!(mark_px(0.0), 0.0, "no mark, no rule");
+    }
+
+    /// Each key's tooltip and scene entry say what its side shows, in the
+    /// trader's words, whatever the key reads; a refusal only adds its note.
+    #[test]
+    fn each_side_describes_what_it_shows() {
+        let [trail, tape] = SideSegment::pair(&state(LaneView::Beside));
+        assert_eq!(
+            trail.description(),
+            "Bars with order flow drawn on them: aggression bubbles and the order book (L2) on tick, volume or time bars. Choose the bar type in the TRAIL header."
+        );
+        assert_eq!(
+            tape.description(),
+            "Trades as they print, second by second, newest at the right. Aggression bubbles sized by quantity over the order book; green buys at the ask, red sells at the bid. No bars."
+        );
+        let held = FlowHeaderState {
+            market_held: true,
+            ..state(LaneView::Beside)
+        };
+        let tape = SideSegment::of(LaneSide::Tape, &held);
+        assert_eq!(tape.word(), MARKET_CLOSED_WORD);
+        assert_eq!(tape.description(), TAPE_DESCRIPTION);
+        assert_eq!(tape.note(), Some("the first print brings it back"));
     }
 
     fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {
