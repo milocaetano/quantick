@@ -269,7 +269,7 @@ fn light_ledger_wears_no_gold_or_orange() {
         tokens.extend([look.ink, look.detail, look.pnl[0], look.pnl[1]]);
         tokens.extend(look.fill.into_iter().chain(look.edge).chain(look.mark));
     }
-    let frame = ledger_frame(Some(Ends::default()), Some(Ends::default()));
+    let frame = ledger_frame(Some([false, false]), Some([false, false]));
     for layer in frame.layers.into_iter().flatten() {
         tokens.extend([layer.fill, layer.stroke]);
     }
@@ -299,15 +299,9 @@ fn the_ledger_nests_a_trade_in_its_session_box_in_its_day_card() {
     assert_eq!(bare.layers, [None, None]);
     assert_eq!(bare.content, Margin::default());
 
-    let open = Ends {
-        first: true,
-        last: false,
-    };
-    let middle = Ends::default();
-    let close = Ends {
-        first: false,
-        last: true,
-    };
+    let open: Ends = [true, false];
+    let middle: Ends = [false, false];
+    let close: Ends = [false, true];
     let day = ledger_frame(Some(open), None);
     let card = day.layers[0].unwrap();
     assert_eq!(card.fill, Token::LedgerCard);

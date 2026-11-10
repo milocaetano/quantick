@@ -67,6 +67,7 @@ fn history(files: &[&str]) -> LoadedHistory {
             trades: 1,
             net: Decimal::ONE,
             first_closed_ms: Some(closed.closed_ms),
+            span: Some((closed.opened_ms, closed.closed_ms)),
             tags: BTreeMap::new(),
         };
         if !tags.is_empty() {
@@ -154,14 +155,14 @@ fn the_cut_follows_a_filter_set_from_outside_the_filter_row() {
     let loaded = history(&["a.csv", "b.csv"]);
     let mut state = LedgerState::default();
     state.reloaded(&loaded);
-    state.ensure_cut(Some(&loaded), UTC);
+    state.ensure_cut(Some(&loaded), LiveCloses::default(), UTC);
     assert_eq!(state.cut.as_ref().unwrap().kept.len(), 2);
     // The control plane sets the view; no frame of the filter row ran.
     state.view.apply(&LedgerViewChange {
         search: Some("#msc".to_owned()),
         ..LedgerViewChange::default()
     });
-    state.ensure_cut(Some(&loaded), UTC);
+    state.ensure_cut(Some(&loaded), LiveCloses::default(), UTC);
     assert_eq!(state.cut.as_ref().unwrap().kept, vec![0]);
     let label = &state.cut.as_ref().unwrap().labels[&key("a.csv")];
     assert_eq!(
@@ -176,7 +177,7 @@ fn f2_names_and_del_deletes_the_focused_session_but_never_a_live_one() {
     let loaded = history(&["a.csv", "b.csv"]);
     let mut state = LedgerState::default();
     state.reloaded(&loaded);
-    state.ensure_cut(Some(&loaded), UTC);
+    state.ensure_cut(Some(&loaded), LiveCloses::default(), UTC);
     let none = BTreeSet::new();
     assert_eq!(state.key_press(false, &none, Some(&loaded)), None);
     assert_eq!(state.key_press(true, &none, Some(&loaded)), None);
@@ -235,7 +236,7 @@ fn live_trades_are_filtered_by_their_files_tags_and_counted_when_hidden() {
     let sources = vec![SessionSource::Live; trades.len()];
     let mut state = LedgerState::default();
     state.view.filter.search = "#msc".to_owned();
-    state.ensure_cut(Some(&loaded), UTC);
+    state.ensure_cut(Some(&loaded), LiveCloses::default(), UTC);
     let (kept, hidden) = state.live_trades(&trades, &at, &sources, Some(&loaded), UTC);
     assert_eq!(hidden, 2, "the untagged trade and the one no file holds");
     assert_eq!(kept.len(), 1);
@@ -256,7 +257,7 @@ fn selecting_a_trade_never_makes_its_session_what_the_keys_act_on() {
     let loaded = history(&["a.csv", "b.csv"]);
     let mut state = LedgerState::default();
     state.reloaded(&loaded);
-    state.ensure_cut(Some(&loaded), UTC);
+    state.ensure_cut(Some(&loaded), LiveCloses::default(), UTC);
     let none = BTreeSet::new();
     assert_eq!(
         state.apply(SessionPress::Fold(key("a.csv"), true), None),

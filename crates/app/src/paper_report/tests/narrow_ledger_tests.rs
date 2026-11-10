@@ -11,7 +11,7 @@ use quantick_sim::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 use super::super::ledger::draw_totals_strip;
-use super::super::rows::{TradeMeta, draw_day_header, draw_ledger_row};
+use super::super::rows::{TradeMeta, draw_day_header, draw_ledger_row, framed};
 use super::super::sessions::{SessionHead, draw_session_head};
 use crate::paper_calendar::CivilDate;
 use crate::timezone::TzOffset;
@@ -115,6 +115,7 @@ fn has(texts: &[(String, egui::Rect)], wanted: &str) -> bool {
     texts.iter().any(|(text, _)| text.contains(wanted))
 }
 
+/// A WINZ26 trade's row on a WDOZ26 chart, so it names its market.
 fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
     let tags = ["breakout".to_owned(), "absorption-at-vwap".to_owned()];
     let meta = TradeMeta {
@@ -129,7 +130,7 @@ fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
             ui,
             trade,
             meta,
-            Some("WINZ26"),
+            ("WINZ26", "WDOZ26"),
             false,
             false,
             TzOffset::new(0),
@@ -138,8 +139,8 @@ fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
 }
 
 /// The trader's screenshot: side, round trip, instrument and points ran
-/// into one another. Narrow, the words wrap and both figures stay whole,
-/// each flush right on its own line.
+/// into one another. Narrow, the words are cut at their end and both
+/// figures stay whole, each flush right on its own line.
 #[test]
 fn a_trade_row_at_the_docked_width_keeps_its_result_and_overlaps_nothing() {
     let trade = short_four();
@@ -171,6 +172,132 @@ fn a_trade_row_at_the_docked_width_keeps_its_result_and_overlaps_nothing() {
     );
 }
 
+/// Every galley painted, with how many rows it laid out.
+fn painted_rows(width: f32, draw: impl FnMut(&mut egui::Ui)) -> Vec<(String, usize, egui::Rect)> {
+    let ctx = egui::Context::default();
+    let mut draw = draw;
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(width, 400.0),
+        )),
+        ..Default::default()
+    };
+    let output = ctx.run(input, |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| draw(ui));
+    });
+    let mut out = Vec::new();
+    for clipped in &output.shapes {
+        if let egui::Shape::Text(text) = &clipped.shape
+            && !text.galley.text().is_empty()
+        {
+            let rows = text.galley.rows.len();
+            out.push((
+                text.galley.text().to_owned(),
+                rows,
+                text.visual_bounding_rect(),
+            ));
+        }
+    }
+    out
+}
+
+/// The trader's capture at the default 320 px dock, and at 280: inside its
+/// session box a trade row is exactly two lines - nothing wraps, its
+/// figures are whole and flush right, its words cut at their end - and a
+/// Replay session's header is one line.
+#[test]
+fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
+    let trade = ClosedTrade {
+        side: Side::Sell,
+        quantity: Decimal::from(6),
+        entry_price: Decimal::new(17_360_333, 2),
+        exit_price: Decimal::from(173_662),
+        opened_ms: CLOSED_MS - 2_195_000,
+        closed_ms: CLOSED_MS,
+        pnl_points: Decimal::new(-35_202, 2),
+        ..short_four()
+    };
+    let pnl = PnlReader::plain().of("WINZ26");
+    let (lead, behind) = pnl.closed_split(&trade);
+    let meta = TradeMeta {
+        session: None,
+        trade_ref: TradeRef::default(),
+        source: Some(SessionSource::Replay),
+        tags: &[],
+        pnl,
+    };
+    let in_box =
+        quantick_appearance::paper::ledger_frame(Some([false, false]), Some([false, false]));
+    for width in [280.0, 320.0] {
+        let texts = painted_rows(width, |ui| {
+            framed(ui, &in_box, |ui| {
+                draw_ledger_row(
+                    ui,
+                    &trade,
+                    meta,
+                    ("WINZ26", "WINZ26"),
+                    false,
+                    false,
+                    TzOffset::new(0),
+                );
+            });
+        });
+        let mut lines: Vec<i32> = Vec::new();
+        for (text, rows, rect) in &texts {
+            assert_eq!(*rows, 1, "{text:?} wraps at {width}");
+            assert!(rect.right() <= width, "{text:?} runs out at {width}");
+            let top = rect.top().round() as i32;
+            if !lines.iter().any(|line| (line - top).abs() <= 3) {
+                lines.push(top);
+            }
+        }
+        assert_eq!(lines.len(), 2, "two lines at {width}: {texts:?}");
+        for figure in [&lead, &behind] {
+            let (_, _, rect) = texts
+                .iter()
+                .find(|(text, ..)| text == figure)
+                .unwrap_or_else(|| panic!("{figure} is whole at {width}: {texts:?}"));
+            let words = texts.iter().filter(|(text, ..)| text != figure);
+            assert!(
+                words
+                    .clone()
+                    .all(|(_, _, other)| other.right() <= rect.left()
+                        || (other.top() - rect.top()).abs() > 3.0),
+                "{figure} stays right of the words at {width}"
+            );
+        }
+        assert!(texts.iter().any(|(text, ..)| text.starts_with("SHORT 6")));
+
+        let head = SessionHead {
+            key: SessionKey::parse("WINZ26/2026-11-09-replay.csv").unwrap(),
+            title: "Replay · rerun 2 · 09:04–12:02".to_owned(),
+            source: Some(SessionSource::Replay),
+            count: 12,
+            net: (Decimal::ONE, "-316.09 BRL".to_owned()),
+            folded: false,
+            focused: false,
+            live: false,
+        };
+        let session =
+            quantick_appearance::paper::ledger_frame(Some([false, false]), Some([true, false]));
+        let texts = painted_rows(width, |ui| {
+            framed(ui, &session, |ui| _ = draw_session_head(ui, &head));
+        });
+        assert!(texts.iter().all(|(_, rows, _)| *rows == 1), "{texts:?}");
+        assert!(
+            texts.iter().any(|(text, ..)| text.contains("Replay")),
+            "{texts:?}"
+        );
+        assert!(texts.iter().any(|(text, ..)| text == "12 · -316.09 BRL"));
+        let tops: Vec<f32> = texts.iter().map(|(_, _, rect)| rect.center().y).collect();
+        assert!(
+            tops.iter().all(|top| (top - tops[0]).abs() <= 3.0),
+            "one line at {width}: {texts:?}"
+        );
+    }
+}
+
 #[test]
 fn a_day_header_at_the_docked_width_keeps_its_count_and_money() {
     let date = CivilDate::from_ms(CLOSED_MS, TzOffset::new(0));
@@ -196,10 +323,9 @@ fn a_day_header_at_the_docked_width_keeps_its_count_and_money() {
 }
 
 #[test]
-fn a_session_row_at_the_docked_width_wraps_its_complete_name_and_net() {
+fn a_session_row_at_the_docked_width_cuts_its_name_and_keeps_its_net() {
     let head = SessionHead {
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
-        label: "morning replay of the opening drive".to_owned(),
         title: "morning replay of the opening drive · 10:50–10:58".to_owned(),
         source: Some(SessionSource::Replay),
         count: 11,
@@ -211,9 +337,11 @@ fn a_session_row_at_the_docked_width_wraps_its_complete_name_and_net() {
     let texts = painted_text(NARROW_PX, |ui| _ = draw_session_head(ui, &head));
     assert_apart(&texts, NARROW_PX);
     assert!(
-        has(&texts, &head.title) && has(&texts, "11 · +115.20 BRL"),
-        "the name, its span and the leading figure stay complete: {texts:?}"
+        has(&texts, "morning replay") && has(&texts, "…") && has(&texts, "11 · +115.20 BRL"),
+        "the name is cut at its end, the leading figure whole: {texts:?}"
     );
+    let wide = painted_text(WIDE_PX, |ui| _ = draw_session_head(ui, &head));
+    assert!(has(&wide, &head.title), "wide, it is whole: {wide:?}");
 }
 
 #[test]
@@ -265,7 +393,7 @@ fn enlarged_light_trade_rows_keep_primary_text_apart() {
                 ui,
                 &trade,
                 meta,
-                Some("WINZ26"),
+                ("WINZ26", "WDOZ26"),
                 false,
                 false,
                 TzOffset::new(0),

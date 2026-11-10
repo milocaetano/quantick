@@ -256,10 +256,11 @@ impl LedgerSessions {
     }
 }
 
-/// A session's header, the top of its box inside the day's card: a large
-/// caret, the source glyph and `Live · 12:16–13:56`, its count and leading
-/// figure flush right (`paper::RowKind::Session`). A click folds it; the
-/// menu renames or deletes it.
+/// A session's header, the top of its box inside the day's card, on one
+/// line: a large caret, the source glyph and `Live · 12:16–13:56` (cut at
+/// its end where it would not fit), its count and leading figure flush
+/// right (`paper::RowKind::Session`). A click folds it; the menu renames or
+/// deletes it, the confirm naming it as the header does.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Session);
@@ -270,7 +271,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         &look,
         (&head.title, glyph),
         &figures,
-        (SESSION_HEAD_PAD, Bold::Neither),
+        (SESSION_HEAD_PAD, Bold::Neither, false),
         (head.folded, head.focused),
     );
     let mut press = None;
@@ -284,7 +285,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         if head.folded { "open it" } else { "fold it" }
     ));
     response.context_menu(|ui| {
-        if let Some(menu) = session_menu(ui, &head.key, &head.label, head.count, head.live) {
+        if let Some(menu) = session_menu(ui, &head.key, &head.title, head.count, head.live) {
             press = Some(menu);
         }
     });

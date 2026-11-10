@@ -229,13 +229,11 @@ impl RowLook {
     }
 }
 
-/// Where a row stands in one container, a day card or a session box: its
-/// first row opens the container, its last closes it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Ends {
-    pub first: bool,
-    pub last: bool,
-}
+/// Where a row stands in one container, a day card or a session box, as
+/// `[opens, closes]`: its first row opens the container, its last closes
+/// it. The ledger's nesting (`paper::report::ledger_rows::RowNest`) hands
+/// these over as they are.
+pub type Ends = [bool; 2];
 
 /// Space around a rectangle, in logical pixels.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -264,7 +262,8 @@ impl FrameLayer {
     /// this row closes.
     #[must_use]
     pub fn corners(&self) -> [f32; 2] {
-        [self.ends.first, self.ends.last].map(|closes| if closes { self.radius } else { 0.0 })
+        self.ends
+            .map(|closes| if closes { self.radius } else { 0.0 })
     }
 
     /// How far the container's outline runs past the slice above and below:
@@ -272,7 +271,8 @@ impl FrameLayer {
     /// its sides there.
     #[must_use]
     pub fn reach(&self) -> [f32; 2] {
-        [self.ends.first, self.ends.last].map(|closes| if closes { 0.0 } else { self.radius + 1.0 })
+        self.ends
+            .map(|closes| if closes { 0.0 } else { self.radius + 1.0 })
     }
 }
 
@@ -295,7 +295,8 @@ pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
     let Some(day) = day else {
         return frame;
     };
-    let top = if day.first { CARD_GAP_PX } else { 0.0 };
+    let [day_opens, day_closes] = day;
+    let top = if day_opens { CARD_GAP_PX } else { 0.0 };
     frame.layers[0] = Some(FrameLayer {
         fill: Token::LedgerCard,
         stroke: Token::LedgerCardEdge,
@@ -309,7 +310,8 @@ pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
     frame.content.top = top;
     let side = match session {
         Some(session) => {
-            let below = if session.last { SESSION_INSET_PX } else { 0.0 };
+            let [opens, closes] = session;
+            let below = if closes { SESSION_INSET_PX } else { 0.0 };
             frame.layers[1] = Some(FrameLayer {
                 fill: Token::LedgerSession,
                 stroke: Token::LedgerSessionEdge,
@@ -322,23 +324,19 @@ pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
                 },
                 ends: session,
             });
-            frame.content.bottom = if session.last {
-                below + SESSION_PAD_PX
-            } else {
-                0.0
-            };
+            frame.content.bottom = if closes { below + SESSION_PAD_PX } else { 0.0 };
             // The session's header spans its box; its trades stand in.
-            if session.first {
+            if opens {
                 SESSION_INSET_PX
             } else {
                 SESSION_INSET_PX + TRADE_INSET_PX
             }
         }
         // The day's header spans its card.
-        None if day.first => 0.0,
+        None if day_opens => 0.0,
         // A trade no session holds stands where a box would.
         None => {
-            if day.last {
+            if day_closes {
                 frame.content.bottom = SESSION_INSET_PX;
             }
             SESSION_INSET_PX

@@ -305,17 +305,22 @@ impl SymbolPnl<'_> {
             .trade(self.symbol, trade.pnl_points, trade.quantity)
     }
 
-    /// [`Self::closed`] apart: the leading figure, and the one that keeps
-    /// it honest - a row writes them on two lines.
+    /// One closed trade of this symbol as a ledger row writes it, on two
+    /// lines: [`Self::row_split`] of its stored figure.
     #[must_use]
     pub fn closed_split(&self, trade: &ClosedTrade) -> (String, String) {
+        self.row_split(trade.pnl_points, trade.quantity)
+    }
+
+    /// A stored figure of this symbol (move × quantity) as a ledger row
+    /// writes it: the leading figure on line one and the one that keeps it
+    /// honest on line two, each in [`fmt_row_figure`]'s row form.
+    #[must_use]
+    pub fn row_split(&self, pnl_points: Decimal, quantity: Decimal) -> (String, String) {
         let units = self.reader.book.units(self.symbol);
-        let pnl = TradePnl::of(trade.pnl_points, trade.quantity, &units);
+        let pnl = TradePnl::of(pnl_points, quantity, &units);
         let primary = self.reader.settings.primary(units.money.is_some());
-        (
-            fmt_primary(&pnl, &units, primary),
-            fmt_primary(&pnl, &units, secondary_of(primary)),
-        )
+        split_trade(&pnl, &units, primary, fmt_row_figure)
     }
 
     /// One closed trade of this symbol, in the leading figure alone.
@@ -481,12 +486,18 @@ pub fn fmt_money(money: &Money) -> String {
 /// significant digits where cents would read a real amount as zero. A zero
 /// is `0.00`, never `-0.00`.
 fn fmt_cents(amount: Decimal, unit: &str) -> String {
+    format!("{} {unit}", cents(amount))
+}
+
+/// `amount` signed, in cents or the display rule's significant digits,
+/// with no unit after it.
+fn cents(amount: Decimal) -> String {
     let mut shown = round_for_display(amount);
     if shown.is_zero() {
         shown = Decimal::ZERO;
     }
     shown.rescale(shown.scale().max(MONEY_PLACES));
-    signed(shown, format!("{shown} {unit}"))
+    signed(shown, shown.to_string())
 }
 
 /// One plotted value in the figure it was plotted in: money with cents and
@@ -547,16 +558,49 @@ pub fn fmt_primary(pnl: &TradePnl, units: &PnlUnits<'_>, primary: PnlPrimary) ->
     }
 }
 
-/// The readout a trade row shows: the primary figure, then the one that
-/// keeps it honest. Money leads with the per-contract figure behind it; a
-/// points figure leads with the money behind it.
+/// The readout a trade shows on one line: the primary figure, then the
+/// one that keeps it honest. Money leads with the per-contract figure
+/// behind it; a points figure leads with the money behind it.
 #[must_use]
 pub fn fmt_trade(pnl: &TradePnl, units: &PnlUnits<'_>, primary: PnlPrimary) -> String {
-    format!(
-        "{} · {}",
-        fmt_primary(pnl, units, primary),
-        fmt_primary(pnl, units, secondary_of(primary))
+    let (lead, behind) = split_trade(pnl, units, primary, fmt_primary);
+    format!("{lead} · {behind}")
+}
+
+/// A trade's two figures apart - `primary`, then [`secondary_of`] it -
+/// each worded by `word`: the one split every trade readout is cut from.
+#[must_use]
+pub fn split_trade(
+    pnl: &TradePnl,
+    units: &PnlUnits<'_>,
+    primary: PnlPrimary,
+    word: fn(&TradePnl, &PnlUnits<'_>, PnlPrimary) -> String,
+) -> (String, String) {
+    (
+        word(pnl, units, primary),
+        word(pnl, units, secondary_of(primary)),
     )
+}
+
+/// One figure as a trade row inside the ledger writes it: money without
+/// its currency, which the day and session totals above it carry, and the
+/// quantity tight against its sign - `-70.40`, `-58.67 pts ×6`. An unset
+/// point value still says so.
+#[must_use]
+pub fn fmt_row_figure(pnl: &TradePnl, units: &PnlUnits<'_>, primary: PnlPrimary) -> String {
+    match primary {
+        PnlPrimary::Money => pnl
+            .money
+            .as_ref()
+            .map_or_else(|| UNSET_MONEY.to_owned(), |money| cents(money.amount)),
+        PnlPrimary::PointsPerContract => format!(
+            "{} {} ×{}",
+            signed(pnl.per_unit, fmt_decimal(pnl.per_unit)),
+            units.unit_suffix(),
+            fmt_decimal(pnl.quantity)
+        ),
+        PnlPrimary::PointsTimesQty => fmt_grouped(pnl, units),
+    }
 }
 
 /// The primary figure alone, as a number a curve can plot: `None` for money

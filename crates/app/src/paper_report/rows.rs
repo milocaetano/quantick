@@ -16,6 +16,8 @@ use quantick_appearance::paper::{
     TITLE_PX, TRADE_EDGE_PX, TRADE_GAP_PX, TRADE_PAD, ledger_row,
 };
 use quantick_engine::Side;
+use quantick_paper::pnl::SymbolPnl;
+use quantick_paper::report::fit::fit_pieces;
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
@@ -122,8 +124,11 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
     );
 }
 
-/// One line's words from the left and its figure flush right: on one line
-/// where the words keep at least half of it, else the figure under them.
+/// One piece of a line's words: its text, font and ink.
+type Piece = (String, egui::FontId, egui::Color32);
+
+/// One line's words from the left and its figure flush right, never wrapped
+/// ([`fit_pieces`]); a `stack` line may put the figure under the words.
 struct Line {
     left: Arc<egui::Galley>,
     right: Option<Arc<egui::Galley>>,
@@ -133,49 +138,66 @@ struct Line {
 impl Line {
     fn lay(
         painter: &egui::Painter,
-        mut left: egui::text::LayoutJob,
-        mut right: egui::text::LayoutJob,
+        pieces: &[Piece],
+        (right, figures): (&str, &dyn Fn(&str) -> egui::text::LayoutJob),
         width: f32,
+        stack: bool,
     ) -> Self {
-        let right = (!right.text.is_empty()).then(|| {
-            right.wrap.max_width = width.max(1.0);
-            painter.layout_job(right)
-        });
-        let figure = right.as_ref().map_or(0.0, |right| right.size().x);
-        let room = width - figure - SIDE_GAP_PX;
-        let stacked = room < width * 0.5;
-        left.break_on_newline = true;
-        left.wrap.max_rows = usize::MAX;
-        left.wrap.max_width = if stacked { width } else { room }.max(1.0);
+        let texts: Vec<&str> = pieces.iter().map(|(text, ..)| text.as_str()).collect();
+        let measure = |index: usize, text: &str| match pieces.get(index) {
+            Some((_, font, _)) => text_width(painter, text, font),
+            None => painter.layout_job(figures(text)).size().x,
+        };
+        let fitted = fit_pieces(width, SIDE_GAP_PX, &texts, right, stack, measure);
+        let mut left = egui::text::LayoutJob::default();
+        for ((_, font, color), text) in pieces.iter().zip(&fitted.left) {
+            if !text.is_empty() {
+                append(&mut left, text, font.clone(), *color);
+            }
+        }
         Self {
             left: painter.layout_job(left),
-            right,
-            stacked,
+            right: (!fitted.right.is_empty()).then(|| painter.layout_job(figures(&fitted.right))),
+            stacked: fitted.stacked,
         }
+    }
+
+    /// The left part's height and the figure's.
+    fn heights(&self) -> (f32, f32) {
+        let right = self.right.as_ref().map_or(0.0, |right| right.size().y);
+        (self.left.size().y, right)
     }
 
     fn height(&self) -> f32 {
-        let right = self.right.as_ref().map_or(0.0, |right| right.size().y);
+        let (left, right) = self.heights();
         if self.stacked {
-            self.left.size().y + right
+            left + right
         } else {
-            self.left.size().y.max(right)
+            left.max(right)
         }
     }
 
-    /// Paint at `at`, `width` wide; `bold` strikes the left words or the
-    /// right figure twice (egui bundles one weight).
+    /// Paint at `at`, `width` wide, both parts centred on one line unless
+    /// stacked; `bold` strikes one part twice (egui bundles one weight).
     fn paint(self, painter: &egui::Painter, at: egui::Pos2, width: f32, bold: Bold) {
         let strike = egui::vec2(BOLD_STRIKE_PX, 0.0);
         let ink = egui::Color32::PLACEHOLDER;
+        let ((left, right), height) = (self.heights(), self.height());
+        let centre = |part: f32| {
+            if self.stacked {
+                0.0
+            } else {
+                (height - part) / 2.0
+            }
+        };
+        let left_at = at + egui::vec2(0.0, centre(left));
+        let right_y = if self.stacked { left } else { centre(right) };
         if bold == Bold::Left {
-            painter.galley(at + strike, self.left.clone(), ink);
+            painter.galley(left_at + strike, self.left.clone(), ink);
         }
-        let lines = self.left.size().y;
-        let below = if self.stacked { lines } else { 0.0 };
-        painter.galley(at, self.left, ink);
+        painter.galley(left_at, self.left, ink);
         if let Some(right) = self.right {
-            let right_at = at + egui::vec2(width - right.size().x, below);
+            let right_at = at + egui::vec2(width - right.size().x, right_y);
             if bold == Bold::Right {
                 painter.galley(right_at + strike, right.clone(), ink);
             }
@@ -226,35 +248,32 @@ fn signed_figures(
 }
 
 /// A day's or a session's header: a large caret, an optional glyph and the
-/// title, `figures` flush right, inside `pad`. Hovered, or `lit` (the
-/// session F2 acts on), it takes the hover fill inside its container's
-/// border; `folded`, it closes the container, so its fill rounds there too.
+/// title, `figures` flush right, inside `pad`, on one [`Line`]. Hovered, or
+/// `lit` (the session F2 acts on), it takes the hover fill inside its
+/// container's border; `folded`, it closes the container, so its fill rounds there too.
 pub(super) fn draw_header(
     ui: &mut egui::Ui,
     look: &RowLook,
     (title, glyph): (&str, Option<(&str, egui::Color32)>),
     figures: &str,
-    (pad, bold): (Margin, Bold),
+    (pad, bold, stack): (Margin, Bold, bool),
     (folded, lit): (bool, bool),
 ) -> egui::Response {
     let palette = theme::get(ui.ctx());
     let ink = *palette.get(look.ink);
-    let mut left = egui::text::LayoutJob::default();
-    let caret = format!("{} ", caret(folded));
-    append(&mut left, &caret, palette.body_font(CARET_PX), ink);
+    let mut left: Vec<Piece> = vec![(
+        format!("{} ", caret(folded)),
+        palette.body_font(CARET_PX),
+        ink,
+    )];
     if let Some((glyph, color)) = glyph {
-        append(
-            &mut left,
-            &format!("{glyph} "),
-            palette.body_font(10.0),
-            color,
-        );
+        left.push((format!("{glyph} "), palette.body_font(10.0), color));
     }
-    append(&mut left, title, palette.mono_font(TITLE_PX), ink);
+    left.push((title.to_owned(), palette.mono_font(TITLE_PX), ink));
     let (small, detail) = (palette.mono_font(DETAIL_PX), *palette.get(look.detail));
-    let right = signed_figures(&palette, look, figures, small, detail);
+    let right = |text: &str| signed_figures(&palette, look, text, small.clone(), detail);
     let width = (ui.available_width() - pad.left - pad.right).max(1.0);
-    let line = Line::lay(ui.painter(), left, right, width);
+    let line = Line::lay(ui.painter(), &left, (figures, &right), width, stack);
     let size = egui::vec2(ui.available_width(), line.height() + pad.top + pad.bottom);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
@@ -289,7 +308,7 @@ pub(super) fn draw_day_header(
         &look,
         (&title, None),
         &figures,
-        (DAY_PAD, Bold::Left),
+        (DAY_PAD, Bold::Left, true),
         (folded, false),
     )
     .on_hover_text(format!(
@@ -348,14 +367,14 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
 }
 
 /// The pinned open-position row uses the current mark as its provisional exit.
-pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, symbol: Option<&str>) {
-    let words = TradeWords::open(open, symbol);
+pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, pnl: SymbolPnl<'_>, chart: &str) {
+    let words = TradeWords::open(open, pnl, chart);
     paint_trade(ui, &words, false, egui::Sense::hover());
 }
 
-/// A trade's plate in its card colour, its side rule, and its two lines:
+/// A trade's plate in its card colour, its side rule, and its two [`Line`]s:
 /// the side, size and round trip with the leading figure flush right, the
-/// detail with the figure behind it.
+/// detail with the figure behind it. Only the plate answers the pointer.
 fn paint_trade(
     ui: &mut egui::Ui,
     words: &TradeWords<'_>,
@@ -368,40 +387,29 @@ fn paint_trade(
     let ink = *palette.get(look.ink);
     let detail = *palette.get(look.detail_at(selected));
     let (title, small) = (palette.mono_font(TITLE_PX), palette.mono_font(DETAIL_PX));
-    let mut head = egui::text::LayoutJob::default();
-    append(&mut head, &words.head, title.clone(), ink);
-    let route = format!("  {}", words.route);
-    append(&mut head, &route, title.clone(), detail);
+    let mut head: Vec<Piece> = vec![
+        (words.head.clone(), title.clone(), ink),
+        (format!("  {}", words.route), title.clone(), detail),
+    ];
     if let Some(symbol) = words.symbol {
-        append(&mut head, &format!("  {symbol}"), title.clone(), detail);
+        head.push((format!("  {symbol}"), title.clone(), detail));
     }
     if let Some((glyph, color)) = source_glyph(&palette, words.source, &look) {
-        append(&mut head, &format!("  {glyph}"), title.clone(), color);
+        head.push((format!("  {glyph}"), title.clone(), color));
     }
-    let mut lower = egui::text::LayoutJob::default();
-    append(&mut lower, &words.detail, small.clone(), detail);
+    let lower: [Piece; 1] = [(words.detail.clone(), small.clone(), detail)];
     let width = (ui.available_width() - TRADE_EDGE_PX - TRADE_PAD.left - TRADE_PAD.right).max(1.0);
     let painter = ui.painter().clone();
-    let first = Line::lay(
-        &painter,
-        head,
-        signed_figures(&palette, &look, &words.pnl.0, title, ink),
-        width,
-    );
-    let second = Line::lay(
-        &painter,
-        lower,
-        signed_figures(&palette, &look, &words.pnl.1, small, detail),
-        width,
-    );
+    let lead = |text: &str| signed_figures(&palette, &look, text, title.clone(), ink);
+    let behind = |text: &str| signed_figures(&palette, &look, text, small.clone(), detail);
+    let first = Line::lay(&painter, &head, (&words.pnl.0, &lead), width, false);
+    let second = Line::lay(&painter, &lower, (&words.pnl.1, &behind), width, false);
     let plate_height =
         TRADE_PAD.top + first.height() + LINE_GAP_PX + second.height() + TRADE_PAD.bottom;
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), plate_height + TRADE_GAP_PX),
-        sense,
-    );
-    if ui.is_rect_visible(rect) {
-        let plate = rect.with_max_y(rect.top() + plate_height);
+    let (plate, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), plate_height), sense);
+    ui.add_space(TRADE_GAP_PX);
+    if ui.is_rect_visible(plate) {
         if let Some(fill) = look.fill_at(response.hovered(), selected) {
             painter.rect_filled(plate, look.radius, *palette.get(fill));
         }
@@ -434,18 +442,18 @@ pub(super) fn text_width(painter: &egui::Painter, text: &str, font: &egui::FontI
 /// session rows also carry a separate jump-to-chart action. Rows from
 /// earlier sessions never navigate — their tape is not the one on screen,
 /// so the chart has nothing honest to point at. The day's card above
-/// carries the date, and `symbol` comes only where the list mixes
-/// instruments.
+/// carries the date, and the row names its instrument only where it is not
+/// the chart's (`instrument_on_chart`).
 pub(super) fn draw_ledger_row(
     ui: &mut egui::Ui,
     trade: &ClosedTrade,
     meta: TradeMeta<'_>,
-    symbol: Option<&str>,
+    instrument_on_chart: (&str, &str),
     selected: bool,
     session: bool,
     tz: TzOffset,
 ) -> LedgerRowResponse {
-    let words = TradeWords::closed(trade, meta, symbol, tz);
+    let words = TradeWords::closed(trade, meta, instrument_on_chart, tz);
     let response = paint_trade(ui, &words, selected, egui::Sense::click());
     // Navigation gets its own row; it never covers the date or financial text.
     // An accent text action, not a pill: the row is the thing, this a link.

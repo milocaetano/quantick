@@ -9,7 +9,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::pnl::PnlReader;
 pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
-use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, Span, nesting};
+use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, nesting};
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
 };
@@ -30,7 +30,7 @@ use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, financial_text, list_symbol_folders, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
-use quantick_appearance::paper::{Ends, ledger_frame};
+use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl ReportState {
     // ------------------------------------------------------------------
@@ -143,7 +143,7 @@ impl ReportState {
             .draw_filter_row(ui, self.history_cache.as_ref(), tz);
         self.sessions
             .state
-            .ensure_cut(self.history_cache.as_ref(), tz);
+            .ensure_cut(self.history_cache.as_ref(), env.live_closes(), tz);
         ui.horizontal(|ui| {
             ui.label(caption(&palette, "TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -152,15 +152,11 @@ impl ReportState {
         });
         ui.separator();
 
-        // A row names its instrument only where the list mixes them; under
-        // "This chart" the scope already says which.
-        let names_symbol = self.ledger_scope.names_symbol(env.symbol);
-        let own_symbol = (names_symbol && !env.symbol.is_empty()).then_some(env.symbol);
         // The open position rides above the scroll — panning through
         // history must never hide the trade you are in.
         if let Some(open) = &env.open {
             ui.label(caption(&palette, "OPEN"));
-            draw_open_row(ui, open, own_symbol);
+            draw_open_row(ui, open, env.pnl.of(env.symbol), env.symbol);
         }
 
         let saved_len = self
@@ -271,8 +267,7 @@ impl ReportState {
             rows: &rows,
             selected: self.selected_trade,
             selected_saved: self.sessions.state.selected_saved.as_ref(),
-            own_symbol,
-            names_symbol,
+            chart: env.symbol,
             tz,
             deletes: delete_key.is_some(),
             edit: &mut self.sessions.state.edit,
@@ -503,10 +498,9 @@ struct RowList<'a, 'r> {
     rows: &'a [LedgerRow<'r>],
     selected: Option<usize>,
     selected_saved: Option<&'a (SessionKey, TradeRef)>,
-    /// The chart's instrument, where this session's rows name it.
-    own_symbol: Option<&'a str>,
-    /// Whether saved rows name theirs: only where the list mixes them.
-    names_symbol: bool,
+    /// The chart's instrument: this session's rows are on it, and a row
+    /// names its own only where it is another.
+    chart: &'a str,
     tz: TzOffset,
     /// Del over the list would start a delete, so the list takes the key.
     deletes: bool,
@@ -549,9 +543,6 @@ impl RowList<'_, '_> {
             .auto_shrink([false, false])
             .max_height(list_height)
             .show_viewport(ui, |ui, viewport| {
-                // Rows meet edge to edge, so a card's border runs unbroken;
-                // each row spaces itself.
-                ui.spacing_mut().item_spacing.y = 0.0;
                 let palette = theme::get(ui.ctx());
                 let key = self.layout_key.with((
                     ui.available_width().to_bits(),
@@ -563,6 +554,9 @@ impl RowList<'_, '_> {
                         ui.spacing().item_spacing
                     ),
                 ));
+                // Rows meet edge to edge, so a card's border runs unbroken;
+                // [`Self::row`] spaces the rows outside the cards.
+                ui.spacing_mut().item_spacing.y = 0.0;
                 let cache_id = ui.id().with("measured_ledger_rows");
                 let cached =
                     ui.data(|data| data.get_temp::<(egui::Id, std::sync::Arc<Vec<f32>>)>(cache_id));
@@ -629,16 +623,18 @@ impl RowList<'_, '_> {
         presses
     }
 
-    /// One row inside the day card and session box `nest` places it in.
+    /// One row inside the day card and session box `nest` places it in;
+    /// a spaced one takes a card's gap under the last card, else the style's.
     fn row(&mut self, ui: &mut egui::Ui, index: usize, nest: RowNest, presses: &mut RowPresses) {
         #[cfg(test)]
         layout_cache_tests::record(ui);
-        let ends = |span: Span| Ends {
-            first: span.first,
-            last: span.last,
-        };
-        let frame = ledger_frame(nest.day.map(ends), nest.session.map(ends));
-        framed(ui, &frame, |ui| self.row_body(ui, index, presses));
+        framed(ui, &ledger_frame(nest.day, nest.session), |ui| {
+            self.row_body(ui, index, presses)
+        });
+        let gap = ui.ctx().style().spacing.item_spacing.y;
+        if nest.spaced {
+            ui.add_space(if nest.day.is_some() { CARD_GAP_PX } else { gap });
+        }
     }
 
     fn row_body(&mut self, ui: &mut egui::Ui, index: usize, presses: &mut RowPresses) {
@@ -669,7 +665,7 @@ impl RowList<'_, '_> {
                     ui,
                     trade,
                     *meta,
-                    self.own_symbol,
+                    (self.chart, self.chart),
                     is_selected,
                     true,
                     self.tz,
@@ -687,9 +683,9 @@ impl RowList<'_, '_> {
             LedgerRow::Earlier(symbol, trade, meta) => {
                 let pick = meta.session.map(|key| (key.clone(), meta.trade_ref));
                 let is_selected = pick.is_some() && pick.as_ref() == self.selected_saved;
-                let symbol = self.names_symbol.then_some(*symbol);
+                let on_chart = (*symbol, self.chart);
                 let response =
-                    draw_ledger_row(ui, trade, *meta, symbol, is_selected, false, self.tz);
+                    draw_ledger_row(ui, trade, *meta, on_chart, is_selected, false, self.tz);
                 if response.clicked {
                     presses.select_saved = Some(if is_selected { None } else { pick.clone() });
                 }
@@ -912,8 +908,7 @@ mod layout_cache_tests {
                             rows: &rows,
                             selected: None,
                             selected_saved: None,
-                            own_symbol: None,
-                            names_symbol: false,
+                            chart: "",
                             tz: TzOffset::new(0),
                             deletes: false,
                             edit: &mut None,

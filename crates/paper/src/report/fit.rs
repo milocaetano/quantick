@@ -114,6 +114,105 @@ fn gap_before(right: &str, gap: f32) -> f32 {
     if right.is_empty() { 0.0 } else { gap }
 }
 
+/// One ledger line, fitted: its left words piece by piece, its figure, and
+/// whether the figure stands on a line of its own under the words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FittedPieces {
+    pub left: Vec<String>,
+    pub right: String,
+    pub stacked: bool,
+}
+
+/// Fit a line that never wraps into `width`: `right` flush right, whole
+/// wherever it fits the width alone, and `left`'s pieces, written in order
+/// with at least `gap` before it, keeping what the rest of the width holds:
+/// cut at their end with `…` ([`elide_tail`]), the pieces after the cut
+/// dropped. With `stack`, a line whose words would be cut beside the figure
+/// puts the figure under them instead, each fitted to the whole width.
+/// `measure(i, text)` is how wide `text` paints as piece `i`; piece
+/// `left.len()` is the figure.
+pub fn fit_pieces(
+    width: f32,
+    gap: f32,
+    left: &[&str],
+    right: &str,
+    stack: bool,
+    measure: impl Fn(usize, &str) -> f32,
+) -> FittedPieces {
+    let figure = |text: &str| measure(left.len(), text);
+    let right = elide_to_width(right, width, figure);
+    let beside = width - gap_before(&right, gap) - figure(&right);
+    let whole = left.iter().enumerate().map(|(i, piece)| measure(i, piece));
+    let stacked = stack && !right.is_empty() && whole.sum::<f32>() > beside;
+    let room = if stacked { width } else { beside };
+    FittedPieces {
+        left: elide_pieces(left, room, &measure),
+        right,
+        stacked,
+    }
+}
+
+/// The longest form of `pieces` read as one text - whole, else cut at its
+/// end with `…` - whose pieces `measure` puts within `width` together.
+/// Bisected like [`elide_to_width`].
+pub fn elide_pieces(
+    pieces: &[&str],
+    width: f32,
+    measure: impl Fn(usize, &str) -> f32,
+) -> Vec<String> {
+    let total: usize = pieces.iter().map(|piece| piece.chars().count()).sum();
+    let wide = |cut: &[String]| -> f32 {
+        cut.iter()
+            .enumerate()
+            .map(|(i, piece)| measure(i, piece))
+            .sum()
+    };
+    let whole = cut_pieces(pieces, total);
+    if wide(&whole) <= width {
+        return whole;
+    }
+    // Invariant: budget `lo` fits (zero is every piece empty), `hi` does not.
+    let (mut lo, mut hi) = (0, total);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if wide(&cut_pieces(pieces, mid)) <= width {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    cut_pieces(pieces, lo)
+}
+
+/// `pieces` cut to `budget` characters in all, the cut marked with `…` on
+/// the piece it falls in (spaces and a dangling ` · ` before it dropped)
+/// and every piece after it empty. Below two characters nothing is left.
+fn cut_pieces(pieces: &[&str], budget: usize) -> Vec<String> {
+    let total: usize = pieces.iter().map(|piece| piece.chars().count()).sum();
+    if budget >= total {
+        return pieces.iter().map(|piece| (*piece).to_owned()).collect();
+    }
+    let mut keep = budget.saturating_sub(1);
+    let mut cut = budget < 2;
+    pieces
+        .iter()
+        .map(|piece| {
+            if cut {
+                return String::new();
+            }
+            let count = piece.chars().count();
+            if count < keep {
+                keep -= count;
+                return (*piece).to_owned();
+            }
+            cut = true;
+            let kept: String = piece.chars().take(keep).collect();
+            let kept = kept.trim_end_matches(|c: char| c.is_whitespace() || c == '·');
+            format!("{kept}…")
+        })
+        .collect()
+}
+
 /// What a trade row's head line keeps at a given width.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadLine {

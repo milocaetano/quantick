@@ -151,17 +151,60 @@ fn three_replays_of_one_day_are_three_sessions_not_one() {
     assert_eq!(counts.iter().sum::<usize>(), 5);
     assert!(days[0].sessions.iter().all(|s| s.items.len() == s.count));
 
-    let label = loaded.sessions[&third].default_label(UTC);
-    assert_eq!(label, "Replay · 13:01 · rerun 2");
+    let label = loaded.sessions[&third].label(UTC);
     assert_eq!(
-        loaded.sessions[&third].stem(),
-        "Replay · rerun 2",
-        "a session header writes its own span instead of the first close"
+        label, "Replay · rerun 2 · 13:00–13:01",
+        "where from, which run, then first entry to last exit"
     );
+    assert_eq!(loaded.sessions[&third].stem(), "Replay · rerun 2");
     assert_eq!(
         loaded.sessions[&second].label(UTC),
-        "Replay · 13:01 · rerun 1"
+        "Replay · rerun 1 · 13:00–13:02"
     );
+}
+
+/// One name per session: the header, the search box, the delete confirm
+/// and the control plane all read [`SessionInfo::label`], and a close the
+/// folder read has not seen yet stretches it for all of them at once.
+#[test]
+fn a_session_is_named_one_way_everywhere_and_its_newest_close_stretches_it() {
+    let dir = ScratchDir::new("sessions-one-label");
+    let entry = trade_at(DAY_START + 3 * 60_000, 2);
+    let key = write_session(
+        dir.path(),
+        "20260316-130300.csv",
+        SessionSource::Live,
+        std::slice::from_ref(&entry),
+    );
+    let loaded = load_history(dir.path(), None, &[]);
+    let file = session_labels(Some(&loaded), std::iter::empty(), UTC);
+    assert_eq!(file[&key].text, "Live · 13:02–13:03");
+    assert_eq!(file[&key].text, loaded.sessions[&key].label(UTC));
+    let (listed, _) = summarize_sessions(&loaded, &LedgerFilter::default(), UTC, &BTreeSet::new());
+    assert_eq!(
+        listed[0].label, file[&key].text,
+        "the control plane's listing"
+    );
+
+    // The search finds it by the clock its header writes.
+    let search = |text: &str| LedgerFilter {
+        search: text.to_owned(),
+        ..LedgerFilter::default()
+    };
+    assert_eq!(kept_rows(&loaded, &file, &search("13:02"), UTC).len(), 1);
+
+    // A close journaled after the read: the label stretches to it, and a
+    // session the read never saw is named from its closes alone.
+    let later = trade_at(DAY_START + 40 * 60_000, 1);
+    let fresh = SessionKey::parse("WINJ26/20260316-134000.rerun-1.csv").unwrap();
+    let live = [
+        (&key, Some(SessionSource::Live), &later),
+        (&fresh, Some(SessionSource::Replay), &later),
+    ];
+    let stretched = session_labels(Some(&loaded), live, UTC);
+    assert_eq!(stretched[&key].text, "Live · 13:02–13:40");
+    assert_eq!(stretched[&fresh].text, "Replay · rerun 1 · 13:39–13:40");
+    assert_eq!(stretched[&key].folded, "live · 13:02–13:40");
 }
 
 #[test]
@@ -336,7 +379,7 @@ fn a_listing_keeps_sessions_with_a_kept_trade_newest_first() {
     assert_eq!((tagged[0].trades, tagged[0].net), (1, Decimal::from(3)));
 
     // The ledger's own cut agrees with the listing, row for row.
-    let labels = session_labels(&loaded, UTC);
+    let labels = session_labels(Some(&loaded), std::iter::empty(), UTC);
     let kept = kept_rows(&loaded, &labels, &msc, UTC);
     assert_eq!(kept.len(), 1);
     assert_eq!(loaded.rows[kept[0]].tags, vec!["msc"]);
@@ -371,7 +414,7 @@ fn a_name_and_tags_survive_a_reload_and_the_ledger_reads_them() {
     let loaded = load_history(dir.path(), None, &[]);
     let info = &loaded.sessions[&key];
     assert_eq!(info.name.as_deref(), Some("Opening drive"));
-    assert_eq!(info.label(UTC), "Opening drive");
+    assert_eq!(info.label(UTC), "Opening drive · 12:59–13:00");
     assert_eq!(loaded.rows[0].tags, vec!["msc", "fade"]);
     assert_eq!(loaded.rows[0].session.as_ref(), Some(&key));
     assert_eq!(loaded.rows.len(), 1, "metadata lines are not trades");
@@ -398,7 +441,7 @@ fn a_legacy_file_without_metadata_loads_with_a_default_label() {
     let loaded = load_history(dir.path(), None, &[]);
     let info = loaded.sessions.values().next().expect("one session");
     assert_eq!(info.name, None);
-    assert_eq!(info.label(UTC), "Unrecorded · 13:00");
+    assert_eq!(info.label(UTC), "Unrecorded · 12:59–13:00");
     assert!(loaded.rows[0].tags.is_empty());
 }
 

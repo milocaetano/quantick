@@ -553,6 +553,12 @@ impl PaperAccount {
         }
     }
 
+    /// Whether this session's trades are live or a replay's.
+    #[must_use]
+    pub fn session_source(&self) -> history::SessionSource {
+        self.session_source
+    }
+
     /// Seed the mark from backfilled history — never fills (look-ahead).
     pub fn seed(&mut self, trade: &Trade) {
         self.observe_precision(trade);

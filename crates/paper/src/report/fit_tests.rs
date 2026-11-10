@@ -170,3 +170,116 @@ fn enlarged_readouts_fit_even_when_the_result_alone_exceeds_the_row() {
         }
     }
 }
+
+/// The widths a trade row's words get in the docked panel: the dock less
+/// the panel's margins (16), the session box and row insets (26) and the
+/// side rule with the row's padding (22).
+const ROW_WORDS_PX: [(f32, f32); 2] = [(280.0, 216.0), (320.0, 256.0)];
+
+/// Egui's monospace at the row's sizes: 11 px on line one (piece 0 and 1
+/// and the figure), 10 px for the detail line.
+fn row_measure(detail: bool) -> impl Fn(usize, &str) -> f32 {
+    let advance = if detail { 6.0 } else { 6.6 };
+    move |_, text: &str| text.chars().count() as f32 * advance
+}
+
+fn fitted_width(fitted: &FittedPieces, measure: &impl Fn(usize, &str) -> f32) -> f32 {
+    let words: f32 = fitted
+        .left
+        .iter()
+        .enumerate()
+        .map(|(i, piece)| measure(i, piece))
+        .sum();
+    words + SIDE_GAP + measure(fitted.left.len(), &fitted.right)
+}
+
+const SIDE_GAP: f32 = 8.0;
+
+/// The trader's capture at the default dock: rows ran to three and four
+/// lines. Each line now stays one line at 280 and 320 px: the figure
+/// whole and flush right, the words cut at their end - side, size and
+/// prices first on line one, the clock and duration first on line two.
+#[test]
+fn a_trade_row_keeps_two_lines_at_the_docked_widths() {
+    for (dock, width) in ROW_WORDS_PX {
+        let head = ["SHORT 6", "  173603.33 → 173662"];
+        let measure = row_measure(false);
+        let first = fit_pieces(width, SIDE_GAP, &head, "-70.40", false, &measure);
+        assert_eq!(first.right, "-70.40", "the figure is never cut at {dock}");
+        assert!(!first.stacked, "never under the words at {dock}");
+        assert!(
+            fitted_width(&first, &measure) <= width,
+            "{first:?} at {dock}"
+        );
+        assert_eq!(first.left[0], "SHORT 6", "side and size first at {dock}");
+
+        let detail = ["17:31:34 · 36m 35s · take profit"];
+        let measure = row_measure(true);
+        let second = fit_pieces(width, SIDE_GAP, &detail, "-58.67 pts ×6", false, &measure);
+        assert_eq!(second.right, "-58.67 pts ×6");
+        assert!(
+            fitted_width(&second, &measure) <= width,
+            "{second:?} at {dock}"
+        );
+        assert!(
+            second.left[0].starts_with("17:31:34 · 36m 35s"),
+            "the clock and duration stay at {dock}: {second:?}"
+        );
+        assert!(second.left[0].ends_with('…'), "the reason is cut, visibly");
+    }
+    // Wide enough, nothing is cut.
+    let roomy = fit_pieces(
+        400.0,
+        SIDE_GAP,
+        &["SHORT 6", "  173603.33 → 173662"],
+        "-70.40",
+        false,
+        row_measure(false),
+    );
+    assert_eq!(roomy.left, ["SHORT 6", "  173603.33 → 173662"]);
+}
+
+/// A cut lands on the piece it falls in; the pieces after it are dropped,
+/// so a cut route never leaves a source mark dangling after it.
+#[test]
+fn pieces_are_cut_at_their_end_and_the_rest_dropped() {
+    let pieces = ["SHORT 1", "  173290 → 173840", "  ▷"];
+    let fits = |budget: f32| elide_pieces(&pieces, budget, |_, text: &str| mono(text));
+    assert_eq!(fits(200.0), ["SHORT 1", "  173290 → 173840", "  ▷"]);
+    assert_eq!(fits(90.0), ["SHORT 1", "  17329…", ""]);
+    assert_eq!(fits(42.0), ["SHORT…", "", ""]);
+    // Spaces before the cut go, so it never reads `SHORT 1  …`.
+    assert_eq!(fits(60.0), ["SHORT 1", "…", ""]);
+    assert_eq!(fits(6.0), ["", "", ""], "below two characters, nothing");
+}
+
+/// A session header stays one line: its title is cut, its count and figure
+/// never. A day header may set its figures under the date instead.
+#[test]
+fn a_header_is_one_line_unless_it_may_stack() {
+    let left = ["▾ ", "▷ ", "Replay · rerun 2 · 09:04–12:02"];
+    let session = fit_pieces(
+        200.0,
+        SIDE_GAP,
+        &left,
+        "12 · -316.09 BRL",
+        false,
+        |_, text| mono(text),
+    );
+    assert!(!session.stacked);
+    assert_eq!(session.right, "12 · -316.09 BRL");
+    assert_eq!(session.left[..2], ["▾ ", "▷ "]);
+    assert!(session.left[2].starts_with("Replay") && session.left[2].ends_with('…'));
+
+    let day = fit_pieces(
+        240.0,
+        SIDE_GAP,
+        &["▾ ", "Mon 09 Nov 2026"],
+        "13 · -491.09 BRL · -1427.85 pts/ct",
+        true,
+        |_, text| mono(text),
+    );
+    assert!(day.stacked, "the figures go under the date");
+    assert_eq!(day.left, ["▾ ", "Mon 09 Nov 2026"], "the date stays whole");
+    assert_eq!(day.right, "13 · -491.09 BRL · -1427.85 pts/ct");
+}

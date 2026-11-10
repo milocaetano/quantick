@@ -1,10 +1,10 @@
 //! Virtual ledger rows resolved before a renderer lays them out.
 use super::sessions::{
-    SessionKey, SessionLabel, SessionRow, TradeRef, clock_minute, clock_second,
-    group_by_day_and_session, place_session_rows, source_word,
+    SessionKey, SessionLabel, SessionRow, TradeRef, clock_second, group_by_day_and_session,
+    place_session_rows, session_title, source_word, span_of,
 };
 use super::snapshot::OpenRow;
-use crate::format::{fmt_decimal, fmt_duration_ms, position_word};
+use crate::format::{fmt_decimal, fmt_duration_ms, position_word, sanitize_symbol};
 use crate::pnl::SymbolPnl;
 use quantick_civil::{CivilDate, TzOffset};
 use quantick_engine::Side;
@@ -53,9 +53,9 @@ pub struct TradeMeta<'a> {
 }
 
 /// What a trade row writes, decided here so a test reads it: the side and
-/// size, the round trip, the instrument where the list mixes them, the
-/// source, the P&L pair and the detail line. The day's card above carries
-/// the date, so no row repeats it.
+/// size, the round trip, the instrument where it is not the chart's
+/// ([`shown_symbol`]), the source, the P&L pair and the detail line. The
+/// day's card above carries the date, so no row repeats it.
 pub struct TradeWords<'a> {
     pub side: Side,
     pub head: String,
@@ -63,18 +63,19 @@ pub struct TradeWords<'a> {
     pub symbol: Option<&'a str>,
     pub source: Option<SessionSource>,
     /// The leading figure, written on line one, and the one that keeps it
-    /// honest, on line two.
+    /// honest, on line two ([`SymbolPnl::row_split`]).
     pub pnl: (String, String),
     pub detail: String,
 }
 
 impl<'a> TradeWords<'a> {
-    /// A closed trade's row, its tags closing the detail line.
+    /// A closed trade of `instrument`'s row on the `chart`'s list, its tags
+    /// closing the detail line.
     #[must_use]
     pub fn closed(
         trade: &ClosedTrade,
         meta: TradeMeta<'_>,
-        symbol: Option<&'a str>,
+        (instrument, chart): (&'a str, &str),
         tz: TzOffset,
     ) -> Self {
         let mut detail = trade_detail(trade, tz);
@@ -93,17 +94,18 @@ impl<'a> TradeWords<'a> {
                 fmt_decimal(trade.entry_price),
                 fmt_decimal(trade.exit_price)
             ),
-            symbol,
+            symbol: shown_symbol(instrument, chart),
             source: meta.source,
             pnl: meta.pnl.closed_split(trade),
             detail,
         }
     }
 
-    /// The open position's row: the current mark as its provisional exit,
-    /// and the open profit as the ticket words it.
+    /// The open position's row on the `chart`'s list: the current mark as
+    /// its provisional exit, its open profit worded by `pnl` (the account's
+    /// instrument) as a closed row's is, and no figure before a mark.
     #[must_use]
-    pub fn open(open: &OpenRow, symbol: Option<&'a str>) -> Self {
+    pub fn open(open: &OpenRow, pnl: SymbolPnl<'a>, chart: &str) -> Self {
         let summary = &open.summary;
         let exit = open.mark_price.map_or_else(|| "…".to_owned(), fmt_decimal);
         let held = open
@@ -117,12 +119,24 @@ impl<'a> TradeWords<'a> {
                 fmt_decimal(summary.quantity)
             ),
             route: format!("{} → {}", fmt_decimal(summary.avg_price), exit),
-            symbol,
-            source: None,
-            pnl: (open.pnl.clone().unwrap_or_default(), String::new()),
+            symbol: shown_symbol(pnl.symbol, chart),
+            source: Some(open.source),
+            pnl: summary
+                .open_points
+                .map(|points| pnl.row_split(points, summary.quantity))
+                .unwrap_or_default(),
             detail: format!("{held} · at the last print"),
         }
     }
+}
+
+/// The instrument a row of `instrument` names on the `chart`'s list: none
+/// where it is the chart's own, compared as the journal's folders spell
+/// them ([`sanitize_symbol`]), so a row of another market always says
+/// which and a row of this one never repeats it.
+#[must_use]
+pub fn shown_symbol<'a>(instrument: &'a str, chart: &str) -> Option<&'a str> {
+    (sanitize_symbol(instrument) != sanitize_symbol(chart)).then_some(instrument)
 }
 
 /// The detail line under a ledger row: the closing clock, how long the
@@ -163,9 +177,9 @@ pub struct GroupView<'s> {
 /// A session's row as the list paints it.
 pub struct SessionHead {
     pub key: SessionKey,
-    pub label: String,
-    /// What the row writes: `Live · 12:16–13:56`, from its first entry to
-    /// its last exit that day ([`session_title`]).
+    /// What the row writes, and what the search, the delete confirm and the
+    /// control plane call it: its label, `Live · 12:16–13:56`, from its
+    /// first entry to its last exit ([`session_title`]).
     pub title: String,
     pub source: Option<SessionSource>,
     pub count: usize,
@@ -217,17 +231,22 @@ pub fn push_groups<'a>(
                 if session.row == SessionRow::Inline {
                     rows.push(LedgerRow::Inline);
                 } else {
-                    let label = view.labels.get(key);
-                    let stem = label.map_or(source_word(first.meta.source), |label| &label.stem);
-                    let trades = session.items.iter().map(|&index| items[index].trade);
-                    let primary = first.meta.pnl.reader.word_split(&session.pnl).0;
+                    // The label the cut gave it; a session no cut named
+                    // yet is titled the same way from what is listed.
+                    let title = view.labels.get(key).map_or_else(
+                        || {
+                            let trades = session.items.iter().map(|&index| items[index].trade);
+                            let stem = source_word(first.meta.source);
+                            session_title(stem, span_of(trades), view.tz)
+                        },
+                        |label| label.text.clone(),
+                    );
                     rows.push(LedgerRow::SessionHead(SessionHead {
                         key: key.clone(),
-                        label: label.map_or_else(|| stem.to_owned(), |label| label.text.clone()),
-                        title: session_title(stem, trades, view.tz),
+                        title,
                         source: first.meta.source,
                         count: session.count,
-                        net: (session.tint, primary),
+                        net: (session.tint, session.lead.clone()),
                         folded: view.collapsed_sessions.contains(key),
                         focused: view.focused == Some(key),
                         live: view.live.contains(key),
@@ -248,45 +267,16 @@ pub fn push_groups<'a>(
     }
 }
 
-/// `Live · 12:16–13:56`: a session's name, then its first entry and its
-/// last exit among `trades`, in the display timezone.
-pub fn session_title<'t>(
-    stem: &str,
-    trades: impl IntoIterator<Item = &'t ClosedTrade>,
-    tz: TzOffset,
-) -> String {
-    let span = trades
-        .into_iter()
-        .fold(None, |span: Option<(i64, i64)>, trade| {
-            Some(
-                span.map_or((trade.opened_ms, trade.closed_ms), |(from, to)| {
-                    (from.min(trade.opened_ms), to.max(trade.closed_ms))
-                }),
-            )
-        });
-    match span {
-        Some((from, to)) => format!(
-            "{stem} · {}\u{2013}{}",
-            clock_minute(from, tz),
-            clock_minute(to, tz)
-        ),
-        None => stem.to_owned(),
-    }
-}
-
-/// Where a row stands in one container, a day's card or a session's box:
-/// its first row opens the container, its last closes it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Span {
-    pub first: bool,
-    pub last: bool,
-}
-
-/// The containers that hold one row, and where it stands in each.
+/// The containers that hold one row, and where it stands in each as
+/// `[opens, closes]`: a container's first row opens it, its last closes it
+/// (the shape `appearance::paper::ledger_frame` paints from).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RowNest {
-    pub day: Option<Span>,
-    pub session: Option<Span>,
+    pub day: Option<[bool; 2]>,
+    pub session: Option<[bool; 2]>,
+    /// The list's ordinary spacing follows the row: it stands outside every
+    /// card, or it closes the last card before a caption or the list's end.
+    pub spaced: bool,
 }
 
 /// What a row is to the containers around it.
@@ -332,23 +322,26 @@ pub fn nesting(rows: &[LedgerRow<'_>]) -> Vec<RowNest> {
         .enumerate()
         .map(|(index, place)| {
             let next = places.get(index + 1).copied().unwrap_or(Place::Outside);
-            let day = Span {
-                first: *place == Place::Day,
-                last: matches!(next, Place::Outside | Place::Day),
-            };
-            let session = Span {
-                first: *place == Place::Session,
-                last: next != Place::InSession,
-            };
+            let day = [
+                *place == Place::Day,
+                matches!(next, Place::Outside | Place::Day),
+            ];
+            let session = [*place == Place::Session, next != Place::InSession];
+            let spaced = next == Place::Outside;
             match place {
-                Place::Outside => RowNest::default(),
+                Place::Outside => RowNest {
+                    spaced: true,
+                    ..RowNest::default()
+                },
                 Place::Day | Place::Loose => RowNest {
                     day: Some(day),
                     session: None,
+                    spaced,
                 },
                 Place::Session | Place::InSession => RowNest {
                     day: Some(day),
                     session: Some(session),
+                    spaced,
                 },
             }
         })
@@ -388,18 +381,6 @@ impl LedgerScope {
             Self::Chart => format!("This chart · {chart}"),
             Self::Symbol(symbol) => symbol.clone(),
             Self::All => "All symbols".to_owned(),
-        }
-    }
-
-    /// Whether a trade row names its instrument: only where the list mixes
-    /// them - every symbol, or a named one beside this session's trades on
-    /// the `chart`'s. Under "This chart" the picker already says which.
-    #[must_use]
-    pub fn names_symbol(&self, chart: &str) -> bool {
-        match self {
-            Self::Chart => false,
-            Self::Symbol(symbol) => symbol != chart,
-            Self::All => true,
         }
     }
 }
@@ -650,7 +631,7 @@ mod tests {
     /// exit and its leading figure; every row knows its card and its box.
     #[test]
     fn two_sessions_nest_in_their_day_card_and_a_folded_day_closes_its_own() {
-        use crate::report::sessions::{SessionKey, SessionLabel};
+        use crate::report::sessions::SessionKey;
         let tz = TzOffset::new(0);
         let day = CivilDate::from_ymd(2026, 11, 9).start_ms(tz);
         let minute = 60_000;
@@ -660,6 +641,7 @@ mod tests {
         };
         let early = SessionKey::parse("WINZ26/early.csv").unwrap();
         let late = SessionKey::parse("WINZ26/late.csv").unwrap();
+        let older = SessionKey::parse("WINZ26/older.csv").unwrap();
         // Newest first: the late session, the early one, then a day before.
         let trades = [
             at(14 * 60 + 57, 15 * 60 + 7, 44),
@@ -667,7 +649,7 @@ mod tests {
             at(12 * 60 + 16, 12 * 60 + 19, -55),
             at(-600, -590, 5),
         ];
-        let keys = [&late, &early, &early, &early];
+        let keys = [&late, &early, &early, &older];
         let items: Vec<Item<'_>> = trades
             .iter()
             .zip(keys)
@@ -684,14 +666,14 @@ mod tests {
                 },
             })
             .collect();
-        let mut labels = std::collections::BTreeMap::new();
-        for key in [&early, &late] {
-            let label = SessionLabel {
-                stem: "Live".to_owned(),
-                ..SessionLabel::new("Live · 12:19".to_owned())
-            };
-            labels.insert(key.clone(), label);
-        }
+        // The labels the cut builds: one per session, from its trades.
+        let labels = crate::report::sessions::session_labels(
+            None,
+            items
+                .iter()
+                .map(|item| (item.meta.session.unwrap(), item.meta.source, item.trade)),
+            tz,
+        );
         let folded: std::collections::BTreeSet<i64> =
             [CivilDate::from_ms(day - 1, tz).day_number()].into();
         let none = std::collections::BTreeSet::new();
@@ -723,41 +705,29 @@ mod tests {
             ],
             "start to last exit, and the leading figure alone"
         );
+        assert_eq!(
+            titles[1].0, labels[&early].text,
+            "the header writes the label the search and the delete confirm read"
+        );
 
-        let span = |first, last| Some(Span { first, last });
+        let ends = |opens, closes| Some([opens, closes]);
+        let row = |day, session, spaced| RowNest {
+            day,
+            session,
+            spaced,
+        };
         let nests = nesting(&rows);
         assert_eq!(nests.len(), rows.len());
         let expected = [
-            RowNest::default(), // caption
-            RowNest {
-                day: span(true, false),
-                session: None,
-            }, // Mon 09
-            RowNest {
-                day: span(false, false),
-                session: span(true, false),
-            }, // late
-            RowNest {
-                day: span(false, false),
-                session: span(false, true),
-            },
-            RowNest {
-                day: span(false, false),
-                session: span(true, false),
-            }, // early
-            RowNest {
-                day: span(false, false),
-                session: span(false, false),
-            },
-            RowNest {
-                day: span(false, true),
-                session: span(false, true),
-            },
-            RowNest {
-                day: span(true, true),
-                session: None,
-            }, // folded Sun 08
-            RowNest::default(), // show older
+            row(None, None, true),                             // caption
+            row(ends(true, false), None, false),               // Mon 09
+            row(ends(false, false), ends(true, false), false), // late
+            row(ends(false, false), ends(false, true), false),
+            row(ends(false, false), ends(true, false), false), // early
+            row(ends(false, false), ends(false, false), false),
+            row(ends(false, true), ends(false, true), false),
+            row(ends(true, true), None, true), // folded Sun 08, the last card
+            row(None, None, true),             // show older
         ];
         assert_eq!(nests, expected);
     }
@@ -782,25 +752,76 @@ mod tests {
             tags: &tags,
             pnl: PnlReader::plain().of("WINZ26"),
         };
-        let words = TradeWords::closed(&trade, meta, None, tz);
+        let words = TradeWords::closed(&trade, meta, ("WINZ26", "WINZ26"), tz);
         assert_eq!(words.head, "SHORT 2");
         assert_eq!(words.route, "100 → -177");
         assert_eq!(words.symbol, None);
         assert_eq!(words.detail, "13:17:43 · 38m 34s · manual · #fade");
-        assert_eq!(words.pnl, meta.pnl.closed_split(&trade));
         assert_eq!(
-            format!("{} · {}", words.pnl.0, words.pnl.1),
+            words.pnl,
+            ("-138.5 pts ×2".to_owned(), "— set pt value".to_owned()),
+            "the row's own form: the quantity tight against its sign"
+        );
+        assert_eq!(
             meta.pnl.closed(&trade),
-            "the same pair the row used to write on one line"
+            "-138.5 pts × 2 · — set pt value",
+            "the one-line readout is cut from the same split"
         );
     }
 
+    /// A row names its market only where it is not the chart's, compared
+    /// as the journal's folders spell them, whatever the list's scope.
     #[test]
-    fn a_trade_row_names_its_instrument_only_where_the_list_mixes_them() {
-        assert!(!LedgerScope::Chart.names_symbol("WINZ26"));
-        assert!(!LedgerScope::Symbol("WINZ26".to_owned()).names_symbol("WINZ26"));
-        assert!(LedgerScope::Symbol("WDOZ26".to_owned()).names_symbol("WINZ26"));
-        assert!(LedgerScope::All.names_symbol("WINZ26"));
+    fn a_trade_row_names_its_instrument_only_where_it_is_not_the_charts() {
+        assert_eq!(shown_symbol("WINZ26", "WINZ26"), None);
+        assert_eq!(shown_symbol("WDOZ26", "WINZ26"), Some("WDOZ26"));
+        assert_eq!(
+            shown_symbol("WIN_N", "WIN@N"),
+            None,
+            "the folder's spelling of the chart's own market"
+        );
+        assert_eq!(shown_symbol("WINZ26", ""), Some("WINZ26"));
+    }
+
+    /// The pinned position is this session's: it says Live or Replay, never
+    /// the unrecorded `?`, and lays its figures out like a closed row.
+    #[test]
+    fn the_open_row_names_its_source_and_splits_its_figures() {
+        use crate::format::PositionSummary;
+        let open = OpenRow {
+            summary: PositionSummary {
+                side: Side::Buy,
+                quantity: Decimal::TWO,
+                avg_price: Decimal::from(100),
+                open_points: Some(Decimal::from(30)),
+            },
+            mark_price: Some(Decimal::from(115)),
+            held_ms: Some(90_000),
+            source: SessionSource::Replay,
+        };
+        let pnl = PnlReader::plain().of("WINZ26");
+        let words = TradeWords::open(&open, pnl, "WINZ26");
+        assert_eq!(words.source, Some(SessionSource::Replay));
+        assert_eq!(words.symbol, None);
+        assert_eq!(words.route, "100 → 115");
+        assert_eq!(words.pnl, pnl.row_split(Decimal::from(30), Decimal::TWO));
+        assert_eq!(words.pnl.0, "+15 pts ×2");
+
+        // Before a mark there is no figure to write.
+        let unmarked = OpenRow {
+            summary: PositionSummary {
+                open_points: None,
+                ..open.summary
+            },
+            ..open
+        };
+        let words = TradeWords::open(&unmarked, pnl, "WDOZ26");
+        assert_eq!(words.pnl, (String::new(), String::new()));
+        assert_eq!(
+            words.symbol,
+            Some("WINZ26"),
+            "another chart's position names it"
+        );
     }
 
     #[test]
@@ -813,14 +834,12 @@ mod tests {
         push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
         let nests = nesting(&rows);
         assert_eq!(nests[1].session, None, "no file, no box");
-        assert_eq!(
-            nests[2].day,
-            Some(Span {
-                first: false,
-                last: true
-            })
+        assert_eq!(nests[2].day, Some([false, true]));
+        assert!(
+            nests[2].spaced,
+            "the list's last card leaves a gap under it"
         );
-        assert_eq!(session_title("Replay", std::iter::empty(), tz), "Replay");
+        assert_eq!(session_title("Replay", None, tz), "Replay");
     }
 
     #[test]
