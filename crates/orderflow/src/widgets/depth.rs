@@ -34,11 +34,15 @@ pub const WALL_MEDIAN_MULTIPLE: u32 = 4;
 #[derive(Debug, Clone, Copy)]
 pub struct DepthInput<'a> {
     /// The book the pane saw before, and the exchange time it was current
-    /// at. Prints after that time are the evidence a reduction is checked
-    /// against. `None` labels nothing.
+    /// at. Prints after that time, up to [`ladder_at_ms`](Self::ladder_at_ms),
+    /// are the evidence a reduction is checked against. `None` labels
+    /// nothing.
     pub earlier: Option<(&'a BookLadder, i64)>,
     /// The current book.
     pub ladder: &'a BookLadder,
+    /// The exchange time the current book is current at: a print after it
+    /// cannot explain a change the book already shows.
+    pub ladder_at_ms: i64,
     /// The tape the SOLD and BOUGHT columns sum, in any order.
     pub prints: &'a [Aggression],
     /// Row height in price.
@@ -183,11 +187,18 @@ pub fn build_depth(input: &DepthInput<'_>) -> Option<DepthModel> {
     })
 }
 
-/// The tape's latest print: highest exchange time, then highest id.
+/// The tape's latest print: highest exchange time, then highest id, then
+/// highest price and quantity — a total order, so ids repeated across
+/// sessions cannot make the answer depend on input order.
 fn latest_print(prints: &[Aggression]) -> Option<&Aggression> {
-    prints
-        .iter()
-        .max_by(|a, b| (a.timestamp_ms, a.agg_id).cmp(&(b.timestamp_ms, b.agg_id)))
+    prints.iter().max_by(|a, b| {
+        (a.timestamp_ms, a.agg_id, a.price, a.quantity).cmp(&(
+            b.timestamp_ms,
+            b.agg_id,
+            b.price,
+            b.quantity,
+        ))
+    })
 }
 
 fn sum_levels(levels: &[BookLevel], grouping: EffectiveGrouping) -> BTreeMap<Decimal, Decimal> {
@@ -206,8 +217,11 @@ struct Reductions {
     asks: BTreeMap<Decimal, Decimal>,
     traded_bids: BTreeMap<Decimal, Decimal>,
     traded_asks: BTreeMap<Decimal, Decimal>,
-    /// The current book's deepest bid and ask: below (above) them the
-    /// current ladder was clipped, so a missing level there is not news.
+    /// The current book's deepest bid and ask. The ladder is published
+    /// clipped (level count and view window) without saying where, so past
+    /// its deepest level a missing size is not evidence of anything and is
+    /// left unlabelled — no claim rather than a guessed one. A pull of the
+    /// outermost levels is therefore not labelled.
     bid_floor: Option<Decimal>,
     ask_ceiling: Option<Decimal>,
 }
@@ -221,11 +235,11 @@ impl Reductions {
     ) -> Self {
         let mut traded_bids = BTreeMap::new();
         let mut traded_asks = BTreeMap::new();
-        for print in input
+        let evidence = input
             .prints
             .iter()
-            .filter(|print| print.timestamp_ms > at_ms)
-        {
+            .filter(|print| print.timestamp_ms > at_ms && print.timestamp_ms <= input.ladder_at_ms);
+        for print in evidence {
             let side = match consumed_side(print.side) {
                 BookSide::Bid => &mut traded_bids,
                 BookSide::Ask => &mut traded_asks,

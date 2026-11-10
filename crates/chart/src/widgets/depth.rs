@@ -2,7 +2,9 @@
 //! and bar widths, plus the footer's spread and near-touch sums.
 
 use quantick_appearance::Token;
-use quantick_orderflow::widgets::depth::{DepthModel, DepthRow, UNATTRIBUTED_L2_REDUCTION};
+use quantick_orderflow::widgets::depth::{
+    DepthModel, DepthRow, NEAR_TOUCH_FRACTION, UNATTRIBUTED_L2_REDUCTION,
+};
 use rust_decimal::Decimal;
 
 use super::{WidgetBar, WidgetCell, bar_px, price_text};
@@ -131,9 +133,10 @@ pub fn depth_view(
     }];
     if let Some((bid, ask)) = model.near_touch {
         footer.push(format!(
-            "bid {} | ask {} within 0.1%",
+            "bid {} | ask {} within {}%",
             fmt_qty(bid),
-            fmt_qty(ask)
+            fmt_qty(ask),
+            (NEAR_TOUCH_FRACTION * Decimal::ONE_HUNDRED).normalize()
         ));
     }
     DepthView {

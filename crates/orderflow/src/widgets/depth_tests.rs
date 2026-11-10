@@ -89,6 +89,7 @@ fn later() -> BookLadder {
 }
 
 const EARLIER_AT_MS: i64 = 1_000;
+const LATER_AT_MS: i64 = 2_000;
 
 fn prints() -> Vec<Aggression> {
     vec![
@@ -108,6 +109,7 @@ fn ladder_rows_match_golden() {
     let model = build_depth(&DepthInput {
         earlier: Some((&earlier, EARLIER_AT_MS)),
         ladder: &later,
+        ladder_at_ms: LATER_AT_MS,
         prints: &prints,
         tick: d("0.5"),
         rows_per_side: 4,
@@ -158,6 +160,7 @@ fn without_an_earlier_book_nothing_is_called_a_reduction() {
     let model = build_depth(&DepthInput {
         earlier: None,
         ladder: &later,
+        ladder_at_ms: LATER_AT_MS,
         prints: &prints,
         tick: d("0.5"),
         rows_per_side: 4,
@@ -172,6 +175,7 @@ fn an_empty_book_without_prints_has_no_model() {
     let model = build_depth(&DepthInput {
         earlier: None,
         ladder: &empty,
+        ladder_at_ms: LATER_AT_MS,
         prints: &[],
         tick: d("0.5"),
         rows_per_side: 4,
@@ -185,6 +189,7 @@ fn without_prints_the_ladder_centres_on_the_mid() {
     let model = build_depth(&DepthInput {
         earlier: None,
         ladder: &later,
+        ladder_at_ms: LATER_AT_MS,
         prints: &[],
         tick: d("0.5"),
         rows_per_side: 1,
@@ -193,4 +198,52 @@ fn without_prints_the_ladder_centres_on_the_mid() {
     let prices: Vec<Decimal> = model.rows.iter().map(|row| row.price).collect();
     assert_eq!(prices, vec![d("1001.0"), d("1000.5"), d("1000.0")]);
     assert_eq!(model.last_price, d("1000.5"));
+}
+
+#[test]
+fn a_print_after_the_current_book_explains_nothing() {
+    let earlier = earlier();
+    let later = later();
+    let mut prints = prints();
+    // A sell at 999.5 after the current book cannot explain its drop.
+    prints.push(print(14, LATER_AT_MS + 500, Side::Sell, "999.5", "2"));
+    let model = build_depth(&DepthInput {
+        earlier: Some((&earlier, EARLIER_AT_MS)),
+        ladder: &later,
+        ladder_at_ms: LATER_AT_MS,
+        prints: &prints,
+        tick: d("0.5"),
+        rows_per_side: 4,
+    })
+    .expect("model");
+    let row = model
+        .rows
+        .iter()
+        .find(|row| row.price == d("999.5"))
+        .expect("row");
+    assert_eq!(row.bid_unattributed, d("2"));
+}
+
+#[test]
+fn a_repeated_id_does_not_make_the_centre_order_dependent() {
+    let later = later();
+    let forward = vec![
+        print(5, 1_500, Side::Buy, "1000.0", "1"),
+        print(5, 1_500, Side::Buy, "1001.0", "1"),
+    ];
+    let mut backward = forward.clone();
+    backward.reverse();
+    let build = |prints: &[Aggression]| {
+        build_depth(&DepthInput {
+            earlier: None,
+            ladder: &later,
+            ladder_at_ms: LATER_AT_MS,
+            prints,
+            tick: d("0.5"),
+            rows_per_side: 1,
+        })
+        .expect("model")
+        .last_price
+    };
+    assert_eq!(build(&forward), build(&backward));
 }

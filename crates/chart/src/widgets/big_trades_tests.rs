@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 
 use super::WidgetCell;
 use super::big_trades::{
-    BIG_TRADES_COLUMNS, BIG_TRADES_EMPTY, BigTradesView, NOTIONAL_PRESET_LABELS, big_trades_view,
+    BIG_TRADES_EMPTY, BigTradesLayout, BigTradesView, NotionalUnit, big_trades_view,
 };
 
 fn d(text: &str) -> Decimal {
@@ -48,6 +48,16 @@ fn model() -> BigTrades {
     }
 }
 
+fn layout(min_notional: &str, merge_fills: bool, unit: NotionalUnit) -> BigTradesLayout {
+    BigTradesLayout {
+        min_notional: d(min_notional),
+        merge_fills,
+        tick: d("0.50"),
+        tz: TzOffset::new(0),
+        unit,
+    }
+}
+
 fn cell(text: &str, token: Token) -> WidgetCell {
     WidgetCell {
         text: text.to_owned(),
@@ -57,16 +67,9 @@ fn cell(text: &str, token: Token) -> WidgetCell {
 
 #[test]
 fn view_matches_golden() {
-    let view = big_trades_view(
-        Some(&model()),
-        d("250000"),
-        true,
-        d("0.50"),
-        TzOffset::new(0),
-    );
+    let view = big_trades_view(Some(&model()), &layout("250000", true, NotionalUnit::USD));
     assert_eq!(view.empty, None);
-    assert_eq!(BIG_TRADES_COLUMNS, ["TIME", "", "PRICE", "SIZE", "USD", ""]);
-    assert_eq!(NOTIONAL_PRESET_LABELS, ["50k", "250k", "1M"]);
+    assert_eq!(view.columns, ["TIME", "", "PRICE", "SIZE", "USD", ""]);
     assert_eq!(
         view.presets,
         vec![
@@ -83,7 +86,7 @@ fn view_matches_golden() {
     assert_eq!(first.price, cell("76200.00", Token::TextPrimary));
     assert_eq!(first.size, cell("13.12", Token::Buy));
     assert_eq!(first.fills, None);
-    assert_eq!(first.notional, cell("$1.00M", Token::TextPrimary));
+    assert_eq!(first.notional, cell("$1.0M", Token::TextPrimary));
     assert!(first.emphasised);
     assert_eq!(first.bubble_token, Token::Buy);
 
@@ -94,7 +97,7 @@ fn view_matches_golden() {
     assert_eq!(merged.price, cell("76183.33", Token::TextMuted));
     assert_eq!(merged.size, cell("4.72", Token::Sell));
     assert_eq!(merged.fills, Some(cell("×3", Token::TextFaint)));
-    assert_eq!(merged.notional, cell("$360.00K", Token::TextMuted));
+    assert_eq!(merged.notional, cell("$360.0k", Token::TextMuted));
     assert!(!merged.emphasised);
 
     let third = &view.rows[2];
@@ -108,7 +111,7 @@ fn view_matches_golden() {
         assert!((radius - expected).abs() < 1e-4, "{radii:?}");
     }
 
-    assert_eq!(view.footer, "last 5 min: buys $8.40M · sells $5.10M");
+    assert_eq!(view.footer, "last 5 min: buys $8.4M · sells $5.1M");
     for row in &view.rows {
         assert!(!row.price.text.contains(','), "{}", row.price.text);
     }
@@ -121,23 +124,28 @@ fn nothing_over_the_threshold_says_so() {
         window_buy_notional: Decimal::ZERO,
         window_sell_notional: Decimal::ZERO,
     };
-    let view = big_trades_view(
-        Some(&empty),
-        d("1000000"),
-        false,
-        d("0.50"),
-        TzOffset::new(0),
-    );
+    let view = big_trades_view(Some(&empty), &layout("1000000", false, NotionalUnit::USD));
     assert!(view.rows.is_empty());
     assert_eq!(
         view.empty,
-        Some("no trades at or above $1.00M yet".to_owned())
+        Some("no trades at or above $1.0M yet".to_owned())
     );
 }
 
 #[test]
 fn no_tape_is_the_empty_state() {
-    let view = big_trades_view(None, d("250000"), true, d("0.50"), TzOffset::new(0));
-    assert_eq!(view, BigTradesView::empty_state(d("250000"), true));
+    let view = big_trades_view(None, &layout("250000", true, NotionalUnit::USD));
+    assert_eq!(
+        view,
+        BigTradesView::empty_state(d("250000"), true, NotionalUnit::USD)
+    );
     assert_eq!(view.empty, Some(BIG_TRADES_EMPTY.to_owned()));
+}
+
+#[test]
+fn a_points_quoted_notional_is_not_called_dollars() {
+    let view = big_trades_view(Some(&model()), &layout("250000", true, NotionalUnit::QUOTE));
+    assert_eq!(view.columns[4], "NOTIONAL");
+    assert_eq!(view.rows[0].notional.text, "1.0M");
+    assert!(!view.footer.contains('$'), "{}", view.footer);
 }

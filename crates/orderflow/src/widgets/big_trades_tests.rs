@@ -150,3 +150,60 @@ fn input_order_does_not_change_the_rows() {
         big_trades(&prints(), &params, NOW_MS)
     );
 }
+
+#[test]
+fn a_repeated_id_is_still_two_prints() {
+    // An MT5 bridge restarts its sequence per session: the same id twice.
+    let prints = vec![
+        print(5, 2_000_000, Side::Buy, "76200", "10"),
+        print(5, 2_100_000, Side::Buy, "76300", "1"),
+    ];
+    let rows = big_trades(
+        &prints,
+        &BigTradesParams {
+            min_notional: d("250000"),
+            merge_fills: true,
+            max_rows: 10,
+        },
+        2_100_000,
+    )
+    .rows;
+    assert_eq!(
+        rows,
+        vec![big(5, 2_000_000, Side::Buy, "76200", "10", "762000", 1)]
+    );
+
+    let same_ms = vec![
+        print(5, 2_000_000, Side::Sell, "100", "2"),
+        print(5, 2_000_000, Side::Sell, "100", "3"),
+    ];
+    let merged = big_trades(
+        &same_ms,
+        &BigTradesParams {
+            min_notional: Decimal::ZERO,
+            merge_fills: true,
+            max_rows: 10,
+        },
+        2_000_000,
+    );
+    assert_eq!(
+        merged.rows,
+        vec![big(5, 2_000_000, Side::Sell, "100", "5", "500", 2)]
+    );
+}
+
+#[test]
+fn a_print_ahead_of_the_clock_is_still_in_the_totals() {
+    let prints = vec![print(1, NOW_MS + 200, Side::Buy, "50000", "40")];
+    let model = big_trades(
+        &prints,
+        &BigTradesParams {
+            min_notional: d("250000"),
+            merge_fills: true,
+            max_rows: 10,
+        },
+        NOW_MS,
+    );
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.window_buy_notional, d("2000000"));
+}
