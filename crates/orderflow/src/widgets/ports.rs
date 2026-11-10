@@ -1,7 +1,7 @@
 //! The derivatives data port: what a venue must hand the Liquidations and
-//! OI + Funding models. No feed produces these yet; a feed that learns to
-//! advertises it through its capabilities and fills these types, and the
-//! models take them as plain slices with a clock the caller passes in.
+//! OI + Funding models. No feed produces these yet. A feed that learns to
+//! advertises it through its capabilities and fills these types; the models
+//! take them as plain slices with a clock the caller passes in.
 
 use rust_decimal::Decimal;
 

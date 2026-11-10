@@ -7,7 +7,9 @@
 //! not share a bar type or a clock grid.
 //!
 //! A span opens at the first point, on either leg, from which both lines are
-//! non-zero with opposite signs, and closes at the first point from which
+//! non-zero with opposite signs (a line within [`CVD_ZERO_TOLERANCE`] of
+//! zero counts as zero: the running sum is f64, and a flat leg must not
+//! flicker a span open on rounding residue), and closes at the first point from which
 //! they are not. A span still open when the bars end is marked ongoing and
 //! ends at the last point.
 
@@ -16,6 +18,9 @@ use quantick_engine::Bar;
 use crate::host::IndicatorHost;
 use crate::native::Cvd;
 use crate::output::PlotId;
+
+/// How close to zero a CVD line may sit and still count as zero.
+pub const CVD_ZERO_TOLERANCE: f64 = 1e-9;
 
 /// One CVD value at its bar's close.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,7 +106,11 @@ fn opposite_spans(perp: &[CvdPoint], spot: &[CvdPoint]) -> Vec<OppositeSpan> {
             s += 1;
         }
         let opposite = match (perp_now, spot_now) {
-            (Some(a), Some(b)) => a != 0.0 && b != 0.0 && (a < 0.0) != (b < 0.0),
+            (Some(a), Some(b)) => {
+                a.abs() > CVD_ZERO_TOLERANCE
+                    && b.abs() > CVD_ZERO_TOLERANCE
+                    && (a < 0.0) != (b < 0.0)
+            }
             _ => false,
         };
         match (open, opposite) {

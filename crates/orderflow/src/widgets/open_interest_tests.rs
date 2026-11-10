@@ -63,8 +63,9 @@ fn oi_change_and_funding_countdown() {
         Some(FundingState {
             rate: d("0.0001"),
             predicted_rate: Some(d("0.000071")),
-            annualised_rate: d("0.1095"),
+            annualised_rate: Some(d("0.1095")),
             countdown_ms: 11_564_000,
+            stale: false,
         })
     );
     assert_eq!(model.provenance, "OI polled every 5 s from venue REST");
@@ -79,10 +80,29 @@ fn oi_change_and_funding_countdown() {
 }
 
 #[test]
-fn a_settlement_already_past_counts_down_to_zero() {
+fn a_settlement_already_past_counts_down_to_zero_and_is_stale() {
     let late = NEXT_FUNDING_MS + 1_000;
     let model = open_interest(&samples(), Some(&funding()), POLLED, &PARAMS, late);
-    assert_eq!(model.funding.map(|f| f.countdown_ms), Some(0));
+    let funding = model.funding.expect("funding");
+    assert_eq!(funding.countdown_ms, 0);
+    assert!(funding.stale);
+}
+
+#[test]
+fn no_usable_interval_has_no_annualised_rate() {
+    let mut snapshot = funding();
+    snapshot.interval_ms = 0;
+    let model = open_interest(&samples(), Some(&snapshot), POLLED, &PARAMS, NOW_MS);
+    assert_eq!(model.funding.and_then(|f| f.annualised_rate), None);
+}
+
+#[test]
+fn a_gap_in_the_readings_has_no_hour_change() {
+    // The reading before the latest is six hours older: not an hour ago.
+    let gapped = [sample(0, "1000", "100"), sample(21_600_000, "880", "90")];
+    let model = open_interest(&gapped, None, POLLED, &PARAMS, 21_600_000);
+    assert_eq!(model.oi_change_1h, None);
+    assert_eq!(model.price_change_1h, None);
 }
 
 #[test]

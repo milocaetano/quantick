@@ -4,8 +4,14 @@
 //! passes in, how the readings reached us, and the OI and price series.
 //!
 //! The hour is measured between readings, not from the clock: the latest
-//! reading against the newest one at least an hour older. With less history
-//! than that there is no change to show, and the model says none.
+//! reading against the newest one at least an hour older, and at most
+//! [`OI_CHANGE_MAX_SPAN_MS`] older. With less history than that, or a gap in
+//! it that would stretch the figure past that, there is no change to show,
+//! and the model says none.
+//!
+//! A funding snapshot whose settlement time has passed is stale: it still
+//! names the settled period's rate. The model says so instead of showing it
+//! as the next one.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +21,9 @@ use super::ports::{FundingSnapshot, OpenInterestOrigin, OpenInterestSample};
 
 /// The span the change figures cover.
 pub const OI_CHANGE_SPAN_MS: i64 = 3_600_000;
+
+/// The oldest a reference reading may be and still stand for an hour ago.
+pub const OI_CHANGE_MAX_SPAN_MS: i64 = 5_400_000;
 
 /// The year an annualised funding rate is scaled to.
 pub const FUNDING_YEAR_MS: i64 = 365 * 86_400_000;
@@ -35,10 +44,14 @@ pub struct FundingState {
     pub rate: Decimal,
     /// The venue's estimate of the settlement after the next, if published.
     pub predicted_rate: Option<Decimal>,
-    /// `rate` scaled to [`FUNDING_YEAR_MS`] of settlements.
-    pub annualised_rate: Decimal,
+    /// `rate` scaled to [`FUNDING_YEAR_MS`] of settlements; nothing when
+    /// the venue gave no usable interval.
+    pub annualised_rate: Option<Decimal>,
     /// Until the next settlement; zero once its time has passed.
     pub countdown_ms: i64,
+    /// The settlement this snapshot announced has passed and no newer
+    /// snapshot arrived: `rate` is the settled period's, not the next one's.
+    pub stale: bool,
 }
 
 /// The pane's model.
@@ -80,6 +93,7 @@ pub fn open_interest(
             .iter()
             .rev()
             .find(|sample| sample.timestamp_ms <= cutoff)
+            .filter(|sample| latest.timestamp_ms - sample.timestamp_ms <= OI_CHANGE_MAX_SPAN_MS)
     });
     let (oi_change_1h, price_change_1h) = match (&latest, reference) {
         (Some(latest), Some(reference)) => (
@@ -105,16 +119,15 @@ fn change(from: Decimal, to: Decimal) -> Option<Decimal> {
 }
 
 fn funding_state(snapshot: &FundingSnapshot, now_ms: i64) -> FundingState {
-    let annualised_rate = if snapshot.interval_ms > 0 {
+    let annualised_rate = (snapshot.interval_ms > 0).then(|| {
         snapshot.rate * Decimal::from(FUNDING_YEAR_MS) / Decimal::from(snapshot.interval_ms)
-    } else {
-        Decimal::ZERO
-    };
+    });
     FundingState {
         rate: snapshot.rate,
         predicted_rate: snapshot.predicted_rate,
         annualised_rate,
         countdown_ms: snapshot.next_funding_ms.saturating_sub(now_ms).max(0),
+        stale: now_ms >= snapshot.next_funding_ms,
     }
 }
 

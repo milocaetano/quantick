@@ -64,9 +64,19 @@ fn bar_px(part: Decimal, whole: Decimal, full_px: f32) -> f32 {
     (part / whole).to_f32().unwrap_or(0.0) * full_px
 }
 
-/// `value` written with the unit's prefix: `$942.1k`.
+/// Where [`amount`] switches to billions.
+const BILLION: u64 = 1_000_000_000;
+
+/// `value` written with the unit's prefix: `$942.1k`, and `$6.98B` from a
+/// billion, where the quantity format would write `6980.0M`.
 fn amount(value: Decimal, unit: big_trades::NotionalUnit) -> String {
-    format!("{}{}", unit.prefix, fmt_qty(value))
+    use rust_decimal::prelude::ToPrimitive as _;
+    let figure = if value.abs() >= Decimal::from(BILLION) {
+        crate::geometry::compact_value(value.to_f64().unwrap_or(f64::NAN))
+    } else {
+        fmt_qty(value)
+    };
+    format!("{}{figure}", unit.prefix)
 }
 
 /// `00:13:52` in `tz`.

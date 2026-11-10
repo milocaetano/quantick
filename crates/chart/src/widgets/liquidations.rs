@@ -26,9 +26,9 @@ pub const LIQUIDATION_BAR_GAP_PX: f32 = 1.0;
 pub struct LiquidationTotalsView {
     /// `1m`, `5m`, `1h`.
     pub label: String,
-    /// `L $0.42M`, in the sell colour: longs were sold out.
+    /// `L $420.0k`, in the sell colour: longs were sold out.
     pub long: WidgetCell,
-    /// `S $0.03M`, in the buy colour.
+    /// `S $30.0k`, in the buy colour.
     pub short: WidgetCell,
 }
 

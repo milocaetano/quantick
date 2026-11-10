@@ -15,7 +15,7 @@ use super::liquidations::{
     LiquidationsLayout, liquidations_view,
 };
 use super::open_interest::{
-    OPEN_INTEREST_NOT_PROVIDED, OpenInterestLayout, READING_NOTE, open_interest_view,
+    FUNDING_STALE, OPEN_INTEREST_NOT_PROVIDED, OpenInterestLayout, READING_NOTE, open_interest_view,
 };
 use super::spot_perp_cvd::{SPOT_PERP_NOT_PROVIDED, SpotPerpCvdLayout, spot_perp_cvd_view};
 
@@ -92,8 +92,9 @@ fn oi_model() -> OpenInterest {
         funding: Some(FundingState {
             rate: d("0.0001"),
             predicted_rate: Some(d("0.000071")),
-            annualised_rate: d("0.1095"),
+            annualised_rate: Some(d("0.1095")),
             countdown_ms: 11_564_000,
+            stale: false,
         }),
         provenance: "OI polled every 5 s from venue REST".to_owned(),
         series: vec![
@@ -222,7 +223,7 @@ fn views_match_golden_and_empty_state() {
     assert_eq!(view.oi_change, cell("-1.84% 1h", Token::Sell));
     assert_eq!(view.notional, cell("$6.98B", Token::TextFaint));
     let funding = view.funding.expect("funding card");
-    assert_eq!(funding.countdown, cell("03:12:44", Token::TextPrimary));
+    assert_eq!(funding.countdown, cell("3:12:44", Token::TextPrimary));
     assert_eq!(funding.rate, cell("+0.0100%", Token::Buy));
     assert_eq!(funding.predicted, Some(cell("+0.0071%", Token::Buy)));
     assert_eq!(funding.annualised, cell("10.95%/yr", Token::TextFaint));
@@ -262,7 +263,8 @@ fn views_match_golden_and_empty_state() {
     assert_eq!(view.perp_token, Token::DrawCyan);
     assert_eq!(view.spot_token, Token::DrawViolet);
     assert_eq!(view.zero_y_px, Some(44.0));
-    assert_eq!(view.shaded, vec![[60.0, 180.0], [210.0, 210.0]]);
+    // The ongoing span opened on the last point: still drawn, at the edge.
+    assert_eq!(view.shaded, vec![[60.0, 180.0], [207.0, 210.0]]);
     assert_eq!(view.perp_legend, cell("— perp +3 BTC", Token::DrawCyan));
     assert_eq!(view.spot_legend, cell("— spot -2 BTC", Token::DrawViolet));
     assert_eq!(view.note, "shaded = opposite signs");
@@ -280,4 +282,44 @@ fn views_match_golden_and_empty_state() {
     ] {
         assert!(text.starts_with("feed does not provide"), "{text}");
     }
+}
+
+#[test]
+fn oi_view_labels_what_it_does_not_know() {
+    // Funding before the first OI reading still shows its card.
+    let funding_only = OpenInterest {
+        latest: None,
+        notional: None,
+        oi_change_1h: None,
+        price_change_1h: None,
+        series: Vec::new(),
+        ..oi_model()
+    };
+    let view = open_interest_view(Some(&funding_only), &oi_layout());
+    assert_eq!(view.empty, None);
+    assert!(view.funding.is_some());
+    assert!(view.oi_line.is_empty());
+
+    // A settled snapshot no newer one replaced says so, in faint ink.
+    let mut stale = oi_model();
+    if let Some(funding) = stale.funding.as_mut() {
+        funding.stale = true;
+        funding.countdown_ms = 0;
+        funding.annualised_rate = None;
+    }
+    let card = open_interest_view(Some(&stale), &oi_layout())
+        .funding
+        .expect("funding card");
+    assert_eq!(card.countdown, cell(FUNDING_STALE, Token::TextFaint));
+    assert_eq!(card.rate, cell("+0.0100%", Token::TextFaint));
+    assert_eq!(card.annualised, cell("—/yr", Token::TextFaint));
+
+    // A move that prints as zero is neither coloured nor read.
+    let flat = OpenInterest {
+        oi_change_1h: Some(d("-0.00001")),
+        ..oi_model()
+    };
+    let view = open_interest_view(Some(&flat), &oi_layout());
+    assert_eq!(view.oi_change, cell("0.00% 1h", Token::TextMuted));
+    assert_eq!(view.reading, None);
 }

@@ -106,6 +106,29 @@ fn lines_reuse_cvd_and_spans_match_golden() {
 }
 
 #[test]
+fn rounding_residue_around_zero_is_not_a_divergence() {
+    // 0.1 + 0.2 - 0.3 leaves about 5.6e-17 in f64: a flat leg, not a buyer.
+    let fractional = |agg_id, timestamp_ms, side, quantity: &str| Trade {
+        quantity: quantity.parse().expect("fixture decimal"),
+        ..trade(agg_id, timestamp_ms, side, 0)
+    };
+    let perp_bars = minute_bars(&[
+        fractional(1, 0, Side::Buy, "0.1"),
+        fractional(2, 60_000, Side::Buy, "0.2"),
+        fractional(3, 120_000, Side::Sell, "0.3"),
+    ]);
+    let spot_bars = minute_bars(&[trade(1, 150_000, Side::Sell, 4)]);
+    let model = spot_perp_cvd(&perp_bars, &spot_bars);
+    let last = model.perp.last().expect("perp line").value;
+    assert!(last != 0.0 && last.abs() < 1e-12, "{last}");
+    assert!(
+        model.opposite_spans.is_empty(),
+        "{:?}",
+        model.opposite_spans
+    );
+}
+
+#[test]
 fn one_leg_alone_has_no_spans() {
     let perp_bars = minute_bars(&perp_trades());
     let model = spot_perp_cvd(&perp_bars, &[]);

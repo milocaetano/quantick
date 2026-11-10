@@ -10,8 +10,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use super::big_trades::NotionalUnit;
-use super::{WidgetCell, line_px, price_text, value_range};
-use crate::geometry::compact_value;
+use super::{WidgetCell, amount, line_px, price_text, value_range};
+use crate::bar_progress::countdown_text;
 
 /// What the pane says on a feed with no open interest or funding.
 pub const OPEN_INTEREST_NOT_PROVIDED: &str = "feed does not provide open interest or funding";
@@ -19,15 +19,26 @@ pub const OPEN_INTEREST_NOT_PROVIDED: &str = "feed does not provide open interes
 /// What the pane says on a feed that provides it before the first reading.
 pub const OPEN_INTEREST_WAITING: &str = "waiting for the first open interest reading";
 
+/// The countdown's place once the announced settlement has passed and no
+/// newer funding arrived: the rate shown is the settled period's.
+pub const FUNDING_STALE: &str = "settled, awaiting the next rate";
+
+/// Places a change or annualised rate is printed at, in percent.
+const CHANGE_PLACES: u32 = 2;
+
+/// Places a funding rate is printed at, in percent.
+const RATE_PLACES: u32 = 4;
+
 /// Written after the reading rule, so nobody takes it for a signal.
 pub const READING_NOTE: &str = "(reading rule, not a signal)";
 
 /// The funding card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FundingCardView {
-    /// `03:12:44` until the next settlement.
+    /// `3:12:44` until the next settlement, or [`FUNDING_STALE`].
     pub countdown: WidgetCell,
-    /// `+0.0100%`, buy colour when longs pay, sell colour when shorts do.
+    /// `+0.0100%`, buy colour when longs pay, sell colour when shorts do,
+    /// faint when stale.
     pub rate: WidgetCell,
     /// The venue's estimate, when it publishes one.
     pub predicted: Option<WidgetCell>,
@@ -95,7 +106,8 @@ pub struct OpenInterestLayout<'a> {
     pub plot_height_px: f32,
 }
 
-/// Lay `model` out; the empty state when the feed provides none.
+/// Lay `model` out; the empty state when the feed provides none. Funding
+/// without a first OI reading still shows its card.
 #[must_use]
 pub fn open_interest_view(
     model: Option<&OpenInterest>,
@@ -104,24 +116,29 @@ pub fn open_interest_view(
     let Some(model) = model else {
         return OpenInterestView::empty_state(OPEN_INTEREST_NOT_PROVIDED);
     };
+    let funding = model.funding.as_ref().map(funding_card);
     let Some(latest) = &model.latest else {
-        return OpenInterestView::empty_state(OPEN_INTEREST_WAITING);
+        if funding.is_none() {
+            return OpenInterestView::empty_state(OPEN_INTEREST_WAITING);
+        }
+        return OpenInterestView {
+            funding,
+            provenance: WidgetCell::new(model.provenance.clone(), Token::DrawViolet),
+            empty: None,
+            ..OpenInterestView::empty_state("")
+        };
     };
     let oi_text = round_for_display(latest.open_interest).normalize();
     let oi_change = match model.oi_change_1h {
-        Some(change) => WidgetCell::new(format!("{} 1h", percent(change, 2)), signed_token(change)),
+        Some(change) => {
+            let (text, token) = percent(change, CHANGE_PLACES);
+            WidgetCell::new(format!("{text} 1h"), token)
+        }
         None => WidgetCell::new("— 1h", Token::TextFaint),
     };
-    let notional = model.notional.map_or_else(
-        || "—".to_owned(),
-        |value| {
-            format!(
-                "{}{}",
-                layout.unit.prefix,
-                compact_value(value.to_f64().unwrap_or(f64::NAN))
-            )
-        },
-    );
+    let notional = model
+        .notional
+        .map_or_else(|| "—".to_owned(), |value| amount(value, layout.unit));
     let (t0, t1) = match (model.series.first(), model.series.last()) {
         (Some(first), Some(last)) => (first.timestamp_ms, last.timestamp_ms),
         _ => (0, 0),
@@ -150,7 +167,7 @@ pub fn open_interest_view(
         ),
         oi_change,
         notional: WidgetCell::new(notional, Token::TextFaint),
-        funding: model.funding.as_ref().map(funding_card),
+        funding,
         reading: reading(model.price_change_1h, model.oi_change_1h)
             .map(|(price, oi, says)| format!("price {price} · OI {oi} = {says}")),
         price_label: format!("price {}", price_text(latest.price, layout.tick)),
@@ -163,29 +180,45 @@ pub fn open_interest_view(
 }
 
 fn funding_card(funding: &FundingState) -> FundingCardView {
-    FundingCardView {
-        countdown: WidgetCell::new(countdown_text(funding.countdown_ms), Token::TextPrimary),
-        rate: WidgetCell::new(percent(funding.rate, 4), signed_token(funding.rate)),
-        predicted: funding
-            .predicted_rate
-            .map(|rate| WidgetCell::new(percent(rate, 4), signed_token(rate))),
-        annualised: WidgetCell::new(
-            format!(
-                "{:.2}%/yr",
-                (funding.annualised_rate * Decimal::ONE_HUNDRED).round_dp(2)
-            ),
-            Token::TextFaint,
+    let (rate, rate_token) = percent(funding.rate, RATE_PLACES);
+    let annualised = match funding.annualised_rate {
+        Some(rate) => format!(
+            "{}/yr",
+            percent(rate, CHANGE_PLACES).0.trim_start_matches('+')
         ),
+        None => "—/yr".to_owned(),
+    };
+    FundingCardView {
+        countdown: if funding.stale {
+            WidgetCell::new(FUNDING_STALE, Token::TextFaint)
+        } else {
+            WidgetCell::new(countdown_text(funding.countdown_ms), Token::TextPrimary)
+        },
+        rate: WidgetCell::new(
+            rate,
+            if funding.stale {
+                Token::TextFaint
+            } else {
+                rate_token
+            },
+        ),
+        predicted: funding.predicted_rate.map(|rate| {
+            let (text, token) = percent(rate, RATE_PLACES);
+            WidgetCell::new(text, token)
+        }),
+        annualised: WidgetCell::new(annualised, Token::TextFaint),
     }
 }
 
 /// The classic reading of price and open interest moving together, as
-/// arrows and what it is usually read as.
+/// arrows and what it is usually read as. A move that prints as zero is
+/// no move.
 fn reading(
     price: Option<Decimal>,
     oi: Option<Decimal>,
 ) -> Option<(&'static str, &'static str, &'static str)> {
-    let (price, oi) = (price?, oi?);
+    let price = shown_percent(price?, CHANGE_PLACES);
+    let oi = shown_percent(oi?, CHANGE_PLACES);
     if price.is_zero() || oi.is_zero() {
         return None;
     }
@@ -197,30 +230,30 @@ fn reading(
     })
 }
 
-/// A fraction as a signed percentage: `+0.0100%`, `-1.84%`.
-fn percent(fraction: Decimal, places: u32) -> String {
-    let value = (fraction * Decimal::ONE_HUNDRED).round_dp(places);
-    let sign = if value > Decimal::ZERO { "+" } else { "" };
-    format!("{sign}{value:.prec$}%", prec = places as usize)
-}
-
-fn signed_token(value: Decimal) -> Token {
-    if value > Decimal::ZERO {
-        Token::Buy
-    } else if value < Decimal::ZERO {
-        Token::Sell
+/// A fraction as the percentage figure printed at `places`; a figure that
+/// rounds to zero is plain zero, never `-0`.
+fn shown_percent(fraction: Decimal, places: u32) -> Decimal {
+    let figure = (fraction * Decimal::ONE_HUNDRED).round_dp(places);
+    if figure.is_zero() {
+        Decimal::ZERO
     } else {
-        Token::TextMuted
+        figure
     }
 }
 
-/// `03:12:44`; hours run past 24 rather than wrap.
-fn countdown_text(countdown_ms: i64) -> String {
-    let seconds = countdown_ms.max(0) / 1_000;
-    format!(
-        "{:02}:{:02}:{:02}",
-        seconds / 3_600,
-        seconds % 3_600 / 60,
-        seconds % 60
+/// A fraction as a signed percentage, `+0.0100%` or `-1.84%`, and the
+/// colour of the printed figure's sign.
+fn percent(fraction: Decimal, places: u32) -> (String, Token) {
+    let figure = shown_percent(fraction, places);
+    let (sign, token) = if figure > Decimal::ZERO {
+        ("+", Token::Buy)
+    } else if figure < Decimal::ZERO {
+        ("", Token::Sell)
+    } else {
+        ("", Token::TextMuted)
+    };
+    (
+        format!("{sign}{figure:.prec$}%", prec = places as usize),
+        token,
     )
 }

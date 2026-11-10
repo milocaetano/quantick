@@ -14,6 +14,9 @@ pub const SPOT_PERP_NOT_PROVIDED: &str = "feed does not provide a spot and perp 
 /// What the pane says on a pair before either leg trades.
 pub const SPOT_PERP_WAITING: &str = "waiting for trades on both legs";
 
+/// The narrowest an ongoing span is shaded.
+pub const ONGOING_SPAN_MIN_PX: f32 = 3.0;
+
 /// The legend's key to the shading.
 pub const SPOT_PERP_NOTE: &str = "shaded = opposite signs";
 
@@ -29,9 +32,11 @@ pub struct SpotPerpCvdView {
     /// The zero line, when zero is inside the scale.
     pub zero_y_px: Option<f32>,
     /// `[left, right]` of each opposite-sign span, translucent
-    /// [`Self::spot_token`].
+    /// [`Self::spot_token`]. The ongoing one reaches the right edge and is
+    /// at least [`ONGOING_SPAN_MIN_PX`] wide, so a divergence that opened
+    /// on the latest point shows.
     pub shaded: Vec<[f32; 2]>,
-    /// `— perp -2341 BTC`.
+    /// `— perp -2.3k BTC`.
     pub perp_legend: WidgetCell,
     /// `— spot +412 BTC`.
     pub spot_legend: WidgetCell,
@@ -106,7 +111,15 @@ pub fn spot_perp_cvd_view(
         shaded: model
             .opposite_spans
             .iter()
-            .map(|span| [x_of(span.start_ms), x_of(span.end_ms)])
+            .map(|span| {
+                let (left, right) = (x_of(span.start_ms), x_of(span.end_ms));
+                if span.ongoing {
+                    let right = right.max(layout.plot_width_px);
+                    [left.min(right - ONGOING_SPAN_MIN_PX).max(0.0), right]
+                } else {
+                    [left, right]
+                }
+            })
             .collect(),
         perp_legend: legend("perp", &model.perp, layout.base_unit, Token::DrawCyan),
         spot_legend: legend("spot", &model.spot, layout.base_unit, Token::DrawViolet),
@@ -115,7 +128,7 @@ pub fn spot_perp_cvd_view(
     }
 }
 
-/// `— perp -2341 BTC`: the leg's latest CVD, signed.
+/// `— perp -2.3k BTC`: the leg's latest CVD, signed.
 fn legend(leg: &str, points: &[CvdPoint], base_unit: &str, token: Token) -> WidgetCell {
     let value = match points.last() {
         Some(point) => {
