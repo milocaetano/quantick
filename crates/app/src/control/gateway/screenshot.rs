@@ -75,43 +75,6 @@ pub(super) fn unpainted_scene(app: &ControlWindow, window: WireU64) -> SceneSnap
     }
 }
 impl ControlAccess {
-    #[cfg(test)]
-    pub(crate) fn publish_screenshot_for_test(
-        &mut self,
-        app: &mut ControlWindow,
-        mut raw: RawScreenshot,
-    ) {
-        let window = raw
-            .window_id
-            .unwrap_or_else(|| WireU64::new(app.tab_reads().tabs().windows().presented().0));
-        let source = raw.source_window_id.unwrap_or(window);
-        raw.window_id = Some(window);
-        raw.source_window_id = Some(source);
-        self.captures.frames.arm(
-            window,
-            PaintedScene {
-                scene: super::super::scene::scene_snapshot(app),
-                pixels_per_point: raw.pixels_per_point,
-            },
-        );
-        self.accept_screenshot(app, window, source, raw);
-    }
-    #[cfg(test)]
-    pub(crate) fn awaiting_screenshot_for_test(&self) -> usize {
-        self.captures
-            .awaiting
-            .iter()
-            .filter(|request| request.prepared.dispatch.needs_screenshot())
-            .count()
-    }
-    #[cfg(test)]
-    pub(crate) fn screenshot_armed_for_test(&self) -> bool {
-        self.captures.frames.any_armed()
-    }
-    #[cfg(test)]
-    pub(crate) fn retained_evidence_for_test(&self) -> usize {
-        self.evidence.retained()
-    }
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn has_screenshot(&self) -> bool {
         self.captures.frames.has_image(WireU64::new(0)) || self.captures.screenshot.is_some()
@@ -371,6 +334,46 @@ impl ControlAccess {
             self.captures.local_window = None;
         }
         self.captures.awaiting.clear();
+    }
+}
+
+#[cfg(test)]
+impl ControlAccess {
+    pub(crate) fn publish_screenshot_for_test(
+        &mut self,
+        app: &mut ControlWindow,
+        mut raw: RawScreenshot,
+    ) {
+        let window = raw
+            .window_id
+            .unwrap_or_else(|| WireU64::new(app.tab_reads().tabs().windows().presented().0));
+        let source = raw.source_window_id.unwrap_or(window);
+        raw.window_id = Some(window);
+        raw.source_window_id = Some(source);
+        self.captures.frames.arm(
+            window,
+            PaintedScene {
+                scene: super::super::scene::scene_snapshot(app),
+                pixels_per_point: raw.pixels_per_point,
+            },
+        );
+        self.accept_screenshot(app, window, source, raw);
+    }
+
+    pub(crate) fn awaiting_screenshot_for_test(&self) -> usize {
+        self.captures
+            .awaiting
+            .iter()
+            .filter(|request| request.prepared.dispatch.needs_screenshot())
+            .count()
+    }
+
+    pub(crate) fn screenshot_armed_for_test(&self) -> bool {
+        self.captures.frames.any_armed()
+    }
+
+    pub(crate) fn retained_evidence_for_test(&self) -> usize {
+        self.evidence.retained()
     }
 }
 

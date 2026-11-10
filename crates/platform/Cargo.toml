@@ -13,10 +13,12 @@ tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 # The Win32 window, subclass and version calls. Other targets link nothing:
-# every function here is a no-op or `None` there. The three areas beyond the
-# workspace union are this crate's alone.
+# every function here is a no-op or `None` there. The four areas beyond the
+# workspace union are this crate's alone; Gdi names the monitors a
+# popped-out chart is saved on.
 windows-sys = { workspace = true, features = [
     "Wdk_System_SystemServices",
+    "Win32_Graphics_Gdi",
     "Win32_System_SystemInformation",
     "Win32_UI_Shell",
 ] }

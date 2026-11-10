@@ -12,7 +12,7 @@ const AREA: CanvasRect = CanvasRect::new(0.0, 0.0, 1200.0, 800.0);
 fn removing_a_chart_keeps_the_others_on_their_panes() {
     let preset = preset("stack2+flow").unwrap();
     let mut state = CanvasState::from_preset(preset);
-    let mut seats = Vec::new();
+    let mut seats = Seats::default();
     let before = tree_bands(&state, &mut seats, AREA, 4.0);
     assert_eq!(before.iter().filter(|band| band.seat == Some(1)).count(), 1);
     state.remove(0).unwrap();

@@ -117,6 +117,7 @@ struct CanvasFrame {
 
 /// Where each visible pane draws this frame, after the context column has
 /// spent its header strips.
+#[derive(Default)]
 struct PaneRects {
     /// Per context chart, top to bottom: the chart rect and its layout strip.
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
@@ -128,6 +129,9 @@ struct PaneRects {
     /// The row of the flow pane's side headers, painted after its chart, and the
     /// bar inputs its bars control offers.
     flow_side_row: Option<(egui::Rect, BarInputAvailability)>,
+    /// The panes this pass leaves alone, drawn by a pass of their own: the
+    /// floating ones on the canvas's pass, every other on a floating one's.
+    kept: SmallVec<[PaneIndex; MAX_CANVAS_PANES]>,
 }
 
 impl Tab {
@@ -181,6 +185,7 @@ impl Tab {
         let picks = self.shared_picks(ui);
         let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
         self.apply_shared_interactions(&edits);
+        self.draw_floating(tab_id, ui, chrome);
 
         // Drawings marked "show on all timeframes" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
@@ -188,7 +193,7 @@ impl Tab {
         // that needs both panes borrowed at once — immutably, which is also
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
-        self.draw_layer_capsules(ui, chrome);
+        self.draw_layer_capsules(ui, chrome, |side| !rects.kept.contains(&side.index()));
         self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
@@ -246,13 +251,7 @@ impl Tab {
             chrome.capabilities,
             self.deal_recording_view().as_ref(),
         );
-        let mut rects = PaneRects {
-            context_charts: SmallVec::new(),
-            context_dividers: SmallVec::new(),
-            flow_areas: None,
-            pane_bands: SmallVec::new(),
-            flow_side_row: None,
-        };
+        let mut rects = PaneRects::default();
         #[cfg(test)]
         self.context_dividers.clear();
         let shown = &self.time_panes[..context_shown.min(self.time_panes.len())];
@@ -401,12 +400,20 @@ impl Tab {
 
     /// Each time pane's capsule, docked in its header, and the tape's seam, after
     /// the charts and their shared marks, so nothing strokes across them.
-    fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
+    fn draw_layer_capsules(
+        &mut self,
+        ui: &mut egui::Ui,
+        chrome: &mut CanvasChrome<'_>,
+        drawn: impl Fn(PaneSide) -> bool,
+    ) {
         let mut focus = None;
         let now_ms = crate::metrics::wall_clock_ms();
         let seam_words = self.connection.seam_line(&self.symbol, now_ms);
         let link = self.connection.spoken_link(now_ms);
         for (pane, side) in self.panes_with_sides_mut() {
+            if !drawn(side) {
+                continue;
+            }
             let sides = crate::pane::SideChrome {
                 style: chrome.style,
                 capabilities: chrome.capabilities,
@@ -609,12 +616,18 @@ impl Tab {
         // Cleared before the loop, set by whichever panes it actually walks: a
         // collapsed context column would otherwise keep the rect it last had,
         // and the overlay would paint off the visible canvas.
-        flow_pane.frame.area = None;
-        flow_pane.frame.layout_strip = None;
-        if rects.flow_areas.is_none() {
+        let kept = |index: PaneIndex| rects.kept.contains(&index);
+        if !kept(0) {
+            flow_pane.frame.area = None;
+            flow_pane.frame.layout_strip = None;
+        }
+        if rects.flow_areas.is_none() && !kept(0) {
             flow_pane.frame.clear_hidden();
         }
         for (slot, pane) in time_panes.iter_mut().enumerate() {
+            if kept(slot + 1) {
+                continue;
+            }
             pane.frame.area = None;
             pane.frame.layout_strip = None;
             if rects.context_charts.get(slot).is_none_or(Option::is_none) {

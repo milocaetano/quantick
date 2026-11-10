@@ -539,11 +539,6 @@ impl ControlAccess {
         }
     }
 
-    #[cfg(test)]
-    pub fn journal(&self) -> &EventJournal {
-        &self.journal
-    }
-
     /// Whom an object this call produces belongs to, when the call is a
     /// trace replaying a recorded action. `None` on every ordinary call: the
     /// acting actor is the author.
@@ -1220,6 +1215,13 @@ impl ControlAccess {
             event_code = "CONTROL_GATEWAY_SHUTDOWN_TIMEOUT",
             "gateway cleanup did not acknowledge before application exit"
         );
+    }
+}
+
+#[cfg(test)]
+impl ControlAccess {
+    pub fn journal(&self) -> &EventJournal {
+        &self.journal
     }
 }
 

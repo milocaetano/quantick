@@ -233,3 +233,6 @@ For a screen that represents the user's real setup, enable the trio:
 
 | `QUANTICK_INDICATOR_PICKER=1` | Open the centered searchable indicator library on the focused chart at launch, through the toolbar surface owner. |
 | `QUANTICK_WIDGETS=<ids>` | opens these widget panes |
+| `QUANTICK_ADD_MENU=1` | the toolbar's **+ menu** (ADD TO CANVAS) open, one row per `WIDGETS` entry, once the canvas first drew; one-shot |
+| `QUANTICK_CANVAS_ACTS=<acts>` | **canvas acts** run once the canvas first drew, `;`-separated, each through the `canvas.*` capability it names: `add:<widget>`, `float:<slot>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `pop_out:<slot>`, `return:<slot>`, `minimize:<slot>`, `maximize:<slot>`, `restore:<slot>`, `remove:<slot>` (edges `left`/`right`/`top`/`bottom`, corners `top_left`…`bottom_right`). An act that does not parse is skipped; one the canvas refuses is logged. `add:timeframe-chart` opens a floating chart, `pop_out:<slot>` its own OS window. One-shot |
+| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | the floating chart `<slot>` **held by its grip** with the pointer pinned at that share of the canvas (`0.02,0.5` is the left edge's middle): the dock preview, its "Dock here" pill and the drop hint stay up for a capture. Nothing is dropped while pinned. Applies once the chart floats |

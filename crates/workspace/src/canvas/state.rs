@@ -429,6 +429,29 @@ impl CanvasState {
         Ok(true)
     }
 
+    /// Bring every pane whose OS window sat on a monitor not in `monitors`
+    /// back over `canvas`, centred, its size kept as far as the canvas
+    /// allows. Answers the slots it brought back, in slot order.
+    pub fn settle_monitors(&mut self, monitors: &[String], canvas: CanvasRect) -> Vec<PaneSlot> {
+        let gone: Vec<PaneSlot> = (self.floating.iter())
+            .filter(|pane| match &pane.host {
+                FloatHost::OsWindow { monitor, .. } => !monitors.contains(monitor),
+                FloatHost::Canvas { .. } => false,
+            })
+            .map(|pane| pane.slot)
+            .collect();
+        for slot in &gone {
+            let _ = self.return_to_canvas(*slot, canvas);
+        }
+        gone
+    }
+
+    /// Where a pane floats or stands in its own window, if it does.
+    #[must_use]
+    pub fn host(&self, slot: PaneSlot) -> Option<&FloatHost> {
+        Some(&self.floating[self.floating_index(slot)?].host)
+    }
+
     fn set_host(&mut self, slot: PaneSlot, host: FloatHost) -> Result<bool, CanvasRefusal> {
         if let Some(index) = self.floating_index(slot) {
             let changed = self.floating[index].host != host;
@@ -482,9 +505,27 @@ impl CanvasState {
     }
 }
 
-/// Whether removing `slot` should ask first: only when `saved`, the
+/// Whether removing `live`'s `slot` should ask first: only when `saved`, the
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
+///
+/// Compared by [`pane_identity`], never by slot number: a plain saved recipe
+/// numbers its slots from its preset, while a live tab that reached the same
+/// layout from another one numbers them as it went.
 #[must_use]
-pub fn remove_needs_confirm(saved: &CanvasState, slot: PaneSlot) -> bool {
-    saved.holds(slot)
+pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
+    let Some(identity) = pane_identity(live, slot) else {
+        return false;
+    };
+    (saved.panes().iter()).any(|(held, ..)| pane_identity(saved, *held) == Some(identity))
+}
+
+/// A pane's identity across two numberings of one canvas: its kind and how
+/// many panes of that kind hold a lower slot. Slots only rise, so the n-th
+/// time chart of a save is the n-th time chart of the tab it restored.
+#[must_use]
+pub fn pane_identity(state: &CanvasState, slot: PaneSlot) -> Option<(PaneKind, usize)> {
+    let panes = state.panes();
+    let kind = panes.iter().find(|(held, ..)| *held == slot)?.1;
+    let before = (panes.iter()).filter(|(held, held_kind, _)| *held_kind == kind && *held < slot);
+    Some((kind, before.count()))
 }

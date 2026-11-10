@@ -15,6 +15,7 @@ use quantick_paper::order_strategies;
 #[path = "../../engine/tests/support/seventh_bar.rs"]
 mod bar_extension_fixture;
 
+mod add_widget;
 mod app;
 // The headless chart model, under its old module names so every path in
 // this crate keeps its address.
@@ -36,6 +37,7 @@ mod deal_recording_ui;
 mod dock;
 mod drawings;
 mod feed_notice;
+mod floating_panes;
 mod footprint_config;
 mod footprint_panel;
 mod footprint_presets;

@@ -247,35 +247,6 @@ impl ReportState {
         self.report_open
     }
 
-    /// Test-only. The saved journal rows the ledger has loaded, or `None`
-    /// while it has never been drawn. `None` and "loaded, and empty" are
-    /// different answers, and a caller that could not tell them apart would
-    /// report a folder as empty because nobody had looked at it yet.
-    ///
-    /// This and the two below exist for the ten report tests that stayed
-    /// with `paper_trading` because they drive a real journal on disk. They
-    /// let those tests ask a question instead of reading a field, which is
-    /// what keeps this struct's state private now that it has any.
-    #[cfg(test)]
-    pub(crate) fn saved_rows_loaded(&self) -> Option<&[HistoryRow]> {
-        self.history_cache
-            .as_ref()
-            .map(|cache| cache.rows.as_slice())
-    }
-
-    /// Test-only. How many pages of saved history the ledger has revealed.
-    #[cfg(test)]
-    pub(crate) fn revealed_pages(&self) -> usize {
-        self.ledger_pages
-    }
-
-    /// Test-only. The trades inside the report's current cut, or `None`
-    /// before one has been made.
-    #[cfg(test)]
-    pub(crate) fn view_rows(&self) -> Option<&[HistoryRow]> {
-        self.report_view.as_ref().map(|view| view.rows.as_slice())
-    }
-
     /// The journal moved to a new folder. Everything loaded describes the
     /// old one, so it all goes — and an open window re-reads at once,
     /// because cleared caches alone left it claiming "no saved trades"
@@ -351,6 +322,35 @@ impl ReportState {
         self.history_cache
             .as_ref()
             .map_or(&[][..], |cache| cache.rows.as_slice())
+    }
+}
+
+#[cfg(test)]
+impl ReportState {
+    /// Test-only. The saved journal rows the ledger has loaded, or `None`
+    /// while it has never been drawn. `None` and "loaded, and empty" are
+    /// different answers, and a caller that could not tell them apart would
+    /// report a folder as empty because nobody had looked at it yet.
+    ///
+    /// This and the two below exist for the ten report tests that stayed
+    /// with `paper_trading` because they drive a real journal on disk. They
+    /// let those tests ask a question instead of reading a field, which is
+    /// what keeps this struct's state private now that it has any.
+    pub(crate) fn saved_rows_loaded(&self) -> Option<&[HistoryRow]> {
+        self.history_cache
+            .as_ref()
+            .map(|cache| cache.rows.as_slice())
+    }
+
+    /// Test-only. How many pages of saved history the ledger has revealed.
+    pub(crate) fn revealed_pages(&self) -> usize {
+        self.ledger_pages
+    }
+
+    /// Test-only. The trades inside the report's current cut, or `None`
+    /// before one has been made.
+    pub(crate) fn view_rows(&self) -> Option<&[HistoryRow]> {
+        self.report_view.as_ref().map(|view| view.rows.as_slice())
     }
 }
 

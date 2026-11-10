@@ -133,25 +133,6 @@ impl PaperTrading {
         self.account.follow_journal();
     }
 
-    /// The overlay control under the pointer; see `Gesture::control_at`.
-    #[cfg(test)]
-    pub(super) fn control_at(
-        &self,
-        pointer: egui::Pos2,
-        chart: egui::Rect,
-        scale: &PriceScale,
-    ) -> Option<PaperControl> {
-        self.desk
-            .gesture
-            .control_at(&self.account, point(pointer), bounds(chart), &Axis(scale))
-    }
-
-    /// Which line sits under the pointer; see `quantick_paper::desk::line_at`.
-    #[cfg(test)]
-    pub(super) fn line_at(&self, pointer: egui::Pos2, scale: &PriceScale) -> Option<PaperDrag> {
-        quantick_paper::desk::line_at(&self.account, point(pointer), &Axis(scale))
-    }
-
     /// The cursor that announces what is under the pointer; `None` away
     /// from everything, so the caller falls through to the drawings' own
     /// cursors. `chart` is the tag band (`tag_band`). See
@@ -203,5 +184,25 @@ impl PaperTrading {
     #[must_use]
     pub fn aiming(&self) -> bool {
         self.desk.gesture.cmd_preview.is_some()
+    }
+}
+
+#[cfg(test)]
+impl PaperTrading {
+    /// The overlay control under the pointer; see `Gesture::control_at`.
+    pub(super) fn control_at(
+        &self,
+        pointer: egui::Pos2,
+        chart: egui::Rect,
+        scale: &PriceScale,
+    ) -> Option<PaperControl> {
+        self.desk
+            .gesture
+            .control_at(&self.account, point(pointer), bounds(chart), &Axis(scale))
+    }
+
+    /// Which line sits under the pointer; see `quantick_paper::desk::line_at`.
+    pub(super) fn line_at(&self, pointer: egui::Pos2, scale: &PriceScale) -> Option<PaperDrag> {
+        quantick_paper::desk::line_at(&self.account, point(pointer), &Axis(scale))
     }
 }

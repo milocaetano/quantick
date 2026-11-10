@@ -33,9 +33,11 @@ impl AgentPopupSurface {
     pub fn show(&mut self, popup: AgentPopup) {
         self.pending = Some(popup);
     }
+}
 
+#[cfg(test)]
+impl AgentPopupSurface {
     /// The popup currently on screen, if any.
-    #[cfg(test)]
     pub fn pending(&self) -> Option<&AgentPopup> {
         self.pending.as_ref()
     }

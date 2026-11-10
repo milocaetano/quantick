@@ -206,15 +206,6 @@ impl PaperAccount {
         }
     }
 
-    /// Apply a raw simulator command through the normal event funnel
-    /// (tests only) — for arranging sim state the UI would need gestures
-    /// to reach.
-    #[cfg(test)]
-    pub(crate) fn apply_sim_command_for_tests(&mut self, command: quantick_sim::Command) {
-        let events = self.core.dispatch(command);
-        self.handle_events(events);
-    }
-
     /// Index (into the session's closed trades) of the ledger's selected
     /// trade, for the chart to emphasize; `None` while nothing is selected.
     #[must_use]
@@ -222,5 +213,16 @@ impl PaperAccount {
         self.report
             .selected_trade()
             .filter(|index| *index < self.core.session_trades().len())
+    }
+}
+
+#[cfg(test)]
+impl PaperAccount {
+    /// Apply a raw simulator command through the normal event funnel
+    /// (tests only) — for arranging sim state the UI would need gestures
+    /// to reach.
+    pub(crate) fn apply_sim_command_for_tests(&mut self, command: quantick_sim::Command) {
+        let events = self.core.dispatch(command);
+        self.handle_events(events);
     }
 }

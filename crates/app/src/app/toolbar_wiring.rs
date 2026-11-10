@@ -134,6 +134,7 @@ impl QuantickApp {
             // Carried out by `capsule_wiring::settle`, which knows the window.
             ToolbarAction::ToggleWindowMenu
             | ToolbarAction::ToggleLayoutPopover
+            | ToolbarAction::ToggleAddMenu
             | ToolbarAction::ToggleWorkspaceMenu
             | ToolbarAction::SaveWorkspace => {}
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),

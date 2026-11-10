@@ -48,16 +48,6 @@ pub struct PaneContextMenu {
 }
 
 impl PaneContextMenu {
-    /// Aim the next menu at one pane or the other, as a right-click would.
-    #[cfg(test)]
-    pub(crate) fn aim_at_tape(
-        &mut self,
-        model: &mut quantick_chart_interaction::pane::Model,
-        on_tape: bool,
-    ) {
-        model.menu.on_tape = on_tape;
-    }
-
     /// Open on a resolved press: hold its answers for the menu's whole life,
     /// and seed the rename buffer from the drawing it landed on. Returns the
     /// selection the press makes — a right-click selects like the primary
@@ -125,6 +115,18 @@ impl PaneContextMenu {
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn chart_layers_center(&self) -> Option<egui::Pos2> {
         self.chart_layers_rect.map(|rect| rect.center())
+    }
+}
+
+#[cfg(test)]
+impl PaneContextMenu {
+    /// Aim the next menu at one pane or the other, as a right-click would.
+    pub(crate) fn aim_at_tape(
+        &mut self,
+        model: &mut quantick_chart_interaction::pane::Model,
+        on_tape: bool,
+    ) {
+        model.menu.on_tape = on_tape;
     }
 }
 

@@ -21,6 +21,7 @@ pub(super) struct CapsuleState {
     marks: LayoutMarks,
     menu_open: bool,
     popover_open: bool,
+    add_open: bool,
     door_open: bool,
     door_hover: String,
 }
@@ -41,6 +42,7 @@ impl CapsuleState {
             marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
             menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
             popover_open: app.chrome.layout_picker_open,
+            add_open: app.chrome.add_menu.open,
             workspace,
             door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
             door_hover: format!(
@@ -62,12 +64,6 @@ impl CapsuleState {
         }
     }
 
-    /// The name, the floppy's dot and the miniature's dot.
-    #[cfg(test)]
-    pub(super) fn marks(&self) -> (&str, bool, bool) {
-        (&self.workspace, self.unsaved, self.marks.layout_unsaved)
-    }
-
     pub(super) fn model(&self) -> CapsuleModel<'_> {
         CapsuleModel {
             tree: &self.tree,
@@ -76,8 +72,17 @@ impl CapsuleState {
             layout_unsaved: self.marks.layout_unsaved,
             menu_open: self.menu_open,
             popover_open: self.popover_open,
+            add_open: self.add_open,
             compact: false,
         }
+    }
+}
+
+#[cfg(test)]
+impl CapsuleState {
+    /// The name, the floppy's dot and the miniature's dot.
+    pub(super) fn marks(&self) -> (&str, bool, bool) {
+        (&self.workspace, self.unsaved, self.marks.layout_unsaved)
     }
 }
 
@@ -113,6 +118,7 @@ pub(super) fn settle(
             ToolbarAction::ToggleLayoutPopover => {
                 app.chrome.layout_picker_open = !app.chrome.layout_picker_open;
             }
+            ToolbarAction::ToggleAddMenu => app.chrome.add_menu.open ^= true,
             ToolbarAction::ToggleWorkspaceMenu => workspace_clicked = true,
             ToolbarAction::SaveWorkspace => {
                 super::tab_workspaces::apply_workspace_command(app, WorkspaceCommand::SaveTo);
@@ -134,6 +140,8 @@ pub(super) fn settle(
         cells = drawn;
     }
     super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
+    app.chrome.add_menu.door = rects.add;
+    super::canvas_wiring::add_from_menu(app, ctx);
     publish(app, viewport, state, rects, door, &cells);
     rest
 }
@@ -208,5 +216,17 @@ fn publish(
             Some(PICK_LAYOUT_CAPABILITY_ID),
         ));
     }
+    let add = &app.chrome.add_menu;
+    if let Some(door) = add.door {
+        let capability = Some(quantick_control_schema::canvas::ADD_WIDGET_CAPABILITY_ID);
+        controls.push(control(
+            "add_widget",
+            "Add to canvas",
+            door,
+            add.open,
+            capability,
+        ));
+    }
+    controls.extend(add.drawn.iter().cloned());
     app.chrome.toolbar_controls = controls;
 }

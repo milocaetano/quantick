@@ -8,7 +8,9 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::canvas::{self, CanvasAct, CanvasHost};
 use quantick_control_schema::canvas::CanvasResult;
 use quantick_stores::workspaces::WorkspaceRecipe;
-use quantick_workspace::canvas::{CanvasRect, CanvasState, remove_prompt, slot_seat};
+use quantick_workspace::canvas::{
+    CanvasRect, CanvasState, WidgetSpec, add_menu, remove_prompt, slot_seat,
+};
 
 use crate::tab::CanvasLayout;
 
@@ -18,7 +20,12 @@ use super::menu_bar::MenuDoor;
 /// The canvas the active tab last drew, in model points; before its first
 /// frame a nominal one stands in.
 fn canvas_area(app: &QuantickApp) -> CanvasRect {
-    let drawn = app.active_tab().canvas.last_canvas;
+    tab_area(&app.active_tab().canvas)
+}
+
+/// `canvas`'s area as last drawn, or a nominal one before its first frame.
+pub(super) fn tab_area(canvas: &crate::tab::layout::TabCanvas) -> CanvasRect {
+    let drawn = canvas.last_canvas;
     if drawn.width() > 0.0 && drawn.height() > 0.0 {
         CanvasRect::new(drawn.left(), drawn.top(), drawn.width(), drawn.height())
     } else {
@@ -56,10 +63,22 @@ impl CanvasHost for QuantickApp {
 /// Act on the active tab's canvas against its save, and read it back.
 fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, ControlError> {
     let (area, saved) = (canvas_area(app), saved_recipe(app).map(recipe_state));
+    let act = canvas::placed_pop_out(
+        act,
+        &app.active_tab().canvas.state,
+        area,
+        app.active_tab().canvas.floats.origin,
+    );
     let (changed, slot) = if let CanvasAct::PickLayout { preset_id } = &act {
         let before = app.active_tab().canvas.state.clone();
         app.apply_layout_preset(canvas::picked(preset_id)?);
         (app.active_tab().canvas.state != before, None)
+    } else if let Some(id) = canvas::surface_widget(&act) {
+        let reads = (&app.config, app.runtime.tz);
+        let tabs = (&mut app.surfaces.widgets, &mut app.runtime.tabs);
+        crate::widget_surfaces::answer(tabs, reads, (id, Some(true)))
+            .map_err(ControlError::invalid_request)?;
+        (true, None)
     } else {
         let state = &mut app.active_tab_mut().canvas.state;
         canvas::act(state, saved.as_ref(), area, act)?
@@ -82,6 +101,33 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         && !ctx.wants_keyboard_input()
         && !ctx.memory(|memory| memory.any_popup_open())
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let at = ctx.input(|input| input.viewport().inner_rect);
+    let origin = at.map_or((0.0, 0.0), |at| (at.min.x, at.min.y));
+    let floats = &mut app.active_tab_mut().canvas.floats;
+    floats.origin = origin;
+    let (dropped, windows) = (floats.dropped.take(), std::mem::take(&mut floats.windows));
+    let monitor = |rect: CanvasRect| {
+        let scale = ctx.pixels_per_point();
+        quantick_platform::monitor_at((rect.x + rect.w / 2.0) * scale, (rect.y + 10.0) * scale)
+    };
+    #[cfg(any(feature = "scenario-harness", test))]
+    let hooked = canvas_hooks(app);
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    let hooked = Vec::new();
+    let mut acts: Vec<CanvasAct> = (windows.into_iter())
+        .filter_map(|(slot, events)| {
+            canvas::window_act(slot, (events.moved, events.closed), monitor)
+        })
+        .collect();
+    acts.extend(dropped.map(|(slot, outcome)| canvas::drop_act(slot, outcome, origin, monitor)));
+    for act in acts.into_iter().chain(hooked) {
+        if let Err(error) = answer(app, act) {
+            tracing::warn!(error = %error.message, "the floating chart's act was refused");
+        }
+    }
+    #[cfg(any(feature = "scenario-harness", test))]
+    hold_from_hook(app);
+    let canvas = &app.active_tab().canvas;
     if canvas.menus.picked.is_none() && canvas.menus.removing.is_none() && !escape {
         return;
     }
@@ -118,6 +164,53 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         tracing::warn!(error = %error.message, "the chart menu's act was refused");
     }
 }
+
+/// The + menu: hang it from the + with the rows the canvas can take now,
+/// and add what was picked through `canvas.widget.add`.
+pub(super) fn add_from_menu(app: &mut QuantickApp, ctx: &egui::Context) {
+    let capabilities = app.active_tab().capabilities(&app.config);
+    let serves = |widget: &WidgetSpec| crate::widget_surfaces::serves(widget.id, &capabilities);
+    let rows = add_menu(&app.active_tab().canvas.state, serves);
+    crate::add_widget::hang(ctx, &rows, &mut app.chrome.add_menu);
+    let picked = app.chrome.add_menu.picked.take();
+    if let Some(Err(error)) = picked.map(|widget| answer(app, canvas::add_act(widget).1)) {
+        tracing::warn!(error = %error.message, "the add menu's widget was refused");
+    }
+}
+
+/// `QUANTICK_CANVAS_ACTS` and `QUANTICK_ADD_MENU`, once, after the canvas
+/// first drew: the acts as their capabilities take them, the + menu open.
+#[cfg(any(feature = "scenario-harness", test))]
+fn canvas_hooks(app: &mut QuantickApp) -> Vec<CanvasAct> {
+    let drawn = app.active_tab().canvas.last_canvas.width() > 0.0;
+    if !drawn || std::mem::replace(&mut app.chrome.add_menu.hooked, true) {
+        return Vec::new();
+    }
+    let var = crate::hooks::captured::var;
+    app.chrome.add_menu.open |= var("QUANTICK_ADD_MENU").as_deref() == Some("1");
+    canvas::hook_acts(&var("QUANTICK_CANVAS_ACTS").unwrap_or_default())
+}
+
+/// `QUANTICK_CANVAS_HOLD`: once its chart floats, hold it by the grip with
+/// the pointer pinned at that share of the canvas, for the dock preview.
+#[cfg(any(feature = "scenario-harness", test))]
+fn hold_from_hook(app: &mut QuantickApp) {
+    let value = crate::hooks::captured::var("QUANTICK_CANVAS_HOLD").unwrap_or_default();
+    let canvas = &mut app.active_tab_mut().canvas;
+    let held = canvas::held_by_hook(&canvas.state, &value);
+    if let (Some((held, (x, y))), None) = (held, canvas.floats.pinned) {
+        let area = canvas.last_canvas;
+        canvas.floats.held = Some(held);
+        canvas.floats.pinned = Some(area.min + egui::vec2(x, y) * area.size());
+    }
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks![
+    "QUANTICK_ADD_MENU",
+    "QUANTICK_CANVAS_ACTS",
+    "QUANTICK_CANVAS_HOLD"
+];
 
 /// Hang the window menu from the toolbar's list door, as a click on it does.
 pub(super) fn open_window_menu(menu: &mut super::menu_bar::WindowMenuState) -> bool {

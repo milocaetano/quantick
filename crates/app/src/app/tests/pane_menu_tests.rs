@@ -68,7 +68,10 @@ fn minimize_strip_and_maximize_restore() {
         .filter(|control| control.id.starts_with(&format!("pane_menu.{time}.")))
         .map(|control| control.label.as_str())
         .collect();
-    assert_eq!(rows, ["Minimize", "Maximize", "Remove chart"]);
+    assert_eq!(
+        rows,
+        ["Minimize", "Maximize", "Open in new window", "Remove chart"]
+    );
     let output = press(&mut app, &ctx, &format!("pane_menu.{time}.minimize"));
     assert_eq!(mode(&app, time), Some(PaneMode::Minimized));
     let texts = painted_text(&output);

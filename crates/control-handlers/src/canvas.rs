@@ -17,8 +17,8 @@ use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
 };
 use quantick_workspace::canvas::{
-    self, CanvasRect, CanvasRefusal, CanvasState, Corner, Edge, FloatHost, LayoutPreset, PaneKind,
-    PaneMenuItem, PaneMode, RemoveAnswer,
+    self, CanvasRect, CanvasRefusal, CanvasState, Corner, DropOutcome, Edge, FloatGesture,
+    FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer, WidgetSpec,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -276,8 +276,9 @@ fn check_rect(rect: CanvasRectDto) -> Result<(), ControlError> {
     }
 }
 
-/// Where a chart popped out without a monitor named goes.
-const PRIMARY_MONITOR: &str = "primary";
+/// Where a chart popped out without a monitor named goes. Always present,
+/// so a window saved on it never falls back to the canvas.
+pub const PRIMARY_MONITOR: &str = "primary";
 
 fn refused(refusal: &CanvasRefusal) -> ControlError {
     let mut error = ControlError::invalid_request(refusal.to_string());
@@ -306,8 +307,7 @@ pub fn act(
         slot,
         confirm: false,
     } = act
-        && saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, slot))
-        && state.holds(slot)
+        && saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, state, slot))
     {
         let mut error = ControlError::invalid_request(format!(
             "the saved workspace holds chart {slot}: remove it with confirm true, as the trader's dialog asks first"
@@ -324,7 +324,14 @@ pub fn act(
         CanvasAct::Restore { slot } => state.restore(slot).map(on(slot)),
         CanvasAct::Remove { slot, .. } => state.remove(slot).map(on(slot)),
         CanvasAct::AddWidget { widget_id } => match canvas::widget(&widget_id) {
-            Some(widget) => state.add(widget.kind, area).map(|slot| (true, Some(slot))),
+            Some(WidgetSpec {
+                kind: Some(kind), ..
+            }) => state.add(*kind, area).map(|slot| (true, Some(slot))),
+            Some(_) => {
+                return Err(ControlError::invalid_request(format!(
+                    "{widget_id} opens in a window of its own, which this host does not draw"
+                )));
+            }
             None => Err(CanvasRefusal::UnknownWidget(widget_id)),
         },
         CanvasAct::Float { slot, rect } => {
@@ -392,8 +399,14 @@ pub fn menu_step(
         PaneMenuItem::Minimize => CanvasAct::Minimize { slot },
         PaneMenuItem::Maximize => CanvasAct::Maximize { slot },
         PaneMenuItem::Restore => CanvasAct::Restore { slot },
+        PaneMenuItem::OpenInNewWindow => CanvasAct::PopOut {
+            slot,
+            monitor: None,
+            rect: None,
+        },
+        PaneMenuItem::ReturnToCanvas => CanvasAct::Return { slot },
         PaneMenuItem::Remove
-            if saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, slot)) =>
+            if saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, state, slot)) =>
         {
             *removing = Some(slot);
             return None;
@@ -412,8 +425,196 @@ pub const fn item_capability(item: PaneMenuItem) -> &'static str {
         PaneMenuItem::Minimize => MINIMIZE_CAPABILITY_ID,
         PaneMenuItem::Maximize => MAXIMIZE_CAPABILITY_ID,
         PaneMenuItem::Restore => RESTORE_CAPABILITY_ID,
+        PaneMenuItem::OpenInNewWindow => POP_OUT_CAPABILITY_ID,
+        PaneMenuItem::ReturnToCanvas => RETURN_CAPABILITY_ID,
         PaneMenuItem::Remove => REMOVE_CAPABILITY_ID,
     }
+}
+
+fn dto(rect: CanvasRect) -> CanvasRectDto {
+    CanvasRectDto {
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+    }
+}
+
+/// The act letting go of a held floating pane takes: `outcome` is the
+/// canvas model's drop rule's answer. A pop-out's rectangle is in window
+/// points; it moves by the window's desktop `origin`, and `monitor` names
+/// the monitor holding it there.
+#[must_use]
+pub fn drop_act(
+    slot: u32,
+    outcome: DropOutcome,
+    (x, y): (f32, f32),
+    monitor: impl Fn(CanvasRect) -> Option<String>,
+) -> CanvasAct {
+    match outcome {
+        DropOutcome::Dock(edge) => CanvasAct::Dock {
+            slot,
+            edge: match edge {
+                Edge::Left => CanvasEdge::Left,
+                Edge::Right => CanvasEdge::Right,
+                Edge::Top => CanvasEdge::Top,
+                Edge::Bottom => CanvasEdge::Bottom,
+            },
+        },
+        DropOutcome::Park(corner) => CanvasAct::Park {
+            slot,
+            corner: match corner {
+                Corner::TopLeft => CanvasCorner::TopLeft,
+                Corner::TopRight => CanvasCorner::TopRight,
+                Corner::BottomLeft => CanvasCorner::BottomLeft,
+                Corner::BottomRight => CanvasCorner::BottomRight,
+            },
+        },
+        DropOutcome::Float(rect) => CanvasAct::Float {
+            slot,
+            rect: Some(dto(rect)),
+        },
+        DropOutcome::PopOut(rect) => {
+            let rect = CanvasRect::new(rect.x + x, rect.y + y, rect.w, rect.h);
+            CanvasAct::PopOut {
+                slot,
+                monitor: monitor(rect),
+                rect: Some(dto(rect)),
+            }
+        }
+    }
+}
+
+/// What a chart's own window asks for: closing it returns the chart to the
+/// canvas; moving or resizing it keeps it out, at its new place, on the
+/// monitor that now holds it.
+#[must_use]
+pub fn window_act(
+    slot: u32,
+    (moved, closed): (Option<CanvasRect>, bool),
+    monitor: impl Fn(CanvasRect) -> Option<String>,
+) -> Option<CanvasAct> {
+    if closed {
+        return Some(CanvasAct::Return { slot });
+    }
+    let rect = moved?;
+    Some(CanvasAct::PopOut {
+        slot,
+        monitor: monitor(rect),
+        rect: Some(dto(rect)),
+    })
+}
+
+/// Whether a chart's window now standing `at` has left `saved` by a point
+/// or more on any side.
+#[must_use]
+pub fn moved(at: CanvasRect, saved: CanvasRect) -> bool {
+    let deltas = [
+        at.x - saved.x,
+        at.y - saved.y,
+        at.w - saved.w,
+        at.h - saved.h,
+    ];
+    deltas.iter().any(|delta| delta.abs() >= 1.0)
+}
+
+/// A pop-out that named no place opens where the chart stands now, moved by
+/// the window's desktop `origin`; every other act passes through.
+#[must_use]
+pub fn placed_pop_out(
+    act: CanvasAct,
+    state: &CanvasState,
+    area: CanvasRect,
+    (x, y): (f32, f32),
+) -> CanvasAct {
+    let CanvasAct::PopOut {
+        slot,
+        monitor,
+        rect: None,
+    } = act
+    else {
+        return act;
+    };
+    let floating = state.host(slot).and_then(|host| match host {
+        FloatHost::Canvas { rect } => Some(*rect),
+        FloatHost::OsWindow { .. } => None,
+    });
+    let docked = state
+        .rects(area)
+        .into_iter()
+        .find(|(held, _)| *held == slot);
+    let rect = floating
+        .or(docked.map(|(_, rect)| rect))
+        .map(|rect| CanvasRect::new(rect.x + x, rect.y + y, rect.w, rect.h));
+    CanvasAct::PopOut {
+        slot,
+        monitor,
+        rect: rect.map(dto),
+    }
+}
+
+/// The canvas's drop targets while a chart floats over it: each edge band
+/// docks, each corner parks. Answers each target's scene id, label, place
+/// and the capability that does what a drop there does.
+#[must_use]
+pub fn drop_targets(
+    state: &CanvasState,
+    area: CanvasRect,
+) -> Vec<(String, String, CanvasRect, &'static str)> {
+    let over = |pane: &canvas::FloatingPane| matches!(pane.host, FloatHost::Canvas { .. });
+    if !state.floating().iter().any(over) {
+        return Vec::new();
+    }
+    let (band, corner) = (canvas::DOCK_EDGE_BAND_PX, canvas::PARK_CORNER_PX);
+    let (right, bottom) = (area.right() - band, area.bottom() - band);
+    let (far_x, far_y) = (area.right() - corner, area.bottom() - corner);
+    let rect = |x, y, w, h| CanvasRect::new(x, y, w, h);
+    let docks = [
+        ("left", rect(area.x, area.y, band, area.h)),
+        ("right", rect(right, area.y, band, area.h)),
+        ("top", rect(area.x, area.y, area.w, band)),
+        ("bottom", rect(area.x, bottom, area.w, band)),
+    ];
+    let parks = [
+        ("top_left", rect(area.x, area.y, corner, corner)),
+        ("top_right", rect(far_x, area.y, corner, corner)),
+        ("bottom_left", rect(area.x, far_y, corner, corner)),
+        ("bottom_right", rect(far_x, far_y, corner, corner)),
+    ];
+    let named = |verb: &str, words: &str, at: &str| {
+        (
+            format!("canvas.{verb}.{at}"),
+            format!("{words} {}", at.replace('_', " ")),
+        )
+    };
+    let docks = docks
+        .into_iter()
+        .map(|(at, place)| (named("dock", "Dock at", at), place, DOCK_CAPABILITY_ID));
+    let parks = parks
+        .into_iter()
+        .map(|(at, place)| (named("park", "Park in", at), place, PARK_CAPABILITY_ID));
+    (docks.chain(parks))
+        .map(|((id, label), place, capability)| (id, label, place, capability))
+        .collect()
+}
+
+/// The widget surface an add names, which the window opens in a window of
+/// its own rather than on the canvas.
+#[must_use]
+pub fn surface_widget(act: &CanvasAct) -> Option<&'static str> {
+    let CanvasAct::AddWidget { widget_id } = act else {
+        return None;
+    };
+    canvas::widget(widget_id)
+        .filter(|widget| widget.kind.is_none())
+        .map(|widget| widget.id)
+}
+
+/// The add menu's capability, and the act its row `widget` takes.
+#[must_use]
+pub fn add_act(widget: &WidgetSpec) -> (&'static str, CanvasAct) {
+    let widget_id = widget.id.to_owned();
+    (ADD_WIDGET_CAPABILITY_ID, CanvasAct::AddWidget { widget_id })
 }
 
 /// The capability a dialog answer runs; Cancel runs none.
@@ -499,4 +700,79 @@ pub fn view(state: &CanvasState) -> CanvasView {
         panes,
         floating,
     }
+}
+
+/// A `QUANTICK_CANVAS_ACTS` value: canvas acts split by `;`, each
+/// `add:<widget>`, `float:<slot>`, `dock:<slot>:<edge>`,
+/// `park:<slot>:<corner>`, `pop_out:<slot>`, `return:<slot>`,
+/// `minimize:<slot>`, `maximize:<slot>`, `restore:<slot>` or
+/// `remove:<slot>`, edges and corners as the wire names them. An act that
+/// does not parse is left out.
+#[must_use]
+pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
+    fn named<T: DeserializeOwned>(word: &str) -> Option<T> {
+        serde_json::from_value(Value::String(word.trim().to_owned())).ok()
+    }
+    let one = |act: &str| -> Option<CanvasAct> {
+        let mut words = act.trim().split(':');
+        let verb = words.next()?;
+        if verb == "add" {
+            let widget_id = words.next()?.trim().to_owned();
+            return Some(CanvasAct::AddWidget { widget_id });
+        }
+        let slot: u32 = words.next()?.trim().parse().ok()?;
+        Some(match (verb, words.next()) {
+            ("float", None) => CanvasAct::Float { slot, rect: None },
+            ("dock", Some(edge)) => CanvasAct::Dock {
+                slot,
+                edge: named(edge)?,
+            },
+            ("park", Some(corner)) => CanvasAct::Park {
+                slot,
+                corner: named(corner)?,
+            },
+            ("pop_out", None) => CanvasAct::PopOut {
+                slot,
+                monitor: None,
+                rect: None,
+            },
+            ("return", None) => CanvasAct::Return { slot },
+            ("minimize", None) => CanvasAct::Minimize { slot },
+            ("maximize", None) => CanvasAct::Maximize { slot },
+            ("restore", None) => CanvasAct::Restore { slot },
+            ("remove", None) => CanvasAct::Remove {
+                slot,
+                confirm: true,
+            },
+            _ => return None,
+        })
+    };
+    value.split(';').filter_map(one).collect()
+}
+
+/// A `QUANTICK_CANVAS_HOLD` value, `<slot>:<x>,<y>`, on `state`: once that
+/// chart floats over the canvas, its grip held, and the share of the canvas
+/// the pointer is pinned at.
+#[must_use]
+pub fn held_by_hook(state: &CanvasState, value: &str) -> Option<(FloatGesture, (f32, f32))> {
+    let (slot, at) = value.split_once(':')?;
+    let (x, y) = at.split_once(',')?;
+    let share = |value: &str| {
+        value
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| (0.0..=1.5).contains(v))
+    };
+    let slot = slot.trim().parse().ok()?;
+    let Some(FloatHost::Canvas { rect }) = state.host(slot) else {
+        return None;
+    };
+    let start = canvas::CanvasPoint::new(rect.x + 10.0, rect.y + 10.0);
+    let held = FloatGesture::Move {
+        slot,
+        from: *rect,
+        start,
+    };
+    Some((held, (share(x)?, share(y)?)))
 }

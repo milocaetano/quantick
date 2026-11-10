@@ -43,14 +43,6 @@ impl Default for CandlesTab {
     }
 }
 impl CandlesTab {
-    #[cfg(test)]
-    pub fn with_presets_path(path: std::path::PathBuf) -> Self {
-        Self {
-            state: CandleSettings::open(path),
-            ..Self::default()
-        }
-    }
-
     /// A warning is about the last attempt: a new name typed, or anything
     /// that then went right, retires it.
     fn settle(&mut self, moved_on: bool) {
@@ -148,6 +140,16 @@ impl CandlesTab {
             );
         }
         response
+    }
+}
+
+#[cfg(test)]
+impl CandlesTab {
+    pub fn with_presets_path(path: std::path::PathBuf) -> Self {
+        Self {
+            state: CandleSettings::open(path),
+            ..Self::default()
+        }
     }
 }
 

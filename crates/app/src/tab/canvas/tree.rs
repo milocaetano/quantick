@@ -8,14 +8,16 @@
 
 use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
-use quantick_workspace::canvas::{CanvasRect, PaneKind, strip_label, tree_bands};
+use quantick_workspace::canvas::{
+    CanvasRect, FloatHost, PaneKind, PaneSlot, slot_seat, strip_label, tree_bands,
+};
 use smallvec::SmallVec;
 
 use super::{CanvasChrome, CanvasFrame, PaneRects, Tab};
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, MAX_CANVAS_PANES};
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{PaneSide, split_flow_pane, split_pane_header, split_pane_layout_strip};
-use crate::theme;
+use crate::{floating_panes, theme};
 
 impl Tab {
     /// Lay the canvas out from the model's tree and spend each band's header,
@@ -65,10 +67,10 @@ impl Tab {
             .rect_filled(area, egui::Rounding::ZERO, palette.border());
         let mut rects = PaneRects {
             context_charts: SmallVec::from_elem(None, built),
-            context_dividers: SmallVec::new(),
-            flow_areas: None,
-            pane_bands: SmallVec::new(),
-            flow_side_row: None,
+            kept: (self.floating_sides().iter())
+                .map(|(_, side, _)| side.index())
+                .collect(),
+            ..PaneRects::default()
         };
         let flow_band = (bands.iter())
             .find(|(side, _, minimized, _)| *side == PaneSide::Flow && !minimized)
@@ -108,21 +110,7 @@ impl Tab {
             self.focus_from_pointer(ui, &focus_bands, flow_band.unwrap_or(egui::Rect::NOTHING));
         }
         if let Some(band) = flow_band {
-            rects.pane_bands.push((PaneSide::Flow, band));
-            let pane_areas = split_pane_layout_strip(band);
-            let areas = split_flow_pane(pane_areas.body, palette.layout(1.0));
-            ui.painter().rect_filled(
-                pane_areas.body,
-                egui::Rounding::ZERO,
-                palette.flow_surface(),
-            );
-            self.draw_flow_header(ui, areas.band, chrome);
-            rects.flow_side_row = Some((areas.side_row, bar_inputs));
-            self.flow_pane.frame.side_row = Some(areas.side_row);
-            rects.flow_areas = Some(PaneAreas {
-                body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
-                layout_strip: pane_areas.layout_strip,
-            });
+            self.draw_flow_band(ui, (band, 0.0), chrome, &mut rects);
         }
         let frame = CanvasFrame {
             area,
@@ -137,6 +125,137 @@ impl Tab {
             tree: true,
         };
         (frame, rects)
+    }
+
+    /// The flow pane in `band`: its surface, its header (right of `grip`
+    /// points kept for a floating pane's grip) and its panel.
+    fn draw_flow_band(
+        &mut self,
+        ui: &mut egui::Ui,
+        (band, grip): (egui::Rect, f32),
+        chrome: &mut CanvasChrome<'_>,
+        rects: &mut PaneRects,
+    ) {
+        let palette = theme::get(ui.ctx());
+        let bar_inputs = crate::toolbar::available_bar_inputs(
+            chrome.capabilities,
+            self.deal_recording_view().as_ref(),
+        );
+        rects.pane_bands.push((PaneSide::Flow, band));
+        let pane_areas = split_pane_layout_strip(band);
+        let areas = split_flow_pane(pane_areas.body, palette.layout(1.0));
+        ui.painter().rect_filled(
+            pane_areas.body,
+            egui::Rounding::ZERO,
+            palette.flow_surface(),
+        );
+        let header = areas.band.with_min_x(areas.band.min.x + grip);
+        self.draw_flow_header(ui, header, chrome);
+        rects.flow_side_row = Some((areas.side_row, bar_inputs));
+        self.flow_pane.frame.side_row = Some(areas.side_row);
+        rects.flow_areas = Some(PaneAreas {
+            body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
+            layout_strip: pane_areas.layout_strip,
+        });
+    }
+
+    /// Every pane outside the docked tree: its slot, the chart it shows and
+    /// where it stands.
+    pub(crate) fn floating_sides(&mut self) -> SmallVec<[(PaneSlot, PaneSide, FloatHost); 4]> {
+        let canvas = &mut self.canvas;
+        let floating = canvas.state.floating().to_vec();
+        let mut side = |slot| match slot_seat(&canvas.state, &mut canvas.seats, slot)? {
+            Some(seat) => Some(PaneSide::Time(seat)),
+            None => Some(PaneSide::Flow),
+        };
+        (floating.into_iter())
+            .filter_map(|pane| Some((pane.slot, side(pane.slot)?, pane.host)))
+            .collect()
+    }
+
+    /// The charts floating over the canvas, each on a layer of its own above
+    /// it, and those standing in their own OS windows: after the docked
+    /// panes, with the drop preview over all of them.
+    pub(super) fn draw_floating(
+        &mut self,
+        tab_id: u64,
+        ui: &mut egui::Ui,
+        chrome: &mut CanvasChrome<'_>,
+    ) {
+        let floating = self.floating_sides();
+        let (ctx, canvas) = (ui.ctx().clone(), self.canvas.last_canvas);
+        for (slot, side, host) in floating {
+            let window = match host {
+                FloatHost::Canvas { rect } => {
+                    let rect = floating_panes::placed(&self.canvas.floats, slot, rect, &ctx);
+                    let mut layer = floating_panes::layer(&ctx, (tab_id, slot), rect);
+                    let floats = &mut self.canvas.floats;
+                    let (grip, content) = floating_panes::frame(&mut layer, rect, slot, floats);
+                    self.draw_solo(tab_id, &mut layer, chrome, (side, content, grip));
+                    continue;
+                }
+                FloatHost::OsWindow { rect, .. } => rect,
+            };
+            let events = floating_panes::os_window(&ctx, (tab_id, slot), window, |ui| {
+                let (grip, content) = floating_panes::window_grip(ui);
+                self.draw_solo(tab_id, ui, chrome, (side, content, grip));
+            });
+            self.canvas.floats.record(slot, events);
+        }
+        let canvas_state = &mut self.canvas;
+        let floats = &mut canvas_state.floats;
+        floating_panes::preview(&ctx, floats, &canvas_state.state, canvas);
+        canvas_state.menus.drawn.extend(floats.drawn.drain(..));
+    }
+
+    /// One floating chart's own pane pass, in `content` on `ui`'s layer or
+    /// window, its header right of a `grip` points wide grip.
+    fn draw_solo(
+        &mut self,
+        tab_id: u64,
+        ui: &mut egui::Ui,
+        chrome: &mut CanvasChrome<'_>,
+        (side, content, grip): (PaneSide, egui::Rect, f32),
+    ) {
+        let palette = theme::get(ui.ctx());
+        let built = self.time_panes.len();
+        let mut rects = PaneRects {
+            context_charts: SmallVec::from_elem(None, built),
+            kept: (0..=built).filter(|index| *index != side.index()).collect(),
+            ..PaneRects::default()
+        };
+        match side {
+            PaneSide::Time(seat) if seat < built => {
+                let bar_inputs = crate::toolbar::available_bar_inputs(
+                    chrome.capabilities,
+                    self.deal_recording_view().as_ref(),
+                );
+                let pane_areas = split_pane_layout_strip(content);
+                let height = palette.layout(crate::time_header::HEIGHT_PX);
+                let areas = split_pane_header(pane_areas.body, height);
+                let header = areas.header.with_min_x(areas.header.min.x + grip);
+                self.draw_time_header(ui, seat, header, bar_inputs, None);
+                rects.context_charts[seat] = Some((areas.chart, pane_areas.layout_strip));
+                rects.pane_bands.push((side, content));
+            }
+            PaneSide::Time(_) => {
+                // Still being built: the canvas, not a stand-in chart.
+                ui.painter().rect_filled(content, 0.0, palette.chrome());
+                return;
+            }
+            PaneSide::Flow => self.draw_flow_band(ui, (content, grip), chrome, &mut rects),
+        }
+        self.canvas
+            .drawn_bands
+            .extend(rects.pane_bands.iter().copied());
+        if ui.input(|input| input.pointer.primary_pressed()) && ui.rect_contains_pointer(content) {
+            self.focus = side;
+        }
+        let picks = self.shared_picks(ui);
+        let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
+        self.apply_shared_interactions(&edits);
+        self.draw_layer_capsules(ui, chrome, |drawn| drawn == side);
+        self.draw_flow_sides(ui, rects.flow_side_row, chrome);
     }
 
     /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".

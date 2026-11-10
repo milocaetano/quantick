@@ -315,18 +315,6 @@ impl QuickRange {
         })
     }
 
-    #[cfg(test)]
-    pub fn paint_anchors(&self) -> Option<[ChartPoint; 2]> {
-        self.model.view().map(|view| view.anchors.map(point))
-    }
-
-    #[cfg(test)]
-    pub fn control(&self, tab: u64) -> Option<Control> {
-        self.controls(tab)?
-            .into_iter()
-            .find(|control| control.action == Action::Profile)
-    }
-
     pub fn controls(&self, tab: u64) -> Option<[Control; ACTION_COUNT]> {
         let view = self.model.view()?;
         if view.context.owner.tab != tab
@@ -364,6 +352,19 @@ impl QuickRange {
     ) -> ConversionReadback {
         let context = self.model.context().unwrap_or_default();
         conversion.finish(&mut self.model, context, outcome)
+    }
+}
+
+#[cfg(test)]
+impl QuickRange {
+    pub fn paint_anchors(&self) -> Option<[ChartPoint; 2]> {
+        self.model.view().map(|view| view.anchors.map(point))
+    }
+
+    pub fn control(&self, tab: u64) -> Option<Control> {
+        self.controls(tab)?
+            .into_iter()
+            .find(|control| control.action == Action::Profile)
     }
 }
 

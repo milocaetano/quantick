@@ -15,6 +15,7 @@
 //! - [`menu`]: a chart's ⋯ menu, its folded strip and the remove dialog.
 
 pub mod bands;
+pub mod drag;
 pub mod drop;
 pub mod menu;
 pub mod presets;
@@ -23,15 +24,18 @@ pub mod tree;
 pub mod widgets;
 
 pub use bands::{
-    LayoutMarks, Signal, TreeBand, inset_seams, same_layout, seat_slot, signal, slot_seat,
+    LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_slot, signal, slot_seat,
     tree_bands,
+};
+pub use drag::{
+    DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, MIN_FLOAT_SIZE, RESIZE_GRIP_PX, ResizeEdges,
 };
 pub use drop::{
     Corner, DOCK_EDGE_BAND_PX, DropTarget, Edge, PARK_CORNER_PX, PARK_MARGIN_PX, drop_target,
     park_rect,
 };
 pub use menu::{
-    PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, menu_hook, pane_menu,
+    PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, add_menu, menu_hook, pane_menu,
     remove_prompt, strip_label,
 };
 pub use presets::{
@@ -39,13 +43,15 @@ pub use presets::{
 };
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
-    remove_needs_confirm,
+    pane_identity, remove_needs_confirm,
 };
 pub use tree::{CanvasPoint, CanvasRect, PaneSlot, PaneTree, SplitAxis};
 pub use widgets::{WIDGETS, WidgetSpec, widget};
 
 #[cfg(test)]
 mod bands_tests;
+#[cfg(test)]
+mod drag_tests;
 #[cfg(test)]
 mod drop_tests;
 #[cfg(test)]

@@ -50,10 +50,6 @@ impl Palette {
             heat_ink: resolved.footprint_heat.ink.map(rendered),
         }
     }
-    #[cfg(test)]
-    pub fn color(&self, token: Token) -> egui::Color32 {
-        *self.colors.get(token)
-    }
     pub fn footprint_font(&self, row_height: f32, width: f32) -> egui::FontId {
         let mut font = self.font(FontRole::Footprint);
         font.size = self.footprint_text.fitted_size(row_height, width);
@@ -82,6 +78,13 @@ impl Palette {
     }
     pub fn font_at(&self, role: FontRole, reference_size: f32) -> egui::FontId {
         rendered_font(self.resolved.typography.at_size(role, reference_size))
+    }
+}
+
+#[cfg(test)]
+impl Palette {
+    pub fn color(&self, token: Token) -> egui::Color32 {
+        *self.colors.get(token)
     }
 }
 

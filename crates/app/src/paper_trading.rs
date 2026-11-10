@@ -398,32 +398,6 @@ impl PaperTrading {
         )
     }
 
-    /// The report's state, as its own surfaces read it. Test-only, like the
-    /// account's own pair: the drawing code reaches the report through
-    /// `report_parts`.
-    #[cfg(test)]
-    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
-        self.account().report_state()
-    }
-
-    /// The report's state, mutably. Test-only, as above.
-    #[cfg(test)]
-    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
-        self.account_mut().report_state_mut()
-    }
-
-    /// Point the journal at a scratch folder (tests only).
-    #[cfg(test)]
-    pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
-        self.account_mut().redirect_history_dir(dir);
-    }
-
-    /// Run one simulator command straight at the venue (tests only).
-    #[cfg(test)]
-    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
-        self.account_mut().apply_sim_command_for_tests(command);
-    }
-
     /// The policy half, for readers that want it and not the pixels.
     ///
     /// The control plane goes through here: `control::{trade, session,
@@ -453,11 +427,6 @@ impl PaperTrading {
     // money path and not the ticket that draws it.
     // ------------------------------------------------------------------
 
-    #[cfg(test)]
-    pub(crate) fn close_button_label(&self) -> Option<String> {
-        self.account().close_button_label()
-    }
-
     /// Close everything, now. Named here as well as on the account because
     /// `Iterator::flatten` otherwise wins method resolution on a bare
     /// `.flatten()` and the shortcut stops closing the position.
@@ -479,11 +448,6 @@ impl PaperTrading {
 
     pub(crate) fn position_summary(&self) -> Option<PositionSummary> {
         self.account().position_summary()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn ready(&self) -> bool {
-        self.account().ready()
     }
 
     pub(crate) fn seed(&mut self, trade: &Trade) {
@@ -532,20 +496,6 @@ impl PaperTrading {
     /// the wheel.
     pub(crate) fn set_ruler_ticks(&mut self, notches: u32) -> u32 {
         self.desk.ruler.set_ticks(notches)
-    }
-
-    /// How far one notch walks this instrument's ruler, in points.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn ruler_step(&self) -> Decimal {
-        self.desk.ruler_step(&self.account)
-    }
-
-    /// Name this instrument's step, in points. A value that is not positive
-    /// clears it, which puts the instrument back on the derived default.
-    #[cfg(test)]
-    pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
-        self.desk.ruler.set_step(self.account.symbol(), step);
     }
 
     /// Every step the trader has named, by symbol, for the sidecar.
@@ -742,6 +692,51 @@ impl PaperTrading {
             return;
         };
         self.account.reverse_position(bracket);
+    }
+}
+
+#[cfg(test)]
+impl PaperTrading {
+    /// The report's state, as its own surfaces read it. Test-only, like the
+    /// account's own pair: the drawing code reaches the report through
+    /// `report_parts`.
+    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
+        self.account().report_state()
+    }
+
+    /// The report's state, mutably. Test-only, as above.
+    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
+        self.account_mut().report_state_mut()
+    }
+
+    /// Point the journal at a scratch folder (tests only).
+    pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
+        self.account_mut().redirect_history_dir(dir);
+    }
+
+    /// Run one simulator command straight at the venue (tests only).
+    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
+        self.account_mut().apply_sim_command_for_tests(command);
+    }
+
+    pub(crate) fn close_button_label(&self) -> Option<String> {
+        self.account().close_button_label()
+    }
+
+    pub(crate) fn ready(&self) -> bool {
+        self.account().ready()
+    }
+
+    /// How far one notch walks this instrument's ruler, in points.
+    #[must_use]
+    pub(crate) fn ruler_step(&self) -> Decimal {
+        self.desk.ruler_step(&self.account)
+    }
+
+    /// Name this instrument's step, in points. A value that is not positive
+    /// clears it, which puts the instrument back on the derived default.
+    pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
+        self.desk.ruler.set_step(self.account.symbol(), step);
     }
 }
 

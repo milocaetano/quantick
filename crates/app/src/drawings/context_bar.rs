@@ -508,42 +508,6 @@ impl ContextBar {
         self.rect
     }
 
-    #[cfg(test)]
-    #[must_use]
-    pub fn gear_rect(&self) -> Option<egui::Rect> {
-        self.gear_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn draw_again_rect(&self) -> Option<egui::Rect> {
-        self.draw_again_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn sharing_rect(&self) -> Option<egui::Rect> {
-        self.sharing_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn magnet_rect(&self) -> Option<egui::Rect> {
-        self.magnet_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn color_rect(&self) -> Option<egui::Rect> {
-        self.color_rect
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn swatch_rect(&self, index: usize) -> Option<egui::Rect> {
-        self.swatch_rects.get(index).copied()
-    }
-
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
         self.open = if self.open == popover {
             Popover::None
@@ -552,8 +516,40 @@ impl ContextBar {
         };
         self.anchor = Some(anchor);
     }
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+impl ContextBar {
+    #[must_use]
+    pub fn gear_rect(&self) -> Option<egui::Rect> {
+        self.gear_rect
+    }
+
+    #[must_use]
+    pub fn draw_again_rect(&self) -> Option<egui::Rect> {
+        self.draw_again_rect
+    }
+
+    #[must_use]
+    pub fn sharing_rect(&self) -> Option<egui::Rect> {
+        self.sharing_rect
+    }
+
+    #[must_use]
+    pub fn magnet_rect(&self) -> Option<egui::Rect> {
+        self.magnet_rect
+    }
+
+    #[must_use]
+    pub fn color_rect(&self) -> Option<egui::Rect> {
+        self.color_rect
+    }
+
+    #[must_use]
+    pub fn swatch_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.swatch_rects.get(index).copied()
+    }
+
     pub fn popover_open(&self) -> bool {
         self.open != Popover::None
     }
