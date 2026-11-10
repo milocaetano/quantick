@@ -20,11 +20,11 @@ set -u
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 GUARDRAILS="$script_dir/guardrails.sh"
 
-# Which copy of the script `run` invokes. The real one, except in the block
-# that has to control what `ai_review_threads.sh` answers: the gate finds that
-# sibling beside itself, so the only way to stub it without teaching the script
-# an env override -- a switch whose whole purpose would be to turn the gate off
-# -- is to run a copy from a directory the fixture owns. The copy is `cp`ed from
+# Which copy of the script `run` invokes. The real one, except in the blocks
+# that have to control what `full_ci.sh` answers: the gate finds that sibling
+# beside itself, so the only way to stub it without teaching the script an env
+# override -- a switch whose whole purpose would be to turn the gate off -- is
+# to run a copy from a directory the fixture owns. The copy is `cp`ed from
 # the real file, so nothing here tests a script that is not the shipped one.
 GUARDRAILS_UNDER_TEST="$GUARDRAILS"
 
@@ -32,39 +32,30 @@ passed=0
 failed=0
 
 # The tier vocabulary, read out of guardrails.sh rather than written here.
-# Restating the file name or the ceiling would make this suite a second source
-# of truth for both, and a test that agrees with itself about a renamed file
-# proves nothing. Empty means the constant moved, which is a failure loud
-# enough to stop: every tier case below would otherwise pass vacuously.
+# Restating the file name would make this suite a second source of truth for
+# it, and a test that agrees with itself about a renamed file proves nothing.
+# Empty means the constant moved, which is a failure loud enough to stop: every
+# tier case below would otherwise pass vacuously.
 tier_file_name=$(sed -n 's/^TIER_FILE_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
 tiers=$(sed -n 's/^TIERS="\([^"]*\)".*/\1/p' "$GUARDRAILS")
-small_ceiling=$(sed -n 's/^SMALL_TIER_MAX_CHANGED_LINES=\([0-9][0-9]*\).*/\1/p' "$GUARDRAILS")
 
 # Loud, and deliberately not fatal. Stopping here would hide whatever else a
-# rename broke behind one line of output, and the whole suite reporting a
-# single failure reads like a small problem. The substitutes below are chosen
-# to keep every later case running and failing honestly: a file name nothing
-# will ever match, one tier, and a ceiling of 1. `set_tier` must never be
-# handed an empty name - it would build a path ending in a bare slash.
-#
-# The ceiling substitute is deliberately not the real default. Writing 300 here
-# would put a second copy of a value this file exists to read from one place,
-# and it would go stale the first time the real one moved - while looking, to
-# the next reader, like the authority. All this path needs is a number the
-# fixture can build a branch around.
-if [ -z "$tier_file_name" ] || [ -z "$tiers" ] || [ -z "$small_ceiling" ]; then
+# rename broke behind one line of output. The substitutes keep every later case
+# running and failing honestly: a file name nothing will ever match, and one
+# tier. `set_tier` must never be handed an empty name - it would build a path
+# ending in a bare slash.
+if [ -z "$tier_file_name" ] || [ -z "$tiers" ]; then
     printf 'FAIL the tier constants are not readable from guardrails.sh\n'
-    printf '  file=%s tiers=%s ceiling=%s\n' "$tier_file_name" "$tiers" "$small_ceiling"
+    printf '  file=%s tiers=%s\n' "$tier_file_name" "$tiers"
     failed=$((failed + 1))
     tier_file_name="mission-tier-unreadable"
-    tiers="small"
-    small_ceiling=1
+    tiers="medium"
 fi
 
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/rv" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/rv" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -92,48 +83,6 @@ git -C "$root/wt" commit -qm "second"
 head_sha=$(git -C "$root/wt" rev-parse HEAD)
 wt_git_dir=$(git -C "$root/wt" rev-parse --absolute-git-dir)
 
-# A second branch, one line fatter than the `small` tier's ceiling, so the
-# bound on the exemption is tested against a diff git actually measures rather
-# than a number the suite asserts about itself. Sized from the script's own
-# constant: a hardcoded 400 here would go quietly vacuous the day the ceiling
-# moved past it, and a ceiling case that cannot fail is worse than none.
-git -C "$root/mainco" worktree add -q -b feat/big "$root/big"
-big_line=0
-: > "$root/big/src/big.txt"
-while [ "$big_line" -le "$small_ceiling" ]; do
-    echo "line $big_line" >> "$root/big/src/big.txt"
-    big_line=$((big_line + 1))
-done
-git -C "$root/big" add -A
-git -C "$root/big" commit -qm "over the ceiling"
-big_sha=$(git -C "$root/big" rev-parse HEAD)
-big_git_dir=$(git -C "$root/big" rev-parse --absolute-git-dir)
-big_changed=$((small_ceiling + 1))
-
-# A failed `worktree add` leaves this empty, and an empty git dir turns every
-# helper below into a write at the filesystem root - `> "/mission-tier"`,
-# `rm -f "/arch-review-ok"`. The helpers refuse an empty argument as well; this
-# is the louder half, because it names which fixture went missing.
-if [ -z "$big_git_dir" ]; then
-    printf 'FAIL the over-ceiling fixture worktree was not created\n'
-    failed=$((failed + 1))
-fi
-
-# A small branch carrying a binary file. numstat reports `-` for both counts,
-# and reading that as "unmeasurable" made a single icon void the exemption and
-# blame a broken git for it. The text edit stays well under the ceiling.
-git -C "$root/mainco" worktree add -q -b feat/binary "$root/binary"
-printf 'changed\n' > "$root/binary/src/a.txt"
-printf 'PNG\000\001\002binary\000payload\n' > "$root/binary/src/logo.png"
-git -C "$root/binary" add -A
-git -C "$root/binary" commit -qm "a fix and an icon"
-binary_sha=$(git -C "$root/binary" rev-parse HEAD)
-binary_git_dir=$(git -C "$root/binary" rev-parse --absolute-git-dir)
-if [ -z "$binary_git_dir" ]; then
-    printf 'FAIL the binary-asset fixture worktree was not created\n'
-    failed=$((failed + 1))
-fi
-
 # A branch for review-verdict, whose cases commit on it.
 git -C "$root/mainco" worktree add -q -b feat/verdict "$root/rv"
 echo verdict > "$root/rv/src/a.txt"
@@ -141,28 +90,13 @@ git -C "$root/rv" add -A
 git -C "$root/rv" commit -qm "reviewed change"
 rv_head=$(git -C "$root/rv" rev-parse HEAD)
 rv_git_dir=$(git -C "$root/rv" rev-parse --absolute-git-dir)
+# A failed `worktree add` leaves this empty, and an empty git dir turns every
+# helper below into a write at the filesystem root. The helpers refuse an empty
+# argument as well; this is the louder half, because it names the fixture.
 if [ -z "$rv_git_dir" ]; then
     printf 'FAIL the review-verdict fixture worktree was not created\n'
     failed=$((failed + 1))
 fi
-
-# A repository with no `origin/main` at all, for the fail-closed path: the one
-# place guardrails.sh deliberately breaks its own fail-open rule, and until now
-# the only branch of `changed_lines` no case reached.
-git init -b main -q "$root/noremote"
-git -C "$root/noremote" config user.email t@t
-git -C "$root/noremote" config user.name t
-git -C "$root/noremote" config core.autocrlf false
-git -C "$root/noremote" config core.safecrlf false
-echo one > "$root/noremote/a.txt"
-git -C "$root/noremote" add -A
-git -C "$root/noremote" commit -qm "first"
-git -C "$root/noremote" checkout -q -b feat/unmeasurable
-echo two > "$root/noremote/a.txt"
-git -C "$root/noremote" add -A
-git -C "$root/noremote" commit -qm "second"
-noremote_sha=$(git -C "$root/noremote" rev-parse HEAD)
-noremote_git_dir=$(git -C "$root/noremote" rev-parse --absolute-git-dir)
 
 # marker_key <worktree> — the value a marker must hold for that branch: the
 # hash of its own diff against origin/main, falling back to the commit when
@@ -372,11 +306,10 @@ run "the main checkout on another branch is allowed" \
 git -C "$root/mainco" checkout -q main
 
 # --- pr-gate ----------------------------------------------------------------
-
 #
-# Two markers gate the PR and both must record the exact commit being shipped.
-# The cases move one marker at a time, so a regression says which half broke
-# rather than only that the gate stopped working.
+# One marker gates a PR that leaves draft: `code-review-ok`, recording the exact
+# change being shipped. A draft opens with no marker on every branch but an
+# `implement` one, which owes the review before any PR (its section is below).
 
 # Derived, not literal: `require_marker` grades any marker whose length
 # differs from HEAD's as "(not a commit id)", so a hardcoded 40 zeroes
@@ -384,12 +317,9 @@ git -C "$root/mainco" checkout -q main
 # using a longer hash — still green, testing nothing it claims to.
 stale_sha=$(printf '%*s' "${#head_sha}" '' | tr ' ' 0)
 
-# What each fixture's markers must hold. A function of the diff, not of the
-# commit that carries it.
+# What the marker must hold. A function of the diff, not of the commit that
+# carries it.
 wt_key=$(marker_key "$root/wt")
-big_key=$(marker_key "$root/big")
-binary_key=$(marker_key "$root/binary")
-noremote_key=$(marker_key "$root/noremote")
 
 if [ -z "$wt_key" ]; then
     printf 'FAIL the fixture worktree has no review key, so no marker case is meaningful\n'
@@ -408,62 +338,43 @@ else
 fi
 head_sha=$(git -C "$root/wt" rev-parse HEAD)
 
-set_marker arch-review-ok ""
-set_marker delivery-review-ok ""
+set_marker code-review-ok ""
 
 run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
 
 run "gh pr create without a recorded review is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "code-review-ok"
 
-# With neither recorded, the denial names arch-review — the review that runs
-# first, because a delivery review of a branch the shape review is about to
-# change is wasted work. The script states that order as a contract; without
-# this assertion the two `require_marker` calls could be swapped with every
-# case still green, and an agent starting a fresh branch would be sent to the
-# conformance review first.
-run "with neither review recorded the gate names arch-review first" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
-
-# Staleness, one marker at a time. Each keeps the *other* marker at HEAD, so
-# the case can only pass through the staleness branch it aims at — with the
-# other missing, every one of them would deny for the wrong reason and prove
-# nothing about staleness at all.
-set_marker arch-review-ok "$stale_sha"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-run "an arch review recorded for an older change is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
-
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$stale_sha"
-run "a delivery review recorded for an older change is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+set_marker code-review-ok "$stale_sha"
+run "a code-review recorded for an older change is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "was recorded for change"
 
 # A marker holding something other than a sha must trip the gate, not break it:
 # `deny` interpolates the contents into JSON, and a payload the harness cannot
-# parse loses the decision and lets the command through. The delivery marker is
-# parked at HEAD so the arch marker is the only thing left to complain about.
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
+# parse loses the decision and lets the command through.
+printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/code-review-ok"
 run "a corrupt marker is reported as not a commit id" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
-# Absence, one marker at a time. Each pins that the *other* being satisfied
-# does not carry the branch through.
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok ""
-run "arch-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+: > "$wt_git_dir/code-review-ok"
+run "an empty marker is reported as not a commit id" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
-set_marker arch-review-ok ""
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-run "delivery-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
+set_marker code-review-ok "$wt_key extra"
+run "a key with a word beside it is not a commit id" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-run "both reviews recorded for the exact change is allowed" \
+# The marker lives in the worktree's own git dir. The identical key recorded in
+# another worktree's is a review of that worktree, not of this one.
+set_marker code-review-ok ""
+set_marker_in "$rv_git_dir" code-review-ok "$wt_key"
+run "another worktree cannot supply the marker" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "has not been recorded"
+set_marker_in "$rv_git_dir" code-review-ok ""
+
+set_marker code-review-ok "$wt_key"
+run "a code-review of the exact change opens a non-draft PR" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
 # The script is tool-agnostic: it reads the payload's `command` field and does
@@ -478,82 +389,23 @@ run "both reviews recorded for the exact change is allowed" \
 # which would have opened the gate for every branch. Gating a shell means
 # teaching the parser that shell; until then this case pins only that the
 # script itself is indifferent to the tool name.
-set_marker arch-review-ok ""
-set_marker delivery-review-ok ""
+set_marker code-review-ok ""
 run "the script judges the payload, not the tool that produced it" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
 
 # --- pr-gate: the draft PR and the merge gate -------------------------------
 #
-# Phase one ends at a draft PR and phase two ends at a merge, so the gate moved
-# with the work: a draft opens ungated, and `gh pr ready` and `gh pr merge`
-# want both markers *and* zero open ai-review threads.
+# A draft ships nothing, so it opens with no marker. A non-draft creation,
+# `gh pr ready` and `gh pr merge` want the code-review; ready and merge also
+# want full CI at the exact head.
 #
 # These cases run a copy of the script from a fixture directory, because the
-# gate resolves `ai_review_threads.sh` beside itself and the count has to be
-# controlled without reaching GitHub. `threads` in that directory is what the
-# stub answers: a number, or `unavailable` for the case where no count can be
-# taken at all.
+# gate resolves `full_ci.sh` beside itself and its verdict has to be controlled
+# without reaching GitHub. `fullci` in that directory is what the stub answers
+# (`green` when absent); the real script's own cases run further down against a
+# fake `gh`.
 mkdir -p "$root/hooks"
 cp "$GUARDRAILS" "$root/hooks/guardrails.sh"
-cat > "$root/hooks/ai_review_threads.sh" <<'STUB'
-#!/bin/sh
-# Fixture stub for the real ai_review_threads.sh. Honours only the one
-# definition's two read operations and refuses everything else loudly.
-stub_answer=$(cat "$(dirname "$0")/threads" 2>/dev/null)
-case "$stub_answer" in
-    unavailable)
-        echo "the fixture says gh cannot answer" >&2
-        exit 2
-        ;;
-esac
-case "${1:-}" in
-    count)
-        [ "$stub_answer" = late5 ] && stub_answer=0
-        printf '%s\n' "$stub_answer"
-        ;;
-    list)
-        if [ "$stub_answer" = late5 ]; then
-            late_file=${QUANTICK_COMPLETION_FIXTURE:?}/listed-once
-            if [ -f "$late_file" ]; then stub_answer=5; else : > "$late_file"; stub_answer=0; fi
-        fi
-        stub_line=0
-        while [ "$stub_line" -lt "$stub_answer" ]; do
-            stub_line=$((stub_line + 1))
-            printf 'thread-%s\tsrc/a.txt:1\tfixture finding %s\n' "$stub_line" "$stub_line"
-        done
-        ;;
-    *) exit 64 ;;
-esac
-STUB
-
-cat > "$root/hooks/review_report.sh" <<'STUB'
-#!/bin/sh
-stub_dir=$(dirname "$0")
-operation=${1:-}
-kind=${2:-}
-report_state=$(cat "$stub_dir/reports" 2>/dev/null || printf 'current\n')
-case "$operation" in
-    verify)
-        [ "$report_state" != unavailable ] || exit 2
-        [ "$report_state" != "missing-$kind" ] || exit 1
-        printf 'https://example.test/%s-report\n' "$kind"
-        ;;
-    publish)
-        [ "$kind" = mission-completion ] || exit 64
-        grep -q '^MISSION-COMPLETION: PASS$' "$4" || exit 1
-        printf 'https://example.test/mission-completion-report\n'
-        ;;
-    *) exit 64 ;;
-esac
-STUB
-chmod +x "$root/hooks/review_report.sh"
-
-set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
-
-# The full-CI verdict, stubbed the same way: `fullci` in the fixture directory
-# is the answer (`green` when absent), and the real script's own cases run
-# further down against a fake `gh`.
 cat > "$root/hooks/full_ci.sh" <<'STUB'
 #!/bin/sh
 case "$(cat "$(dirname "$0")/fullci" 2>/dev/null || printf 'green\n')" in
@@ -567,12 +419,9 @@ set_full_ci() { printf '%s\n' "$1" > "$root/hooks/fullci"; }
 
 GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
 
-# A draft PR is where phase one ends and where the findings get posted, so it
-# opens with no marker at all. This is the case the whole two-phase split rests
-# on: gating it would require the reviews before the review that informs them.
-set_marker arch-review-ok ""
-set_marker delivery-review-ok ""
-set_threads 0
+# A draft PR opens with no marker at all. Gating it would ask for the review
+# before the PR its findings are discussed on exists.
+set_marker code-review-ok ""
 run "a draft PR opens with no marker recorded" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
 
@@ -582,24 +431,24 @@ run "the short spelling of draft is a draft too" \
 # The one spelling that contains the flag and means the opposite of it. Read as
 # a draft, it would open an ungated real PR.
 run "--draft=false is not a draft" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --draft=false --fill")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft=false --fill")" deny "code-review-ok"
 
 # The flag is read from what the command *does*, never from what it says. The
 # first version globbed the whole statement, so this exact spelling opened a
 # real, un-reviewed PR -- and the PR that introduced the draft exemption is
 # itself the PR whose title is about `--draft`.
 run "a --draft inside a quoted title is not a draft flag" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"Make --draft PRs ungated\" --fill")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"Make --draft PRs ungated\" --fill")" deny "code-review-ok"
 
 run "a -d inside a quoted body is not a draft flag either" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --body \"pass -d to open a draft\" --fill")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "gh pr create --body \"pass -d to open a draft\" --fill")" deny "code-review-ok"
 
 # `--draft=f` is what gh's own flag parser calls false, and so are `F`,
 # `False` and `FALSE`. Excluding only `false` and `0` left four spellings of
 # "not a draft" opening a real PR with no review.
 for draft_false in f F False FALSE 0 false; do
     run "--draft=$draft_false opens a real PR and is gated" \
-        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_false --fill")" deny "arch-review-ok"
+        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_false --fill")" deny "code-review-ok"
 done
 
 for draft_true in 1 t T true TRUE True; do
@@ -610,12 +459,12 @@ done
 # A quote this cannot pair off means the blanking cannot be trusted, so the
 # exemption is refused rather than guessed at.
 run "an unbalanced quote is never a draft" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"unclosed --draft --fill")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"unclosed --draft --fill")" deny "code-review-ok"
 
 # The flag has to come from the statement the gate matched. A `--draft`
 # anywhere else on the line is somebody else's argument.
 run "a draft flag in a neighbouring statement is not this PR's" \
-    pr-gate "$(json_bash "$root/wt" "echo --draft && gh pr create --fill")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "echo --draft && gh pr create --fill")" deny "code-review-ok"
 
 # --- pr-gate: the read-cost advisory ----------------------------------------
 #
@@ -707,105 +556,37 @@ else
     # The gate's own verdict is never softened by the advisory: a real PR on a
     # branch with no review is still denied, and denied about the review.
     run "an over-ceiling branch is still denied for the review it skipped" \
-        pr-gate "$(json_bash "$root/readcost" "gh pr create --fill")" deny "arch-review-ok"
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --fill")" deny "code-review-ok"
 fi
 
-# Order matters: an unreviewed branch is told about the review it skipped, not
-# about threads. The markers are the older rule and the cheaper check.
-run "gh pr ready wants the reviews before it wants a thread count" \
-    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "arch-review-ok"
+run "gh pr ready without a code-review is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "code-review-ok"
 
-run "gh pr merge wants the reviews too" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "arch-review-ok"
+run "gh pr merge without a code-review is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "code-review-ok"
 
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-
-set_threads 0
-# AI completion is not inferred from zero findings. Pin each failure with all
-# preceding evidence current, through both hosts' shared hook entry point.
+# Only `implement` changes what the gate wants. Every mission tier faces the
+# gate an untiered branch faces, through both hosts' shared hook entry point.
 for client in Bash exec_command; do
     for tier in $tiers; do
         set_tier "$root/wt" "$tier"
-        set_marker ai-review-complete ""
-        if [ "$tier" = small ]; then set_marker delivery-review-ok ""; fi
-        for action in ready merge; do
-            run "$client $tier $action requires AI completion with zero threads" \
-                pr-gate "$(json_bash "$root/wt" "gh pr $action 42" "$client")" deny "ai-review-complete"
-        done
-        set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-        run "$client $tier current clean AI completion allows ready" \
-            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
-        set_threads 1
-        run "$client $tier completed review with findings still denies ready" \
-            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'PR #42 has 1'
-        set_threads 0
-        set_marker delivery-review-ok "$(marker_key "$root/wt")"
+        set_marker code-review-ok ""
+        run "$client $tier draft opens with no marker" \
+            pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill" "$client")" silent
+        run "$client $tier non-draft creation wants the code-review" \
+            pr-gate "$(json_bash "$root/wt" "gh pr create --fill" "$client")" deny "code-review-ok"
+        run "$client $tier ready wants the code-review" \
+            pr-gate "$(json_bash "$root/wt" "gh pr ready 42" "$client")" deny "code-review-ok"
+        set_marker code-review-ok "$wt_key"
+        run "$client $tier non-draft creation opens on the code-review" \
+            pr-gate "$(json_bash "$root/wt" "gh pr create --fill" "$client")" silent
+        run "$client $tier ready passes on the code-review and full CI" \
+            pr-gate "$(json_bash "$root/wt" "gh pr ready 42" "$client")" silent
     done
-    set_tier "$root/wt" ""
-    set_marker ai-review-complete "feat/x $stale_sha"
-    run "$client stale AI key denies ready" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
-    for malformed in "$(marker_key "$root/wt")" 'he said "hi"' \
-        "feat/x $(marker_key "$root/wt") extra" "feat/x $(marker_key "$root/wt") "; do
-        set_marker ai-review-complete "$malformed"
-        run "$client malformed AI record denies with safe JSON" \
-            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
-    done
-    : > "$wt_git_dir/ai-review-complete"
-    run "$client empty AI record denies" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
-    printf 'feat/x %s\nextra' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
-    run "$client unterminated appended AI record denies" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
-    printf 'feat/x %s\n\n' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
-    run "$client multiline AI record denies" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
-
-    set_marker ai-review-complete ""
-    set_marker_in "$big_git_dir" ai-review-complete "feat/x $(marker_key "$root/wt")"
-    run "$client another worktree cannot supply the identical AI record" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
-    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-    ai_original_key=$(marker_key "$root/wt")
-    git -C "$root/wt" checkout -qb "feat/ai-$client"
-    if [ "$(marker_key "$root/wt")" = "$ai_original_key" ]; then
-        passed=$((passed + 1))
-    else
-        printf 'FAIL branch-only AI fixture changed the raw key\n'
-        failed=$((failed + 1))
-    fi
-    run "$client branch-only change invalidates AI completion" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
-    set_marker ai-review-complete "feat/ai-$client $ai_original_key"
-    git -C "$root/wt" commit -q --amend -m "same diff, $client reword"
-    run "$client same-branch reword preserves AI completion" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
-    printf 'AI source change\n' >> "$root/wt/src/a.txt"
-    git -C "$root/wt" commit -qam 'change after AI review'
-    set_marker arch-review-ok "$(marker_key "$root/wt")"
-    set_marker delivery-review-ok "$(marker_key "$root/wt")"
-    run "$client source change stales AI after other reviews refresh" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
-    git -C "$root/wt" checkout -q feat/x
-    set_marker arch-review-ok "$(marker_key "$root/wt")"
-    set_marker delivery-review-ok "$(marker_key "$root/wt")"
-    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-    set_marker arch-review-ok ""
-    run "$client AI completion cannot replace architecture review" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'arch-review-ok'
-    set_marker delivery-review-ok ""
-    set_marker ai-review-complete ""
-    run "$client draft creation needs no review markers" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr create --draft --fill' "$client")" silent
-    set_marker arch-review-ok "$(marker_key "$root/wt")"
-    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-    run "$client AI completion cannot replace delivery review" \
-        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'delivery-review-ok'
-    set_marker delivery-review-ok "$(marker_key "$root/wt")"
 done
+set_tier "$root/wt" ""
 
-run "all required reviews and no open thread makes the branch ready" \
+run "a code-review and full CI make the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
 
 # The advisory rides a pass rather than replacing a decision, and the pull
@@ -829,7 +610,7 @@ run "a creation names no pull request to the advisory" \
 rm -rf "$root/wt/tools"
 
 # Draft pushes run only the fast job, so readiness is where full CI is owed.
-# Every review is recorded here; only the full-CI verdict moves.
+# The code-review is recorded here; only the full-CI verdict moves.
 set_full_ci missing
 run "gh pr ready is denied without full CI at the exact head" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "Full final-head CI gates"
@@ -846,11 +627,6 @@ run "a gate with no full_ci.sh beside it asks rather than passes" \
 mv "$root/hooks/full_ci.sh.away" "$root/hooks/full_ci.sh"
 set_full_ci green
 
-printf 'missing-arch-review\n' > "$root/hooks/reports"
-run "a hand-written architecture marker cannot replace its durable report" \
-    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "durable PR report"
-printf 'current\n' > "$root/hooks/reports"
-
 run "even reviewed main merges remain exclusively human" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 
@@ -863,77 +639,36 @@ run "a cd prefix leaves a main-based ready where it was" \
 run "a cd prefix does not make a main merge the agent's" \
     pr-gate "$(json_bash "$root/wt" "cd $root/wt && gh pr merge 42 --squash")" deny "reserved exclusively"
 
-set_threads 2
-run "gh pr ready is denied while an ai-review thread is open" \
-    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "PR #42 has 2"
+# The PR number is named, never guessed: full CI and the campaign checks are
+# read for one PR, and a guess would read another's.
+run "gh pr ready naming no PR is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready")" deny "Name the PR number explicitly"
 
-run "gh pr merge is denied while an ai-review thread is open" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "PR #42 has 2"
-
-# The denial has to name the way out, and the way out is the list of threads.
-run "the denial names the command that lists the open threads" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42")" deny "ai_review_threads.sh list 42"
-
-# A count nobody could take is not a count of zero, and the gate says which of
-# the two it is holding. It asks rather than denies: the file's rule is
-# fail-open, and a human can still answer for it.
-set_threads unavailable
-run "a count that cannot be taken asks rather than passing in silence" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "could not be counted"
-
-set_threads 0
-run "a command naming no PR asks rather than guessing which PR to count" \
-    pr-gate "$(json_bash "$root/wt" "gh pr ready")" ask "names no PR number"
-
-# Two bare numbers and the operand cannot be told from a flag's value. Guessing
-# would count another PR's threads and report a clean number for a branch
-# nobody reviewed, so the gate asks instead.
+# Two bare numbers and the operand cannot be told from a flag's value.
 run "two bare numbers are an ambiguous PR, not a guess" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 306 42 --squash")" ask "names no PR number"
-
-# The hook always runs from the main checkout, so a branch that has not merged
-# the counting script yet cannot be counted from there. That is a different
-# failure from `gh` refusing to answer, and it gets a different message: an
-# agent told to check its GitHub authentication over a missing file goes
-# looking in the wrong place.
-mkdir -p "$root/lonely"
-cp "$GUARDRAILS" "$root/lonely/guardrails.sh"
-cp "$root/hooks/review_report.sh" "$root/lonely/review_report.sh"
-GUARDRAILS_UNDER_TEST="$root/lonely/guardrails.sh"
-run "a missing counting script is named as such, not blamed on gh" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "is not beside the hook"
-GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
-
-# `gh pr create` is never held on the thread count, draft or not: the PR is
-# where the findings live, so they cannot be a precondition for opening it.
-set_threads 9
-run "an open thread never blocks opening the PR that carries it" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 306 42 --squash")" deny "Name the PR number explicitly"
 
 # A compound line runs two of the gated commands. The draft exemption belongs
 # to the `create` half only, and taking it for the whole line would let the
-# `gh pr ready` beside it ship with no review -- the natural spelling for
-# ending phase one and starting phase two, and the one that must not slip.
-set_marker arch-review-ok ""
-set_marker delivery-review-ok ""
+# `gh pr ready` beside it through with no review.
+set_marker code-review-ok ""
 run "a draft create beside a ready is judged as the ready" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill && gh pr ready")" deny "arch-review-ok"
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill && gh pr ready")" deny "code-review-ok"
 
 # The PR number is a whole word. Reading a digit run out of a filename made
-# `--body-file notes2.md 42` count PR 2's threads, which reports a clean number
-# for a branch nobody reviewed -- worse than reporting no number at all.
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-set_threads 7
-GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+# `--body-file notes2.md 42` name PR 2, and the full-CI denial names the PR it
+# read.
+set_marker code-review-ok "$wt_key"
+set_full_ci missing
 run "a digit inside a filename is not the PR number" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge --body-file notes2.md 42")" deny "PR #42 has 7"
+    pr-gate "$(json_bash "$root/wt" "gh pr merge --body-file notes2.md 42")" deny "gh pr edit 42 --add-label full-ci"
+set_full_ci green
 GUARDRAILS_UNDER_TEST="$GUARDRAILS"
 
-# --- ai_review_threads.sh: the contract the gate reads ----------------------
+# --- ai_review_threads.sh: the contract completion reads ------------------
 #
-# The gate treats "no count" and "a count of zero" as different answers, and
-# the whole of that distinction rests on this script's exit status. Neither
+# `mission_ship_gate.sh` treats "no list" and "an empty list" as different
+# answers, and the whole of that distinction rests on this script's exit status. Neither
 # case here reaches GitHub: one asks for nothing, the other runs with a PATH
 # that has no `gh` on it.
 threads_script="$script_dir/ai_review_threads.sh"
@@ -962,50 +697,10 @@ else
     failed=$((failed + 1))
 fi
 
-# --- pr-gate: the small tier ------------------------------------------------
-#
-# `small` is the only tier that changes what the gate requires, so it is the
-# only tier that needs cases. They fix both directions - the exemption is
-# granted where it was earned and refused everywhere else - and then the
-# property the whole design rests on: a branch that never asked for the
-# exemption is never told that one exists.
-
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok ""
-
-set_tier "$root/wt" small
-run "a small mission opens its PR on arch-review alone" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
-
-# The tier buys a shorter review, never no review. Without this case the
-# exemption could be widened to cover both markers with every other case still
-# green, and the bug pass is the last thing a branch should buy its way out of.
-set_marker arch-review-ok ""
-run "a small mission still cannot skip arch-review" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-
-# Every other tier pays in full. Looped over the tiers the script itself
-# declares, minus the exempt one, so a tier added later is covered on the day
-# it is added rather than the day someone remembers this file exists.
-for tier in $tiers; do
-    [ "$tier" != "small" ] || continue
-    set_tier "$root/wt" "$tier"
-    run "the $tier tier still requires delivery-review" \
-        pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-done
-
-# A word the script does not know is not a tier. Read as `small` instead, the
-# gate would open for anything at all written into that file.
-set_tier "$root/wt" "smallish"
-run "an unrecognised tier grants nothing" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-
 # --- pr-gate: the implement tier --------------------------------------------
 #
 # One review, owed before any PR, draft included; none of the mission's.
 set_tier "$root/wt" implement
-set_marker arch-review-ok ""
 set_marker code-review-ok ""
 run "an implement branch cannot open a draft before code-review" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" deny "code-review-ok"
@@ -1026,8 +721,38 @@ set_marker code-review-ok "stale"
 run "a code-review of another change does not count" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "code-review-ok"
 set_marker code-review-ok ""
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_tier "$root/wt" small
+
+# A declaration belongs to the branch that made it. The first version of the
+# tier file stored the word alone, and a worktree reused for a second branch
+# inherited a tier it never declared. With no code-review recorded, a draft
+# tells the two apart: an `implement` branch is denied it, any other opens it.
+git -C "$root/wt" checkout -q -b feat/inherits
+echo three > "$root/wt/src/a.txt"
+git -C "$root/wt" add -A
+git -C "$root/wt" commit -qm "a different goal, same worktree"
+run "a second branch in the same worktree does not inherit the tier" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+git -C "$root/wt" checkout -q feat/x
+
+# A detached head names no branch. `rev-parse --abbrev-ref` prints the literal
+# `HEAD` there, and the snippet that writes this file uses that same command -
+# so without the guard, a declaration made while detached matches every future
+# detached checkout in this worktree: the inheritance bug in a different hat.
+git -C "$root/wt" checkout -q --detach
+printf 'HEAD implement\n' > "$wt_git_dir/$tier_file_name"
+run "a tier declared while detached declares nothing" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+git -C "$root/wt" checkout -q feat/x
+
+# One field is the format that caused the inheritance, so it is refused.
+printf 'implement\n' > "$wt_git_dir/$tier_file_name"
+run "a tier file naming no branch declares nothing" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+
+set_tier "$root/wt" "implementish"
+run "an unrecognised tier is no tier" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+set_tier "$root/wt" ""
 
 # --- review-verdict: the hook that records code-review-ok -------------------
 #
@@ -1067,12 +792,12 @@ verdict_case "the brief's template records nothing" \
     "$(stop_json "End with REVIEW-VERDICT: pass|fail $root/rv $rv_head")" ""
 verdict_case "markdown around the verdict still records it" \
     "$(stop_json "**REVIEW-VERDICT: **pass** \`$root/rv\` $rv_head**")" "$(marker_key "$root/rv")"
-printf '%s\timplement\n' "$(git -C "$root/rv" rev-parse --abbrev-ref HEAD)" > "$rv_git_dir/$tier_file_name"
-verdict_case "a tier pr-gate reads is a tier the hook reads" \
-    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" "$(marker_key "$root/rv")"
+# pr-gate asks every branch for the marker, so the hook records it whatever
+# tier the worktree declared; were it to record only `implement`, a non-draft PR
+# on any other branch would wait on a record nothing writes.
 set_tier "$root/rv" ""
-verdict_case "a worktree outside the implement tier records nothing" \
-    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" ""
+verdict_case "a worktree outside the implement tier records it too" \
+    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" "$(marker_key "$root/rv")"
 set_tier "$root/rv" implement
 
 printf '%s' "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" | sh "$GUARDRAILS" review-verdict
@@ -1093,151 +818,6 @@ echo after > "$root/rv/src/a.txt"
 git -C "$root/rv" commit -qam "unreviewed change"
 run "a commit after the review leaves the record stale" \
     pr-gate "$(json_bash "$root/rv" "gh pr create --fill")" deny "code-review-ok"
-
-# The bound, on a branch that really is too big. Two cases rather than one: the
-# first pins that the exemption lapses, the second that it lapsed because the
-# size was *measured*. Without the second, a `declared_tier` that had stopped
-# recognising `small` at all would pass the first and look correct.
-set_marker_in "$big_git_dir" arch-review-ok "$(marker_key "$root/big")"
-set_marker_in "$big_git_dir" delivery-review-ok ""
-set_tier "$root/big" small
-
-run "a small mission that outgrew the ceiling pays in full" \
-    pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "delivery-review-ok"
-
-run "and is told the measured size that cost it the exemption" \
-    pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "carries $big_changed"
-
-# A binary file has no lines, which is not the same as a diff that cannot be
-# read. Without this, every `small` mission shipping an icon, a font or a
-# captured screenshot paid the full delivery-review and was told its size could
-# not be measured - pointing at an absent remote it does have.
-set_tier "$root/binary" small
-set_marker_in "$binary_git_dir" arch-review-ok "$(marker_key "$root/binary")"
-set_marker_in "$binary_git_dir" delivery-review-ok ""
-
-# Without this the case is vacuous: `silent` is also what any within-ceiling
-# branch produces, so if `logo.png` ever stops being seen as binary - a
-# `printf` that truncates at the NUL, a git that calls 21 bytes text - the case
-# passes while proving nothing about the `'-') continue` branch it exists to
-# pin. Assert the premise, not only the conclusion.
-if LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD |
-        grep -qP '^-\t-\t' 2>/dev/null ||
-    LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD |
-        grep -q "^-$(printf '\t')-$(printf '\t')"; then
-    passed=$((passed + 1))
-else
-    printf 'FAIL the binary fixture is not seen as binary by git, so its case proves nothing\n'
-    printf '  numstat: %s\n' "$(LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD | tr '\n' ' ')"
-    failed=$((failed + 1))
-fi
-
-run "a binary file does not cost a small mission its exemption" \
-    pr-gate "$(json_bash "$root/binary" "gh pr create --fill")" silent
-
-# Asserted on the phrase only the *within-ceiling* reminder carries. "the
-# exemption from" appears in the unmeasurable message too, so it passed under
-# the mutation this case exists to catch - a case that cannot fail is worse
-# than no case, because the suite then reports the behaviour as proven.
-run "and the reminder does not tell it to raise the tier" \
-    commit-reminder "$(json_bash "$root/binary" "git commit -m x")" \
-    context "of the $small_ceiling changed lines"
-
-# Fail-closed, where the size cannot be measured at all. Without this the
-# git-error branch of `changed_lines` could be 'simplified' to return 0 - which
-# looks harmless next to the empty-diff case that legitimately yields 0 - and
-# every small branch in a checkout without origin/main would ship ungraded at
-# any size, with all other cases still green.
-set_tier "$root/noremote" small
-set_marker_in "$noremote_git_dir" arch-review-ok "$(marker_key "$root/noremote")"
-set_marker_in "$noremote_git_dir" delivery-review-ok ""
-
-run "a small mission whose size cannot be measured pays in full" \
-    pr-gate "$(json_bash "$root/noremote" "gh pr create --fill")" deny "delivery-review-ok"
-
-run "and is told the size is what it could not measure" \
-    pr-gate "$(json_bash "$root/noremote" "gh pr create --fill")" deny "can be measured"
-
-# A declaration belongs to the branch that made it. The first version of this
-# feature stored the tier word alone, and a worktree reused for a second branch
-# inherited the exemption: a live run opened a PR for an undeclared branch with
-# no delivery-review at all. Both halves are pinned - the stale declaration
-# grants nothing, and the one-field format that caused it is refused outright.
-set_tier "$root/wt" small
-git -C "$root/wt" checkout -q -b feat/inherits
-echo three > "$root/wt/src/a.txt"
-git -C "$root/wt" add -A
-git -C "$root/wt" commit -qm "a different mission, same worktree"
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok ""
-
-run "a second branch in the same worktree does not inherit the tier" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-
-git -C "$root/wt" checkout -q feat/x
-
-# A detached head names no branch. `rev-parse --abbrev-ref` prints the literal
-# `HEAD` there, and the snippet that writes this file uses that same command -
-# so without the guard, a declaration made while detached matches every future
-# detached checkout in this worktree: the inheritance bug in a different hat.
-git -C "$root/wt" checkout -q --detach
-printf 'HEAD small\n' > "$wt_git_dir/$tier_file_name"
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-run "a tier declared while detached grants nothing" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-git -C "$root/wt" checkout -q feat/x
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-
-printf 'small\n' > "$wt_git_dir/$tier_file_name"
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-run "a tier file naming no branch grants nothing" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-
-# The property the exemption rests on, and the reason the earlier skip file was
-# reverted: an agent that has merely forgotten the review must not learn from
-# the denial that a way around it exists. `run` can only assert a string is
-# present, so absence is checked here.
-set_tier "$root/wt" ""
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok ""
-
-# The denial itself first, through `run`, so the absence check below cannot
-# pass on an empty string. A regression that stops the gate denying at all
-# produces no output, contains none of the words, and would otherwise report
-# this case green at exactly the moment the gate is off.
-run "an untiered branch is still denied for delivery-review" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
-
-untiered=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" | sh "$GUARDRAILS" pr-gate 2>&1)
-
-# The denial quotes the recording command, which contains `$root` - a mktemp
-# path whose random suffix can itself contain `max`, `high`, `tier` or `small`.
-# Scanning it made a correct hook fail at random, with a message that sends the
-# next reader hunting a leak which is not there.
-untiered=$(printf '%s' "$untiered" | sed "s|$root||g")
-teaches=""
-case "$untiered" in
-    *'"permissionDecision":"deny"'*) ;;
-    *) teaches=" (no denial to inspect)" ;;
-esac
-# Every word that would give the mechanism away, not just two. A denial reading
-# "see the reduced-ceremony path", or naming `medium`, or saying `exemption`,
-# contains neither `mission-tier` nor `small` and would have reported green
-# while the gate did the one thing the README says it must never do.
-if [ -z "$teaches" ]; then
-    for secret in $tier_file_name $tiers tier exemption; do
-        case "$untiered" in
-            *"$secret"*) teaches="$teaches $secret" ;;
-        esac
-    done
-fi
-if [ -z "$teaches" ]; then
-    passed=$((passed + 1))
-else
-    printf 'FAIL the untiered denial advertises the exemption:%s\n  output: %s\n' \
-        "$teaches" "$untiered"
-    failed=$((failed + 1))
-fi
 
 # --- mission/ship final completion -----------------------------------------
 #
@@ -1281,6 +861,42 @@ fi
 exit 64
 STUB
 chmod +x "$root/bin/gh"
+
+# The thread list completion reads, stubbed beside the gate: `threads` in the
+# fixture directory is the answer, a number or `unavailable`; `late5` reads
+# zero the first time and five after, as threads opened mid-reconciliation do.
+cat > "$root/hooks/ai_review_threads.sh" <<'STUB'
+#!/bin/sh
+# Fixture stub for the real ai_review_threads.sh. Honours only the one
+# definition's two read operations and refuses everything else loudly.
+stub_answer=$(cat "$(dirname "$0")/threads" 2>/dev/null)
+case "$stub_answer" in
+    unavailable)
+        echo "the fixture says gh cannot answer" >&2
+        exit 2
+        ;;
+esac
+case "${1:-}" in
+    count)
+        [ "$stub_answer" = late5 ] && stub_answer=0
+        printf '%s\n' "$stub_answer"
+        ;;
+    list)
+        if [ "$stub_answer" = late5 ]; then
+            late_file=${QUANTICK_COMPLETION_FIXTURE:?}/listed-once
+            if [ -f "$late_file" ]; then stub_answer=5; else : > "$late_file"; stub_answer=0; fi
+        fi
+        stub_line=0
+        while [ "$stub_line" -lt "$stub_answer" ]; do
+            stub_line=$((stub_line + 1))
+            printf 'thread-%s\tsrc/a.txt:1\tfixture finding %s\n' "$stub_line" "$stub_line"
+        done
+        ;;
+    *) exit 64 ;;
+esac
+STUB
+
+set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
 
 cat > "$root/hooks/review_report.sh" <<'STUB'
 #!/bin/sh
@@ -1341,16 +957,7 @@ printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 
 
 GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
 set_tier "$root/wt" high
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-set_threads 0
-set_marker ai-review-complete ""
-for completion_mode in mission ship; do
-    run_completion "PR 306 $completion_mode refuses an already-ready green mergeable PR without AI completion" \
-        "$completion_mode" fail ai-review-complete
-done
-
-set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+set_marker code-review-ok "$(marker_key "$root/wt")"
 set_threads 5
 for completion_mode in mission ship; do
     run_completion "PR 306 $completion_mode refuses five open AI-review threads" \
@@ -1361,16 +968,12 @@ set_threads 0
 printf 'missing-ai-review\n' > "$root/completion/reports"
 for completion_mode in mission ship; do
     run_completion "PR 306 $completion_mode refuses AI completion without its durable report" \
-        "$completion_mode" fail 'ai-review` marker has no matching durable PR report'
+        "$completion_mode" fail 'AI completion marker has no matching durable COMPLETE report'
 done
 
 printf 'missing-arch-review\n' > "$root/completion/reports"
 run_completion "a hand-written architecture marker has no durable skill report" \
-    mission fail 'arch-review` marker has no matching durable PR report'
-
-printf 'missing-delivery-review\n' > "$root/completion/reports"
-run_completion "high cannot complete with a hand-written delivery marker" \
-    ship fail 'delivery-review` marker has no matching durable PR report'
+    mission fail 'architecture marker has no matching durable PASS report'
 
 printf 'current\n' > "$root/completion/reports"
 for completion_mode in mission ship; do
@@ -1432,15 +1035,7 @@ run_completion "final completion refuses a PR that is still draft" \
 printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
     "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
 
-set_tier "$root/wt" small
-set_marker delivery-review-ok ""
-printf 'missing-delivery-review\n' > "$root/completion/reports"
-run_completion "small keeps only its bounded delivery-review exemption" \
-    mission pass
-
-printf 'current\n' > "$root/completion/reports"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-for tier in medium high max; do
+for tier in $tiers; do
     set_tier "$root/wt" "$tier"
     run_completion "$tier completes through the same final gate" mission pass
 done
@@ -1487,9 +1082,7 @@ sed -i '/<!-- end what-done-means:v1 -->/i\- **D9** -- An unmapped completion cl
 git -C "$root/wt" add .claude/skills/mission/SKILL.md
 git -C "$root/wt" commit -qm 'mutate completion contract'
 head_sha=$(git -C "$root/wt" rev-parse HEAD)
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+set_marker code-review-ok "$(marker_key "$root/wt")"
 printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
     "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
 run_completion "an unknown What done means clause blocks completion" \
@@ -1500,7 +1093,7 @@ git -C "$root/wt" commit -qm 'restore completion contract'
 head_sha=$(git -C "$root/wt" rev-parse HEAD)
 
 set_tier "$root/wt" ""
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_marker code-review-ok "$(marker_key "$root/wt")"
 printf 'current\n' > "$root/completion/reports"
 
 # --- completion by PR kind (#439) -------------------------------------------
@@ -1520,7 +1113,7 @@ echo main-next > "$root/mainnext/src/main-next.txt"
 kind_commit "$root/mainnext" 'main advances'
 git -C "$root/mainco" update-ref refs/remotes/origin/main "$(git -C "$root/mainnext" rev-parse HEAD)"
 
-# kind_pr <worktree> <PR base ref> [campaign parent URL] - reviewed markers at
+# kind_pr <worktree> <PR base ref> [campaign parent URL] - a code-review at
 # the worktree's current key and a PR identity matching its head and base.
 kind_pr() {
     kind_git=$(git -C "$1" rev-parse --absolute-git-dir)
@@ -1531,9 +1124,7 @@ kind_pr() {
     kind_key=$(sh "$root/hooks/campaign_context.sh" key "$1")
     kind_head=$(git -C "$1" rev-parse HEAD)
     kind_tip=$(git -C "$1" rev-parse "origin/$2")
-    set_marker_in "$kind_git" arch-review-ok "$kind_key"
-    set_marker_in "$kind_git" delivery-review-ok "$kind_key"
-    set_marker_in "$kind_git" ai-review-complete "$kind_branch $kind_key"
+    set_marker_in "$kind_git" code-review-ok "$kind_key"
     printf '%s %s %s %s OPEN false MERGEABLE CLEAN https://github.com/owner/repo/pull/42 false\n' \
         "$kind_branch" "$kind_head" "$2" "$kind_tip" > "$root/completion/pr-identity"
     printf '%s %s %s OPEN false false %s CLEAN\n' \
@@ -1678,34 +1269,24 @@ git -C "$root/mainco" update-ref refs/remotes/origin/main "$main_first"
 
 # --- commit-reminder --------------------------------------------------------
 
-# At the `small` tier the reminder has to name the gate that branch actually
-# faces. Sending it to run the review its own tier exempts it from would spend
-# exactly the saving the tier exists to buy.
-set_tier "$root/wt" small
-run "the reminder at the small tier names the exemption it runs under" \
-    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "exemption"
-run "the reminder at the small tier still requires AI evidence" \
-    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "ai-review-complete"
-
-# The other direction. Only `small` changes what the reminder says, and without
-# this a widened condition (`small*`, or a prefix match) would start telling
-# `medium` branches they are exempt with every case still green. The reminder is
-# the surface an agent reads most often, so a wrong one there shapes behaviour
-# more than a wrong denial does.
+# Only `implement` changes what the reminder says. Every mission tier hears what
+# an untiered branch hears: the draft is free, leaving draft wants the review.
 for tier in $tiers; do
-    [ "$tier" != "small" ] || continue
     set_tier "$root/wt" "$tier"
-    run "the reminder at the $tier tier still names all reviews" \
-        commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "architecture, delivery and AI"
+    run "the reminder at the $tier tier says a draft opens freely" \
+        commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "A draft PR opens freely"
 done
 
-# Cleared before anything else runs: every case from here on predates tiers and
-# assumes no declaration, and a leftover file would quietly change what they
-# test rather than fail them.
+set_tier "$root/wt" implement
+run "the reminder at the implement tier names the review owed before any PR" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context 'at the `implement` tier'
+
+# Cleared before anything else runs: every case from here on assumes no
+# declaration, and a leftover file would quietly change what they test.
 set_tier "$root/wt" ""
 
-run "the untiered reminder still names all reviews" \
-    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "architecture, delivery and AI"
+run "the untiered reminder names the code-review the gate wants" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context 'need a current `code-review-ok`'
 
 run "a bash command that is not git commit is ignored" \
     commit-reminder "$(json_bash "$root/wt" "git status")" silent
@@ -1810,8 +1391,7 @@ rm -rf "$root/wt/target"
 # Both cases below blocked or misjudged real work the first time these hooks
 # ran for real, which is why they are pinned here.
 
-set_marker arch-review-ok ""
-set_marker delivery-review-ok ""
+set_marker code-review-ok ""
 
 run "a commit message that merely names the gated command is ignored" \
     pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" silent
@@ -1828,9 +1408,8 @@ run "a commit message naming the gated command still reminds, not blocks" \
 run "a leading cd sends the gate to the worktree, not the session cwd" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" deny
 
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-run "a leading cd finds the reviews recorded in that worktree" \
+set_marker code-review-ok "$(marker_key "$root/wt")"
+run "a leading cd finds the review recorded in that worktree" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" silent
 
 run "a leading cd sends the reminder to the worktree branch" \
@@ -1853,7 +1432,7 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 # unrelated doc edit can turn it red.
 
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
-markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+markers=$(sed -n 's/^[A-Z_]*MARKER[A-Z_]*="\([^"]*\)".*/\1/p' "$GUARDRAILS")
 
 # --- full_ci.sh and ci.yml must name the same jobs and label ----------------
 #
@@ -2018,7 +1597,7 @@ fi
 gate_files_padded=" $(echo $markers $tier_file_name) "
 
 if [ -z "$markers" ]; then
-    printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
+    printf 'FAIL no MARKER constants found in guardrails.sh\n'
     failed=$((failed + 1))
 fi
 
@@ -2027,15 +1606,15 @@ fi
 # current names made the check self-selecting, so a doc that renamed its marker
 # dropped out of the set and the rename went unnoticed. A stale list here fails
 # loudly; a self-selecting one failed silently.
-flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md"
+flow_docs=".claude/hooks/README.md"
 
 # Each review skill must call the shared producer under its own kind. The
-# producer owns marker writes and durable receipts; a direct redirect in a
-# skill would reopen the manual-marker path this suite guards.
+# producer owns its marker writes and the durable receipts completion reads; a
+# direct redirect in a skill would reopen the manual-marker path.
 review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md .claude/skills/ai-review/SKILL.md"
 
 # Per file, not "somewhere among them": checking the set would stay green while
-# the instruction vanished from two of the three.
+# the instruction vanished from one of them.
 for marker in $markers; do
     for doc in $flow_docs; do
         if [ ! -f "$repo_root/$doc" ]; then
@@ -2067,7 +1646,7 @@ for doc in $review_skills; do
 done
 
 # Every file name the prose tells an agent to *write* into a git dir is one the
-# gate reads - the two review markers and the tier file.
+# gate reads - the review marker and the tier file.
 # Anchored on the recording command's shape, not on the names — grepping for
 # the current names is what let a renamed doc escape the set. `grep -o`, not
 # `sed`, because a leading `.*` is greedy and would see only the last recording
@@ -2093,9 +1672,7 @@ done
 #
 # The same boundary the markers cross, one layer along: guardrails.sh reads the
 # tier file and the `mission` skill writes it. Rename the file on one side only
-# and a mission declares a tier the gate never sees - which fails in the safe
-# direction for `small`, silently costs the saving for the rest, and in neither
-# case says anything.
+# and a goal declares a tier the gate never sees - and nothing says so.
 
 tier_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md"
 for doc in $tier_docs; do
@@ -2156,14 +1733,6 @@ done
 # commit sha, with the whole suite green, because the checks above assert only
 # that a doc *names* a marker file and never what it writes into it.
 
-for marker in $markers; do
-    if grep -qF -- "$marker" "$repo_root/.claude/hooks/review_report.sh"; then
-        passed=$((passed + 1))
-    else
-        printf 'FAIL the shared report producer never owns %s\n' "$marker"
-        failed=$((failed + 1))
-    fi
-done
 if grep -qF -- 'campaign_context.sh" key' "$repo_root/.claude/hooks/review_report.sh"; then
     passed=$((passed + 1))
 else
