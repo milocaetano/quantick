@@ -790,6 +790,19 @@ impl quantick_control_handlers::widgets::WidgetHost for QuantickApp {
     }
 }
 
+/// A pane's close button closes it through `widget.close`, so the journal
+/// hears the trader's close as it hears an agent's; directly without a gateway.
+pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
+    let close = quantick_control_schema::widget::WIDGET_CLOSE_CAPABILITY_ID;
+    let input = serde_json::json!({ "id": id });
+    if app
+        .control_action(close, 1, crate::control::ActionOrigin::Human, input)
+        .is_err()
+    {
+        let _ = widget_answer(app, id, Some(false));
+    }
+}
+
 /// The widget panes' one door, outside the window's own impl.
 fn widget_answer(
     app: &mut QuantickApp,

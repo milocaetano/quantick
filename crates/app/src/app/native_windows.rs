@@ -99,7 +99,9 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     if app.runtime.tabs.windows().window(WindowId::ROOT).is_some() {
         paint(app, ctx, WindowId::ROOT, now);
         let (widgets, reads) = (&mut app.surfaces.widgets, (&app.config, app.runtime.tz));
-        crate::widget_surfaces::draw(ctx, widgets, &mut app.runtime.tabs, reads);
+        for id in crate::widget_surfaces::draw(ctx, widgets, &mut app.runtime.tabs, reads) {
+            super::control_host::close_widget(app, id);
+        }
     } else {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         if app.presentation.native.final_exit {

@@ -5,8 +5,10 @@
 //! scene's text, so the two cannot disagree.
 //!
 //! A scene is rebuilt only when what it reads changed: the tab, the tape's
-//! last print, the book's time, the body's size or the clock's second.
+//! last print, the book's time or the body's size. The tape is copied once
+//! per change and shared by every pane that reads it.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use quantick_chart::widgets::big_trades::{BigTradesLayout, NotionalUnit, big_trades_view};
@@ -72,7 +74,9 @@ pub struct WidgetFeed<'a> {
     /// What a quantity counts (`BTC`, `contracts`), from the asset's mode.
     pub base_unit: &'a str,
     pub tz: TzOffset,
-    pub now_ms: i64,
+    /// The tape's recent prints, when [`WidgetDeck`] already copied them;
+    /// `None` reads them from `trades`.
+    pub prints: Option<&'a [Aggression]>,
 }
 
 impl WidgetFeed<'_> {
@@ -87,7 +91,12 @@ impl WidgetFeed<'_> {
         }
     }
 
-    fn prints(&self) -> Vec<Aggression> {
+    fn prints(&self) -> Cow<'_, [Aggression]> {
+        self.prints
+            .map_or_else(|| Cow::Owned(self.recent_prints()), Cow::Borrowed)
+    }
+
+    fn recent_prints(&self) -> Vec<Aggression> {
         let trades = self.trades.last_n(WIDGET_TAPE_PRINTS);
         trades
             .map(|trade| Aggression {
@@ -105,11 +114,16 @@ impl WidgetFeed<'_> {
 /// Lays one pane out for a feed in a `width` by `height` body.
 pub type SceneBuilder = fn(&WidgetFeed<'_>, f32, f32) -> WidgetScene;
 
-/// One pane: its id, header title, the capability it needs and its scene.
+/// One pane: its id, header title, the capability it needs, what it reads
+/// and its scene.
 pub struct WidgetSpec {
     pub id: &'static str,
     pub title: &'static str,
     pub gate: fn(&FeedCapabilities) -> bool,
+    /// Reads the order book: the deck keeps the book before the current one.
+    pub book: bool,
+    /// Reads the tape: a new print rebuilds the scene.
+    pub tape: bool,
     pub scene: SceneBuilder,
 }
 
@@ -134,7 +148,8 @@ pub fn depth_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> WidgetScen
     depth_view(model.as_ref(), feed.tick(), resting * width, volume * width).paint(width, height)
 }
 
-/// The prints at or above the configured threshold.
+/// The prints at or above the configured threshold. The window totals are
+/// measured to the tape's newest print, so a replay reads its own time.
 #[must_use]
 pub fn big_trades_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> WidgetScene {
     let min_notional = Decimal::from(feed.setup.big_trade_min());
@@ -152,7 +167,9 @@ pub fn big_trades_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> Widge
         max_rows: BIG_TRADES_MAX_ROWS,
     };
     let prints = feed.prints();
-    let model = (!prints.is_empty()).then(|| big_trades(&prints, &params, feed.now_ms));
+    let model = prints
+        .last()
+        .map(|newest| big_trades(&prints, &params, newest.timestamp_ms));
     big_trades_view(model.as_ref(), &layout).paint(width, height)
 }
 
@@ -199,19 +216,24 @@ pub fn spot_perp_cvd_scene(feed: &WidgetFeed<'_>, width: f32, height: f32) -> Wi
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SceneKey {
     tab_id: u64,
-    prints: usize,
-    last_print: Option<(u64, i64)>,
+    tape: Option<TapeKey>,
     ladder_at_ms: Option<i64>,
     size: (u32, u32),
-    second: i64,
 }
 
-/// The open panes, the book each saw before, and their scenes.
+/// The tape's length and its newest print's id and time.
+type TapeKey = (usize, u64, i64);
+
+/// The open panes, the book each saw before, the shared prints and their
+/// scenes.
 #[derive(Default)]
 pub struct WidgetDeck {
     open: Vec<&'static str>,
+    /// The tab the kept book and prints came from.
+    tab_id: Option<u64>,
     /// The latest book seen and the one before it, with their times.
     books: [Option<(BookLadder, i64)>; 2],
+    prints: (Option<TapeKey>, Vec<Aggression>),
     scenes: BTreeMap<&'static str, (SceneKey, WidgetScene)>,
 }
 
@@ -254,22 +276,35 @@ impl WidgetDeck {
         feed: &WidgetFeed<'_>,
         (width, height): (f32, f32),
     ) -> &WidgetScene {
-        self.observe(feed);
-        let last = feed.trades.last();
+        if self.tab_id != Some(feed.tab_id) {
+            self.tab_id = Some(feed.tab_id);
+            self.books = [None, None];
+            self.prints = (None, Vec::new());
+        }
+        if spec.book {
+            self.observe(feed);
+        }
+        let tape = feed.trades.last().map(|trade| {
+            let len = feed.trades.len();
+            (len, trade.agg_id, trade.timestamp_ms)
+        });
         let key = SceneKey {
             tab_id: feed.tab_id,
-            prints: feed.trades.len(),
-            last_print: last.map(|trade| (trade.agg_id, trade.timestamp_ms)),
-            ladder_at_ms: feed.ladder.map(|(_, at)| at),
+            tape: tape.filter(|_| spec.tape),
+            ladder_at_ms: feed.ladder.map(|(_, at)| at).filter(|_| spec.book),
             size: (width.round() as u32, height.round() as u32),
-            second: feed.now_ms.div_euclid(1000),
         };
-        let [current, earlier] = &self.books;
         let fresh = !matches!(self.scenes.get(spec.id), Some((cached, _)) if *cached == key);
         if fresh {
+            if spec.tape && self.prints.0 != tape {
+                self.prints = (tape, feed.recent_prints());
+            }
+            let [current, earlier] = &self.books;
+            let book = |kept| if spec.book { held(kept) } else { None };
             let feed = WidgetFeed {
-                ladder: held(current),
-                earlier: held(earlier),
+                ladder: book(current),
+                earlier: book(earlier),
+                prints: spec.tape.then_some(self.prints.1.as_slice()),
                 ..*feed
             };
             let scene = (spec.scene)(&feed, width, height);
@@ -278,10 +313,11 @@ impl WidgetDeck {
         &self.scenes[spec.id].1
     }
 
-    /// Keep the book the panes saw before the current one; a new tab
-    /// forgets both.
+    /// Keep the book the panes saw before the current one; a missing book
+    /// forgets both, so a stale ladder never stands in for it.
     fn observe(&mut self, feed: &WidgetFeed<'_>) {
         let Some((ladder, at_ms)) = feed.ladder else {
+            self.books = [None, None];
             return;
         };
         match &self.books[0] {

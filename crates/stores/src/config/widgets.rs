@@ -110,9 +110,15 @@ impl FeedConfig {
                     self.id
                 ));
             }
-            if setup.big_trade_presets.is_empty() {
+            if setup.big_trade_presets.is_empty() || setup.big_trade_presets.contains(&0) {
                 return Err(format!(
-                    "feed '{}' offers no Big Trades preset for '{symbol}'",
+                    "feed '{}' offers no positive Big Trades preset for '{symbol}'",
+                    self.id
+                ));
+            }
+            if !setup.big_trade_presets.contains(&setup.big_trade_min()) {
+                return Err(format!(
+                    "feed '{}' sets a Big Trades minimum for '{symbol}' that is none of its presets",
                     self.id
                 ));
             }
@@ -178,5 +184,22 @@ mod tests {
                 .validate_widgets()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_big_trades_minimum_is_one_of_its_positive_presets() {
+        for (widgets, refusal) in [
+            (
+                "{ \"WIN*\" = { big_trade_min = 100 } }",
+                "none of its presets",
+            ),
+            (
+                "{ \"WIN*\" = { big_trade_presets = [0, 5] } }",
+                "no positive",
+            ),
+        ] {
+            let error = feed(widgets).validate_widgets().unwrap_err();
+            assert!(error.contains(refusal), "{widgets}: {error}");
+        }
     }
 }

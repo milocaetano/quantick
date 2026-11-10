@@ -21,11 +21,11 @@ use crate::pane::PaneSide;
 
 #[rustfmt::skip]
 pub(crate) const WIDGET_SURFACES: [WidgetSpec; 5] = [
-    WidgetSpec { id: "depth", title: "DEPTH", gate: |caps| caps.book_capture, scene: handlers::depth_scene },
-    WidgetSpec { id: "big_trades", title: "BIG TRADES", gate: |_| true, scene: handlers::big_trades_scene },
-    WidgetSpec { id: "liquidations", title: "LIQUIDATIONS", gate: |caps| caps.liquidations, scene: handlers::liquidations_scene },
-    WidgetSpec { id: "open_interest", title: "OI + FUNDING", gate: |caps| caps.open_interest, scene: handlers::open_interest_scene },
-    WidgetSpec { id: "spot_perp_cvd", title: "SPOT vs PERP CVD", gate: |caps| caps.spot_perp_pair, scene: handlers::spot_perp_cvd_scene },
+    WidgetSpec { id: "depth", title: "DEPTH", gate: |caps| caps.book_capture, book: true, tape: true, scene: handlers::depth_scene },
+    WidgetSpec { id: "big_trades", title: "BIG TRADES", gate: |_| true, book: false, tape: true, scene: handlers::big_trades_scene },
+    WidgetSpec { id: "liquidations", title: "LIQUIDATIONS", gate: |caps| caps.liquidations, book: false, tape: false, scene: handlers::liquidations_scene },
+    WidgetSpec { id: "open_interest", title: "OI + FUNDING", gate: |caps| caps.open_interest, book: false, tape: false, scene: handlers::open_interest_scene },
+    WidgetSpec { id: "spot_perp_cvd", title: "SPOT vs PERP CVD", gate: |caps| caps.spot_perp_pair, book: false, tape: false, scene: handlers::spot_perp_cvd_scene },
 ];
 
 /// A pane body's size before its window first lays out, and its window's.
@@ -55,8 +55,8 @@ fn with_feed<R>(
     let pane = tab.pane_mut(PaneSide::Flow);
     let at_ms = pane
         .orderflow
-        .as_mut()
-        .and_then(|view| view.health().last_event_ms);
+        .as_ref()
+        .and_then(|view| view.last_event_ms());
     let book = pane.orderflow.as_ref().map(|view| view.cached_book());
     run(
         WidgetFeed {
@@ -69,26 +69,29 @@ fn with_feed<R>(
             setup: &setup,
             base_unit: &base_unit,
             tz,
-            now_ms: crate::metrics::wall_clock_ms(),
+            prints: None,
         },
         market,
     )
 }
 
 /// Draw every open pane in its own window, laid out for the size its body
-/// had last frame.
+/// had last frame; the panes whose close button was pressed.
 pub(crate) fn draw(
     ctx: &egui::Context,
     surfaces: &mut WidgetSurfaces,
     tabs: &mut ArrangementHost,
     reads: (&AppConfig, TzOffset),
-) {
+) -> Vec<&'static str> {
     #[cfg(any(feature = "scenario-harness", test))]
     surfaces.apply_hook();
-    let open = surfaces.deck.open_ids();
+    let (open, mut closed) = (surfaces.deck.open_ids(), Vec::new());
     if open.is_empty() {
-        return;
+        return closed;
     }
+    // The header row on top of a `BODY` body, so a read before the first
+    // paint lays out what the window then shows.
+    let header = ctx.style().spacing.interact_size.y + ctx.style().spacing.item_spacing.y;
     let palette = crate::theme::get(ctx);
     let ink = |on: bool| {
         *palette.get(if on {
@@ -117,7 +120,7 @@ pub(crate) fn draw(
                 .id(egui::Id::new(("widget", id)))
                 .title_bar(false)
                 .default_pos(corner)
-                .default_size(BODY)
+                .default_size(egui::vec2(BODY.0, BODY.1 + header))
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -138,10 +141,11 @@ pub(crate) fn draw(
                     surfaces.sizes.insert(id, (rect.width(), rect.height()));
                 });
             if !shown {
-                surfaces.deck.set_open(id, false);
+                closed.push(id);
             }
         }
     });
+    closed
 }
 
 /// The control plane's door: open or close `id` when asked, then the

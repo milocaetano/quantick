@@ -56,7 +56,7 @@ fn feed<'a>(
         setup,
         base_unit: "BTC",
         tz: TzOffset::new(0),
-        now_ms: 3_500,
+        prints: None,
     }
 }
 
@@ -73,6 +73,8 @@ fn spec(id: &'static str, scene: SceneBuilder) -> WidgetSpec {
         id,
         title: "T",
         gate: |_| true,
+        book: true,
+        tape: true,
         scene,
     }
 }
@@ -90,6 +92,63 @@ fn big_trades_lists_the_prints_over_the_configured_threshold() {
     assert!(texts.contains(&"SELL"), "{texts:?}");
     assert!(texts.contains(&"76201.0"), "{texts:?}");
     assert!(scene.chips.contains(&("250k".to_owned(), true)));
+}
+
+#[test]
+fn big_trades_measures_its_window_to_the_tape_not_the_wall_clock() {
+    // A tape from 1970, as an old replay is to the wall clock.
+    let (trades, setup) = (tape(), usd());
+    let scene = big_trades_scene(
+        &feed(&trades, &setup, FeedCapabilities::none()),
+        SIZE.0,
+        SIZE.1,
+    );
+    let footer = scene
+        .texts()
+        .find(|text| text.starts_with("last "))
+        .expect("a footer");
+    assert!(!footer.ends_with("sells $0"), "{footer}");
+}
+
+#[test]
+fn a_new_tab_or_a_missing_book_forgets_the_kept_books() {
+    let (trades, setup) = (tape(), usd());
+    let book = ladder();
+    let depth = spec("depth", depth_scene);
+    let mut deck = WidgetDeck::default();
+    let at = |tab_id, ladder| WidgetFeed {
+        tab_id,
+        ladder,
+        ..feed(&trades, &setup, FeedCapabilities::none())
+    };
+    let times = |deck: &WidgetDeck| deck.books.each_ref().map(|kept| kept.as_ref().map(|b| b.1));
+    deck.scene(&depth, &at(7, Some((&book, 10))), SIZE);
+    deck.scene(&depth, &at(7, Some((&book, 20))), SIZE);
+    assert_eq!(times(&deck), [Some(20), Some(10)]);
+    deck.scene(&depth, &at(8, Some((&book, 30))), SIZE);
+    assert_eq!(
+        times(&deck),
+        [Some(30), None],
+        "another tab's book is never the earlier one"
+    );
+    deck.scene(&depth, &at(8, None), SIZE);
+    assert_eq!(times(&deck), [None, None], "no book is not the last book");
+}
+
+#[test]
+fn panes_share_one_copy_of_the_tape() {
+    let (trades, setup) = (tape(), usd());
+    let mut deck = WidgetDeck::default();
+    let feed = feed(&trades, &setup, FeedCapabilities::none());
+    deck.scene(&spec("big_trades", big_trades_scene), &feed, SIZE);
+    let copied = deck.prints.1.as_ptr();
+    deck.scene(&spec("depth", depth_scene), &feed, SIZE);
+    assert_eq!(
+        deck.prints.1.as_ptr(),
+        copied,
+        "the same tape is not copied twice"
+    );
+    assert_eq!(deck.prints.1.len(), 3);
 }
 
 #[test]
@@ -206,12 +265,16 @@ fn a_hook_list_opens_only_the_panes_the_registry_knows() {
             id: "depth",
             title: "DEPTH",
             gate: |_| true,
+            book: true,
+            tape: true,
             scene: depth_scene,
         },
         WidgetSpec {
             id: "big_trades",
             title: "BIG TRADES",
             gate: |_| true,
+            book: false,
+            tape: true,
             scene: big_trades_scene,
         },
     ];
