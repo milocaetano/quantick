@@ -44,9 +44,8 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     frames(&mut app, &ctx, 2);
     app.runtime.workspace.book.book_mut().set_autosave(false);
     frames(&mut app, &ctx, 2);
-    assert_eq!(
-        CapsuleState::of(&app, &egui::Context::default()).marks().1,
-        false,
+    assert!(
+        !CapsuleState::of(&app, &egui::Context::default()).marks().1,
         "a clean tab"
     );
     assert!(control(&app, "toolbar.capsule.save").is_none());

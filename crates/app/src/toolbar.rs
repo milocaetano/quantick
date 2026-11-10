@@ -1512,8 +1512,8 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let rtl = egui::Layout::right_to_left(egui::Align::Min);
-                    ui.with_layout(rtl, |ui| draw_trade(ui, paper, &mut actions));
+                    let row = egui::Layout::left_to_right(egui::Align::Min);
+                    ui.with_layout(row, |ui| draw_trade(ui, paper, &mut actions));
                 });
             });
         }

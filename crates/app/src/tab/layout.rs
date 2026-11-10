@@ -282,6 +282,7 @@ impl CanvasLayout {
 
 /// The layout a hook or a config names: a config word first (so
 /// `time+time+flow` stays the stacked column it always was), else a preset id.
+#[cfg(any(feature = "scenario-harness", test))]
 pub(crate) fn named(name: &str) -> Option<CanvasLayout> {
     let declared = crate::config::DeclaredLayout::parse(name).map(CanvasLayout::from);
     declared.or_else(|| crate::canvas_layout::preset(name).map(CanvasLayout::from_preset))

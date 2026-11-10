@@ -36,7 +36,7 @@ impl CapsuleState {
         let saved = book
             .book()
             .recipe(&workspace)
-            .map(|recipe| super::canvas_wiring::recipe_state(recipe));
+            .map(super::canvas_wiring::recipe_state);
         let layout_unsaved = unsaved
             && saved
                 .as_ref()
