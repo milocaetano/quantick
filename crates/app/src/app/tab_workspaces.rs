@@ -175,9 +175,11 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
     let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
-    // The timeframe stays the tab's: each pane keeps its own interval.
-    let bars = super::arrangement_adapter::saved_tab_of(tab).context_bars;
-    let intervals = super::saved_context_intervals(&bars, None);
+    // The recipe's bar rules win where it names one; a recipe saved before it
+    // kept them leaves each pane on its own.
+    let saved = super::arrangement_adapter::saved_tab_of(tab);
+    let intervals =
+        super::saved_context_intervals(&recipe.context_bars_over(&saved.context_bars), None);
     let legends = LegendFold {
         flow: tab.flow_pane.legend_collapsed,
         time: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
@@ -195,6 +197,12 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
+    let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
+    for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
+        if let Ok(spec) = rules.parse(rule) {
+            let _ = tab.set_pane_bar_spec(address, spec); // A rule the feed refuses leaves the pane.
+        }
+    }
     apply_recipe_switches(runtime, id, recipe);
 }
 

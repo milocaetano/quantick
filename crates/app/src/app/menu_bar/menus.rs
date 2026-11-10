@@ -269,10 +269,7 @@ impl WindowMenu<'_> {
             take_focus(state, level, &response);
             return;
         }
-        if self
-            .workspace
-            .action_row(ui, id, &mut state.tab_workspace, commands)
-        {
+        if self.workspace.action_row(ui, id, commands) {
             return;
         }
         let row = row_of(id);

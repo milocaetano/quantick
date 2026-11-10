@@ -114,16 +114,17 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.rename",
         title: "Rename a workspace",
-        reach: "window menu, Workspace, Rename",
+        reach: "window menu, Workspace, Rename, or a row's Rename in Manage workspaces",
         keys: &[(Source::MenuEntry, "Rename workspace\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.rename"]),
     },
     UiBehaviour {
-        id: "workspace.delete",
-        title: "Delete a workspace, moving its tabs to Default",
-        reach: "window menu, Workspace, Delete",
-        keys: &[(Source::MenuEntry, "Delete workspace")],
-        mapping: Mapping::Capabilities(&["workspace.delete"]),
+        id: "workspace.manage",
+        title: "List every workspace with its tabs, to rename or delete one (its tabs move to \
+                Default), Delete confirmed in the row",
+        reach: "window menu, Workspace, Manage workspaces\u{2026}, or the workspace cell's menu",
+        keys: &[(Source::MenuEntry, "Manage workspaces\u{2026}")],
+        mapping: Mapping::Capabilities(&["workspace.list", "workspace.rename", "workspace.delete"]),
     },
     UiBehaviour {
         id: "workspace.list",

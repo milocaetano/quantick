@@ -213,8 +213,8 @@ The three exclusion classes are closed:
 | `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
 | `workspace.new` | Make a new, empty workspace for a tab | the status bar's workspace cell, New workspace | `workspace.new` | — |
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the status bar's auto save check, or the workspace cell's menu | `workspace.autosave.set` | — |
-| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename | `workspace.rename` | — |
-| `workspace.delete` | Delete a workspace, moving its tabs to Default | window menu, Workspace, Delete | `workspace.delete` | — |
+| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, or a row's Rename in Manage workspaces | `workspace.rename` | — |
+| `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the workspace cell's menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |

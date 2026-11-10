@@ -58,8 +58,9 @@ pub trait TabRecipeHost {
     /// with now, and only the style, so an edit on another tab reaches every
     /// other knob here but never the style. No pixel changes.
     fn pin_tab_footprint(&mut self, tab: u64);
-    /// The canvas and the context intervals. Drawings, anchored studies, the flow
-    /// bar size and the paper position are not touched: they are the market's.
+    /// The canvas and the bar rules: the context intervals and the flow bar,
+    /// where the recipe names one. Drawings, anchored studies and the paper
+    /// position are not touched: they are the market's.
     fn apply_recipe_canvas(&mut self, tab: u64, recipe: &WorkspaceRecipe);
     /// Layers and the footprint style, on every pane the tab has now.
     fn apply_recipe_switches(&mut self, tab: u64, recipe: &WorkspaceRecipe);

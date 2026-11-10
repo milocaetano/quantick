@@ -4,9 +4,7 @@
 
 use eframe::egui;
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
-use quantick_session::workspace_menu::{
-    DeleteClick, NameDialogMode, WorkspaceCommand, WorkspaceMenuState,
-};
+use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
 
 use super::MenuCommand;
@@ -45,10 +43,7 @@ impl<'a> WorkspaceRows<'a> {
     }
 
     fn symbols(&self, tabs: &[u64]) -> Vec<String> {
-        tabs.iter()
-            .filter_map(|id| self.tabs.by_id(*id))
-            .map(|tab| tab.symbol.clone())
-            .collect()
+        crate::app::tab_workspaces::symbols_of(self.tabs, tabs)
     }
 
     fn push(commands: &mut Vec<MenuCommand>, command: WorkspaceCommand) {
@@ -106,7 +101,6 @@ impl<'a> WorkspaceRows<'a> {
         self,
         ui: &mut egui::Ui,
         id: RowId,
-        menu: &mut WorkspaceMenuState,
         commands: &mut Vec<MenuCommand>,
     ) -> bool {
         let (workspace, _) = self.state();
@@ -139,41 +133,18 @@ impl<'a> WorkspaceRows<'a> {
                     Self::push(commands, WorkspaceCommand::SetAutosave(on));
                 }
             }
-            RowId::WorkspaceDelete => self.delete_row(ui, workspace, on_default, menu, commands),
+            RowId::ManageWorkspaces => {
+                if ui
+                    .button(row.label)
+                    .on_hover_text(row.hover.unwrap_or_default())
+                    .clicked()
+                {
+                    Self::push(commands, WorkspaceCommand::BeginManage);
+                }
+            }
             _ => return false,
         }
         true
-    }
-
-    /// Armed by the first click, when the row says what the second one will do.
-    fn delete_row(
-        self,
-        ui: &mut egui::Ui,
-        workspace: &str,
-        on_default: bool,
-        menu: &mut WorkspaceMenuState,
-        commands: &mut Vec<MenuCommand>,
-    ) {
-        let row = row_of(RowId::WorkspaceDelete);
-        let armed = menu.armed_delete.as_deref() == Some(workspace);
-        let label = if armed {
-            let moved = self
-                .book
-                .list()
-                .into_iter()
-                .find(|listing| listing.name == workspace)
-                .map(|listing| self.symbols(&listing.tabs))
-                .unwrap_or_default();
-            text::delete_armed_label(workspace, &moved)
-        } else {
-            row.label.to_owned()
-        };
-        let response = ui
-            .add_enabled(!on_default, egui::Button::new(label))
-            .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
-        if response.clicked() && menu.click_delete(workspace) == DeleteClick::Confirmed {
-            Self::push(commands, WorkspaceCommand::Delete(workspace.to_owned()));
-        }
     }
 
     /// The menu above the status bar's workspace cell, opening upward from its
@@ -206,10 +177,10 @@ impl<'a> WorkspaceRows<'a> {
                         ));
                         self.list(ui, commands, true);
                         ui.separator();
-                        self.action_row(ui, RowId::WorkspaceAutosave, menu, commands);
+                        self.action_row(ui, RowId::WorkspaceAutosave, commands);
                         self.save_to_row(ui, keys, commands);
                         for id in text::CELL_MENU_ROWS {
-                            self.action_row(ui, *id, menu, commands);
+                            self.action_row(ui, *id, commands);
                         }
                     });
                 });
@@ -229,13 +200,15 @@ impl<'a> WorkspaceRows<'a> {
     }
 }
 
+/// The workspace dialogs: the one asking a name over the Manage one.
+pub(super) fn dialogs(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+    super::workspace_manage::manage_dialog(app, ctx, commands);
+    name_dialog(app, ctx, commands);
+}
+
 /// The dialog that asks for a name: Enter saves, Esc cancels, and a refusal stands
 /// under the field with the name still in it.
-pub(super) fn name_dialog(
-    app: &mut QuantickApp,
-    ctx: &egui::Context,
-    commands: &mut Vec<MenuCommand>,
-) {
+fn name_dialog(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
     let palette = crate::theme::get(ctx);
     let tab = app.runtime.tabs.active_id();
     let state = &mut app.chrome.window_menu.tab_workspace;

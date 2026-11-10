@@ -1,0 +1,13 @@
+# Raised by 66 lines for the Manage workspaces dialog
+# (`feat/workspace-manage-timeframes`): its egui painting (a grid of every
+# workspace with its tab count, the current one's check, and per row Rename
+# and Delete with the in-row confirmation) is the new file
+# `crates/app/src/app/menu_bar/workspace_manage.rs`. The menu's inline delete
+# row it replaces is gone (-33). The dialog's state and the delete arm are
+# `quantick_session::workspace_menu::ManageDialog`, its words
+# `quantick_control_schema::window_menu`, and what a button does the shared
+# `WorkspaceCommand`. The rest is the recipe's bar rules put on the panes in
+# `tab_workspaces::apply_recipe_canvas`; which rules apply is decided by
+# `WorkspaceRecipe::rules_over`.
+crates/app +66
+!budget +66

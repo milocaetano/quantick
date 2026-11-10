@@ -1095,12 +1095,12 @@ pub fn capture_recipe(
     (layers, context_layers): (BTreeMap<String, bool>, Vec<BTreeMap<String, bool>>),
     footprint_style: Option<String>,
 ) -> WorkspaceRecipe {
-    let intervals = if tab.context_bars.is_empty() {
-        tab.time_bars.iter().count()
+    let context_bars = if tab.context_bars.is_empty() {
+        tab.time_bars.iter().cloned().collect()
     } else {
-        tab.context_bars.len()
+        tab.context_bars.clone()
     };
-    let panes = tab.context_layouts.len().max(intervals);
+    let panes = tab.context_layouts.len().max(context_bars.len());
     // A pane the stack has not sized yet is automatic and open, which is what
     // a missing entry means: one reading for both, or a fresh pane is an edit.
     let mut context_heights = tab.context_heights.clone();
@@ -1119,10 +1119,12 @@ pub fn capture_recipe(
             .map(|pane| ContextPaneRecipe {
                 indicators: indicators_of(layouts, tab.context_layouts.get(pane).copied()),
                 layers: context_layers.get(pane).cloned().unwrap_or_default(),
+                bars: context_bars.get(pane).cloned(),
             })
             .collect(),
         layers,
         footprint_style,
+        flow_bars: Some(tab.flow_bars.clone()),
     }
 }
 

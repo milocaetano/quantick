@@ -1,11 +1,13 @@
 //! What a workspace keeps: one saved way of reading a market.
 //!
 //! A recipe holds the canvas, the indicators on each pane by role, the layer
-//! toggles and the footprint style. It never holds drawings, anchored studies,
-//! a pane's timeframe, the flow bar size or the paper position: those belong to
-//! the market the tab shows, so a workspace switch never moves them. A recipe
-//! written while it still kept `context_bars` reads with that key ignored, and
-//! the tab keeps the intervals it had.
+//! toggles, the footprint style and each pane's bar rule (the flow bar and the
+//! context charts' intervals), so a workspace reopens on the timeframes it
+//! saved. It never holds drawings, anchored studies or the paper position:
+//! those belong to the market the tab shows. A recipe written before it kept
+//! bar rules holds none, and the tab keeps the rules it had, which a new tab
+//! takes from what its market remembers. The `context_bars` key an older
+//! recipe still carries is ignored: it was written by a rule since reversed.
 //!
 //! Indicators are copies, not layout ids. A layout id points into the shared
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
@@ -19,8 +21,7 @@ use std::collections::BTreeMap;
 pub const FACTORY_SUMMARY: &str = "as the feed opens";
 const SUMMARY_SEPARATOR: &str = " \u{b7} ";
 
-/// What the menu calls a context pane: its interval is the market's, not the
-/// workspace's.
+/// What the menu calls a context pane.
 const CONTEXT_PANE_LABEL: &str = "Time";
 
 /// The canvas layout a feed declares its tabs open on (`default_layout` in
@@ -81,13 +82,16 @@ impl DeclaredLayout {
 
 /// What a recipe keeps for one context pane; its role is its place, top to
 /// bottom.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContextPaneRecipe {
     #[serde(default)]
     pub indicators: Vec<SavedIndicator>,
     /// This pane's layer switches, as [`WorkspaceRecipe::layers`] for the flow pane.
     #[serde(default)]
     pub layers: BTreeMap<String, bool>,
+    /// This pane's bar rule, e.g. `time:300000`; absent keeps the tab's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bars: Option<String>,
 }
 
 /// One saved way of reading a market.
@@ -123,6 +127,9 @@ pub struct WorkspaceRecipe {
     /// The footprint style's id; absent keeps the window's footprint style.
     #[serde(default)]
     pub footprint_style: Option<String>,
+    /// The flow pane's bar rule, e.g. `tick:2000`; absent keeps the tab's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_bars: Option<String>,
 }
 
 impl Default for WorkspaceRecipe {
@@ -140,6 +147,7 @@ impl Default for WorkspaceRecipe {
             context_panes: Vec::new(),
             layers: BTreeMap::new(),
             footprint_style: None,
+            flow_bars: None,
         }
     }
 }
@@ -176,7 +184,7 @@ impl WorkspaceRecipe {
     pub fn emptied(&self) -> Self {
         let bare = |pane: &ContextPaneRecipe| ContextPaneRecipe {
             indicators: Vec::new(),
-            layers: pane.layers.clone(),
+            ..pane.clone()
         };
         Self {
             flow_indicators: Vec::new(),
@@ -217,7 +225,7 @@ impl WorkspaceRecipe {
     pub fn new_tab_arrangement(layout: DeclaredLayout, indicators: &[SavedIndicator]) -> Self {
         let pane = ContextPaneRecipe {
             indicators: indicators.to_vec(),
-            layers: BTreeMap::new(),
+            ..ContextPaneRecipe::default()
         };
         Self {
             layout,
@@ -227,9 +235,49 @@ impl WorkspaceRecipe {
         }
     }
 
+    /// The context charts' bar rules over the tab's `tab` ones: the recipe's
+    /// rule on each pane that has one, the tab's on the rest. A pane the tab
+    /// lacks and the recipe names no rule for is left empty, which opens on
+    /// the default interval.
+    #[must_use]
+    pub fn context_bars_over(&self, tab: &[String]) -> Vec<String> {
+        let named = self
+            .context_panes
+            .iter()
+            .rposition(|pane| pane.bars.is_some())
+            .map_or(0, |last| last + 1);
+        (0..tab.len().max(named))
+            .map(|slot| {
+                let saved = self
+                    .context_panes
+                    .get(slot)
+                    .and_then(|pane| pane.bars.as_ref());
+                saved.or(tab.get(slot)).cloned().unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// The bar rules the recipe names that differ from the tab's, by pane
+    /// address: 0 is the flow pane, then the context panes top to bottom.
+    #[must_use]
+    pub fn rules_over<'a>(&'a self, flow: &str, context: &[String]) -> Vec<(usize, &'a str)> {
+        let panes = self.context_panes.iter().map(|pane| pane.bars.as_deref());
+        let tab = std::iter::once(Some(flow))
+            .chain((0..).map(|slot| context.get(slot).map(String::as_str)));
+        std::iter::once(self.flow_bars.as_deref())
+            .chain(panes)
+            .zip(tab)
+            .enumerate()
+            .filter_map(|(address, (rule, shown))| {
+                rule.filter(|rule| Some(*rule) != shown)
+                    .map(|rule| (address, rule))
+            })
+            .collect()
+    }
+
     /// What differs from `base`, in the words the close prompt lists: each
-    /// indicator added, removed or changed by name, then `panes`, `layers` and
-    /// `footprint style` once each. Empty when nothing differs.
+    /// indicator added, removed or changed by name, then `panes`, `layers`,
+    /// `footprint style` and `timeframe` once each. Empty when nothing differs.
     #[must_use]
     pub fn changes_from(&self, base: &Self) -> Vec<String> {
         let mut words: Vec<String> = Vec::new();
@@ -290,6 +338,14 @@ impl WorkspaceRecipe {
         }
         if self.footprint_style != base.footprint_style {
             note("footprint style".to_owned());
+        }
+        let bars = |recipe: &Self| {
+            std::iter::once(recipe.flow_bars.clone())
+                .chain(recipe.context_panes.iter().map(|pane| pane.bars.clone()))
+                .collect::<Vec<_>>()
+        };
+        if bars(self) != bars(base) {
+            note("timeframe".to_owned());
         }
         words
     }
