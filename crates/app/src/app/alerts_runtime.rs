@@ -35,6 +35,16 @@ pub(super) fn deliver(
 }
 
 impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::QuantickApp {
+    fn alert_resolve_target(
+        &mut self,
+        selector: quantick_control_schema::alerts::DrawingSelector,
+    ) -> Result<
+        quantick_alerts::DurableDrawingRef,
+        quantick_control_schema::alerts::TargetResolveError,
+    > {
+        use super::LayoutPort;
+        self.layout_adapter().resolve_alert_target(selector)
+    }
     fn alert_book(&self) -> &quantick_alerts::AlertBook {
         &self.runtime.alerts.core.book
     }
