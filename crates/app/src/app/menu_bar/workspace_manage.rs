@@ -11,8 +11,6 @@ use quantick_session::workspace_menu::{DeleteClick, WorkspaceCommand};
 use super::MenuCommand;
 use crate::app::QuantickApp;
 
-const NAME_COLUMN_WIDTH_PT: f32 = 160.0;
-
 /// The dialog, in the window presenting the tab whose menu opened it.
 pub(super) fn manage_dialog(
     app: &mut QuantickApp,
@@ -40,12 +38,13 @@ pub(super) fn manage_dialog(
                 .show(ui, |ui| {
                     for row in rows {
                         let is_current = current.as_deref() == Some(row.name.as_str());
-                        let check = if is_current { "\u{2713}" } else { "" };
+                        let check = if is_current {
+                            egui_phosphor::regular::CHECK
+                        } else {
+                            ""
+                        };
                         ui.label(check).on_hover_text(text::MANAGE_CURRENT_HOVER);
-                        ui.add_sized(
-                            [NAME_COLUMN_WIDTH_PT, 0.0],
-                            egui::Label::new(egui::RichText::new(&row.name).strong()).truncate(),
-                        );
+                        ui.label(egui::RichText::new(&row.name).strong());
                         ui.label(crate::theme::supporting_text(
                             ui,
                             text::tab_count_label(row.tabs.len()),
