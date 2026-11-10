@@ -264,7 +264,9 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
     assert_eq!(pane.model.menu.drawing, None);
     assert!(pane.model.menu.rename.is_empty());
     assert!(
-        pane.context_menu.menu_rects.is_empty(),
+        !pane.context_menu.menu_rects.iter().any(|(label, _)| {
+            ["Rename", "Add strategy", "Lock", "Hide", "Delete"].contains(label)
+        }),
         "no section for a ghost"
     );
 }

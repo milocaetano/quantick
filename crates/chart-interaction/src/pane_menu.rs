@@ -231,6 +231,8 @@ pub struct ObjectFact {
 pub struct Facts {
     pub layers: Vec<LayerFact>,
     pub flow_opening: Option<bool>,
+    /// The pane carries the order-flow settings panel its header's gear opens.
+    pub flow_settings: bool,
     pub tape: Option<TapeFact>,
     pub drawing: Option<DrawingMenuFact>,
     pub places: Vec<PlaceFact>,
@@ -255,10 +257,38 @@ fn chart_layers(facts: &Facts) -> Vec<Entry> {
                 checked: ignore, choice: MenuIntent::SetIgnoreFlowOpening(!ignore), shortcut: None,
             }).hint("Exclude the opening quantity in the region containing each UTC date's first recorded trade from FLOW sizing. Only that region may exceed the ordinary maximum, with proportional area and its full volume shown. Other regions share the visible full-volume reference. The first recorded trade is not a proven auction. If no other volume is visible, use the full scale. This preference lasts for this pane and does not change Tape.")] }));
         }
-        if row.blocked.is_none() && row.layer == ChartLayer::Footprint {
-            out.push(Entry::new("", Kind::Indent { id: "footprint_configure", children: vec![button("configure footprint\u{2026}", MenuIntent::OpenFootprintSettings,
-                "style, band fineness, imbalance thresholds, POC and badges \u{2014} in their own window", "configure footprint")] }));
-        }
+    }
+    out
+}
+/// The settings doors, kept together in the main menu right under "chart
+/// layers": the footprint's window on every chart, and on the flow pane the
+/// gear's panel opened on its L2 or bubbles section.
+fn settings_entries(facts: &Facts) -> Vec<Entry> {
+    let mut out = Vec::new();
+    if let Some(row) = facts
+        .layers
+        .iter()
+        .find(|row| row.layer == ChartLayer::Footprint && !row.layer.on_tape())
+    {
+        out.push(
+            button("configure footprint\u{2026}", MenuIntent::OpenFootprintSettings,
+                "style, band fineness, imbalance thresholds, POC and badges \u{2014} in their own window", "configure footprint")
+            .disabled(row.blocked.map(|block| block.explanation.into())),
+        );
+    }
+    if facts.flow_settings {
+        out.push(button(
+            "configure L2\u{2026}",
+            MenuIntent::OpenLayerSettings(ChartLayer::Heatmap),
+            "the book's depth map and strip \u{2014} in the gear's panel beside this chart",
+            "configure L2",
+        ));
+        out.push(button(
+            "configure bubbles\u{2026}",
+            MenuIntent::OpenLayerSettings(ChartLayer::Bubbles),
+            "the bubbles' size, filter and look \u{2014} in the gear's panel beside this chart",
+            "configure bubbles",
+        ));
     }
     out
 }
@@ -537,6 +567,11 @@ pub fn describe(model: &Model, facts: &Facts) -> Vec<Entry> {
                 "what this chart draws"
             }),
     );
+    let settings = settings_entries(facts);
+    if !settings.is_empty() {
+        out.extend(settings);
+        out.push(separator());
+    }
     let count = facts.objects.len();
     let empty = (count == 0).then(|| "nothing is drawn on this chart".into());
     out.push(Entry::new(format!("objects ({count})"), Kind::Submenu(vec![Entry::new("", Kind::Scroll { maximum_height: 320.0, children: object_entries(&facts.objects) })]))

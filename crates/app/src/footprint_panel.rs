@@ -1,6 +1,6 @@
 //! The footprint settings — the Profitchart-style properties dialog, drawn
 //! as the Footprint tab of the chart settings window and opened on that tab
-//! from the layer menu's "configure footprint…" entry.
+//! from the chart menu's "configure footprint…" entry.
 //!
 //! It edits the **focused chart's** knobs, not the window's: a split layout
 //! is two different readings of the same market (a 90-day context chart and
