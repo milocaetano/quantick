@@ -4,7 +4,7 @@
 
 use crate::{
     pane::{ChartPane, PaneSide},
-    tab::{CanvasLayout, Tab},
+    tab::{CanvasLayout, Tab, layout::nearest_declared},
 };
 
 pub(crate) use quantick_control_host::wire::*;
@@ -23,10 +23,7 @@ impl From<CanvasLayout> for CanvasLayoutDto {
             CanvasLayout::Time => Self::Time,
             CanvasLayout::TimeAndFlow => Self::TimeAndFlow,
             CanvasLayout::TimeTimeAndFlow => Self::TimeTimeAndFlow,
-            // The four-word vocabulary's nearest; `canvas` names it exactly.
-            layout @ CanvasLayout::Preset(_) => {
-                CanvasLayout::from(crate::config::DeclaredLayout::from(layout)).into()
-            }
+            CanvasLayout::Preset(preset) => CanvasLayout::from(nearest_declared(preset)).into(),
         }
     }
 }

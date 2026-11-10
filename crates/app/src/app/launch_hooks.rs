@@ -771,14 +771,6 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
 #[cfg(any(feature = "scenario-harness", test))]
 fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // The window menu hung from the toolbar's list door, as its click does.
-    if env.var("QUANTICK_WINDOW_MENU").as_deref() == Some("toolbar") {
-        let menu = &mut app.chrome.window_menu;
-        menu.toggle_from(
-            eframe::egui::ViewportId::ROOT,
-            super::menu_bar::MenuDoor::Toolbar,
-            false,
-        );
-    }
     if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU") {
         let tab = app.runtime.tabs.active_id();
         if !app.chrome.window_menu.tab_workspace.stage(tab, &value) {
@@ -789,9 +781,7 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
     if let Some(name) = env.var("QUANTICK_LAYOUT") {
-        let layout = crate::config::DeclaredLayout::parse(&name)
-            .map(CanvasLayout::from)
-            .or_else(|| crate::canvas_layout::preset(&name).map(CanvasLayout::from_preset));
+        let layout = crate::tab::layout::named(&name);
         match layout {
             Some(layout) => app.active_tab_mut().set_layout(layout),
             None => tracing::warn!(
@@ -935,7 +925,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_TAPE_STARVE_AFTER_MS",
     "QUANTICK_TAPE_WINDOW",
     "QUANTICK_VENUE_LEAD_IN",
-    "QUANTICK_WINDOW_MENU",
     "QUANTICK_WORKSPACE_EXPORT",
     "QUANTICK_WORKSPACE_IMPORT",
     "QUANTICK_WORKSPACE_MENU",

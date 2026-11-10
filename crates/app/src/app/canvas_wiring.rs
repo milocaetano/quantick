@@ -135,7 +135,7 @@ impl CanvasHost for QuantickApp {
 }
 
 /// Hang the window menu from the toolbar's list door, as a click on it does.
-fn open_window_menu(menu: &mut super::menu_bar::WindowMenuState) -> bool {
+pub(super) fn open_window_menu(menu: &mut super::menu_bar::WindowMenuState) -> bool {
     let viewport = eframe::egui::ViewportId::ROOT;
     if !menu.opened_from(viewport, MenuDoor::Toolbar) {
         if menu.is_open_on(viewport) {
@@ -220,12 +220,16 @@ pub(crate) fn view(state: &CanvasState) -> CanvasView {
     }
 }
 
-/// The canvas a recipe saves for `canvas`: none while the column painter's
-/// own words say it all, the whole model otherwise.
+/// `recipe` carrying `canvas`'s model: none while the column painter's own
+/// words say it all, the whole model otherwise.
 #[must_use]
-pub(super) fn saved_state(canvas: &crate::tab::layout::TabCanvas) -> Option<CanvasState> {
+pub(super) fn with_canvas(
+    mut recipe: WorkspaceRecipe,
+    canvas: &crate::tab::layout::TabCanvas,
+) -> WorkspaceRecipe {
     let plain = canvas.column_painted() && canvas.state.floating().is_empty();
-    (!plain).then(|| canvas.state.clone())
+    recipe.canvas = (!plain).then(|| canvas.state.clone());
+    recipe
 }
 
 /// The layout a recipe opens on: its saved canvas's preset, else its
@@ -238,8 +242,9 @@ pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
         .unwrap_or_else(|| CanvasLayout::from(recipe.layout))
 }
 
-/// The canvas model a recipe restores: its saved one, else `layout`'s preset.
+/// The canvas model a recipe restores: its saved one, else its layout's preset.
 #[must_use]
-pub(super) fn recipe_state(recipe: &WorkspaceRecipe, layout: CanvasLayout) -> CanvasState {
+pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
+    let layout = recipe_layout(recipe);
     (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset(layout.preset()))
 }

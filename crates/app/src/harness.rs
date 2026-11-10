@@ -284,6 +284,8 @@ pub(crate) struct Harness {
     /// popup egui owns, so the hook asks for it through the same call the
     /// click makes rather than faking the surface.
     layout_picker_autostart: bool,
+    /// `QUANTICK_WINDOW_MENU=toolbar`: hang the window menu from `≡` once.
+    window_menu_toolbar: bool,
     /// `QUANTICK_DEAL_RECORDING`: `on`/`off` override the default a tab's
     /// deal recorder opens on; `menu` opens the REC popover once.
     deal_recording: Option<crate::deal_recording::RecordingHook>,
@@ -409,6 +411,7 @@ impl Harness {
         let flag = |name: &str| flag(env, name);
         Self {
             layout_picker_autostart: flag("QUANTICK_LAYOUT_PICKER"),
+            window_menu_toolbar: read("QUANTICK_WINDOW_MENU").as_deref() == Some("toolbar"),
             deal_recording: crate::deal_recording::RecordingHook::parse(
                 env.var(crate::deal_recording::RECORDING_HOOK_ENV)
                     .as_deref(),
@@ -490,6 +493,11 @@ impl Harness {
     /// one shot, so a trader's click can close it.
     pub(crate) fn take_layout_picker_autostart(&mut self) -> bool {
         std::mem::take(&mut self.layout_picker_autostart)
+    }
+
+    /// Whether the window menu should hang from `≡` this frame, once.
+    pub(crate) fn take_window_menu_toolbar(&mut self) -> bool {
+        std::mem::take(&mut self.window_menu_toolbar)
     }
 
     /// The recording default the launch imposed, if it imposed one.
@@ -955,6 +963,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_STRATEGY_DEMO",
     "QUANTICK_STRESS_INPUT",
     "QUANTICK_VENUE_HISTORY_DEMO",
+    "QUANTICK_WINDOW_MENU",
 ];
 
 #[cfg(test)]

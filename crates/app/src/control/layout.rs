@@ -276,13 +276,12 @@ fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
             input.preset_id
         ))
     })?;
-    let layout = CanvasLayout::from_preset(preset);
     let tab = app
         .tabs_mut()
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let changed = tab.canvas.layout != layout;
-    tab.set_layout(layout);
+    let changed = tab.canvas.layout != CanvasLayout::from_preset(preset);
+    tab.set_layout(CanvasLayout::from_preset(preset));
     result(app, index, changed)
 }
 

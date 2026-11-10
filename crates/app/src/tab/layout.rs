@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 use super::CanvasLayout;
 use super::context_resize::ContextStack;
-use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
+use crate::canvas_layout::{LayoutPreset, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneSide};
 
 /// The geometry owner of one tab's canvas. The tab holds one and reads its
@@ -268,5 +268,34 @@ impl TabCanvas {
             self.context_collapsed = false;
         }
         true
+    }
+}
+
+impl CanvasLayout {
+    /// Whether the column painter draws this layout; every other one is
+    /// drawn from the canvas's pane tree.
+    #[must_use]
+    pub const fn is_column(self) -> bool {
+        !matches!(self, CanvasLayout::Preset(_))
+    }
+}
+
+/// The layout a hook or a config names: a config word first (so
+/// `time+time+flow` stays the stacked column it always was), else a preset id.
+pub(crate) fn named(name: &str) -> Option<CanvasLayout> {
+    let declared = crate::config::DeclaredLayout::parse(name).map(CanvasLayout::from);
+    declared.or_else(|| crate::canvas_layout::preset(name).map(CanvasLayout::from_preset))
+}
+
+/// The config vocabulary's nearest word for `preset`: it has four, and the
+/// canvas state a recipe carries beside it names the rest.
+pub(crate) fn nearest_declared(preset: &LayoutPreset) -> crate::config::DeclaredLayout {
+    use crate::config::DeclaredLayout;
+    let time = preset.kinds.iter().filter(|kind| **kind == PaneKind::Time);
+    match (time.count(), preset.kinds.contains(&PaneKind::Flow)) {
+        (0, _) => DeclaredLayout::Flow,
+        (_, false) => DeclaredLayout::Time,
+        (1, true) => DeclaredLayout::TimeAndFlow,
+        (_, true) => DeclaredLayout::TimeTimeAndFlow,
     }
 }

@@ -33,9 +33,10 @@ impl CapsuleState {
         let book = &app.runtime.workspace.book;
         let (workspace, unsaved) = book.tab_row(tab);
         let live = &app.active_tab().canvas.state;
-        let saved = book.book().recipe(&workspace).map(|recipe| {
-            super::canvas_wiring::recipe_state(recipe, super::canvas_wiring::recipe_layout(recipe))
-        });
+        let saved = book
+            .book()
+            .recipe(&workspace)
+            .map(|recipe| super::canvas_wiring::recipe_state(recipe));
         let layout_unsaved = unsaved
             && saved
                 .as_ref()
@@ -114,6 +115,10 @@ pub(super) fn settle(
     #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_layout_picker_autostart() {
         app.chrome.layout_picker_open = true;
+    }
+    #[cfg(any(feature = "scenario-harness", test))]
+    if app.chrome.harness.take_window_menu_toolbar() {
+        super::canvas_wiring::open_window_menu(&mut app.chrome.window_menu);
     }
     let mut workspace_clicked = false;
     let mut rest = Vec::new();

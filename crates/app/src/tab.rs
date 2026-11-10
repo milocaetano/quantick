@@ -114,13 +114,6 @@ impl CanvasLayout {
         }
     }
 
-    /// Whether the column painter draws this layout; every other one is
-    /// drawn from the canvas's pane tree.
-    #[must_use]
-    pub const fn is_column(self) -> bool {
-        !matches!(self, CanvasLayout::Preset(_))
-    }
-
     /// The panes this layout draws, left to right.
     #[must_use]
     pub fn kinds(self) -> &'static [PaneKind] {
@@ -164,17 +157,7 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
             CanvasLayout::Time => crate::config::DeclaredLayout::Time,
             CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
             CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
-            // The vocabulary has four words; the canvas state the recipe
-            // carries beside it names the rest.
-            CanvasLayout::Preset(preset) => {
-                let time = preset.kinds.iter().filter(|kind| **kind == PaneKind::Time);
-                match (time.count(), preset.kinds.contains(&PaneKind::Flow)) {
-                    (0, _) => crate::config::DeclaredLayout::Flow,
-                    (_, false) => crate::config::DeclaredLayout::Time,
-                    (1, true) => crate::config::DeclaredLayout::TimeAndFlow,
-                    (_, true) => crate::config::DeclaredLayout::TimeTimeAndFlow,
-                }
-            }
+            CanvasLayout::Preset(preset) => layout::nearest_declared(preset),
         }
     }
 }
