@@ -142,6 +142,10 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     ("crates/app/src/feed_notice.rs", crate::feed_notice::HOOKS),
     ("crates/app/src/loading.rs", crate::loading::HOOKS),
     (
+        "crates/app/src/widget_surfaces/mod.rs",
+        crate::widget_surfaces::HOOKS,
+    ),
+    (
         "crates/app/src/footprint_config.rs",
         crate::footprint_config::HOOKS,
     ),

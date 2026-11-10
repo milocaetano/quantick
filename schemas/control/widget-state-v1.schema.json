@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A pane after an open or a close.",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "open": {
+      "description": "Whether its window is on screen now.",
+      "type": "boolean"
+    },
+    "provided": {
+      "description": "Whether the active tab's feed provides what the pane shows; when\nfalse the pane says so instead of drawing data.",
+      "type": "boolean"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "open",
+    "provided"
+  ],
+  "title": "WidgetState",
+  "type": "object"
+}

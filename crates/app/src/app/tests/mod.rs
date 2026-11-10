@@ -94,6 +94,7 @@ mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
+mod widget_surface_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
@@ -360,6 +361,7 @@ fn test_config() -> AppConfig {
             asset_families: Vec::new(),
             asset_aliases: Default::default(),
             symbol_asset_modes: Default::default(),
+            symbol_widgets: Default::default(),
             contract_rolls: Default::default(),
             default_layout: None,
             default_bars: None,
@@ -1781,6 +1783,10 @@ fn app_backfilled_with(
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,
@@ -1904,6 +1910,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
@@ -1919,6 +1926,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,

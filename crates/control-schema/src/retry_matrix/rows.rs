@@ -48,6 +48,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     script::READBACKS,
     crate::script_editor::READBACKS,
     trade::READBACKS,
+    crate::widget::READBACKS,
 ];
 
 const TOTAL: usize = total(FAMILIES);

@@ -933,6 +933,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
@@ -948,6 +949,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
@@ -2050,6 +2052,10 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         ohlcv_daily_generation: 0,
         ohlcv_aggressor_split: false,
         native_candle_intervals: false,
+        liquidations: false,
+        open_interest: false,
+        funding: false,
+        spot_perp_pair: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

@@ -226,5 +226,6 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_VENUE_LEAD_IN=1` | hooks | pins the View → *venue candles on charts cut by trades* switch on. Off by default and off for anything but `1`, because that is the whole point of the switch: a tick, volume, dollar or imbalance chart has always opened holding only the prints this session saw, and nothing goes in front of them unasked. On, the venue's own 1-minute candles are installed unfolded in front of a chart cut by trades — the only state in which a tick chart shows yesterday, and one no capture reaches without a hand in the View menu. Reaches `Tab::set_venue_lead_in`, the function the checkbox calls, so a hooked run refolds exactly as a click does |
 
 | `QUANTICK_INDICATOR_PICKER=1` | `surfaces/indicator_picker.rs` | Open the centered searchable indicator library on the focused chart at launch, through the toolbar surface owner. |
+| `QUANTICK_WIDGETS=<ids>` | `widget_surfaces/mod.rs` | opens these widget panes |
 
 147 hooks registered.

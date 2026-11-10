@@ -115,6 +115,10 @@ impl ProviderKind {
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: true,
                 native_candle_intervals: true,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -136,6 +140,10 @@ impl ProviderKind {
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: true,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -161,6 +169,10 @@ impl ProviderKind {
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             },
         }
     }
@@ -275,6 +287,19 @@ pub struct FeedCapabilities {
     /// There is a transport behind it to be up or down, and to reconnect. False
     /// on a recording: its silence is data, and "no connection" a false word.
     pub transport: bool,
+    /// Streams forced liquidations (`orderflow::widgets::ports`). No
+    /// provider does yet, so the Liquidations pane says the feed does not
+    /// provide them. A venue that publishes at most one liquidation per
+    /// symbol per second (Binance) delivers a lower bound, and must say so.
+    pub liquidations: bool,
+    /// Polls the venue's open interest. No provider does yet.
+    pub open_interest: bool,
+    /// Publishes the perpetual's funding rate and settlement time. No
+    /// provider does yet.
+    pub funding: bool,
+    /// Streams the same asset's spot and perpetual tapes side by side, for
+    /// the Spot vs Perp CVD pane. No provider does yet.
+    pub spot_perp_pair: bool,
 }
 
 /// Where a feed's pageable trade history ends, labelled rather than left
@@ -382,6 +407,10 @@ impl FeedCapabilities {
             ohlcv_daily_generation: 0,
             ohlcv_aggressor_split: false,
             native_candle_intervals: false,
+            liquidations: false,
+            open_interest: false,
+            funding: false,
+            spot_perp_pair: false,
         }
     }
 
@@ -634,6 +663,32 @@ mod tests {
             ProviderKind::Binance.campaign_page_size(usize::MAX),
             100_000
         );
+    }
+
+    /// No venue feeds the derivative panes yet: every provider, and the
+    /// unresolved feed, says so, so panes 3-5 show their empty state.
+    #[test]
+    fn derivative_bits_are_off_on_every_provider() {
+        use super::{FeedCapabilities, ProviderKind};
+        let providers = [
+            ProviderKind::Binance,
+            ProviderKind::BinanceFutures,
+            ProviderKind::Hyperliquid,
+            ProviderKind::MetaTrader,
+        ];
+        let answers = providers
+            .iter()
+            .map(|provider| provider.capabilities())
+            .chain([FeedCapabilities::none()]);
+        for caps in answers {
+            let bits = [
+                caps.liquidations,
+                caps.open_interest,
+                caps.funding,
+                caps.spot_perp_pair,
+            ];
+            assert_eq!(bits, [false; 4], "{caps:?}");
+        }
     }
 
     /// Only USD-M holds its symbols to a grammar; the rest take any name.

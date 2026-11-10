@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "WidgetChip": {
+      "description": "A header chip and whether it is the one in force.",
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "on"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the pane paints for the active tab, built from the same scene the\nwindow draws.",
+  "properties": {
+    "chips": {
+      "items": {
+        "$ref": "#/$defs/WidgetChip"
+      },
+      "type": "array"
+    },
+    "empty": {
+      "description": "What the pane says instead of data, when it has none.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "market": {
+      "description": "The active tab's market, as the header names it.",
+      "type": "string"
+    },
+    "open": {
+      "description": "Whether its window is on screen now.",
+      "type": "boolean"
+    },
+    "provided": {
+      "description": "Whether the active tab's feed provides what the pane shows; when\nfalse the pane says so instead of drawing data.",
+      "type": "boolean"
+    },
+    "rows": {
+      "description": "Data rows laid out: ladder rows, prints, liquidations or points.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "texts": {
+      "description": "Every text item in paint order, at most [`MAX_READ_TEXTS`].",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "open",
+    "provided",
+    "market",
+    "chips",
+    "rows",
+    "texts"
+  ],
+  "title": "WidgetRead",
+  "type": "object"
+}

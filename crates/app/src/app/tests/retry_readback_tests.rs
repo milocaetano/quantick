@@ -778,6 +778,9 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("layout.flow.expand", LAYOUT_V2, json!({}), Readback::Moves),
+        // Each journals one `widget.changed` naming the pane's new state.
+        ("widget.open", 1, json!({ "id": "depth" }), Readback::Moves),
+        ("widget.close", 1, json!({ "id": "depth" }), Readback::Moves),
         ("layout.pane.resize_pair", 1, Value::Null, Readback::Moves),
         // Seven places cannot come back as they were sent, so v2 refuses
         // them — and the readback stays where it was.

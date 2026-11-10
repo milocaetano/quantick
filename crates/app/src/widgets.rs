@@ -28,7 +28,7 @@ pub const RAIL_ICON: IconSize = IconSize {
 /// around the glyph that a 44 px rail does not read as cramped.
 pub const TOOLRAIL_ICON: IconSize = IconSize {
     glyph: 18.0,
-    hit: 32.0,
+    hit: quantick_chart_interaction::tool_rail::BUTTON_HIT_PX,
 };
 
 /// Opacity of a disabled glyph.

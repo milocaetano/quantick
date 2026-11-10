@@ -351,7 +351,8 @@ impl ArrangementAdapter<'_> {
         let dock_tab = chrome.dock_tab.and_then(crate::dock::DockTab::from_saved);
         self.dock.restore(chrome.dock_visible, dock_tab);
         self.tabs.set_panel_folds(chrome.orderflow_folds.clone());
-        self.toolrail.set_dock(chrome.rail_dock.into());
+        self.toolrail
+            .set_dock(crate::ui_state::rail_dock(chrome.rail_dock));
         self.toolrail.set_visible(chrome.rail_visible);
         *self.show_perf = chrome.perf_readings;
         *self.record_deals = chrome.record_deals;
@@ -410,7 +411,7 @@ impl ArrangementRead<'_> {
             dock_visible: self.dock.visible(),
             dock_tab: self.dock.tab().map(Into::into),
             rail_visible: self.toolrail.visible(),
-            rail_dock: self.toolrail.dock().into(),
+            rail_dock: crate::ui_state::saved_rail_dock(self.toolrail.dock()),
             perf_readings: self.show_perf,
             // Never written any more: the stars are a standing choice and live
             // at the top of the file. An arrangement that carried a copy would
