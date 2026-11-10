@@ -285,6 +285,9 @@ impl AlertBook {
                 entry.clear();
             }
             entry.status = AlertStatus::Monitoring;
+            if input.kind == ObservationKind::Lifecycle {
+                continue;
+            }
             // A restored/new epoch has no comparable monotonic timestamp. Wait
             // a fresh interval, anchored once, rather than trusting UTC jumps.
             if entry.saved.last_fired_utc_ms.is_some()
