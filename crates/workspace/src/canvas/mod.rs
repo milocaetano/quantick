@@ -43,7 +43,7 @@ pub use presets::{
 };
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
-    pane_identity, remove_needs_confirm,
+    remove_needs_confirm,
 };
 pub use tree::{CanvasPoint, CanvasRect, PaneSlot, PaneTree, SplitAxis};
 pub use widgets::{WIDGETS, WidgetSpec, widget};

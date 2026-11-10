@@ -491,17 +491,17 @@ pub fn drop_act(
 #[must_use]
 pub fn window_act(
     slot: u32,
-    (moved, closed): (Option<CanvasRect>, bool),
-    monitor: impl Fn(CanvasRect) -> Option<String>,
+    (moved, closed): (Option<(CanvasRect, Option<String>)>, bool),
 ) -> Option<CanvasAct> {
     if closed {
         return Some(CanvasAct::Return { slot });
     }
-    let rect = moved?;
+    let (rect, monitor) = moved?;
+    let rect = Some(dto(rect));
     Some(CanvasAct::PopOut {
         slot,
-        monitor: monitor(rect),
-        rect: Some(dto(rect)),
+        monitor,
+        rect,
     })
 }
 
@@ -518,14 +518,22 @@ pub fn moved(at: CanvasRect, saved: CanvasRect) -> bool {
     deltas.iter().any(|delta| delta.abs() >= 1.0)
 }
 
+/// A chart window seen `at`, last seen at `seen`: where it settled, once it
+/// stood still for a frame away from `saved`, so a drag saves once at its
+/// end rather than every frame of it.
+pub fn settled(at: CanvasRect, seen: &mut CanvasRect, saved: CanvasRect) -> Option<CanvasRect> {
+    let still = std::mem::replace(seen, at) == at;
+    (still && moved(at, saved)).then_some(at)
+}
+
 /// A pop-out that named no place opens where the chart stands now, moved by
 /// the window's desktop `origin`; every other act passes through.
 #[must_use]
 pub fn placed_pop_out(
     act: CanvasAct,
-    state: &CanvasState,
-    area: CanvasRect,
+    (state, area): (&CanvasState, CanvasRect),
     (x, y): (f32, f32),
+    monitor_of: impl Fn(CanvasRect) -> Option<String>,
 ) -> CanvasAct {
     let CanvasAct::PopOut {
         slot,
@@ -546,6 +554,7 @@ pub fn placed_pop_out(
     let rect = floating
         .or(docked.map(|(_, rect)| rect))
         .map(|rect| CanvasRect::new(rect.x + x, rect.y + y, rect.w, rect.h));
+    let monitor = monitor.or_else(|| rect.and_then(&monitor_of));
     CanvasAct::PopOut {
         slot,
         monitor,

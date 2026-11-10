@@ -132,6 +132,8 @@ struct PaneRects {
     /// The panes this pass leaves alone, drawn by a pass of their own: the
     /// floating ones on the canvas's pass, every other on a floating one's.
     kept: SmallVec<[PaneIndex; MAX_CANVAS_PANES]>,
+    /// A floating chart's own pass, after the canvas's made this frame's aim.
+    solo: bool,
 }
 
 impl Tab {
@@ -653,12 +655,15 @@ impl Tab {
             .filter_map(|(slot, areas)| areas.map(|(chart, _)| (slot + 1, chart)))
             .chain(rects.flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
             .collect();
+        // Focus answers only in the pass that draws the focused pane.
+        let kept = rects.kept.contains(&focused);
+        let fallback = if kept { PaneIndex::MAX } else { focused };
         let trading_pane = trading_pane(
             ui.ctx().pointer_latest_pos(),
             &addressed,
             paper.gesture_active(),
             *paper_drag_pane,
-            focused,
+            fallback,
         );
         let chart_style = chrome.style;
         let mut chrome = PaneChrome {
@@ -691,7 +696,9 @@ impl Tab {
         // one pane is this same loop with one entry in it. The input pane
         // leads because it makes this frame's aim, which every later pane
         // paints whole or as its echo; an aim no pane remakes paints nowhere.
-        chrome.paper.clear_cmd_preview();
+        if !rects.solo {
+            chrome.paper.clear_cmd_preview();
+        }
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.
         let pane_styles: SmallVec<[_; MAX_CANVAS_PANES]> = time_panes
@@ -747,7 +754,9 @@ impl Tab {
         // actually drags, to fall through to the pointer. A flick across a
         // divider in one frame then repriced the order against the
         // neighbour's scale, which is the whole thing the pin exists to stop.
-        *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        if !rects.solo || addressed.iter().any(|(side, _)| *side == trading_pane) {
+            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        }
         edits
     }
 

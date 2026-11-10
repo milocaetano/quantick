@@ -292,29 +292,27 @@ fn canvas_state_round_trips_and_marks_dirty() {
     }
 }
 
-/// A plain save numbers its slots from its preset; a live tab that reached
-/// the same layout another way numbers them as it went. The confirmation
-/// follows the pane, not the number.
+/// A tab that reached a layout another way numbers its panes unlike the
+/// preset, so its save keeps the canvas; then the save and the tab share one
+/// numbering, and a chart added after a removal never passes for a saved one.
 #[test]
-fn remove_confirmation_follows_the_pane_not_its_slot_number() {
-    let saved = canvas("time+flow");
-    let mut live = canvas("time");
-    live.apply_preset(preset("flow").unwrap());
-    live.apply_preset(preset("time+flow").unwrap());
-    let slot_of = |kind| {
-        (live.panes().into_iter())
-            .find(|(_, held, _)| *held == kind)
-            .unwrap()
-            .0
-    };
-    let (time, flow) = (slot_of(PaneKind::Time), slot_of(PaneKind::Flow));
-    assert!(!saved.holds(time), "the numberings differ");
+fn remove_confirmation_follows_the_pane_not_its_ordinal() {
+    let time_flow = preset("time+flow").unwrap();
+    assert!(canvas("time+flow").numbered_as(time_flow), "a plain save");
+    let mut live = canvas("flow");
+    live.apply_preset(time_flow);
+    assert!(
+        !live.numbered_as(time_flow),
+        "reached from Single: kept whole"
+    );
+    let saved = live.clone();
+    let time = live.tree().panes()[0].0;
     assert!(remove_needs_confirm(&saved, &live, time), "the saved chart");
-    assert!(remove_needs_confirm(&saved, &live, flow), "the saved flow");
+    live.remove(time).unwrap();
     let added = live.add(PaneKind::Time, CANVAS).unwrap();
     assert!(!remove_needs_confirm(&saved, &live, added), "a new chart");
+    assert!(!remove_needs_confirm(&saved, &live, time), "gone already");
     assert!(!remove_needs_confirm(&saved, &live, 77), "no such pane");
-    assert_eq!(pane_identity(&live, added), Some((PaneKind::Time, 1)));
 }
 
 /// A chart saved in its own window on a monitor that is gone comes back

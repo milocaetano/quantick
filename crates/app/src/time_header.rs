@@ -58,19 +58,18 @@ pub struct HeaderLayout {
     interval: egui::Rect,
 }
 
+#[cfg(test)]
 impl HeaderLayout {
     /// Where each preset's chip landed, in [`PRESETS`] order.
     ///
     /// Recorded rather than guessed: a test that clicks a timeframe has to
     /// hit the pixels a user would, not a position derived from font metrics
     /// it does not control.
-    #[cfg(test)]
     pub(crate) fn chips(&self) -> [egui::Rect; PRESETS.len()] {
         self.chips
     }
 
     /// Where the interval control landed.
-    #[cfg(test)]
     fn interval(&self) -> egui::Rect {
         self.interval
     }

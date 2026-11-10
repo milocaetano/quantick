@@ -63,12 +63,10 @@ impl CanvasHost for QuantickApp {
 /// Act on the active tab's canvas against its save, and read it back.
 fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, ControlError> {
     let (area, saved) = (canvas_area(app), saved_recipe(app).map(recipe_state));
-    let act = canvas::placed_pop_out(
-        act,
-        &app.active_tab().canvas.state,
-        area,
-        app.active_tab().canvas.floats.origin,
-    );
+    let (canvas, monitor_of) = (&app.active_tab().canvas, crate::floating_panes::monitor_of);
+    let (origin, scale) = (canvas.floats.origin, canvas.floats.scale);
+    let place = (&canvas.state, area);
+    let act = canvas::placed_pop_out(act, place, origin, |rect| monitor_of(rect, scale));
     let (changed, slot) = if let CanvasAct::PickLayout { preset_id } = &act {
         let before = app.active_tab().canvas.state.clone();
         app.apply_layout_preset(canvas::picked(preset_id)?);
@@ -104,20 +102,15 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     let at = ctx.input(|input| input.viewport().inner_rect);
     let origin = at.map_or((0.0, 0.0), |at| (at.min.x, at.min.y));
     let floats = &mut app.active_tab_mut().canvas.floats;
-    floats.origin = origin;
+    (floats.origin, floats.scale) = (origin, ctx.pixels_per_point());
     let (dropped, windows) = (floats.dropped.take(), std::mem::take(&mut floats.windows));
-    let monitor = |rect: CanvasRect| {
-        let scale = ctx.pixels_per_point();
-        quantick_platform::monitor_at((rect.x + rect.w / 2.0) * scale, (rect.y + 10.0) * scale)
-    };
+    let monitor = |rect| crate::floating_panes::monitor_of(rect, ctx.pixels_per_point());
     #[cfg(any(feature = "scenario-harness", test))]
     let hooked = canvas_hooks(app);
     #[cfg(not(any(feature = "scenario-harness", test)))]
     let hooked = Vec::new();
     let mut acts: Vec<CanvasAct> = (windows.into_iter())
-        .filter_map(|(slot, events)| {
-            canvas::window_act(slot, (events.moved, events.closed), monitor)
-        })
+        .filter_map(|(slot, events)| canvas::window_act(slot, (events.moved, events.closed)))
         .collect();
     acts.extend(dropped.map(|(slot, outcome)| canvas::drop_act(slot, outcome, origin, monitor)));
     for act in acts.into_iter().chain(hooked) {
@@ -231,7 +224,7 @@ pub(super) fn with_canvas(
     mut recipe: WorkspaceRecipe,
     canvas: &crate::tab::layout::TabCanvas,
 ) -> WorkspaceRecipe {
-    let plain = canvas.column_painted() && canvas.state.floating().is_empty();
+    let plain = canvas.column_painted() && canvas.state.numbered_as(canvas.layout.preset());
     recipe.canvas = (!plain).then(|| canvas.state.clone());
     recipe
 }

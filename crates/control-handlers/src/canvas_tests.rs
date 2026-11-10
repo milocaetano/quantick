@@ -293,7 +293,7 @@ fn menu_rows_and_dialog_answers_take_the_capabilities_acts() {
 fn drops_windows_and_hooks_become_canvas_acts() {
     use crate::canvas::{
         PRIMARY_MONITOR, drop_act, drop_targets, held_by_hook, hook_acts, moved, placed_pop_out,
-        surface_widget, window_act,
+        settled, surface_widget, window_act,
     };
     use quantick_control_schema::canvas::{CanvasCorner, CanvasEdge};
     use quantick_workspace::canvas::{
@@ -321,15 +321,30 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         "moved by the window's origin"
     );
 
-    let closed = window_act(3, (None, true), named);
+    let closed = window_act(3, (None, true));
     assert_eq!(closed, Some(CanvasAct::Return { slot: 3 }));
-    assert_eq!(window_act(3, (None, false), named), None);
-    assert!(matches!(
-        window_act(3, (Some(past), false), named),
-        Some(CanvasAct::PopOut { .. })
-    ));
+    assert_eq!(window_act(3, (None, false)), None);
+    let landed = Some((past, Some("DISPLAY2".to_owned())));
+    let CanvasAct::PopOut { monitor, .. } = window_act(3, (landed, false)).unwrap() else {
+        panic!("a moved window keeps the chart out");
+    };
+    assert_eq!(
+        monitor.as_deref(),
+        Some("DISPLAY2"),
+        "on the monitor now holding it"
+    );
     assert!(moved(past, CanvasRect::new(1300.0, 101.5, 400.0, 300.0)));
     assert!(!moved(past, CanvasRect::new(1300.4, 100.0, 400.0, 300.0)));
+    // A drag saves once, when the window stands still.
+    let (saved, mut seen) = (CanvasRect::new(0.0, 0.0, 400.0, 300.0), past);
+    let step = CanvasRect::new(1310.0, 100.0, 400.0, 300.0);
+    assert_eq!(settled(step, &mut seen, saved), None, "still moving");
+    assert_eq!(settled(step, &mut seen, saved), Some(step), "settled");
+    assert_eq!(
+        settled(saved, &mut seen, saved),
+        None,
+        "back where it was saved"
+    );
 
     let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
     let menu = CanvasAct::PopOut {
@@ -339,7 +354,7 @@ fn drops_windows_and_hooks_become_canvas_acts() {
     };
     let CanvasAct::PopOut {
         rect: Some(rect), ..
-    } = placed_pop_out(menu, &state, area, (10.0, 20.0))
+    } = placed_pop_out(menu, (&state, area), (10.0, 20.0), named)
     else {
         panic!("a pop-out from the menu opens where the chart stands");
     };

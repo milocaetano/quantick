@@ -766,7 +766,9 @@ impl Tab {
         }
         // Its copy counts against a running campaign's memory ceiling, and
         // there is something for a prefix to go in front of now.
-        self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
+        if reseed.is_none() {
+            self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
+        }
     }
 
     /// The layout each pane opens on, from a saved workspace: the flow pane's

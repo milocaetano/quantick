@@ -26,10 +26,10 @@ const LIGHT_OUTLINE: Color32 = Color32::from_rgb(0x7C, 0x9C, 0xD6);
 const TINT: (f32, f32) = (0.30, 0.45);
 
 /// What a chart's own window did this frame.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct WindowEvents {
-    /// It now stands at this rectangle, in desktop points.
-    pub(crate) moved: Option<CanvasRect>,
+    /// It settled at this rectangle, in desktop points, on this monitor.
+    pub(crate) moved: Option<(CanvasRect, Option<String>)>,
     /// Its close button was pressed: it returns to the canvas.
     pub(crate) closed: bool,
 }
@@ -44,8 +44,12 @@ pub(crate) struct FloatingPanes {
     /// The grips and the canvas's drop targets as drawn, for the scene: id,
     /// label, place and the capability that does what they do.
     pub(crate) drawn: Vec<(String, String, CanvasRect, &'static str)>,
-    /// The window's desktop origin, in points, as last read.
+    /// The window's desktop origin, in points, and its scale, as last read.
     pub(crate) origin: (f32, f32),
+    pub(crate) scale: f32,
+    /// Each chart window's place when it opened, which its builder keeps so
+    /// egui never moves it back, and where it was last seen.
+    pub(crate) placed: std::collections::BTreeMap<PaneSlot, (CanvasRect, CanvasRect)>,
     /// A pointer a capture holds the gesture at, in place of the hand's.
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) pinned: Option<egui::Pos2>,
@@ -59,6 +63,13 @@ impl FloatingPanes {
         }
         ctx.input(|input| input.pointer.latest_pos())
     }
+}
+
+/// The monitor holding `rect` (desktop points at `scale`), by device name.
+pub(crate) fn monitor_of(rect: CanvasRect, scale: f32) -> Option<String> {
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let (x, y) = (rect.x + rect.w / 2.0, rect.y + 10.0);
+    quantick_platform::monitor_at(x * scale, y * scale)
 }
 
 pub(crate) fn model_rect(rect: Rect) -> CanvasRect {
@@ -266,10 +277,11 @@ fn publish_targets(floats: &mut FloatingPanes, state: &CanvasState, canvas: Rect
 pub(crate) fn os_window(
     ctx: &egui::Context,
     (tab, slot): (u64, PaneSlot),
-    rect: CanvasRect,
+    (saved, (opened, seen)): (CanvasRect, &mut (CanvasRect, CanvasRect)),
     mut draw: impl FnMut(&mut egui::Ui),
 ) -> WindowEvents {
     let id = egui::ViewportId::from_hash_of(("canvas_pane", tab, slot));
+    let rect = *opened;
     let builder = egui::ViewportBuilder::default()
         .with_title("Quantick chart")
         .with_position(pos2(rect.x, rect.y))
@@ -298,7 +310,9 @@ pub(crate) fn os_window(
             .zip(inner)
             .map(|(outer, inner)| (outer.min, inner.size()));
         let at = at.map(|(min, size)| CanvasRect::new(min.x, min.y, size.x, size.y));
-        let moved = at.filter(|at| quantick_control_handlers::canvas::moved(*at, rect));
+        let settled = at.and_then(|at| quantick_control_handlers::canvas::settled(at, seen, saved));
+        let scale = child.pixels_per_point();
+        let moved = settled.map(|at| (at, monitor_of(at, scale)));
         WindowEvents { moved, closed }
     })
 }

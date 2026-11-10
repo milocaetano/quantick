@@ -446,6 +446,13 @@ impl CanvasState {
         gone
     }
 
+    /// Whether this canvas is `preset` as the preset itself numbers it: what a
+    /// save may leave out and rebuild from the preset's name alone.
+    #[must_use]
+    pub fn numbered_as(&self, preset: &LayoutPreset) -> bool {
+        *self == Self::from_preset(preset)
+    }
+
     /// Where a pane floats or stands in its own window, if it does.
     #[must_use]
     pub fn host(&self, slot: PaneSlot) -> Option<&FloatHost> {
@@ -508,24 +515,11 @@ impl CanvasState {
 /// Whether removing `live`'s `slot` should ask first: only when `saved`, the
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
 ///
-/// Compared by [`pane_identity`], never by slot number: a plain saved recipe
-/// numbers its slots from its preset, while a live tab that reached the same
-/// layout from another one numbers them as it went.
+/// Compared by slot, the pane's identity for its life: a save keeps the
+/// canvas whenever it is not [`CanvasState::numbered_as`] its preset, so a
+/// saved tab and the live one always number their panes alike, and a slot
+/// added since the save is one the save never held.
 #[must_use]
 pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
-    let Some(identity) = pane_identity(live, slot) else {
-        return false;
-    };
-    (saved.panes().iter()).any(|(held, ..)| pane_identity(saved, *held) == Some(identity))
-}
-
-/// A pane's identity across two numberings of one canvas: its kind and how
-/// many panes of that kind hold a lower slot. Slots only rise, so the n-th
-/// time chart of a save is the n-th time chart of the tab it restored.
-#[must_use]
-pub fn pane_identity(state: &CanvasState, slot: PaneSlot) -> Option<(PaneKind, usize)> {
-    let panes = state.panes();
-    let kind = panes.iter().find(|(held, ..)| *held == slot)?.1;
-    let before = (panes.iter()).filter(|(held, held_kind, _)| *held_kind == kind && *held < slot);
-    Some((kind, before.count()))
+    saved.holds(slot) && live.holds(slot)
 }
