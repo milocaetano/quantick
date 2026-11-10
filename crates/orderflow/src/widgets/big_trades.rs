@@ -90,7 +90,7 @@ pub fn big_trades(prints: &[Aggression], params: &BigTradesParams, now_ms: i64) 
         .map(|cluster| row(cluster, &notional_of))
         .filter(|row| row.notional >= params.min_notional)
         .collect();
-    rows.sort_by(|a, b| (b.timestamp_ms, b.agg_id).cmp(&(a.timestamp_ms, a.agg_id)));
+    rows.sort_by_key(|row| std::cmp::Reverse((row.timestamp_ms, row.agg_id)));
 
     let window_start = now_ms.saturating_sub(BIG_TRADES_WINDOW_MS);
     let mut window_buy_notional = Decimal::ZERO;
