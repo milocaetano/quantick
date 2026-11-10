@@ -4,15 +4,26 @@
 //! same values, so the screen and the read cannot disagree.
 
 use quantick_appearance::Token;
+use quantick_civil::{TzOffset, civil_utc};
 use rust_decimal::Decimal;
+
+use crate::footprint_projection::fmt_qty;
 
 pub mod big_trades;
 pub mod depth;
+pub mod liquidations;
+pub mod open_interest;
+pub mod spot_perp_cvd;
 
 #[cfg(test)]
 mod big_trades_tests;
 #[cfg(test)]
 mod depth_tests;
+#[cfg(test)]
+mod derivatives_tests;
+
+/// Pixels a line keeps clear of its plot's top and bottom edge.
+pub const LINE_PAD_PX: f32 = 4.0;
 
 /// One text cell and the theme token it is inked with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,4 +62,66 @@ fn bar_px(part: Decimal, whole: Decimal, full_px: f32) -> f32 {
         return 0.0;
     }
     (part / whole).to_f32().unwrap_or(0.0) * full_px
+}
+
+/// Where [`amount`] switches to billions.
+const BILLION: u64 = 1_000_000_000;
+
+/// `value` written with the unit's prefix: `$942.1k`, and `$6.98B` from a
+/// billion, where the quantity format would write `6980.0M`.
+fn amount(value: Decimal, unit: big_trades::NotionalUnit) -> String {
+    use rust_decimal::prelude::ToPrimitive as _;
+    let figure = if value.abs() >= Decimal::from(BILLION) {
+        crate::geometry::compact_value(value.to_f64().unwrap_or(f64::NAN))
+    } else {
+        fmt_qty(value)
+    };
+    format!("{}{figure}", unit.prefix)
+}
+
+/// `00:13:52` in `tz`.
+fn clock_text(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (_, _, _, hour, minute, second) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{hour:02}:{minute:02}:{second:02}")
+}
+
+/// `(time, value)` points as pixels in a `width_px` by `height_px` plot:
+/// time across `[t0, t1]`, value down from `hi` to `lo`, [`LINE_PAD_PX`]
+/// clear of each edge. A flat range sits mid-height; a single instant at
+/// the left edge.
+fn line_px(
+    points: impl IntoIterator<Item = (i64, f64)>,
+    (t0, t1): (i64, i64),
+    (lo, hi): (f64, f64),
+    (width_px, height_px): (f32, f32),
+) -> Vec<[f32; 2]> {
+    let span_ms = (t1 - t0) as f64;
+    let usable = f64::from(height_px - 2.0 * LINE_PAD_PX);
+    points
+        .into_iter()
+        .map(|(time_ms, value)| {
+            let x = if span_ms > 0.0 {
+                (time_ms - t0) as f64 * f64::from(width_px) / span_ms
+            } else {
+                0.0
+            };
+            let y = if hi > lo {
+                f64::from(LINE_PAD_PX) + (hi - value) * usable / (hi - lo)
+            } else {
+                f64::from(height_px) / 2.0
+            };
+            [x as f32, y as f32]
+        })
+        .collect()
+}
+
+/// The smallest and largest of `values`; nothing when there are none.
+fn value_range(values: impl IntoIterator<Item = f64>) -> Option<(f64, f64)> {
+    values
+        .into_iter()
+        .filter(|value| value.is_finite())
+        .fold(None, |range, value| match range {
+            None => Some((value, value)),
+            Some((lo, hi)) => Some((lo.min(value), hi.max(value))),
+        })
 }
