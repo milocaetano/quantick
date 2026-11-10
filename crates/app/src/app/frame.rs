@@ -238,9 +238,8 @@ impl QuantickApp {
 
     /// The status bar's facts, read as the line beside them reads them.
     pub(super) fn status_model(&self) -> statusbar::StatusModel {
-        let home = self.chrome.title_bar.surface.is_home();
         let runtime = self.runtime.bound(&self.presentation.binding);
-        self.health.status_model(runtime, &self.config, home)
+        self.health.status_model(runtime, &self.config)
     }
 
     /// The indicator requests of this frame; a guide switch goes through the
@@ -595,7 +594,6 @@ impl QuantickApp {
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
-        super::menu_bar::workspace_cell(self, ctx, &scratch.status);
         if scratch.status.open_display_settings {
             super::desk_wiring::open_settings_on(&mut self.chrome.window_menu, ctx);
         }

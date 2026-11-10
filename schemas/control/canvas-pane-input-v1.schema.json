@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One pane, named by its slot.",
+  "properties": {
+    "slot": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slot"
+  ],
+  "title": "PaneInput",
+  "type": "object"
+}

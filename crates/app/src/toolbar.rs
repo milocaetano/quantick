@@ -5,15 +5,15 @@
 //! door to the window menu the title bar's `⋮` opens; the tab's market as a
 //! dropdown button that opens the palette in switch mode (or the amber
 //! session label while replaying), with REC beside it; HISTORY (a
-//! `+ older ▾` split button whose menu holds the page size). Free space,
-//! then right-aligned TRADE — the simulated BUY/SELL market buttons
-//! (`docs/ux/paper-trading.md`) — the layout picker wearing a miniature of
-//! the layout on screen, and, alone at the edge, PANELS (dock show/hide, a
-//! tray). Appearance has no toolbar button: the chart
-//! itself and the Settings window open it. The toolbar never wraps:
+//! `+ older ▾` split button whose menu holds the page size); TRADE, the
+//! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). Free
+//! space, then the [`capsule`] — the live layout miniature and the
+//! workspace, the floppy glued left while it holds edits — and, alone at the
+//! edge, PANELS (dock show/hide, a tray). Appearance has no toolbar button:
+//! the chart itself and the Settings window open it. The toolbar never wraps:
 //! [`collapse_plan`] folds groups into the `⋯` overflow menu in the §6 order —
-//! PANELS → HISTORY → TRADE → the feed name shrinks to its initial. The symbol
-//! the layout picker and `≡` never fold. Bars, indicators and layers
+//! PANELS → HISTORY → TRADE → the feed name shrinks to its initial. The
+//! symbol, the capsule and `≡` never fold. Bars, indicators and layers
 //! belong to each pane, on its header line (`crate::pane_header`).
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
@@ -24,12 +24,13 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::config::FeedCapabilities;
-use crate::layout_picker::FACE_INSET_PX;
 use quantick_chart::toolbar_collapse::{
-    CollapsePlan, SEPARATOR_AIR_PX, SEPARATOR_WIDTH_PX, collapse_plan,
+    CollapsePlan, SEPARATOR_AIR_PX, SEPARATOR_WIDTH_PX, W_PICKER, collapse_plan,
 };
 use quantick_engine::bar_selection::BarInputAvailability;
 pub(crate) mod bar_parameters;
+pub mod capsule;
+pub mod layout_popover;
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
@@ -83,18 +84,26 @@ pub struct WindowMenuDoor<'a> {
     pub rect: &'a mut Option<egui::Rect>,
 }
 
+/// A toolbar control as drawn, for the observer scene.
+#[derive(Clone, Debug)]
+pub struct DrawnControl {
+    pub id: String,
+    pub label: String,
+    pub rect: egui::Rect,
+    pub selected: bool,
+    /// The capability that does what pressing it does.
+    pub capability: Option<&'static str>,
+}
+
 /// The toolbar's view of the app: fields it edits directly, and read-only
 /// context for gating and display.
 pub struct ToolbarModel<'a> {
     /// The `≡` at the row's left end.
     pub window_menu: WindowMenuDoor<'a>,
-    /// The arrangement the canvas is showing, if it still matches a registered
-    /// preset. `None` marks a custom row and lights no cell.
-    pub layout_preset: Option<&'static crate::canvas_layout::LayoutPreset>,
-    /// Whether the layout popover is open.
-    pub layout_picker_open: &'a mut bool,
-    /// Open the layout popover this frame (the `QUANTICK_LAYOUT_PICKER` hook).
-    pub layout_picker_request_open: bool,
+    /// The capsule: the live layout and the tab's workspace.
+    pub capsule: capsule::CapsuleModel<'a>,
+    /// Where the capsule's parts ended up, written back by the draw.
+    pub capsule_rects: &'a mut capsule::CapsuleRects,
     /// The market button: the venue's letter and the tab chip's own
     /// `SYMBOL · venue`, so the two cannot disagree.
     pub market: (char, &'a str),
@@ -183,6 +192,12 @@ pub enum ToolbarAction {
     ToggleDock,
     /// Open or close the window menu, hung from the toolbar's `≡`.
     ToggleWindowMenu,
+    /// Open or close the layout popover, hung from the capsule's miniature.
+    ToggleLayoutPopover,
+    /// Open or close the workspace menu, hung from the capsule's name.
+    ToggleWorkspaceMenu,
+    /// Save the tab's edits to its workspace (the floppy, Ctrl+S).
+    SaveWorkspace,
     /// Add a native indicator, by its catalog id
     /// (`quantick_indicators::native`). One variant for every native there
     /// will ever be — the menu is drawn from the catalog, so the toolbar
@@ -227,8 +242,9 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             } else {
                 0.0
             };
+            let capsule_run = capsule::width(ui, &model.capsule) - W_PICKER;
             let plan = collapse_plan(
-                ui.available_width() - rec_width - WINDOW_MENU_RUN_PX,
+                ui.available_width() - rec_width - WINDOW_MENU_RUN_PX - capsule_run,
                 W_TRADE,
             );
             ui.horizontal_centered(|ui| {
@@ -251,6 +267,11 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                     row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                     draw_history(ui, model, &mut actions);
                 }
+                if plan.trade_inline {
+                    row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
+                    draw_trade(ui, &model.paper, &mut actions);
+                    row_separator(ui, SEPARATOR_AIR_PX, 0.0);
+                }
                 // The right run grows inwards, opening free space after HISTORY.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if plan.overflow_needed() {
@@ -265,26 +286,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                             actions.push(ToolbarAction::ToggleDock);
                         }
                     }
-                    row_separator(
-                        ui,
-                        SEPARATOR_AIR_PX - DOCK_INSET_PX,
-                        SEPARATOR_AIR_PX - FACE_INSET_PX,
-                    );
-                    if let Some(preset) = crate::layout_picker::draw(
-                        ui,
-                        crate::layout_picker::PickerModel {
-                            current: model.layout_preset,
-                            open: model.layout_picker_open,
-                            request_open: model.layout_picker_request_open,
-                        },
-                    ) {
-                        actions.push(ToolbarAction::SetLayout(preset));
-                    }
-                    if plan.trade_inline {
-                        row_separator(ui, SEPARATOR_AIR_PX - FACE_INSET_PX, SEPARATOR_AIR_PX);
-                        draw_trade(ui, &model.paper, &mut actions);
-                        row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
-                    }
+                    row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
+                    *model.capsule_rects = capsule::draw(ui, &model.capsule, &mut actions);
                 });
             });
         });
@@ -1024,16 +1027,15 @@ mod tests {
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    let mut layout_picker_open = false;
+                    let mut capsule_rects = capsule::CapsuleRects::default();
                     let mut model = ToolbarModel {
                         window_menu: WindowMenuDoor {
                             open: false,
                             hover: String::new(),
                             rect: &mut None,
                         },
-                        layout_preset: None,
-                        layout_picker_open: &mut layout_picker_open,
-                        layout_picker_request_open: false,
+                        capsule: capsule::tests::model(),
+                        capsule_rects: &mut capsule_rects,
                         market: ('B', "BTCUSDT \u{b7} Binance"),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
@@ -1082,16 +1084,15 @@ mod tests {
         let mut history_menu_rect = None;
         for _ in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                let mut layout_picker_open = false;
+                let mut capsule_rects = capsule::CapsuleRects::default();
                 let mut model = ToolbarModel {
                     window_menu: WindowMenuDoor {
                         open: false,
                         hover: String::new(),
                         rect: &mut None,
                     },
-                    layout_preset: None,
-                    layout_picker_open: &mut layout_picker_open,
-                    layout_picker_request_open: false,
+                    capsule: capsule::tests::model(),
+                    capsule_rects: &mut capsule_rects,
                     market: ('B', "US500 \u{b7} MetaTrader 5"),
                     replay: None,
                     deal_recording: None,
@@ -1187,16 +1188,15 @@ mod tests {
         let mut shapes = Vec::new();
         for _ in 0..2 {
             let output = ctx.run(input(), |ctx| {
-                let mut layout_picker_open = false;
+                let mut capsule_rects = capsule::CapsuleRects::default();
                 let mut model = ToolbarModel {
                     window_menu: WindowMenuDoor {
                         open: false,
                         hover: String::new(),
                         rect: &mut None,
                     },
-                    layout_preset: None,
-                    layout_picker_open: &mut layout_picker_open,
-                    layout_picker_request_open: false,
+                    capsule: capsule::tests::model(),
+                    capsule_rects: &mut capsule_rects,
                     market: ('B', "BTCUSDT \u{b7} Binance"),
                     replay: None,
                     deal_recording: None,

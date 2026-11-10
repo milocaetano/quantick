@@ -58,15 +58,8 @@ impl QuantickApp {
             tz: self.runtime.tz,
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
-        // Split off the picker's flags before the tab borrow: the model wants
-        // both, and they live on the same struct.
-        let mut layout_picker_open = self.chrome.layout_picker_open;
-        // One shot: the hook opens the popover on the first drawn frame and
-        // then gets out of the way, so a trader's click can close it.
-        #[cfg(any(feature = "scenario-harness", test))]
-        let layout_picker_autostart = self.chrome.harness.take_layout_picker_autostart();
-        #[cfg(not(any(feature = "scenario-harness", test)))]
-        let layout_picker_autostart = false;
+        let capsule = super::capsule_wiring::CapsuleState::of(self);
+        let mut capsule_rects = self.chrome.capsule;
         let deal_recording = self.active_tab().deal_recording_view();
         #[cfg(any(feature = "scenario-harness", test))]
         let deal_recording_menu =
@@ -78,11 +71,10 @@ impl QuantickApp {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
-        let viewport = ctx.viewport_id();
-        let menu = &self.chrome.window_menu;
         let mut toolbar_door = None;
         let window_menu = toolbar::WindowMenuDoor {
-            open: menu.opened_from(viewport, super::menu_bar::MenuDoor::Toolbar),
+            open: (self.chrome.window_menu)
+                .opened_from(ctx.viewport_id(), super::menu_bar::MenuDoor::Toolbar),
             hover: format!(
                 "Window menu ({})",
                 super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
@@ -93,9 +85,8 @@ impl QuantickApp {
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
             window_menu,
-            layout_preset: Some(tab.canvas.layout.preset()),
-            layout_picker_open: &mut layout_picker_open,
-            layout_picker_request_open: layout_picker_autostart,
+            capsule: capsule.model(),
+            capsule_rects: &mut capsule_rects,
             market: (chip, tab.chip_label()),
             replay,
             deal_recording,
@@ -114,19 +105,11 @@ impl QuantickApp {
                 .trade_bar(&ctx.format_shortcut(&super::menu_bar::PAPER_REVERSE_SHORTCUT)),
         };
         let actions = toolbar::draw(ctx, &mut model);
-        // The popover's own state, back where it lives. Without this the flag
-        // resets every frame and the button never reads as open.
         drop(model);
-        self.chrome.layout_picker_open = layout_picker_open;
         self.chrome.history_menu_rect = history_menu_rect;
-        self.chrome.window_menu.toolbar_door = toolbar_door;
-        for action in actions {
-            if action == ToolbarAction::ToggleWindowMenu {
-                let menu = &mut self.chrome.window_menu;
-                menu.toggle_from(viewport, super::menu_bar::MenuDoor::Toolbar, false);
-            } else {
-                self.apply_toolbar_action(action);
-            }
+        let settle = super::capsule_wiring::settle;
+        for action in settle(self, ctx, &capsule, capsule_rects, toolbar_door, actions) {
+            self.apply_toolbar_action(action);
         }
     }
 
@@ -141,20 +124,13 @@ impl QuantickApp {
         preset: &'static crate::canvas_layout::LayoutPreset,
     ) {
         let Some(layout) = CanvasLayout::from_preset(preset) else {
-            // A preset the canvas cannot draw yet is refused rather than
-            // approximated: switching to the nearest arrangement would be the
-            // picker showing one layout and the canvas drawing another.
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "LAYOUT_PRESET_UNSUPPORTED",
-                preset = %preset.id,
-                action = "layout_left_as_is",
-                "the layout registry names an arrangement the canvas cannot draw yet"
-            );
             return;
         };
-        self.active_tab_mut().set_layout(layout);
+        let tab = self.active_tab_mut();
+        tab.set_layout(layout);
+        // Picked, the layout draws its thumbnail: the column painter's split
+        // lands where the preset's tree puts the flow pane.
+        tab.canvas.split_to_preset();
     }
 
     /// One toolbar side effect.
@@ -171,8 +147,11 @@ impl QuantickApp {
             }
             ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
-            // Carried out by `draw_toolbar`, which knows the window.
-            ToolbarAction::ToggleWindowMenu => {}
+            // Carried out by `capsule_wiring::settle`, which knows the window.
+            ToolbarAction::ToggleWindowMenu
+            | ToolbarAction::ToggleLayoutPopover
+            | ToolbarAction::ToggleWorkspaceMenu
+            | ToolbarAction::SaveWorkspace => {}
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.

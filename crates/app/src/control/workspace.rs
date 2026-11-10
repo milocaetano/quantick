@@ -142,6 +142,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,
                     modified,
+                    canvas: Some(crate::app::canvas_view(&tab.canvas.state)),
                 }
             })
             .collect(),

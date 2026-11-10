@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "CanvasRectDto": {
+      "additionalProperties": false,
+      "description": "A rectangle in canvas points (a monitor's points for an OS window).",
+      "properties": {
+        "h": {
+          "format": "float",
+          "type": "number"
+        },
+        "w": {
+          "format": "float",
+          "type": "number"
+        },
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "rect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanvasRectDto"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Where it floats; absent centres it over the canvas."
+    },
+    "slot": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slot"
+  ],
+  "title": "FloatPaneInput",
+  "type": "object"
+}

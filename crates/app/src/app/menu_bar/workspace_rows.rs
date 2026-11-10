@@ -13,6 +13,8 @@ use crate::app::arrangement_host::ArrangementHost;
 
 const CHIP_MENU_MIN_WIDTH_PT: f32 = 200.0;
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
+/// How far below the capsule the menu hangs.
+const MENU_DROP_PT: f32 = 4.0;
 
 /// What the workspace rows read this frame.
 #[derive(Clone, Copy)]
@@ -147,8 +149,8 @@ impl<'a> WorkspaceRows<'a> {
         true
     }
 
-    /// The menu above the status bar's workspace cell, opening upward from its
-    /// top-left. Opens with `WINV26 uses`.
+    /// The menu below the capsule's workspace name (designer 01): auto save,
+    /// save, save as, rename, the workspaces, new and manage.
     pub(super) fn chip_menu(
         self,
         ctx: &egui::Context,
@@ -161,27 +163,40 @@ impl<'a> WorkspaceRows<'a> {
             return;
         }
         let recorded = commands.len();
+        let (workspace, modified) = self.state();
+        let auto = self.book.autosave();
         let area = egui::Area::new(egui::Id::new("tab_workspace_menu"))
             .order(egui::Order::Foreground)
-            .pivot(egui::Align2::LEFT_BOTTOM)
-            .fixed_pos(anchor.left_top())
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, MENU_DROP_PT))
             .constrain(true)
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(CHIP_MENU_MIN_WIDTH_PT);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         super::menus::flat_rows(ui);
-                        ui.label(crate::theme::supporting_text(
-                            ui,
-                            text::uses_caption(self.symbol),
-                        ));
+                        self.action_row(ui, RowId::WorkspaceAutosave, commands);
+                        let line = if auto { "Every change is saved".to_owned() } else { format!("Save with {keys}") };
+                        ui.label(crate::theme::supporting_text(ui, line));
+                        ui.separator();
+                        let save = egui::Button::new(format!("Save \u{201c}{workspace}\u{201d}"))
+                            .shortcut_text(crate::theme::supporting_text(ui, keys));
+                        let save = ui.add_enabled(modified && !auto, save);
+                        if modified && !auto {
+                            let dot = save.rect.left_center() + egui::vec2(-1.0, 0.0);
+                            ui.painter().circle_filled(dot, 2.5, crate::theme::get(ui.ctx()).accent());
+                        }
+                        if save.clicked() {
+                            Self::push(commands, WorkspaceCommand::SaveTo);
+                        }
+                        self.action_row(ui, RowId::WorkspaceSaveAsNew, commands);
+                        self.action_row(ui, RowId::WorkspaceRename, commands);
+                        ui.separator();
+                        ui.label(crate::theme::supporting_text(ui, "WORKSPACES"));
                         self.list(ui, commands, true);
                         ui.separator();
-                        self.action_row(ui, RowId::WorkspaceAutosave, commands);
-                        self.save_to_row(ui, keys, commands);
-                        for id in text::CELL_MENU_ROWS {
-                            self.action_row(ui, *id, commands);
-                        }
+                        self.action_row(ui, RowId::WorkspaceNew, commands);
+                        self.action_row(ui, RowId::ManageWorkspaces, commands);
                     });
                 });
             });

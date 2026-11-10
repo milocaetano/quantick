@@ -74,8 +74,11 @@ pub enum CanvasLayout {
     Time,
     /// Time pane left, flow pane right, on a draggable divider.
     TimeAndFlow,
-    /// Two time panes stacked in the left column, flow pane right.
+    /// Two time panes stacked in the left column, flow pane right: the
+    /// registry's "2 stacked + Flow".
     TimeTimeAndFlow,
+    /// Any other registry entry, drawn from its pane tree.
+    Preset(&'static LayoutPreset),
 }
 
 impl CanvasLayout {
@@ -91,26 +94,31 @@ impl CanvasLayout {
             CanvasLayout::Single => "flow",
             CanvasLayout::Time => "time",
             CanvasLayout::TimeAndFlow => "time+flow",
-            CanvasLayout::TimeTimeAndFlow => "time+time+flow",
+            CanvasLayout::TimeTimeAndFlow => "stack2+flow",
+            CanvasLayout::Preset(preset) => return preset,
         };
         canvas_layout::preset(id).expect("every canvas layout names a registered preset")
     }
 
-    /// The layout a registry entry names, if the canvas can draw it.
-    ///
-    /// The inverse of [`Self::preset`], and deliberately partial: the registry
-    /// is allowed to describe an arrangement the canvas has not learned to
-    /// draw yet, and answering `None` is how that stays visible instead of
-    /// being approximated into the nearest layout that happens to exist.
+    /// The layout a registry entry names. The inverse of [`Self::preset`]:
+    /// the four arrangements the column painter draws keep their variants,
+    /// every other entry is drawn from its tree.
     #[must_use]
-    pub fn from_preset(preset: &LayoutPreset) -> Option<Self> {
-        match preset.id {
-            "flow" => Some(CanvasLayout::Single),
-            "time" => Some(CanvasLayout::Time),
-            "time+flow" => Some(CanvasLayout::TimeAndFlow),
-            "time+time+flow" => Some(CanvasLayout::TimeTimeAndFlow),
-            _ => None,
-        }
+    pub fn from_preset(preset: &'static LayoutPreset) -> Option<Self> {
+        Some(match preset.id {
+            "flow" => CanvasLayout::Single,
+            "time" => CanvasLayout::Time,
+            "time+flow" => CanvasLayout::TimeAndFlow,
+            "stack2+flow" => CanvasLayout::TimeTimeAndFlow,
+            _ => CanvasLayout::Preset(preset),
+        })
+    }
+
+    /// Whether the column painter draws this layout; every other one is
+    /// drawn from the canvas's pane tree.
+    #[must_use]
+    pub const fn is_column(self) -> bool {
+        !matches!(self, CanvasLayout::Preset(_))
     }
 
     /// The panes this layout draws, left to right.
@@ -156,6 +164,17 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
             CanvasLayout::Time => crate::config::DeclaredLayout::Time,
             CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
             CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
+            // The vocabulary has four words; the canvas state the recipe
+            // carries beside it names the rest.
+            CanvasLayout::Preset(preset) => {
+                let time = preset.kinds.iter().filter(|kind| **kind == PaneKind::Time);
+                match (time.count(), preset.kinds.contains(&PaneKind::Flow)) {
+                    (0, _) => crate::config::DeclaredLayout::Flow,
+                    (_, false) => crate::config::DeclaredLayout::Time,
+                    (1, true) => crate::config::DeclaredLayout::TimeAndFlow,
+                    (_, true) => crate::config::DeclaredLayout::TimeTimeAndFlow,
+                }
+            }
         }
     }
 }

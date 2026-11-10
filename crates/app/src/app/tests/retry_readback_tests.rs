@@ -737,7 +737,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         (
             "layout.preset.apply",
             LAYOUT_V2,
-            json!({ "preset_id": "time+time+flow" }),
+            json!({ "preset_id": "stack2+flow" }),
             Readback::Moves,
         ),
         (
@@ -1404,7 +1404,7 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
     for (capability, payload) in [
         (
             "layout.preset.apply",
-            json!({ "preset_id": "time+time+flow" }),
+            json!({ "preset_id": "stack2+flow" }),
         ),
         ("layout.focus.set", json!({ "pane": "1" })),
         ("layout.pane.move", json!({ "from": "1", "to": "2" })),

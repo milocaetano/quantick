@@ -19,6 +19,9 @@ use eframe::egui;
 use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
+mod canvas_wiring;
+mod capsule_wiring;
+pub(crate) use canvas_wiring::view as canvas_view;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
@@ -54,7 +57,6 @@ mod script_reload;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod home_wiring;
 mod menu_bar;
-pub(crate) use menu_bar::SAVE_TO_WORKSPACE_SHORTCUT;
 pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
@@ -494,6 +496,8 @@ impl QuantickApp {
                 window_startup: launch.window,
                 record_deals: None,
                 layout_picker_open: false,
+                capsule: Default::default(),
+                toolbar_controls: Vec::new(),
                 layout_rename: None,
                 layout_delete_confirm: None,
                 surface: None,

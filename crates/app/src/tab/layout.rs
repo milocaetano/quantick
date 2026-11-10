@@ -18,6 +18,11 @@ pub struct TabCanvas {
     /// and this field with `split_fraction` and the tab's focus is what it
     /// would write.
     pub layout: CanvasLayout,
+    /// The canvas as the headless model holds it: the pane tree, the folds,
+    /// the maximized pane and the floating ones. Picked layouts and the
+    /// `canvas.*` capabilities change it; a layout the column painter cannot
+    /// draw, or any fold or maximize, is painted from it.
+    pub state: quantick_workspace::canvas::CanvasState,
     /// The context column's share of the canvas width while it is shown.
     ///
     /// Kept while the column is collapsed, which is what it springs back to.
@@ -33,7 +38,9 @@ pub struct TabCanvas {
     /// Pixel width and opening direction of the divider drag in flight.
     pub(super) drag: Option<(f32, bool, bool)>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
-    pub(super) last_canvas: egui::Rect,
+    pub(crate) last_canvas: egui::Rect,
+    /// Every pane band the last drawn frame laid out, header to strip.
+    pub(crate) drawn_bands: SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by `Tab::apply_pending_layout` on the following frame.
     pub(super) pending_context_panes: usize,
@@ -61,12 +68,16 @@ impl Default for TabCanvas {
     fn default() -> Self {
         Self {
             layout: CanvasLayout::Single,
+            state: quantick_workspace::canvas::CanvasState::from_preset(
+                CanvasLayout::Single.preset(),
+            ),
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: false,
             flow_collapsed: false,
             context_stack: ContextStack::default(),
             drag: None,
             last_canvas: egui::Rect::ZERO,
+            drawn_bands: SmallVec::new(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -96,6 +107,7 @@ impl TabCanvas {
         self.context_collapsed = false;
         self.flow_collapsed = false;
         self.expand_context_stack();
+        self.state.apply_preset(layout.preset());
         if layout == previous {
             return None;
         }
@@ -116,11 +128,11 @@ impl TabCanvas {
             // The split reveals whichever pane the previous layout was not
             // showing: the time pane coming from Single, the flow pane coming
             // from Time.
-            CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
-                CanvasLayout::Single => PaneSide::Time(0),
-                CanvasLayout::Time => PaneSide::Flow,
-                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => focus,
-            },
+            _ if !layout.shows_flow() => PaneSide::Time(0),
+            _ if !layout.shows_time() => PaneSide::Flow,
+            _ if !previous.shows_time() => PaneSide::Time(0),
+            _ if !previous.shows_flow() => PaneSide::Flow,
+            _ => focus,
         })
     }
 
@@ -217,6 +229,32 @@ impl TabCanvas {
             self.flow_collapsed = false;
         }
         true
+    }
+
+    /// Whether the column painter draws this frame: a layout it knows, laid
+    /// out as its preset, nothing folded or maximized by the canvas model.
+    /// Anything else is painted from [`Self::state`]'s tree.
+    pub(crate) fn column_painted(&self) -> bool {
+        self.layout.is_column()
+            && self.state.maximized().is_none()
+            && self.state.minimized().is_empty()
+            && self.state.preset() == Some(self.layout.preset())
+    }
+
+    /// Put the column painter's split where the layout's tree puts the flow
+    /// pane, so a picked layout draws exactly what its thumbnail drew.
+    pub(crate) fn split_to_preset(&mut self) {
+        if !(self.layout.is_column() && self.layout.shows_time() && self.layout.shows_flow()) {
+            return;
+        }
+        let unit = quantick_workspace::canvas::CanvasRect::new(0.0, 0.0, 1.0, 1.0);
+        let preset = self.layout.preset();
+        let flow = preset.kinds.iter().position(|kind| *kind == PaneKind::Flow);
+        let rects = preset.tree.rects(unit);
+        let flow = flow.and_then(|slot| rects.iter().find(|(held, _)| *held as usize == slot));
+        if let Some((_, rect)) = flow {
+            self.split_fraction = rect.x;
+        }
     }
 
     /// Fold or restore the flow pane while retaining the split's open width.

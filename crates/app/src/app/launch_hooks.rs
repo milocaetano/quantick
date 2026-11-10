@@ -780,7 +780,9 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
     if let Some(name) = env.var("QUANTICK_LAYOUT") {
-        let layout = crate::config::DeclaredLayout::parse(&name).map(CanvasLayout::from);
+        let layout = crate::config::DeclaredLayout::parse(&name)
+            .map(CanvasLayout::from)
+            .or_else(|| crate::canvas_layout::preset(&name).and_then(CanvasLayout::from_preset));
         match layout {
             Some(layout) => app.active_tab_mut().set_layout(layout),
             None => tracing::warn!(

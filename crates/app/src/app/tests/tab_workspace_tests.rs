@@ -732,17 +732,10 @@ fn the_cell_menu_in_a_torn_off_window_acts_on_that_windows_tab() {
     tabs.focus_window(child).unwrap();
     tabs.present_window(child).unwrap();
     assert_eq!(app.runtime.tabs.active_id(), second);
-    let clicked = crate::statusbar::StatusResponse {
-        workspace_cell: Some(egui::Rect::from_min_size(
-            egui::pos2(10.0, 700.0),
-            egui::vec2(90.0, 20.0),
-        )),
-        workspace_clicked: true,
-        ..Default::default()
-    };
+    let cell = egui::Rect::from_min_size(egui::pos2(10.0, 700.0), egui::vec2(90.0, 20.0));
     let ctx = egui::Context::default();
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        crate::app::menu_bar::workspace_cell(&mut app, ctx, &clicked);
+        crate::app::menu_bar::workspace_cell(&mut app, ctx, Some(cell), true);
     });
     let menu = &app.chrome.window_menu.tab_workspace;
     assert!(menu.chip_menu_on(second));
