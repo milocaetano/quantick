@@ -39,6 +39,12 @@ pub struct TabCanvas {
     pub(super) drag: Option<(f32, bool, bool)>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
     pub(crate) last_canvas: egui::Rect,
+    /// Which built time pane each time slot of [`Self::state`] shows, kept
+    /// across edits so a removed chart never moves another; a picked layout
+    /// seats them afresh.
+    pub(crate) seats: SmallVec<
+        [(quantick_workspace::canvas::PaneSlot, usize); crate::canvas_layout::MAX_CANVAS_PANES],
+    >,
     /// Every pane band the last drawn frame laid out, header to strip.
     pub(crate) drawn_bands:
         SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
@@ -79,6 +85,7 @@ impl Default for TabCanvas {
             drag: None,
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
+            seats: SmallVec::new(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -109,6 +116,7 @@ impl TabCanvas {
         self.flow_collapsed = false;
         self.expand_context_stack();
         self.state.apply_preset(layout.preset());
+        self.seats.clear();
         if layout == previous {
             return None;
         }
@@ -272,6 +280,15 @@ impl TabCanvas {
 }
 
 impl CanvasLayout {
+    /// How many timeframe charts this layout shows.
+    #[must_use]
+    pub fn time_panes(self) -> usize {
+        self.kinds()
+            .iter()
+            .filter(|kind| **kind == PaneKind::Time)
+            .count()
+    }
+
     /// Whether the column painter draws this layout; every other one is
     /// drawn from the canvas's pane tree.
     #[must_use]
@@ -286,6 +303,25 @@ impl CanvasLayout {
 pub(crate) fn named(name: &str) -> Option<CanvasLayout> {
     let declared = crate::config::DeclaredLayout::parse(name).map(CanvasLayout::from);
     declared.or_else(|| crate::canvas_layout::preset(name).map(CanvasLayout::from_preset))
+}
+
+/// Lay `tab` out as `preset`, the split where the preset's tree puts it:
+/// the one way every picker, menu and call applies a layout. Answers whether
+/// the canvas changed.
+pub(crate) fn pick(tab: &mut super::Tab, preset: &'static LayoutPreset) -> bool {
+    let before = (
+        tab.canvas.layout,
+        tab.canvas.state.clone(),
+        tab.canvas.split_fraction,
+    );
+    tab.set_layout(CanvasLayout::from_preset(preset));
+    tab.canvas.split_to_preset();
+    before
+        != (
+            tab.canvas.layout,
+            tab.canvas.state.clone(),
+            tab.canvas.split_fraction,
+        )
 }
 
 /// The config vocabulary's nearest word for `preset`: it has four, and the

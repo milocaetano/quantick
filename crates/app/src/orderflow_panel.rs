@@ -23,6 +23,13 @@ const STATE_GAP_PX: f32 = 8.0;
 
 /// Whether the tab has the pane its panel attaches to: no flow pane, no gear.
 pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
+    if !tab.canvas.column_painted() {
+        return tab
+            .canvas
+            .drawn_bands
+            .iter()
+            .any(|(side, _)| *side == crate::pane::PaneSide::Flow);
+    }
     tab.canvas.layout.shows_flow() && !tab.canvas.flow_collapsed
 }
 

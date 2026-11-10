@@ -277,12 +277,17 @@ impl WindowMenu<'_> {
             id,
             SubmenuId::Layouts | SubmenuId::Layout | SubmenuId::MoveChart
         );
+        // The caret points the way the submenu opens.
+        let caret = match state.door {
+            MenuDoor::Kebab => icons::CARET_LEFT,
+            MenuDoor::Toolbar => icons::CARET_RIGHT,
+        };
         let response = ui
             .add_enabled(
                 !empty && (self.chart_shown || !chart_row),
                 egui::Button::new(submenu(id).0)
                     .selected(state.path[level] == Some(id))
-                    .shortcut_text(crate::theme::supporting_text(ui, icons::CARET_LEFT)),
+                    .shortcut_text(crate::theme::supporting_text(ui, caret)),
             )
             .on_disabled_hover_text(if empty {
                 "No workspace files opened yet"

@@ -92,11 +92,8 @@ impl CapsuleState {
 /// Whether two canvases show the same layout: the preset, the folds, the
 /// maximized and the floating panes; slot numbers aside.
 fn same_layout(saved: &CanvasState, live: &CanvasState) -> bool {
-    saved.preset() == live.preset()
-        && saved.tree().len() == live.tree().len()
-        && saved.minimized().len() == live.minimized().len()
-        && saved.maximized().is_some() == live.maximized().is_some()
-        && saved.floating().len() == live.floating().len()
+    use super::canvas_wiring::arrangement;
+    arrangement(saved) == arrangement(live)
 }
 
 /// After the toolbar drew: hang the popover and the workspace menu, publish

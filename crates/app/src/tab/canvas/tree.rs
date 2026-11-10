@@ -7,7 +7,7 @@
 //! dividers do. Nothing here decides a layout.
 
 use eframe::egui;
-use quantick_workspace::canvas::{CanvasRect, CanvasState, PaneKind, PaneMode};
+use quantick_workspace::canvas::{CanvasRect, CanvasState, PaneKind, PaneMode, PaneSlot};
 use smallvec::SmallVec;
 
 use super::{CanvasChrome, CanvasFrame, PaneRects, Tab};
@@ -30,36 +30,43 @@ pub(crate) struct TreeBand {
 /// Where each docked pane of `state` draws when the canvas is `area`.
 ///
 /// Slots map to the window's panes by kind: the flow slot is the flow pane,
-/// and the time slots, in slot order, are the time panes in theirs. A slot
-/// the window has no pane for (a second flow) is left out.
+/// and each time slot keeps the time pane `seats` gave it, so removing one
+/// chart never moves another onto a different pane. A slot the window has no
+/// pane for (a second flow) is left out.
 #[must_use]
 pub(crate) fn tree_bands(
     state: &CanvasState,
+    seats: &mut SmallVec<[(PaneSlot, usize); MAX_CANVAS_PANES]>,
     area: egui::Rect,
 ) -> SmallVec<[TreeBand; MAX_CANVAS_PANES]> {
     let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
-    let mut time = 0;
-    let mut flow_taken = false;
-    let sides: SmallVec<[_; MAX_CANVAS_PANES]> = (state.panes().into_iter())
-        .filter_map(|(slot, kind, _)| match kind {
-            PaneKind::Time => {
-                time += 1;
-                Some((slot, PaneSide::Time(time - 1)))
-            }
-            _ if flow_taken => None,
-            _ => {
-                flow_taken = true;
-                Some((slot, PaneSide::Flow))
-            }
-        })
-        .collect();
+    let panes = state.panes();
+    let time = |slot: PaneSlot| {
+        panes
+            .iter()
+            .any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
+    };
+    seats.retain(|(slot, _)| time(*slot));
+    for (slot, kind, _) in &panes {
+        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
+            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
+            seats.push((*slot, free.unwrap_or_default()));
+        }
+    }
+    let flow = panes
+        .iter()
+        .find(|(_, kind, _)| *kind != PaneKind::Time)
+        .map(|(slot, ..)| *slot);
+    let side = |slot: PaneSlot| match seats.iter().find(|(held, _)| *held == slot) {
+        Some((_, seat)) => Some(PaneSide::Time(*seat)),
+        None => (flow == Some(slot)).then_some(PaneSide::Flow),
+    };
     (state.rects(canvas).into_iter())
         .filter_map(|(slot, rect)| {
-            let side = sides.iter().find(|(held, _)| *held == slot)?.1;
             let rect =
                 egui::Rect::from_min_size(egui::pos2(rect.x, rect.y), egui::vec2(rect.w, rect.h));
             Some(TreeBand {
-                side,
+                side: side(slot)?,
                 rect: inset_seams(rect, area),
                 minimized: state.mode(slot) == Some(PaneMode::Minimized),
             })
@@ -103,7 +110,7 @@ impl Tab {
             chrome.capabilities,
             self.deal_recording_view().as_ref(),
         );
-        let bands = tree_bands(&self.canvas.state, area);
+        let bands = tree_bands(&self.canvas.state, &mut self.canvas.seats, area);
         let built = self.time_panes.len();
         let heights = &mut self.canvas.context_stack.heights;
         if heights.len() < built {

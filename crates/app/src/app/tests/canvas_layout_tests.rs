@@ -89,3 +89,31 @@ fn canvas_draws_every_preset_exactly() {
         );
     }
 }
+
+/// Removing a chart never moves the charts kept onto another pane: each time
+/// slot keeps the pane it was seated on.
+#[test]
+fn removing_a_chart_keeps_the_others_on_their_panes() {
+    use crate::pane::PaneSide;
+    use crate::tab::canvas::tree::tree_bands;
+    let preset = crate::canvas_layout::preset("stack2+flow").unwrap();
+    let mut state = quantick_workspace::canvas::CanvasState::from_preset(preset);
+    let mut seats = smallvec::SmallVec::new();
+    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+    let before = tree_bands(&state, &mut seats, area);
+    assert_eq!(
+        before
+            .iter()
+            .filter(|band| band.side == PaneSide::Time(1))
+            .count(),
+        1
+    );
+    state.remove(0).unwrap();
+    let after = tree_bands(&state, &mut seats, area);
+    let sides: Vec<_> = after.iter().map(|band| band.side).collect();
+    assert_eq!(
+        sides,
+        vec![PaneSide::Time(1), PaneSide::Flow],
+        "the kept chart stays on pane 1"
+    );
+}

@@ -15,7 +15,7 @@ use crate::theme;
 use crate::widgets::CORNER_RADIUS;
 
 /// One cell: the thumbnail and a name of up to two lines under it.
-const CELL: egui::Vec2 = egui::vec2(70.0, 62.0);
+const CELL: egui::Vec2 = egui::vec2(70.0, 70.0);
 /// The thumbnail inside a cell.
 const THUMBNAIL: egui::Vec2 = egui::vec2(58.0, 34.0);
 /// Gap between cells and around the column divider.

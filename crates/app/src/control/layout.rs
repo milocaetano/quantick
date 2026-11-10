@@ -23,7 +23,7 @@ use quantick_control::{
 
 use serde_json::Value;
 
-use crate::{canvas_layout, tab::CanvasLayout};
+use crate::canvas_layout;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION},
@@ -280,8 +280,7 @@ fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
         .tabs_mut()
         .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let changed = tab.canvas.layout != CanvasLayout::from_preset(preset);
-    tab.set_layout(CanvasLayout::from_preset(preset));
+    let changed = crate::tab::layout::pick(tab, preset);
     result(app, index, changed)
 }
 

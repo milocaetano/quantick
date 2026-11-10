@@ -32,7 +32,7 @@ use crate::state::BarConfiguration;
 use quantick_feed::{FeedHandle, FeedLatency, FeedLink};
 use std::path::PathBuf;
 
-mod canvas;
+pub(crate) mod canvas;
 pub(crate) mod context_resize;
 mod feed;
 pub(crate) mod layout;

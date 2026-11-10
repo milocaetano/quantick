@@ -153,7 +153,7 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
         slot,
         confirm: false,
     } = act
-        && saved_recipe(app).is_some_and(|saved| remove_needs_confirm(&saved.canvas_state(), slot))
+        && saved_recipe(app).is_some_and(|saved| remove_needs_confirm(&recipe_state(saved), slot))
         && app.active_tab().canvas.state.holds(slot)
     {
         let mut error = ControlError::invalid_request(format!(
@@ -247,4 +247,61 @@ pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
 pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
     let layout = recipe_layout(recipe);
     (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset(layout.preset()))
+}
+
+/// The recipe signal's reading of a canvas.
+pub(super) type Signal = (Vec<(u32, u8, u8)>, Option<&'static str>, Vec<[u32; 4]>);
+
+/// A hashable reading of `state` for the recipe signal: every pane's slot,
+/// kind and mode, the matched preset, and each floating pane's place.
+#[must_use]
+pub(super) fn signal(state: &CanvasState) -> Signal {
+    let panes = state.panes().into_iter();
+    let panes = panes
+        .map(|(slot, kind, mode)| (slot, kind as u8, mode as u8))
+        .collect();
+    let floating = (state.floating().iter()).map(|pane| match &pane.host {
+        FloatHost::Canvas { rect } | FloatHost::OsWindow { rect, .. } => {
+            [rect.x, rect.y, rect.w, rect.h].map(f32::to_bits)
+        }
+    });
+    (
+        panes,
+        state.preset().map(|preset| preset.id),
+        floating.collect(),
+    )
+}
+
+/// `state` with its slots renumbered in reading order: what two canvases
+/// compare by when only the arrangement matters.
+#[must_use]
+pub(super) fn arrangement(
+    state: &CanvasState,
+) -> (
+    quantick_workspace::canvas::PaneTree,
+    Vec<usize>,
+    Option<usize>,
+    usize,
+) {
+    let order: Vec<u32> = state
+        .tree()
+        .panes()
+        .into_iter()
+        .map(|(slot, _)| slot)
+        .collect();
+    let rank = |slot: u32| {
+        order
+            .iter()
+            .position(|held| *held == slot)
+            .unwrap_or(usize::MAX)
+    };
+    let tree = state.tree().relabelled(&|slot| rank(slot) as u32);
+    let mut folded: Vec<usize> = state.minimized().iter().map(|slot| rank(*slot)).collect();
+    folded.sort_unstable();
+    (
+        tree,
+        folded,
+        state.maximized().map(rank),
+        state.floating().len(),
+    )
 }

@@ -51,11 +51,12 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     assert!(control(&app, "toolbar.capsule.save").is_none());
 
     app.apply_layout_preset(preset("charts-4").unwrap());
-    frames(&mut app, &ctx, 3);
+    // A frame builds each new chart; the tab settles once all four stand.
+    frames(&mut app, &ctx, 6);
     let (_, unsaved, layout) = CapsuleState::of(&app, &egui::Context::default()).marks();
     assert!(
         unsaved && layout,
-        "the floppy and the miniature carry the dot"
+        "the floppy ({unsaved}) and the miniature ({layout}) carry the dot"
     );
     assert!(
         control(&app, "toolbar.capsule.save").is_some(),

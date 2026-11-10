@@ -12,7 +12,6 @@ use quantick_engine::Side;
 
 use super::indicator_manager::IndicatorEdit;
 use crate::indicator_worker::SlotId;
-use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
 use super::{QuantickApp, TabsMutPort};
@@ -115,9 +114,7 @@ impl QuantickApp {
         &mut self,
         preset: &'static crate::canvas_layout::LayoutPreset,
     ) {
-        let tab = self.active_tab_mut();
-        tab.set_layout(CanvasLayout::from_preset(preset));
-        tab.canvas.split_to_preset();
+        crate::tab::layout::pick(self.active_tab_mut(), preset);
     }
 
     /// One toolbar side effect.
