@@ -1190,9 +1190,19 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .collect();
     assert_eq!(
         labels,
-        ["Rename", "Add strategy", "Lock", "Hide", "Delete"],
+        [
+            "Rename",
+            "Add strategy",
+            "Lock",
+            "Hide",
+            "Delete",
+            "configure footprint",
+            "configure L2",
+            "configure bubbles"
+        ],
         "the clicked object owns its section of the menu — rename, the \
-             strategy seat, and the guarded actions"
+             strategy seat, and the guarded actions — above the chart's \
+             settings doors"
     );
 
     let click = |rects: &[(&'static str, egui::Rect)], label: &str| {

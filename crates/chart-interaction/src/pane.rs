@@ -43,6 +43,9 @@ pub enum MenuIntent {
     SetBarProgress(bool),
     SetIgnoreFlowOpening(bool),
     OpenFootprintSettings,
+    /// Open the flow pane's settings panel on the section that configures
+    /// `layer`, the door its header glyph uses.
+    OpenLayerSettings(ChartLayer),
     SetLaneWindow(LaneWindow),
     Place {
         tool: &'static str,
