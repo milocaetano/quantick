@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quantick widgets - mock</title>
+<style>
+/* Quantick dark chrome. Five candidate widgets for the "+" menu, each in a pane with the app's header row. */
+:root {
+  --page:#0B0E14; --canvas:#131722; --chrome:#171B26; --inset:#10141D; --control:#232936; --border:#2E3648;
+  --text:#D2DAE2; --muted:#96A0AF; --faint:#6E7887; --buy:#26A69A; --sell:#EF5350; --accent:#8AB4F8;
+  --cvd:#4DD0E1; --spot:#B39DDB; --grid:#1B2130; --sel:#2F4F8F;
+  --mono:"Cascadia Mono","Consolas",ui-monospace,monospace; --sans:"Segoe UI",system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; background:var(--page); color:var(--muted); font:12px/1.4 var(--sans); }
+main { width:1640px; padding:18px; }
+h1 { font:600 17px var(--sans); color:var(--text); margin:0 0 3px; }
+.lead { margin:0 0 14px; }
+.wall { display:grid; grid-template-columns:330px 420px 1fr 1fr; grid-template-rows:430px 400px; gap:10px; }
+.pane { background:var(--canvas); border:1px solid var(--border); border-radius:3px; display:flex; flex-direction:column; min-height:0; overflow:hidden; position:relative; }
+.ph { display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 10px; border-bottom:1px solid var(--border); background:var(--chrome); white-space:nowrap; flex:none; }
+.ph .k { font:600 11px var(--mono); letter-spacing:.06em; color:var(--text); }
+.ph .s { color:var(--muted); }
+.ph .chip { font:11px var(--mono); color:var(--text); background:var(--control); border:1px solid var(--border); border-radius:3px; padding:1px 6px; }
+.ph .sp { flex:1; }
+.ph .ic { width:18px; height:18px; display:grid; place-items:center; color:var(--muted); font:13px var(--mono); }
+.num { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.buy { color:var(--buy); } .sell { color:var(--sell); } .faint { color:var(--faint); }
+.foot { flex:none; height:22px; display:flex; align-items:center; gap:10px; padding:0 10px; border-top:1px solid var(--border); font:10.5px var(--mono); color:var(--faint); }
+.tag { position:absolute; top:-1px; right:-1px; font:600 10px var(--mono); background:var(--accent); color:#0E121A; padding:1px 6px; border-radius:0 3px 0 3px; }
+
+/* + menu */
+.menu { grid-row:1 / span 2; display:flex; flex-direction:column; gap:10px; }
+.pop { background:var(--chrome); border:1px solid var(--border); border-radius:5px; box-shadow:0 10px 30px rgba(0,0,0,.5); padding:6px; }
+.pop .hd { font:600 10.5px var(--mono); letter-spacing:.08em; color:var(--faint); padding:6px 8px 4px; }
+.pop .it { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:4px; color:var(--text); }
+.pop .it.on { background:var(--sel); }
+.pop .it .g { width:22px; height:22px; border:1px solid var(--border); border-radius:4px; display:grid; place-items:center; font:12px var(--mono); color:var(--muted); background:var(--inset); }
+.pop .it .d { color:var(--faint); font-size:11px; margin-left:auto; }
+.pop .it.off { color:var(--faint); }
+.pop .it.off .d { color:#7A6F9C; }
+.pop .sep { height:1px; background:var(--border); margin:5px 4px; }
+.note { background:var(--canvas); border:1px solid var(--border); border-radius:3px; padding:10px 12px; color:var(--muted); }
+.note b { color:var(--text); font-weight:600; }
+
+/* DOM ladder */
+.dom { flex:1; display:grid; grid-template-rows:20px 1fr; min-height:0; }
+.dh, .dr { display:grid; grid-template-columns:52px 64px 78px 64px 52px 1fr; align-items:center; }
+.dh { font:10px var(--mono); color:var(--faint); border-bottom:1px solid var(--grid); padding:0 4px; }
+.dh span, .dr span { text-align:right; padding-right:6px; }
+.rows { overflow:hidden; padding:0 4px; }
+.dr { height:15.4px; font:11px var(--mono); position:relative; color:var(--muted); }
+.dr .p { color:var(--text); text-align:center; padding:0; }
+.dr .bar { position:absolute; top:2px; bottom:2px; border-radius:1px; opacity:.32; }
+.dr.last { background:rgba(138,180,248,.10); outline:1px solid rgba(138,180,248,.45); }
+.dr.last .p { color:#0E121A; background:var(--accent); border-radius:2px; font-weight:600; }
+.dr.wl .sz { color:#fff; font-weight:600; }
+.vp { position:relative; height:100%; }
+.vp i { position:absolute; left:0; top:3px; bottom:3px; border-radius:1px; }
+
+/* lists */
+.list { flex:1; overflow:hidden; font:11px var(--mono); }
+.lr { display:grid; align-items:center; height:22px; padding:0 10px; border-bottom:1px solid var(--grid); }
+.lr.h { height:20px; font-size:10px; color:var(--faint); }
+.bt .lr { grid-template-columns:62px 34px 78px 70px 74px 1fr; }
+.lq .lr { grid-template-columns:62px 70px 78px 72px 1fr; }
+.lr span:not(:first-child) { text-align:right; }
+.lr .dot { display:flex; justify-content:flex-end; align-items:center; }
+.lr .dot i { display:block; border-radius:50%; }
+.lr.big { background:rgba(255,255,255,.035); }
+.lr.big span { color:var(--text); }
+.fills { color:var(--faint); font-size:10px; margin-left:4px; }
+.filt { display:flex; gap:6px; padding:6px 10px; border-bottom:1px solid var(--border); flex:none; align-items:center; }
+.filt .chip { font:10.5px var(--mono); color:var(--muted); border:1px solid var(--border); border-radius:3px; padding:1px 7px; background:var(--inset); }
+.filt .chip.on { color:var(--text); border-color:var(--accent); }
+
+/* liquidation totals */
+.tot { display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid var(--border); flex:none; }
+.tot div { padding:6px 10px; border-right:1px solid var(--grid); font:10.5px var(--mono); }
+.tot div:last-child { border-right:0; }
+.tot .w { color:var(--faint); }
+.tot .l { color:var(--sell); } .tot .s2 { color:var(--buy); }
+svg { display:block; }
+
+/* OI + funding */
+.cards { display:grid; grid-template-columns:1fr 1fr; flex:none; border-bottom:1px solid var(--border); }
+.card { padding:9px 12px; border-right:1px solid var(--grid); }
+.card:last-child { border-right:0; }
+.card .lbl { font:10px var(--mono); color:var(--faint); letter-spacing:.05em; }
+.card .big { font:600 20px var(--mono); color:var(--text); margin:2px 0 1px; }
+.card .sub { font:11px var(--mono); }
+.prov { font:10px var(--mono); color:#7A6F9C; }
+.read { flex:none; padding:5px 10px; font:10.5px var(--mono); border-top:1px solid var(--grid); color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<h1>Widgets for the "+" menu: Market Depth, Big Trades, Liquidations, OI + Funding, Spot vs Perp CVD</h1>
+<p class="lead">BTCUSDT on Binance, dark theme. Each widget is a pane with the app's header row; a widget the feed cannot serve is greyed in the menu and says why.</p>
+
+<div class="wall">
+
+  <!-- the + menu -->
+  <div class="menu">
+    <div class="pop">
+      <div class="hd">ADD TO LAYOUT</div>
+      <div class="it"><span class="g">⌇</span>Time chart<span class="d">1m 5m 1h</span></div>
+      <div class="it"><span class="g">▦</span>Order flow<span class="d">tick · heatmap</span></div>
+      <div class="sep"></div>
+      <div class="hd">ORDER BOOK &amp; TAPE</div>
+      <div class="it on"><span class="g">☰</span>Market depth<span class="d">DOM ladder</span></div>
+      <div class="it"><span class="g">●</span>Big trades<span class="d">≥ size filter</span></div>
+      <div class="sep"></div>
+      <div class="hd">DERIVATIVES</div>
+      <div class="it"><span class="g">✕</span>Liquidations<span class="d">perp</span></div>
+      <div class="it"><span class="g">%</span>Open interest + funding<span class="d">perp</span></div>
+      <div class="it"><span class="g">⇅</span>Spot vs perp CVD<span class="d">two venues</span></div>
+    </div>
+    <div class="pop">
+      <div class="hd">SAME MENU ON A WINZ26 TAB (MT5)</div>
+      <div class="it off"><span class="g">✕</span>Liquidations<span class="d">feed has no perp</span></div>
+      <div class="it off"><span class="g">%</span>Open interest + funding<span class="d">feed has no perp</span></div>
+      <div class="it off"><span class="g">⇅</span>Spot vs perp CVD<span class="d">feed has no perp</span></div>
+    </div>
+    <div class="note"><b>Gating</b> comes from <span class="num">FeedCapabilities</span>, never from the symbol. Market depth and Big trades work on every feed that sends trades and L2.</div>
+  </div>
+
+  <!-- 1. DOM ladder -->
+  <div class="pane" style="grid-row:1 / span 2">
+    <div class="tag">1</div>
+    <div class="ph"><span class="k">DEPTH</span><span class="s">BTCUSDT · Binance</span><span class="chip">tick 0.50</span><span class="sp"></span><span class="ic">⌖</span><span class="ic">⋯</span></div>
+    <div class="dom">
+      <div class="dh"><span>SOLD</span><span>BID</span><span style="text-align:center">PRICE</span><span>ASK</span><span>BOUGHT</span><span style="text-align:left;padding-left:4px">VOLUME</span></div>
+      <div class="rows" id="dom"></div>
+    </div>
+    <div class="foot"><span>spread 0.50</span><span>bid 18.42 | ask 11.07 within 0.1%</span><span class="sp"></span><span>⌖ recentres</span></div>
+  </div>
+
+  <!-- 2. Big trades -->
+  <div class="pane bt">
+    <div class="tag">2</div>
+    <div class="ph"><span class="k">BIG TRADES</span><span class="s">BTCUSDT</span><span class="sp"></span><span class="ic">⋯</span></div>
+    <div class="filt"><span class="faint">min</span><span class="chip">50k</span><span class="chip on">250k</span><span class="chip">1M</span><span class="sp" style="flex:1"></span><span class="chip on">merge fills</span></div>
+    <div class="list" id="bt"></div>
+    <div class="foot"><span>last 5 min: buys $8.4M · sells $5.1M</span></div>
+  </div>
+
+  <!-- 3. Liquidations -->
+  <div class="pane lq">
+    <div class="tag">3</div>
+    <div class="ph"><span class="k">LIQUIDATIONS</span><span class="s">BTCUSDT.p · Binance</span><span class="sp"></span><span class="ic">⋯</span></div>
+    <div class="tot">
+      <div><span class="w">1m</span><br><span class="l">L $0.42M</span>&nbsp; <span class="s2">S $0.03M</span></div>
+      <div><span class="w">5m</span><br><span class="l">L $2.91M</span>&nbsp; <span class="s2">S $0.18M</span></div>
+      <div><span class="w">1h</span><br><span class="l">L $11.6M</span>&nbsp; <span class="s2">S $3.40M</span></div>
+    </div>
+    <svg id="lqh" width="100%" height="64"></svg>
+    <div class="list" id="lq"></div>
+  </div>
+
+  <!-- 4. OI + Funding -->
+  <div class="pane">
+    <div class="tag">4</div>
+    <div class="ph"><span class="k">OI + FUNDING</span><span class="s">BTCUSDT.p · Binance</span><span class="sp"></span><span class="chip">5m</span><span class="ic">⋯</span></div>
+    <div class="cards">
+      <div class="card">
+        <div class="lbl">OPEN INTEREST</div>
+        <div class="big">92418 BTC</div>
+        <div class="sub"><span class="sell">−1.84% 1h</span> <span class="faint">· $6.98B</span></div>
+      </div>
+      <div class="card">
+        <div class="lbl">FUNDING · NEXT IN <span style="color:var(--text)">03:12:44</span></div>
+        <div class="big buy">+0.0100%</div>
+        <div class="sub"><span class="faint">predicted</span> <span class="buy">+0.0071%</span> <span class="faint">· 10.95%/yr</span></div>
+      </div>
+    </div>
+    <svg id="oi" width="100%" height="190" style="flex:1"></svg>
+    <div class="read">price ↓ · OI ↓ = <span style="color:var(--text)">longs closing</span> <span class="faint">(reading rule, not a signal)</span></div>
+    <div class="foot"><span class="prov">OI polled every 5 s from venue REST</span><span class="sp"></span><span>— price  — OI</span></div>
+  </div>
+
+  <!-- 5. Spot vs Perp CVD -->
+  <div class="pane">
+    <div class="tag">5</div>
+    <div class="ph"><span class="k">SPOT vs PERP CVD</span><span class="s">BTCUSDT · Binance</span><span class="sp"></span><span class="chip">session</span><span class="ic">⋯</span></div>
+    <svg id="cvd" width="100%" height="300" style="flex:1"></svg>
+    <div class="foot"><span style="color:var(--cvd)">— perp −2341 BTC</span><span style="color:var(--spot)">— spot +412 BTC</span><span class="sp"></span><span>shaded = opposite signs</span></div>
+  </div>
+
+  <div class="note" style="grid-column:2 / span 3; display:none"></div>
+</div>
+</main>
+
+<script>
+// Deterministic pseudo-random so every render draws the same mock.
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// 1. DOM ladder
+(() => {
+  const last = 75984.0, rows = [];
+  for (let i = 12; i >= -12; i--) {
+    const p = last + i * 0.5;
+    const ask = i > 0 ? (rnd() * 4 + 0.2) * (i === 6 ? 9 : 1) : 0;
+    const bid = i < 0 ? (rnd() * 4 + 0.2) * (i === -8 ? 11 : 1) : 0;
+    const bought = Math.abs(i) < 9 ? rnd() * 6 * (1 - Math.abs(i) / 10) : 0;
+    const sold = Math.abs(i) < 9 ? rnd() * 6 * (1 - Math.abs(i) / 10) : 0;
+    rows.push({ i, p, ask, bid, bought, sold });
+  }
+  const mx = Math.max(...rows.map(r => Math.max(r.ask, r.bid)));
+  const vx = Math.max(...rows.map(r => r.bought + r.sold));
+  const f = v => v ? v.toFixed(2) : "";
+  document.getElementById("dom").innerHTML = rows.map(r => {
+    const wall = (r.ask > 15 || r.bid > 15) ? " wl" : "";
+    const bidBar = r.bid ? `<i class="bar" style="right:${0}px;width:${r.bid / mx * 60}px;background:var(--buy)"></i>` : "";
+    const askBar = r.ask ? `<i class="bar" style="left:0;width:${r.ask / mx * 60}px;background:var(--sell)"></i>` : "";
+    const tot = r.bought + r.sold;
+    return `<div class="dr${r.i === 0 ? " last" : ""}${wall}">
+      <span class="sell">${f(r.sold)}</span>
+      <span style="position:relative" class="${r.bid ? "sz buy" : ""}">${bidBar}<b style="position:relative;font-weight:inherit">${f(r.bid)}</b></span>
+      <span class="p">${r.p.toFixed(2)}</span>
+      <span style="position:relative;text-align:left;padding-left:6px" class="${r.ask ? "sz sell" : ""}">${askBar}<b style="position:relative;font-weight:inherit">${f(r.ask)}</b></span>
+      <span class="buy">${f(r.bought)}</span>
+      <span class="vp">${tot ? `<i style="width:${r.sold / vx * 100}%;background:rgba(239,83,80,.55)"></i><i style="left:${r.sold / vx * 100}%;width:${r.bought / vx * 100}%;background:rgba(38,166,154,.55)"></i>` : ""}</span>
+    </div>`;
+  }).join("");
+})();
+
+// 2. Big trades
+(() => {
+  const rows = [
+    ["00:13:52", "B", "75984.50", 14.20, 1078.9, 9], ["00:13:51", "S", "75983.00", 4.10, 311.5, 3],
+    ["00:13:49", "B", "75985.00", 3.55, 269.7, 1], ["00:13:47", "S", "75980.50", 22.80, 1732.4, 14],
+    ["00:13:44", "B", "75990.00", 5.02, 381.4, 2], ["00:13:43", "B", "75990.50", 3.40, 258.3, 1],
+    ["00:13:41", "S", "75976.00", 7.75, 588.8, 4], ["00:13:40", "S", "75975.50", 3.31, 251.5, 1],
+    ["00:13:38", "B", "75979.00", 9.10, 691.4, 6], ["00:13:35", "S", "75981.00", 4.46, 338.9, 2],
+    ["00:13:31", "B", "75986.50", 3.70, 281.1, 1], ["00:13:29", "S", "75984.00", 6.20, 471.1, 3],
+  ];
+  const head = `<div class="lr h"><span>TIME</span><span></span><span>PRICE</span><span>BTC</span><span>USD</span><span></span></div>`;
+  document.getElementById("bt").innerHTML = head + rows.map(([t, s, p, q, k, n]) => {
+    const c = s === "B" ? "buy" : "sell", d = Math.min(18, 6 + Math.sqrt(k) * 0.35), big = k >= 1000 ? " big" : "";
+    return `<div class="lr${big}"><span class="faint">${t}</span><span class="${c}">${s === "B" ? "BUY" : "SELL"}</span><span>${p}</span><span class="${c}">${q.toFixed(2)}${n > 1 ? `<span class="fills">×${n}</span>` : ""}</span><span>$${k >= 1000 ? (k / 1000).toFixed(2) + "M" : k.toFixed(0) + "k"}</span><span class="dot"><i style="width:${d}px;height:${d}px;background:var(--${s === "B" ? "buy" : "sell"});opacity:.85"></i></span></div>`;
+  }).join("");
+})();
+
+// 3. Liquidations: per-minute histogram, longs down (red), shorts up (green)
+(() => {
+  const svg = document.getElementById("lqh"), w = 380, h = 64, n = 30, bw = w / n;
+  let out = `<line x1="0" x2="${w}" y1="32" y2="32" stroke="#2E3648"/>`;
+  for (let i = 0; i < n; i++) {
+    const spike = i > 24 ? 3.2 : 1;
+    const L = rnd() ** 3 * 26 * spike, S = rnd() ** 3 * 18;
+    out += `<rect x="${i * bw + 1}" y="32" width="${bw - 2}" height="${Math.min(L, 30)}" fill="#EF5350" opacity=".8"/>`;
+    out += `<rect x="${i * bw + 1}" y="${32 - S}" width="${bw - 2}" height="${S}" fill="#26A69A" opacity=".8"/>`;
+  }
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = out;
+  const rows = [
+    ["00:13:52", "LONG", "75981.20", 3.94, 299.4], ["00:13:52", "LONG", "75981.20", 1.12, 85.1],
+    ["00:13:50", "LONG", "75979.80", 12.40, 942.2], ["00:13:47", "SHORT", "75992.10", 0.48, 36.5],
+    ["00:13:44", "LONG", "75985.40", 2.27, 172.5], ["00:13:41", "LONG", "75975.00", 6.81, 517.4],
+    ["00:13:33", "SHORT", "75998.60", 1.03, 78.3], ["00:13:28", "LONG", "75983.90", 0.91, 69.1],
+    ["00:13:20", "LONG", "75988.00", 4.40, 334.3],
+  ];
+  const head = `<div class="lr h"><span>TIME</span><span>LIQUIDATED</span><span>PRICE</span><span>BTC</span><span>USD</span></div>`;
+  document.getElementById("lq").innerHTML = head + rows.map(([t, s, p, q, k]) => {
+    const c = s === "LONG" ? "sell" : "buy", big = k >= 500 ? " big" : "";
+    return `<div class="lr${big}"><span class="faint">${t}</span><span class="${c}">${s}</span><span>${p}</span><span class="${c}">${q.toFixed(2)}</span><span>$${k.toFixed(1)}k</span></div>`;
+  }).join("");
+})();
+
+// shared line helper
+function path(vals, w, h, pad, lo, hi) {
+  return vals.map((v, i) => `${i ? "L" : "M"}${(i / (vals.length - 1) * w).toFixed(1)},${(pad + (1 - (v - lo) / (hi - lo)) * (h - 2 * pad)).toFixed(1)}`).join("");
+}
+
+// 4. OI vs price
+(() => {
+  const svg = document.getElementById("oi"), w = 460, h = 190, n = 90;
+  let p = 76300, o = 94100; const P = [], O = [];
+  for (let i = 0; i < n; i++) {
+    p += (rnd() - (i > 50 ? 0.62 : 0.48)) * 40; o += (rnd() - (i > 50 ? 0.66 : 0.42)) * 70;
+    P.push(p); O.push(o);
+  }
+  let g = "";
+  for (let k = 1; k < 4; k++) g += `<line x1="0" x2="${w}" y1="${k * h / 4}" y2="${k * h / 4}" stroke="#1B2130"/>`;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = g +
+    `<path d="${path(P, w, h, 14, Math.min(...P), Math.max(...P))}" fill="none" stroke="#D2DAE2" stroke-width="1.3" opacity=".75"/>` +
+    `<path d="${path(O, w, h, 14, Math.min(...O), Math.max(...O))}" fill="none" stroke="#8AB4F8" stroke-width="1.8"/>` +
+    `<text x="6" y="12" fill="#6E7887" font-family="Consolas" font-size="10">price 75984.32</text>` +
+    `<text x="${w - 6}" y="12" fill="#8AB4F8" font-family="Consolas" font-size="10" text-anchor="end">OI 92418</text>`;
+})();
+
+// 5. Spot vs perp CVD
+(() => {
+  const svg = document.getElementById("cvd"), w = 460, h = 300, n = 120;
+  let a = 0, b = 0; const A = [], B = [];
+  for (let i = 0; i < n; i++) {
+    a += (rnd() - (i > 60 ? 0.68 : 0.5)) * 60; b += (rnd() - (i > 60 ? 0.42 : 0.5)) * 14;
+    A.push(a); B.push(b);
+  }
+  const lo = Math.min(...A, ...B), hi = Math.max(...A, ...B), pad = 16;
+  const y = v => pad + (1 - (v - lo) / (hi - lo)) * (h - 2 * pad), x = i => i / (n - 1) * w;
+  let shade = "";
+  for (let i = 1; i < n; i++) if (Math.sign(A[i]) !== Math.sign(B[i]) && Math.abs(A[i] - B[i]) > 40)
+    shade += `<rect x="${x(i - 1)}" y="0" width="${x(1) + 0.5}" height="${h}" fill="#B39DDB" opacity=".07"/>`;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = shade +
+    `<line x1="0" x2="${w}" y1="${y(0)}" y2="${y(0)}" stroke="#2E3648" stroke-dasharray="3 3"/>` +
+    `<path d="${path(A, w, h, pad, lo, hi)}" fill="none" stroke="#4DD0E1" stroke-width="1.8"/>` +
+    `<path d="${path(B, w, h, pad, lo, hi)}" fill="none" stroke="#B39DDB" stroke-width="1.8"/>` +
+    `<text x="${w - 6}" y="${y(A[n - 1]) - 6}" fill="#4DD0E1" font-family="Consolas" font-size="10" text-anchor="end">perp</text>` +
+    `<text x="${w - 6}" y="${y(B[n - 1]) - 6}" fill="#B39DDB" font-family="Consolas" font-size="10" text-anchor="end">spot</text>`;
+})();
+</script>
+</body>
+</html>
