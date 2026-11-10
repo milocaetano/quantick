@@ -1,5 +1,5 @@
 # #864 docks the toolbar's list door, the layout+workspace capsule, popover A and
 # the tree painter as drawing files, and binds the canvas.* family to app-owned tabs.
 # Model, presets, drop rule and capability contracts stay headless (#863, control-*).
-crates/app +903
-!budget +903
+crates/app +904
+!budget +904
