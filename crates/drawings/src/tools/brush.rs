@@ -62,6 +62,11 @@ impl MarkTool for Brush {
     fn freehand(&self) -> bool {
         true
     }
+    /// The trader picks a colour and width while sketching, then expects the
+    /// next stroke to carry on with them.
+    fn remembers_last_style(&self) -> bool {
+        true
+    }
     fn placement_hint(&self, _placed: usize) -> Option<&'static str> {
         Some("hold and draw")
     }
