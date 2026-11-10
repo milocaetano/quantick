@@ -1,0 +1,353 @@
+version = 1
+name = "Light"
+dark = false
+candle_fill_opacity = 1.0
+# The chart area follows TradingView's light chart, sampled from a capture of
+# it: black contours and wicks, and gridlines on both axes. The time chart
+# draws the contour on whole screen pixels: 1.0 is two at 150 % scaling, as
+# thick as TradingView's on the same screen; 0.5 is a single pixel.
+candle_outline_width = 1.0
+candle_outline_opacity = 1.0
+candle_wick_opacity = 1.0
+chart_time_grid = true
+
+[colors]
+drawing_default = "#2B3640"
+drawing_buy = "#1F7A34"
+drawing_sell = "#111111"
+drawing_vwap = "#2B3640"
+# The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
+drawing_profile = "#7A8EC2"
+flow_surface = "#EEEBE7"
+flow_divider = "#BDBBB7"
+flow_ink = "#242424"
+flow_key_down = "#DEDBD7"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 25] }
+flow_key_down_rim = { premultiplied = [30, 30, 30, 90] }
+flow_key_down_ink = "#4a4a4a"
+flow_key_up_top = "#FAF8F5"
+flow_key_up_bottom = "#E3E0DC"
+flow_key_up_lip = { premultiplied = [200, 200, 200, 200] }
+flow_key_up_edge = { premultiplied = [35, 35, 35, 100] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 35] }
+flow_key_up_ink = "#242424"
+flow_band_rule = "#C8C6C2"
+trade_selection_halo = "#24588740"
+candle_preview_background = "#FFFCF7"
+candle_preview_bid = "#157EAE"
+candle_preview_ask = "#BD394C"
+candle_preview_buy = "#4CAF50D2"
+candle_preview_sell = "#000000D2"
+retained_tape_shade = "#77777738"
+text_shadow = "#FFFCF7"
+replay_error = "#FFE6E1"
+replay_inset = "#EEEBE7"
+replay_well = { premultiplied = [245, 243, 240, 255] }
+error_text = "#B3261E"
+action_ink = "#202020"
+modal_scrim = { premultiplied = [0, 0, 0, 60] }
+widget_open_border = "#A09E9B"
+widget_active_border = "#000000"
+widget_noninteractive = "#F7F4F0"
+widget_shadow = { premultiplied = [0, 0, 0, 25] }
+widget_cursor = "#00537D"
+widget_error = "#C62828"
+widget_warn = "#B84600"
+widget_code = "#E6E3DF"
+drawing_readout_plate = "#FFFCF7E6"
+drawing_selection_halo = { premultiplied = [0, 0, 0, 28] }
+flow_buy = "#1769A5"
+flow_sell = "#9B5B12"
+tape_path = "#55555580"
+tape_label = "#555555"
+quantity_shadow = "#FFFCF7BE"
+crosshair_ink = "#202020"
+footprint_total_ink = "#202020"
+loading_logo_low = "#707070"
+loading_logo_high = "#303030"
+loading_title = "#303030"
+loading_meta = "#606060"
+loading_faint = "#858585"
+loading_border = "#C8C6C2"
+footprint_profile = "#404040"
+footprint_bevel_highlight = { premultiplied = [0, 0, 0, 30] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 100] }
+canvas = "#FFFCF7"
+chrome = "#EDEDED"
+inset = "#F7F7F7"
+control = "#FFFFFF"
+# The renderer premultiplies in linear light: at the grid's default opacity
+# this renders TradingView's #F2F3F3 on the white chart canvas.
+chart_grid = "#BABBBB"
+# Overridden by [title_strip] for the bundled strip and wordmark; kept so a
+# Light theme without that table, or one derived from this file, has its own.
+tab_strip = "#D9D6D2"
+brand = "#12C68C"
+# Dark enough that a replaying idle tab keeps 4.5:1 on its warm grey.
+replay_ink = "#7832AA"
+# The active tab flows into the toolbar row, which wears the same grey as the
+# layout strip and status bar below; idle tabs are warm grey blocks with no
+# edge, on the title strip's slate (see [title_strip]).
+toolbar_sheet = "#EDEDED"
+tab_idle_fill = "#CFCCC7"
+tab_idle_outline = "#CFCCC700"
+tab_band = "#12C68C"
+home_glow = "#12C68C0E"
+# TradingView's axes: near-black labels, no rule beside the price axis and a
+# light rule over the time axis.
+axis_ink = "#131722"
+# The plot and both axes; the chrome around them keeps canvas.
+chart_canvas = "#FFFFFF"
+# The last-price chip keeps the direction colours Light's candles wore before
+# their contours turned black.
+last_price_up = "#3D8540"
+last_price_down = "#000000"
+price_axis_rule = "#E0E3EB00"
+time_axis_rule = "#E0E3EB"
+border = "#7C7C7C"
+text_primary = "#202020"
+text_muted = "#505050"
+text_faint = "#707070"
+text_support = "#555555"
+buy = "#4CAF50"
+sell = "#000000"
+poc = "#9A6500"
+accent = "#245DB1"
+amber = "#7F5300"
+pane_mark = "#202020"
+pane_action = "#555555"
+off = "#98540B"
+capsule_fill = "#F7F4F0DB"
+capsule_border = "#20202024"
+capsule_shadow = "#00000038"
+bare_hover = "#20202012"
+seam_line = "#2020203C"
+day_rule = "#2020201E"
+seam_label = "#20202080"
+warn = "#B23824"
+rec = "#BA2636"
+gap_line = "#80600096"
+gap_label = "#765B0E"
+tag_bg = "#E2E2E2"
+chip_ink = "#FFFFFF"
+casing = "#F5F2EEEB"
+draw_violet = "#6A2BA8"
+draw_cyan = "#006A7A"
+float_shadow = "#00000038"
+candle_bull_outline = "#000000"
+candle_bear_outline = "#000000"
+candle_wick = "#000000"
+buy_ink = "#1B6E2E"
+sell_ink = "#202020"
+# Dark plates on the pale chrome: the replay key, the chart's order labels
+# and the report's drawdown chip, with vivid gains and losses inside them.
+replay_plate = "#202020"
+replay_plate_ink = "#FFFFFF"
+order_plate = "#15191E"
+order_plate_ink = "#FFFFFF"
+plate_gain = "#22C55E"
+plate_loss = "#FF8080"
+# White controls on the pale chrome: edged in the border, hovered on the tag
+# grey so their words keep 4.5:1; Reconnect in the primary ink.
+hover_fill = "#E2E2E2"
+control_edge = "#7C7C7C"
+connection_action = "#202020"
+# A loss on the pale panels, apart from sell_ink (the sell side's near-black);
+# gains and losses on a dark surface such as the slate flow pane.
+loss_ink = "#88181E"
+bright_gain_ink = "#64DCA0"
+bright_loss_ink = "#FF9191"
+# The trade ledger: a white day card edged on the chrome, a blue-grey
+# session box inside it, and the selected trade (docs/layout/trades).
+ledger_card = "#FFFFFF"
+ledger_card_edge = "#D5D9E0"
+ledger_session = "#F1F4F8"
+ledger_session_edge = "#E1E6EE"
+ledger_selection = "#D6E6FB"
+
+# TradingView's axis widths and label sizes, in logical pixels; the gutter
+# excludes the plot's 16 px right margin, and the strip counts its top rule.
+[chart_axes]
+price_gutter = 76.0
+time_strip = 30.0
+price_label_size = 11.5
+time_label_size = 11.5
+# Price lines at least this far apart, on the smallest 1-2-2.5-4-5 step that
+# keeps it: cells about twice as wide as tall, as TradingView's are.
+price_line_spacing = 50.0
+
+[footprint_heat]
+buy = ["#E8F5F2", "#D0EBE5", "#AFE0D5", "#75C8B5", "#227C6B", "#116454"]
+sell = ["#FCEEEA", "#F9DCD3", "#F3BDB0", "#EB9783", "#B74730", "#8B2F20"]
+ink = ["#374151", "#374151", "#273142", "#202A38", "#FFFFFF", "#FFFFFF"]
+
+[orderflow]
+ramp = ["#000000", "#040a28", "#0a2e78", "#0078c4", "#00c2c4", "#3cd078", "#d0dc3c", "#fa9e2c", "#fffae8"]
+
+[orderflow.colors]
+crown_backing = "#0000006E"
+separator = "#000000AA"
+buy = { premultiplied = [46, 224, 150, 255] }
+sell = { premultiplied = [255, 82, 96, 255] }
+consumption = { premultiplied = [255, 246, 205, 255] }
+depth_only = { premultiplied = [184, 130, 240, 255] }
+bubble_text = { premultiplied = [255, 255, 255, 255] }
+gap_fill = { premultiplied = [21, 24, 32, 20] }
+gap_boundary = { premultiplied = [157, 167, 188, 115] }
+lane_now = { premultiplied = [226, 234, 250, 150] }
+muted_text = { premultiplied = [186, 194, 209, 255] }
+legend_text = { premultiplied = [225, 230, 239, 255] }
+legend_background = { premultiplied = [8, 12, 23, 225] }
+legend_border = { premultiplied = [130, 145, 170, 90] }
+bid_tint = { premultiplied = [0, 174, 231, 255] }
+ask_tint = { premultiplied = [255, 90, 108, 255] }
+preview_grid = { premultiplied = [16, 16, 16, 16] }
+preview_path = { premultiplied = [145, 145, 145, 145] }
+
+# The bundled VWAP draws in the drawing slate on paper; the flow pane keeps purple.
+[plot_ink."VWAP (cumulative)"]
+vwap = "#2B3640"
+
+# Bookmap uses the approved slate plot independently of the Light Time canvas.
+[bookmap]
+candle_fill_opacity = 0.20
+candle_outline_width = 1.25
+candle_outline_opacity = 0.96
+candle_wick_opacity = 0.90
+
+[bookmap.colors]
+drawing_default = "#E8ECF2"
+drawing_buy = "#26A69A"
+drawing_sell = "#EF5350"
+drawing_vwap = "#8AB4F8"
+drawing_profile = "#7A8EC2"
+flow_surface = "#1e2433"
+flow_divider = "#3a4357"
+flow_ink = "#e8ecf2"
+flow_key_down = "#141924"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 179] }
+flow_key_down_rim = { premultiplied = [0, 0, 0, 102] }
+flow_key_down_ink = "#7e8799"
+flow_key_up_top = "#3d485e"
+flow_key_up_bottom = "#2e3749"
+flow_key_up_lip = { premultiplied = [56, 56, 56, 56] }
+flow_key_up_edge = { premultiplied = [0, 0, 0, 153] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
+flow_key_up_ink = "#ffffff"
+flow_band_rule = "#2e3648"
+trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
+candle_preview_background = "#252F37"
+candle_preview_bid = "#14B9E6"
+candle_preview_ask = "#F54646"
+candle_preview_buy = "#37E2B0D2"
+candle_preview_sell = "#FF5B69D2"
+retained_tape_shade = "#0000005A"
+text_shadow = "#000000"
+replay_error = "#5A1E1978"
+replay_inset = { premultiplied = [0, 0, 0, 90] }
+replay_well = { premultiplied = [0, 0, 0, 60] }
+error_text = "#FF8080"
+action_ink = "#000000"
+modal_scrim = { premultiplied = [0, 0, 0, 90] }
+widget_open_border = "#3C3C3C"
+widget_active_border = "#FFFFFF"
+widget_noninteractive = "#1B1B1B"
+widget_shadow = { premultiplied = [0, 0, 0, 96] }
+widget_cursor = "#C0DEFF"
+widget_error = "#FF0000"
+widget_warn = "#FF8F00"
+widget_code = "#404040"
+drawing_readout_plate = { premultiplied = [14, 18, 26, 216] }
+drawing_selection_halo = { premultiplied = [28, 28, 28, 28] }
+flow_buy = "#70B9F4"
+flow_sell = "#E8AF63"
+tape_path = "#8EA6B15F"
+tape_label = "#D0D7DF"
+quantity_shadow = { premultiplied = [0, 0, 0, 190] }
+crosshair_ink = "#FFFFFF"
+footprint_total_ink = "#FFFFFF"
+loading_logo_low = "#969696"
+loading_logo_high = "#D2D2D2"
+loading_title = "#D7DDE8"
+loading_meta = "#7C8799"
+loading_faint = "#4B5566"
+loading_border = "#1B2330"
+footprint_profile = "#C5CCD6"
+footprint_bevel_highlight = { premultiplied = [56, 56, 56, 56] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 120] }
+canvas = "#252F37"
+chrome = "#171B26"
+inset = "#10141D"
+control = "#232936"
+chart_grid = "#232936"
+tab_strip = "#10141D"
+brand = "#3AF0B2"
+replay_ink = "#C58CFF"
+border = "#2E3648"
+text_primary = "#F3F4F6"
+text_muted = "#D0D7DF"
+text_faint = "#BBC6D0"
+buy = "#26A69A"
+sell = "#EF5350"
+poc = "#FFD54F"
+accent = "#8AB4F8"
+amber = "#F0B90B"
+pane_mark = { premultiplied = [190, 156, 63, 217] }
+pane_action = "#AAB0BF"
+off = "#F29A4B"
+capsule_fill = { premultiplied = [8, 10, 15, 189] }
+capsule_border = { premultiplied = [23, 23, 23, 23] }
+capsule_shadow = { premultiplied = [0, 0, 0, 115] }
+bare_hover = { premultiplied = [15, 15, 15, 15] }
+seam_line = { premultiplied = [60, 60, 60, 60] }
+day_rule = { premultiplied = [30, 30, 30, 30] }
+seam_label = { premultiplied = [80, 80, 80, 80] }
+warn = "#FF6347"
+rec = "#FF4D4D"
+gap_line = { premultiplied = [120, 92, 10, 150] }
+gap_label = "#9A823A"
+tag_bg = "#373F50"
+text_support = "#D0D7DF"
+chip_ink = "#0E121A"
+casing = { premultiplied = [5, 7, 12, 235] }
+draw_violet = "#C58AF9"
+draw_cyan = "#4DD0E1"
+float_shadow = { premultiplied = [0, 0, 0, 96] }
+candle_bull_outline = "#68E0C9"
+candle_bear_outline = "#FF898B"
+last_price_up = "#68E0C9"
+last_price_down = "#FF898B"
+candle_wick = "#B6C9D2"
+
+buy_ink = "#88CEC7"
+sell_ink = "#F6A09F"
+replay_plate = "#F0B90B"
+replay_plate_ink = "#0E121A"
+order_plate = "#10141D"
+order_plate_ink = "#D2DAE2"
+plate_gain = "#88CEC7"
+plate_loss = "#F6A09F"
+hover_fill = "#2E3648"
+control_edge = "#00000000"
+connection_action = "#7C8799"
+
+# Logical pixels. Both families retain the bundled glyph fallback chain.
+
+[bookmap.footprint_heat]
+buy = ["#0A2D2B", "#0D3B38", "#11554E", "#0D6A5F", "#009880", "#29D9AE"]
+sell = ["#510E16", "#6A111A", "#951520", "#BD1217", "#FE3800", "#FDAF89"]
+ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]
+
+# The title strip (logo, +, menu and window buttons) keeps the order-flow slate
+# with Dark's inks, so the logo renders exactly as it does in Dark. Market tabs
+# keep this theme's own colours and inks.
+[title_strip.colors]
+tab_strip = "#252F37"
+text_primary = "#D2DAE2"
+text_muted = "#96A0AF"
+brand = "#3AF0B2"
+warn = "#FF6347"
+amber = "#F0B90B"
+accent = "#8AB4F8"
+control = "#232936"
+bare_hover = { premultiplied = [15, 15, 15, 15] }

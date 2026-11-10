@@ -922,3 +922,25 @@ fn a_default_drawing_colour_takes_the_surface_role_and_an_authored_one_does_not(
         assert_eq!(dark.bookmap().legible_drawing_as(born, role), born);
     }
 }
+
+/// A document that predates `flow_band` keeps its band on its own
+/// `flow_surface`, under its own inks; an authored band wins, and a document
+/// that authors neither takes the fallback's band with the fallback's inks.
+#[test]
+fn the_flow_band_defaults_to_the_documents_own_flow_surface() {
+    let band = |colors: &str| {
+        let source = format!("version = 1\nname = \"Custom\"\ndark = false\n[colors]\n{colors}");
+        let theme = ResolvedTheme::parse(&source).unwrap();
+        theme.color(Token::FlowBand).to_array()
+    };
+    assert_eq!(
+        band("flow_surface = \"#123456\"\n"),
+        [0x12, 0x34, 0x56, 255]
+    );
+    assert_eq!(
+        band("flow_surface = \"#123456\"\nflow_band = \"#654321\"\n"),
+        [0x65, 0x43, 0x21, 255]
+    );
+    let dark = ResolvedTheme::default();
+    assert_eq!(band(""), dark.color(Token::FlowBand).to_array());
+}

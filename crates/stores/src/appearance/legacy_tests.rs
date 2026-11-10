@@ -254,6 +254,40 @@ fn light_choice_before_the_tradingview_chart_migrates_to_current_light() {
     assert_eq!(store.resolved(), &ResolvedTheme::parse(dark).unwrap());
 }
 
+/// A Light choice saved with the pale order-flow band opens on the graphite
+/// band, under the light ink it was drawn for; an authored copy of the same
+/// file keeps its own pale band under its own dark ink.
+#[test]
+fn light_choice_before_the_graphite_band_migrates_to_current_light() {
+    let graphite = [0x4A, 0x50, 0x59, 255];
+    for old in [
+        include_str!("legacy-light-4b4dbe17.toml"),
+        include_str!("legacy-light-1a94dcf5.toml"),
+    ] {
+        let scratch = ScratchDir::new("legacy-light-graphite-band");
+        let path = scratch.join("appearance.toml");
+        std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+        let store = AppearanceStore::open(path.clone());
+        assert_eq!(store.builtin(), Some(Builtin::Light));
+        assert_eq!(store.resolved(), &ResolvedTheme::parse(LIGHT).unwrap());
+        assert_eq!(store.resolved().color(Token::FlowBand).to_array(), graphite);
+        std::fs::remove_file(scratch.join("appearance.toml.choice.toml")).unwrap();
+        std::fs::write(&path, old).unwrap();
+        let authored = AppearanceStore::open(path);
+        assert_eq!(authored.builtin(), None);
+        let theme = authored.resolved();
+        assert_eq!(
+            theme.color(Token::FlowBand),
+            theme.color(Token::FlowSurface),
+            "the band is the file's own frame"
+        );
+        assert_eq!(
+            theme.color(Token::FlowInk).to_array(),
+            [0x24, 0x24, 0x24, 255]
+        );
+    }
+}
+
 /// A Light choice saved with the warm toolbar row and the blue VWAP opens on
 /// the grey toolbar row, the slate VWAP drawing and the slate VWAP indicator.
 #[test]
