@@ -218,7 +218,10 @@ pub(crate) fn draw(
 struct GestureInput {
     now_ms: u64,
     dragging: bool,
-    origin: Option<egui::Pos2>,
+    /// Where and when the current press began.
+    origin: Option<(egui::Pos2, f64)>,
+    /// The layer the press landed on — the chart's own notion of chrome.
+    layer: Option<egui::LayerId>,
     zoomed: bool,
     screen: egui::Rect,
 }
@@ -229,7 +232,7 @@ impl GestureInput {
         let (dragging, origin, zoomed, screen) = ctx.input(|input| {
             (
                 input.pointer.is_decidedly_dragging(),
-                input.pointer.press_origin(),
+                (input.pointer.press_origin()).zip(input.pointer.press_start_time()),
                 input.raw_scroll_delta.y.abs() > f32::EPSILON
                     || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
                 input.screen_rect,
@@ -239,6 +242,7 @@ impl GestureInput {
             now_ms,
             dragging,
             origin,
+            layer: origin.and_then(|(origin, _)| ctx.layer_id_at(origin)),
             zoomed,
             screen,
         }
@@ -248,16 +252,10 @@ impl GestureInput {
     /// whether the bar is suppressed now.
     fn suppresses(self, bar: &mut drawings::context_bar::ContextBar) -> bool {
         let bar_rect = bar.last_rect();
-        // Against the rect the press *landed* on, not this frame's — the bar
-        // moves with a grip drag, so comparing against the moved rect makes
-        // the origin fall outside after ~20 px and suppresses the very
-        // gesture that is moving it. The grip is the escape hatch for a bar
-        // sitting over something the trader needs to see; it has to survive
-        // being used.
-        let on_the_bar = matches!(
-            (self.origin, bar.press_rect(self.origin, bar_rect)),
-            (Some(origin), Some(rect)) if rect.contains(origin)
-        );
+        // Decided once per press, not against this frame's rect — a grip drag
+        // moves the bar, and the moved rect would leave the origin behind and
+        // suppress the very gesture moving it.
+        let on_the_bar = bar.owns_press(self.origin, bar_rect, self.layer);
         if self.dragging && !on_the_bar {
             bar.suppress_gesture();
         } else if !self.dragging {
