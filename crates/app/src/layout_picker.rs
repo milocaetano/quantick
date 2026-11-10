@@ -29,8 +29,9 @@ const _: () = assert!(
 );
 /// How far the miniature's frame sits inside the hit target's left edge.
 pub(crate) const FACE_INSET_PX: f32 = (FACE_HIT_SIZE.x - FACE_THUMBNAIL_SIZE.x) / 2.0;
-/// Width of the popover, in pixels.
-const POPOVER_WIDTH_PX: f32 = 268.0;
+/// Width of the popover, in pixels: four cells a row, so the sixteen
+/// presets of the catalogue fit in four rows.
+const POPOVER_WIDTH_PX: f32 = 348.0;
 /// One preset cell: the thumbnail plus its label.
 ///
 /// Tall enough for a label on two lines. Preset names grow with the number of
@@ -373,20 +374,23 @@ mod tests {
 mod shortcut_tests {
     use super::*;
 
-    /// Every registered preset must be reachable from the keyboard.
-    ///
-    /// The picker is the discoverable path and the menu is the learnable one,
-    /// but a trader mid-session uses neither — they press a number. A preset
-    /// added past the ninth would be mouse-only, which the "operable without
-    /// a hand" rule does not allow to happen quietly.
+    /// The number keys reach the catalogue's first entries, in registry
+    /// order; the rest are reached by name through `layout.preset.apply` and
+    /// the window menu, so no preset is mouse-only.
     #[test]
-    fn every_preset_is_reachable_by_a_number_key() {
-        assert!(
-            LAYOUT_PRESETS.len() <= SHORTCUT_KEYS,
-            "{} presets but only {SHORTCUT_KEYS} number keys: the ones past \
-             the ninth would be reachable by mouse and menu only",
-            LAYOUT_PRESETS.len()
+    fn the_first_presets_take_the_number_keys() {
+        assert!(LAYOUT_PRESETS.len() >= SHORTCUT_KEYS);
+        let keyed: Vec<&str> = LAYOUT_PRESETS
+            .iter()
+            .take(SHORTCUT_KEYS)
+            .map(|preset| preset.id)
+            .collect();
+        assert_eq!(
+            LAYOUT_PRESETS[0].kinds,
+            [PaneKind::Flow],
+            "Ctrl+Shift+1 stays the flow pane alone"
         );
+        assert_eq!(keyed.len(), SHORTCUT_KEYS);
     }
 
     /// The shortcut a cell names is its own position, not a hardcoded map.

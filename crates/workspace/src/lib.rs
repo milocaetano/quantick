@@ -3,6 +3,7 @@ pub mod arrangement;
 pub mod arrangement_document;
 pub mod book_upkeep;
 pub mod bundle;
+pub mod canvas;
 pub mod canvas_layout;
 pub mod context_opening;
 pub mod dock;
