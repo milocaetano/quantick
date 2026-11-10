@@ -83,6 +83,19 @@ impl DeclaredLayout {
         }
     }
 
+    /// The nearest of the four words for `preset`: the canvas a recipe
+    /// carries beside it names the rest.
+    #[must_use]
+    pub fn nearest(preset: &crate::canvas::LayoutPreset) -> Self {
+        let flow = preset.kinds.contains(&crate::canvas::PaneKind::Flow);
+        match (preset.time_panes(), flow) {
+            (0, _) => Self::Flow,
+            (_, false) => Self::Time,
+            (1, true) => Self::TimeAndFlow,
+            (_, true) => Self::TimeTimeAndFlow,
+        }
+    }
+
     /// How many context charts this layout shows.
     #[must_use]
     pub const fn context_panes(self) -> usize {

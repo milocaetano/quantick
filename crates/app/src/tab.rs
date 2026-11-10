@@ -157,7 +157,7 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
             CanvasLayout::Time => crate::config::DeclaredLayout::Time,
             CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
             CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
-            CanvasLayout::Preset(preset) => layout::nearest_declared(preset),
+            CanvasLayout::Preset(preset) => crate::config::DeclaredLayout::nearest(preset),
         }
     }
 }

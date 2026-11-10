@@ -13,6 +13,13 @@ use quantick_control_schema::canvas::{
     PickLayoutInput, PopOutInput, REMOVE_CAPABILITY_ID, RESTORE_CAPABILITY_ID,
     RETURN_CAPABILITY_ID, RemovePaneInput, WindowMenuInput, WindowMenuResult, descriptor,
 };
+use quantick_control_schema::canvas::{
+    CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
+};
+use quantick_workspace::canvas::{
+    self, CanvasRect, CanvasRefusal, CanvasState, Corner, Edge, FloatHost, LayoutPreset, PaneKind,
+    PaneMode,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -266,5 +273,159 @@ fn check_rect(rect: CanvasRectDto) -> Result<(), ControlError> {
         Err(ControlError::invalid_request(
             "rect needs finite coordinates and a positive width and height",
         ))
+    }
+}
+
+/// Where a chart popped out without a monitor named goes.
+const PRIMARY_MONITOR: &str = "primary";
+
+fn refused(refusal: &CanvasRefusal) -> ControlError {
+    let mut error = ControlError::invalid_request(refusal.to_string());
+    error.context.details = Some(serde_json::json!({ "refusal": refusal.code() }));
+    error
+}
+
+/// The preset a pick names, or the refusal the wire reads.
+pub fn picked(preset_id: &str) -> Result<&'static LayoutPreset, ControlError> {
+    canvas::preset(preset_id)
+        .ok_or_else(|| refused(&CanvasRefusal::UnknownPreset(preset_id.to_owned())))
+}
+
+/// Apply `act` to `state`, a canvas of `area`. An unconfirmed removal of a
+/// pane the `saved` workspace holds is refused, as the trader's dialog asks
+/// first. Answers whether the canvas changed and the slot acted on. A window
+/// whose pick lays out more than the model (a split, its painter) applies
+/// [`CanvasAct::PickLayout`] itself.
+pub fn act(
+    state: &mut CanvasState,
+    saved: Option<&CanvasState>,
+    area: CanvasRect,
+    act: CanvasAct,
+) -> Result<(bool, Option<u32>), ControlError> {
+    if let CanvasAct::Remove {
+        slot,
+        confirm: false,
+    } = act
+        && saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, slot))
+        && state.holds(slot)
+    {
+        let mut error = ControlError::invalid_request(format!(
+            "the saved workspace holds chart {slot}: remove it with confirm true, as the trader's dialog asks first"
+        ));
+        error.context.details = Some(serde_json::json!({ "refusal": "canvas.confirm_required" }));
+        return Err(error);
+    }
+    let rect_of = |dto: CanvasRectDto| CanvasRect::new(dto.x, dto.y, dto.w, dto.h);
+    let on = |slot: u32| move |done: bool| (done, Some(slot));
+    let acted = match act {
+        CanvasAct::PickLayout { preset_id } => Ok((state.apply_preset(picked(&preset_id)?), None)),
+        CanvasAct::Minimize { slot } => state.minimize(slot).map(on(slot)),
+        CanvasAct::Maximize { slot } => state.maximize(slot).map(on(slot)),
+        CanvasAct::Restore { slot } => state.restore(slot).map(on(slot)),
+        CanvasAct::Remove { slot, .. } => state.remove(slot).map(on(slot)),
+        CanvasAct::AddWidget { widget_id } => match canvas::widget(&widget_id) {
+            Some(widget) => state.add(widget.kind, area).map(|slot| (true, Some(slot))),
+            None => Err(CanvasRefusal::UnknownWidget(widget_id)),
+        },
+        CanvasAct::Float { slot, rect } => {
+            let half = CanvasRect::new(0.0, 0.0, area.w / 2.0, area.h / 2.0);
+            let rect = rect.map_or_else(|| half.centred_in(area), rect_of);
+            state.float(slot, rect).map(on(slot))
+        }
+        CanvasAct::Dock { slot, edge } => {
+            let edge = match edge {
+                CanvasEdge::Left => Edge::Left,
+                CanvasEdge::Right => Edge::Right,
+                CanvasEdge::Top => Edge::Top,
+                CanvasEdge::Bottom => Edge::Bottom,
+            };
+            state.dock(slot, edge).map(on(slot))
+        }
+        CanvasAct::Park { slot, corner } => {
+            let corner = match corner {
+                CanvasCorner::TopLeft => Corner::TopLeft,
+                CanvasCorner::TopRight => Corner::TopRight,
+                CanvasCorner::BottomLeft => Corner::BottomLeft,
+                CanvasCorner::BottomRight => Corner::BottomRight,
+            };
+            state.park(slot, corner, area).map(on(slot))
+        }
+        CanvasAct::PopOut {
+            slot,
+            monitor,
+            rect,
+        } => {
+            let kept = state.floating().iter().find(|pane| pane.slot == slot);
+            let kept = kept.map(|pane| match &pane.host {
+                FloatHost::Canvas { rect } | FloatHost::OsWindow { rect, .. } => *rect,
+            });
+            let rect = rect.map(rect_of).or(kept).unwrap_or(area);
+            let monitor = monitor.as_deref().unwrap_or(PRIMARY_MONITOR);
+            state.pop_out(slot, monitor, rect).map(on(slot))
+        }
+        CanvasAct::Return { slot } => state.return_to_canvas(slot, area).map(on(slot)),
+    };
+    acted.map_err(|refusal| refused(&refusal))
+}
+
+/// The answer to a canvas act: whether it changed, the slot, and the canvas
+/// after, with whether its workspace now differs from the save.
+#[must_use]
+pub fn result(
+    state: &CanvasState,
+    changed: bool,
+    slot: Option<u32>,
+    unsaved: bool,
+) -> CanvasResult {
+    let view = view(state);
+    CanvasResult {
+        changed,
+        slot,
+        preset_id: view.preset_id,
+        unsaved,
+        panes: view.panes,
+    }
+}
+
+/// One tab's canvas as the wire reads it.
+#[must_use]
+pub fn view(state: &CanvasState) -> CanvasView {
+    let panes = (state.panes().into_iter())
+        .map(|(slot, kind, mode)| CanvasPaneDto {
+            slot,
+            kind: match kind {
+                PaneKind::Time => CanvasPaneKind::Time,
+                _ => CanvasPaneKind::Flow,
+            },
+            mode: match mode {
+                PaneMode::Docked => CanvasPaneMode::Docked,
+                PaneMode::Minimized => CanvasPaneMode::Minimized,
+                PaneMode::Maximized => CanvasPaneMode::Maximized,
+                PaneMode::Floating => CanvasPaneMode::Floating,
+                PaneMode::OsWindow => CanvasPaneMode::OsWindow,
+            },
+        })
+        .collect();
+    let floating = (state.floating().iter())
+        .map(|pane| {
+            let (monitor, rect) = match &pane.host {
+                FloatHost::Canvas { rect } => (None, rect),
+                FloatHost::OsWindow { monitor, rect } => (Some(monitor.clone()), rect),
+            };
+            let point = |value: f32| value.round() as i32;
+            CanvasPlaceDto {
+                slot: pane.slot,
+                monitor,
+                x: point(rect.x),
+                y: point(rect.y),
+                w: point(rect.w),
+                h: point(rect.h),
+            }
+        })
+        .collect();
+    CanvasView {
+        preset_id: state.preset().map(|preset| preset.id.to_owned()),
+        panes,
+        floating,
     }
 }

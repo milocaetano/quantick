@@ -42,9 +42,7 @@ pub struct TabCanvas {
     /// Which built time pane each time slot of [`Self::state`] shows, kept
     /// across edits so a removed chart never moves another; a picked layout
     /// seats them afresh.
-    pub(crate) seats: SmallVec<
-        [(quantick_workspace::canvas::PaneSlot, usize); crate::canvas_layout::MAX_CANVAS_PANES],
-    >,
+    pub(crate) seats: Vec<(quantick_workspace::canvas::PaneSlot, usize)>,
     /// Every pane band the last drawn frame laid out, header to strip.
     pub(crate) drawn_bands:
         SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
@@ -85,7 +83,7 @@ impl Default for TabCanvas {
             drag: None,
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
-            seats: SmallVec::new(),
+            seats: Vec::new(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -253,16 +251,8 @@ impl TabCanvas {
     /// Put the column painter's split where the layout's tree puts the flow
     /// pane, so a picked layout draws exactly what its thumbnail drew.
     pub(crate) fn split_to_preset(&mut self) {
-        if !(self.layout.is_column() && self.layout.shows_time() && self.layout.shows_flow()) {
-            return;
-        }
-        let unit = quantick_workspace::canvas::CanvasRect::new(0.0, 0.0, 1.0, 1.0);
-        let preset = self.layout.preset();
-        let flow = preset.kinds.iter().position(|kind| *kind == PaneKind::Flow);
-        let rects = preset.tree.rects(unit);
-        let flow = flow.and_then(|slot| rects.iter().find(|(held, _)| *held as usize == slot));
-        if let Some((_, rect)) = flow {
-            self.split_fraction = rect.x;
+        if self.layout.is_column() && self.layout.shows_time() {
+            self.split_fraction = (self.layout.preset().flow_left()).unwrap_or(self.split_fraction);
         }
     }
 
@@ -280,15 +270,6 @@ impl TabCanvas {
 }
 
 impl CanvasLayout {
-    /// How many timeframe charts this layout shows.
-    #[must_use]
-    pub fn time_panes(self) -> usize {
-        self.kinds()
-            .iter()
-            .filter(|kind| **kind == PaneKind::Time)
-            .count()
-    }
-
     /// Whether the column painter draws this layout; every other one is
     /// drawn from the canvas's pane tree.
     #[must_use]
@@ -322,17 +303,4 @@ pub(crate) fn pick(tab: &mut super::Tab, preset: &'static LayoutPreset) -> bool 
             tab.canvas.state.clone(),
             tab.canvas.split_fraction,
         )
-}
-
-/// The config vocabulary's nearest word for `preset`: it has four, and the
-/// canvas state a recipe carries beside it names the rest.
-pub(crate) fn nearest_declared(preset: &LayoutPreset) -> crate::config::DeclaredLayout {
-    use crate::config::DeclaredLayout;
-    let time = preset.kinds.iter().filter(|kind| **kind == PaneKind::Time);
-    match (time.count(), preset.kinds.contains(&PaneKind::Flow)) {
-        (0, _) => DeclaredLayout::Flow,
-        (_, false) => DeclaredLayout::Time,
-        (1, true) => DeclaredLayout::TimeAndFlow,
-        (_, true) => DeclaredLayout::TimeTimeAndFlow,
-    }
 }

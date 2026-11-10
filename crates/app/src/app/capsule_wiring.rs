@@ -5,7 +5,7 @@
 use eframe::egui;
 use quantick_control_schema::canvas::{OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID};
 use quantick_session::workspace_menu::WorkspaceCommand;
-use quantick_workspace::canvas::{CanvasState, LayoutPreset, PaneTree};
+use quantick_workspace::canvas::{LayoutMarks, PaneTree};
 
 use super::QuantickApp;
 use super::menu_bar::MenuDoor;
@@ -18,11 +18,9 @@ pub(super) struct CapsuleState {
     tree: PaneTree,
     workspace: String,
     unsaved: bool,
-    layout_unsaved: bool,
+    marks: LayoutMarks,
     menu_open: bool,
     popover_open: bool,
-    current: Option<&'static LayoutPreset>,
-    saved: Option<&'static LayoutPreset>,
     door_open: bool,
     door_hover: String,
 }
@@ -37,18 +35,12 @@ impl CapsuleState {
             .book()
             .recipe(&workspace)
             .map(super::canvas_wiring::recipe_state);
-        let layout_unsaved = unsaved
-            && saved
-                .as_ref()
-                .is_some_and(|saved| !same_layout(saved, live));
         Self {
             tree: live.tree().clone(),
             unsaved,
-            layout_unsaved,
+            marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
             menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
             popover_open: app.chrome.layout_picker_open,
-            current: live.preset(),
-            saved: saved.as_ref().and_then(CanvasState::preset),
             workspace,
             door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
             door_hover: format!(
@@ -73,7 +65,7 @@ impl CapsuleState {
     /// The name, the floppy's dot and the miniature's dot.
     #[cfg(test)]
     pub(super) fn marks(&self) -> (&str, bool, bool) {
-        (&self.workspace, self.unsaved, self.layout_unsaved)
+        (&self.workspace, self.unsaved, self.marks.layout_unsaved)
     }
 
     pub(super) fn model(&self) -> CapsuleModel<'_> {
@@ -81,19 +73,12 @@ impl CapsuleState {
             tree: &self.tree,
             workspace: &self.workspace,
             unsaved: self.unsaved,
-            layout_unsaved: self.layout_unsaved,
+            layout_unsaved: self.marks.layout_unsaved,
             menu_open: self.menu_open,
             popover_open: self.popover_open,
             compact: false,
         }
     }
-}
-
-/// Whether two canvases show the same layout: the preset, the folds, the
-/// maximized and the floating panes; slot numbers aside.
-fn same_layout(saved: &CanvasState, live: &CanvasState) -> bool {
-    use super::canvas_wiring::arrangement;
-    arrangement(saved) == arrangement(live)
 }
 
 /// After the toolbar drew: hang the popover and the workspace menu, publish
@@ -139,9 +124,7 @@ pub(super) fn settle(
     if app.chrome.layout_picker_open {
         let model = PopoverModel {
             workspace: &state.workspace,
-            current: state.current,
-            saved: state.saved,
-            layout_unsaved: state.layout_unsaved,
+            marks: state.marks,
         };
         let (drawn, outside) = layout_popover::draw(ctx, rects.miniature, &model, &mut rest);
         let picked = rest
@@ -185,7 +168,10 @@ fn publish(
             capability,
         ));
     }
-    let layout = state.current.map_or("Custom layout", |preset| preset.label);
+    let layout = state
+        .marks
+        .current
+        .map_or("Custom layout", |preset| preset.label);
     controls.push(control(
         "capsule.layout",
         layout,
@@ -213,7 +199,7 @@ fn publish(
     }
     for (preset, rect) in cells {
         let id = format!("layout_popover.{}", preset.id);
-        let selected = state.current == Some(*preset);
+        let selected = state.marks.current == Some(*preset);
         controls.push(control(
             &id,
             preset.label,

@@ -10,9 +10,10 @@
 use eframe::egui;
 
 use super::ToolbarAction;
-use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PresetGroup};
+use crate::canvas_layout::{LayoutPreset, PresetGroup};
 use crate::theme;
 use crate::widgets::CORNER_RADIUS;
+use quantick_workspace::canvas::LayoutMarks;
 
 /// One cell: the thumbnail and a name of up to two lines under it.
 const CELL: egui::Vec2 = egui::vec2(70.0, 70.0);
@@ -33,12 +34,8 @@ const DROP_PX: f32 = 4.0;
 pub struct PopoverModel<'a> {
     /// The workspace whose layout this is.
     pub workspace: &'a str,
-    /// The preset the canvas draws; `None` for a custom arrangement.
-    pub current: Option<&'static LayoutPreset>,
-    /// The preset the workspace saved.
-    pub saved: Option<&'static LayoutPreset>,
-    /// Auto save is off and the layout differs from the save.
-    pub layout_unsaved: bool,
+    /// The current and saved presets, and whether the layout differs.
+    pub marks: LayoutMarks,
 }
 
 /// One drawn cell, for the observer scene.
@@ -73,18 +70,13 @@ pub fn draw(
                     };
                     caption(ui, format!("LAYOUT OF {}", model.workspace.to_uppercase()));
                     ui.horizontal_top(|ui| {
-                        for (group, title) in [
-                            (PresetGroup::WithFlow, "WITH FLOW"),
-                            (PresetGroup::Timeframes, "TIMEFRAMES"),
-                        ] {
+                        for (group, title) in PresetGroup::COLUMNS {
                             if group == PresetGroup::Timeframes {
                                 ui.separator();
                             }
                             ui.vertical(|ui| {
                                 caption(ui, title.to_owned());
-                                let presets = LAYOUT_PRESETS.iter().filter(|p| p.group == group);
-                                let presets: Vec<_> = presets.collect();
-                                for row in presets.chunks(2) {
+                                for row in group.presets().chunks(2) {
                                     ui.horizontal(|ui| {
                                         for preset in row {
                                             let rect = cell(ui, preset, model);
@@ -98,7 +90,7 @@ pub fn draw(
                             });
                         }
                     });
-                    if model.layout_unsaved {
+                    if model.marks.layout_unsaved {
                         ui.separator();
                         ui.horizontal(|ui| {
                             caption(
@@ -144,7 +136,7 @@ fn cell(
     if response.hovered() {
         painter.rect_filled(rect, CORNER_RADIUS, palette.control());
     }
-    if model.current == Some(preset) {
+    if model.marks.current == Some(preset) {
         painter.rect_stroke(
             rect,
             CORNER_RADIUS,
@@ -166,7 +158,7 @@ fn cell(
         egui::FontId::proportional(LABEL_PX),
         palette.text_primary(),
     );
-    if model.saved == Some(preset) {
+    if model.marks.saved == Some(preset) {
         let tag = painter.layout_no_wrap(
             "saved".to_owned(),
             egui::FontId::proportional(9.0),
@@ -189,7 +181,7 @@ fn cell(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::canvas_layout::LAYOUT_PRESETS;
 
     /// The popover reads the registry: no preset id is spelled here.
     #[test]

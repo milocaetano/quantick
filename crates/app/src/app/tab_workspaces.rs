@@ -71,7 +71,7 @@ impl TabRecipeHost for BookTabs<'_> {
     fn tab_settled(&self, id: u64) -> bool {
         self.0.runtime.tabs.by_id(id).is_some_and(|tab| {
             tab.panes().all(|(pane, _)| pane.layout_seeded())
-                && tab.time_panes.len() >= tab.canvas.layout.time_panes()
+                && tab.time_panes.len() >= tab.canvas.layout.preset().time_panes()
         })
     }
     fn live_recipe(&self, id: u64) -> Option<WorkspaceRecipe> {
@@ -102,7 +102,7 @@ impl TabRecipeHost for BookTabs<'_> {
         app.runtime.workspace.layouts().revision().hash(&mut hash);
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
-                super::canvas_wiring::signal(&tab.canvas.state),
+                quantick_workspace::canvas::signal(&tab.canvas.state),
                 tab.canvas.context_collapsed,
                 tab.canvas.flow_collapsed,
             );

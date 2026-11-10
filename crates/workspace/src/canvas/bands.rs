@@ -1,0 +1,208 @@
+//! What the window reads off a canvas to paint and compare it: where each
+//! docked pane draws, which built chart each time slot shows, and the
+//! readings two canvases are compared by.
+//!
+//! The window converts these rectangles to its own type and paints them;
+//! nothing here knows a pixel it did not compute from the tree.
+
+use super::presets::{LAYOUT_PRESETS, LayoutPreset, PaneKind, PresetGroup};
+use super::state::{CanvasState, FloatHost, PaneMode};
+use super::tree::{CanvasRect, PaneSlot, PaneTree};
+
+/// One docked pane of the tree, ready to paint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TreeBand {
+    /// The built time chart this slot shows; `None` for the flow pane.
+    pub seat: Option<usize>,
+    /// Where it draws: its tree rectangle less half a divider on each seam.
+    pub rect: CanvasRect,
+    /// Folded to its strip by the canvas model.
+    pub minimized: bool,
+}
+
+/// Where each docked pane of `state` draws when the canvas is `area`, with
+/// `divider` points between neighbours.
+///
+/// Slots map to the window's charts by kind: the flow slot is the flow pane,
+/// and each time slot keeps the chart `seats` gave it, so removing one chart
+/// never moves another onto a different one. A slot the window has no pane
+/// for (a second flow) is left out.
+#[must_use]
+pub fn tree_bands(
+    state: &CanvasState,
+    seats: &mut Vec<(PaneSlot, usize)>,
+    area: CanvasRect,
+    divider: f32,
+) -> Vec<TreeBand> {
+    let panes = state.panes();
+    let time = |slot: PaneSlot| {
+        panes
+            .iter()
+            .any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
+    };
+    seats.retain(|(slot, _)| time(*slot));
+    for (slot, kind, _) in &panes {
+        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
+            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
+            seats.push((*slot, free.unwrap_or_default()));
+        }
+    }
+    let flow = panes
+        .iter()
+        .find(|(_, kind, _)| *kind != PaneKind::Time)
+        .map(|(slot, ..)| *slot);
+    let seat = |slot: PaneSlot| match seats.iter().find(|(held, _)| *held == slot) {
+        Some((_, seat)) => Some(Some(*seat)),
+        None => (flow == Some(slot)).then_some(None),
+    };
+    (state.rects(area).into_iter())
+        .filter_map(|(slot, rect)| {
+            Some(TreeBand {
+                seat: seat(slot)?,
+                rect: inset_seams(rect, area, divider),
+                minimized: state.mode(slot) == Some(PaneMode::Minimized),
+            })
+        })
+        .collect()
+}
+
+/// `rect` less half a `divider` on every edge inside `area`.
+#[must_use]
+pub fn inset_seams(rect: CanvasRect, area: CanvasRect, divider: f32) -> CanvasRect {
+    const EDGE_SLACK: f32 = 0.5;
+    let half = divider / 2.0;
+    let left = rect.x
+        + if rect.x > area.x + EDGE_SLACK {
+            half
+        } else {
+            0.0
+        };
+    let top = rect.y
+        + if rect.y > area.y + EDGE_SLACK {
+            half
+        } else {
+            0.0
+        };
+    let inner = |edge: f32, outer: f32| if edge < outer - EDGE_SLACK { half } else { 0.0 };
+    let right = rect.right() - inner(rect.right(), area.right());
+    let bottom = rect.bottom() - inner(rect.bottom(), area.bottom());
+    CanvasRect::new(left, top, right - left, bottom - top)
+}
+
+/// The recipe signal's reading of a canvas: every pane's slot, kind and
+/// mode, the matched preset, and each floating pane's place, bitwise.
+pub type Signal = (Vec<(u32, u8, u8)>, Option<&'static str>, Vec<[u32; 4]>);
+
+/// A hashable reading of `state` for the recipe signal.
+#[must_use]
+pub fn signal(state: &CanvasState) -> Signal {
+    let panes = state.panes().into_iter();
+    let panes = panes
+        .map(|(slot, kind, mode)| (slot, kind as u8, mode as u8))
+        .collect();
+    let floating = (state.floating().iter()).map(|pane| match &pane.host {
+        FloatHost::Canvas { rect } | FloatHost::OsWindow { rect, .. } => {
+            [rect.x, rect.y, rect.w, rect.h].map(f32::to_bits)
+        }
+    });
+    (
+        panes,
+        state.preset().map(|preset| preset.id),
+        floating.collect(),
+    )
+}
+
+/// `state` with its slots renumbered in reading order: the tree, the folded
+/// and maximized panes by rank, and how many float.
+fn arrangement(state: &CanvasState) -> (PaneTree, Vec<usize>, Option<usize>, usize) {
+    let order: Vec<u32> = (state.tree().panes().into_iter())
+        .map(|(slot, _)| slot)
+        .collect();
+    let rank = |slot: u32| {
+        (order.iter())
+            .position(|held| *held == slot)
+            .unwrap_or(usize::MAX)
+    };
+    let tree = state.tree().relabelled(&|slot| rank(slot) as u32);
+    let mut folded: Vec<usize> = state.minimized().iter().map(|slot| rank(*slot)).collect();
+    folded.sort_unstable();
+    let maximized = state.maximized().map(rank);
+    (tree, folded, maximized, state.floating().len())
+}
+
+/// Whether two canvases show the same layout: the tree, the folds, the
+/// maximized and the floating panes; slot numbers aside.
+#[must_use]
+pub fn same_layout(saved: &CanvasState, live: &CanvasState) -> bool {
+    arrangement(saved) == arrangement(live)
+}
+
+/// What the toolbar shows of a tab's layout against its workspace's save.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayoutMarks {
+    /// The preset the canvas draws; `None` for a custom arrangement.
+    pub current: Option<&'static LayoutPreset>,
+    /// The preset the workspace saved.
+    pub saved: Option<&'static LayoutPreset>,
+    /// The workspace differs from its save, and what differs is the layout:
+    /// the miniature's dot and the popover's footer.
+    pub layout_unsaved: bool,
+}
+
+impl LayoutMarks {
+    /// The marks of `live` against `saved`, the workspace differing (`unsaved`).
+    #[must_use]
+    pub fn of(live: &CanvasState, saved: Option<&CanvasState>, unsaved: bool) -> Self {
+        Self {
+            current: live.preset(),
+            saved: saved.and_then(CanvasState::preset),
+            layout_unsaved: unsaved && saved.is_some_and(|saved| !same_layout(saved, live)),
+        }
+    }
+}
+
+impl PresetGroup {
+    /// The catalogue's columns, left to right, with their headings.
+    pub const COLUMNS: [(Self, &'static str); 2] = [
+        (Self::WithFlow, "WITH FLOW"),
+        (Self::Timeframes, "TIMEFRAMES"),
+    ];
+
+    /// This column's presets, in registry order.
+    #[must_use]
+    pub fn presets(self) -> Vec<&'static LayoutPreset> {
+        (LAYOUT_PRESETS.iter())
+            .filter(|preset| preset.group == self)
+            .collect()
+    }
+}
+
+impl LayoutPreset {
+    /// How many timeframe charts this preset shows.
+    #[must_use]
+    pub fn time_panes(&self) -> usize {
+        self.kinds
+            .iter()
+            .filter(|kind| **kind == PaneKind::Time)
+            .count()
+    }
+
+    /// Where the flow pane's left edge sits, as a share of the canvas width;
+    /// `None` without a flow pane.
+    #[must_use]
+    pub fn flow_left(&self) -> Option<f32> {
+        let flow = self.kinds.iter().position(|kind| *kind == PaneKind::Flow)?;
+        let unit = CanvasRect::new(0.0, 0.0, 1.0, 1.0);
+        let rects = self.tree.rects(unit);
+        let rect = rects.iter().find(|(held, _)| *held as usize == flow)?;
+        Some(rect.1.x)
+    }
+
+    /// The name a catalogue cell shows: a long one wraps at its first " + ".
+    #[must_use]
+    pub fn cell_label(&self) -> String {
+        const ONE_LINE_CHARS: usize = 12;
+        let wraps = usize::from(self.label.len() > ONE_LINE_CHARS);
+        self.label.replacen(" + ", "\n+ ", wraps)
+    }
+}

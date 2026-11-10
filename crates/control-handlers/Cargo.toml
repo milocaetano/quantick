@@ -37,6 +37,8 @@ quantick-sim = { path = "../sim" }
 quantick-sources = { path = "../sources" }
 # The footprint setup the footprint scope reports.
 quantick-stores = { path = "../stores" }
+# The canvas model a canvas act runs against and a canvas view reads.
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

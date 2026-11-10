@@ -7,7 +7,7 @@
 //! dividers do. Nothing here decides a layout.
 
 use eframe::egui;
-use quantick_workspace::canvas::{CanvasRect, CanvasState, PaneKind, PaneMode, PaneSlot};
+use quantick_workspace::canvas::{CanvasRect, tree_bands};
 use smallvec::SmallVec;
 
 use super::{CanvasChrome, CanvasFrame, PaneRects, Tab};
@@ -15,85 +15,6 @@ use crate::canvas_layout::{CANVAS_DIVIDER_PX, MAX_CANVAS_PANES};
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{PaneSide, split_flow_pane, split_pane_header, split_pane_layout_strip};
 use crate::theme;
-
-/// One docked pane of the tree, in window points.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct TreeBand {
-    /// The window's pane this slot shows.
-    pub side: PaneSide,
-    /// Where it draws: its tree rectangle less half a divider on each seam.
-    pub rect: egui::Rect,
-    /// Folded to its strip by the canvas model.
-    pub minimized: bool,
-}
-
-/// Where each docked pane of `state` draws when the canvas is `area`.
-///
-/// Slots map to the window's panes by kind: the flow slot is the flow pane,
-/// and each time slot keeps the time pane `seats` gave it, so removing one
-/// chart never moves another onto a different pane. A slot the window has no
-/// pane for (a second flow) is left out.
-#[must_use]
-pub(crate) fn tree_bands(
-    state: &CanvasState,
-    seats: &mut SmallVec<[(PaneSlot, usize); MAX_CANVAS_PANES]>,
-    area: egui::Rect,
-) -> SmallVec<[TreeBand; MAX_CANVAS_PANES]> {
-    let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
-    let panes = state.panes();
-    let time = |slot: PaneSlot| {
-        panes
-            .iter()
-            .any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
-    };
-    seats.retain(|(slot, _)| time(*slot));
-    for (slot, kind, _) in &panes {
-        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
-            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
-            seats.push((*slot, free.unwrap_or_default()));
-        }
-    }
-    let flow = panes
-        .iter()
-        .find(|(_, kind, _)| *kind != PaneKind::Time)
-        .map(|(slot, ..)| *slot);
-    let side = |slot: PaneSlot| match seats.iter().find(|(held, _)| *held == slot) {
-        Some((_, seat)) => Some(PaneSide::Time(*seat)),
-        None => (flow == Some(slot)).then_some(PaneSide::Flow),
-    };
-    (state.rects(canvas).into_iter())
-        .filter_map(|(slot, rect)| {
-            let rect =
-                egui::Rect::from_min_size(egui::pos2(rect.x, rect.y), egui::vec2(rect.w, rect.h));
-            Some(TreeBand {
-                side: side(slot)?,
-                rect: inset_seams(rect, area),
-                minimized: state.mode(slot) == Some(PaneMode::Minimized),
-            })
-        })
-        .collect()
-}
-
-/// `rect` less half a divider on every edge inside `area`.
-#[must_use]
-pub(crate) fn inset_seams(rect: egui::Rect, area: egui::Rect) -> egui::Rect {
-    const EDGE_SLACK_PX: f32 = 0.5;
-    let half = CANVAS_DIVIDER_PX / 2.0;
-    let mut inset = rect;
-    if rect.left() > area.left() + EDGE_SLACK_PX {
-        inset.min.x += half;
-    }
-    if rect.right() < area.right() - EDGE_SLACK_PX {
-        inset.max.x -= half;
-    }
-    if rect.top() > area.top() + EDGE_SLACK_PX {
-        inset.min.y += half;
-    }
-    if rect.bottom() < area.bottom() - EDGE_SLACK_PX {
-        inset.max.y -= half;
-    }
-    inset
-}
 
 impl Tab {
     /// Lay the canvas out from the model's tree and spend each band's header,
@@ -110,7 +31,25 @@ impl Tab {
             chrome.capabilities,
             self.deal_recording_view().as_ref(),
         );
-        let bands = tree_bands(&self.canvas.state, &mut self.canvas.seats, area);
+        let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        let bands = tree_bands(
+            &self.canvas.state,
+            &mut self.canvas.seats,
+            canvas,
+            CANVAS_DIVIDER_PX,
+        );
+        let bands = bands.into_iter().map(|band| {
+            let at = egui::Rect::from_min_size(
+                egui::pos2(band.rect.x, band.rect.y),
+                egui::vec2(band.rect.w, band.rect.h),
+            );
+            (
+                band.seat.map_or(PaneSide::Flow, PaneSide::Time),
+                at,
+                band.minimized,
+            )
+        });
+        let bands: SmallVec<[_; MAX_CANVAS_PANES]> = bands.collect();
         let built = self.time_panes.len();
         let heights = &mut self.canvas.context_stack.heights;
         if heights.len() < built {
@@ -130,31 +69,31 @@ impl Tab {
             flow_side_row: None,
         };
         let flow_band = (bands.iter())
-            .find(|band| band.side == PaneSide::Flow && !band.minimized)
-            .map(|band| band.rect);
+            .find(|(side, _, minimized)| *side == PaneSide::Flow && !minimized)
+            .map(|(_, rect, _)| *rect);
         let mut job_slot = flow_band
             .is_none()
             .then(|| self.connection.slot(self.session.history_note()))
             .flatten();
         let mut focus_bands: SmallVec<[egui::Rect; MAX_CANVAS_PANES]> =
             SmallVec::from_elem(egui::Rect::NOTHING, built);
-        for band in &bands {
-            if band.minimized {
-                super::paint_rail(ui.painter(), band.rect, band.rect.left(), false);
+        for &(side, rect, minimized) in &bands {
+            if minimized {
+                super::paint_rail(ui.painter(), rect, rect.left(), false);
                 continue;
             }
-            let PaneSide::Time(slot) = band.side else {
+            let PaneSide::Time(slot) = side else {
                 continue;
             };
             if slot >= built {
                 // Still being built: the canvas, not a stand-in chart.
                 ui.painter()
-                    .rect_filled(band.rect, egui::Rounding::ZERO, palette.chrome());
+                    .rect_filled(rect, egui::Rounding::ZERO, palette.chrome());
                 continue;
             }
-            rects.pane_bands.push((band.side, band.rect));
-            focus_bands[slot] = band.rect;
-            let pane_areas = split_pane_layout_strip(band.rect);
+            rects.pane_bands.push((side, rect));
+            focus_bands[slot] = rect;
+            let pane_areas = split_pane_layout_strip(rect);
             let areas = split_pane_header(
                 pane_areas.body,
                 palette.layout(crate::time_header::HEIGHT_PX),
