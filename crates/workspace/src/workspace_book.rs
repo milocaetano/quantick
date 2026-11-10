@@ -1147,6 +1147,7 @@ pub fn capture_recipe(
         footprint_style,
         flow_bars: Some(tab.flow_bars.clone()),
         legacy_context_bars: Vec::new(),
+        canvas: None,
     }
 }
 
