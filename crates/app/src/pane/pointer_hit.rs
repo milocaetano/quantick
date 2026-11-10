@@ -122,7 +122,7 @@ impl PaneHitTest<'_> {
     /// This pane's own projection, rebuilt from the geometry the last
     /// draw cached. `None` before the pane has drawn once, or while it has
     /// no price range to project against.
-    pub(super) fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
+    pub(crate) fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
         let chart = self.frame.chart_area?;
         let auto = self.frame.auto_range?;
         let scale = self.price_view.scale(
@@ -225,7 +225,7 @@ impl PaneHitTest<'_> {
     /// history side of the lane divider — see `DrawingProjection::canvas_hit`.
     /// A right lane (tape, book or heatmap), an axis or the legend is none of
     /// it. Runs on a double click only.
-    pub(super) fn canvas_hit(&self, pos: egui::Pos2) -> Option<CanvasHit> {
+    pub(crate) fn canvas_hit(&self, pos: egui::Pos2) -> Option<CanvasHit> {
         let chart = self.frame.chart_area.filter(|chart| chart.contains(pos))?;
         if !bands::drawing_area(chart, self.frame.candles_right).contains(pos) {
             return None;

@@ -62,11 +62,11 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "chart.time_axis.reset",
-        title: "Reset a time axis to where it opened, or the candles to a live overview",
-        reach: "double-click the candles' time strip, or the tape's; double-click open canvas",
+        title: "Reset a time axis to where it opened, or the candles to live with the last price centred",
+        reach: "double-click the candles' time strip, or the tape's; double-click open canvas to centre the live price, triple-click it to zoom in too",
         keys: &[(
             Source::Authored,
-            "a time-strip double-click the canvas handles directly",
+            "a time-strip or canvas double- or triple-click the canvas handles directly",
         )],
         mapping: capability!("chart.time_axis.reset"),
     },

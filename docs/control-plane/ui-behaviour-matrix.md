@@ -83,7 +83,7 @@ The three exclusion classes are closed:
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
 | `chart.price_tag.progress.set` | Show or hide the forming bar's progress on the last-price tag | the price axis menu's first row, per market | `chart.price_tag.progress.set` | — |
-| `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
+| `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to live with the last price centred | double-click the candles' time strip, or the tape's; double-click open canvas to centre the live price, triple-click it to zoom in too | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
 | `chart.tape.window` | Choose how much market time the tape shows | the window selector in the tape's header and its window menu, both the call with `file` set | `chart.tape_view.set` | — |
@@ -284,7 +284,7 @@ declares nothing here is a guard failure.
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
 | `chart.price_tag.progress.set` | a checkbox in the price axis context menu, not an entry in an action enum |
-| `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
+| `chart.time_axis.reset` | a time-strip or canvas double- or triple-click the canvas handles directly |
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |
 | `chart.tape.window` | a selector in the tape's header the canvas handles directly; no key names it. A pick files the window as the asset's, which is `chart.tape_view.set` with `file`; without `file` the call navigates as the wheel does |

@@ -10,7 +10,6 @@
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
 use crate::state::ChartState;
-use crate::viewport::Viewport;
 
 use super::ChartPane;
 use quantick_chart_interaction::pane_history::PrefixChange;
@@ -350,7 +349,7 @@ impl ChartPane {
         self.lane.reset();
         self.publish_partial();
         self.bump_pagination_revision();
-        self.model.viewport = Viewport::new();
+        self.model.reset_series_view();
         // Framing dies with the series; orientation is the trader's standing
         // choice about the view, not about these bars — it survives the way
         // the drawings do.

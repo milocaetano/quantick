@@ -888,6 +888,33 @@ fn light_controls_are_edged_and_their_hover_keeps_the_words_readable() {
     assert_contrast(&light, Token::ConnectionAction, Token::ChartCanvas, 4.5);
 }
 
+#[test]
+fn drawing_primaries_are_every_additive_mix_of_red_green_and_blue() {
+    // Each channel fully off or fully on, black excluded: the three primaries,
+    // their three pairwise mixes and white, each exactly once.
+    let mut mixes: Vec<[u8; 4]> = palette::DRAWING_PRIMARIES
+        .iter()
+        .map(|color| color.to_array())
+        .collect();
+    mixes.sort_unstable();
+    let mut expected: Vec<[u8; 4]> = (1u8..8)
+        .map(|bits| {
+            let channel = |bit: u8| if bits & bit == 0 { 0 } else { 255 };
+            [channel(1), channel(2), channel(4), 255]
+        })
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(mixes, expected);
+    assert_eq!(
+        palette::DRAWING_PRIMARIES[..3]
+            .iter()
+            .map(|color| color.to_array())
+            .collect::<Vec<_>>(),
+        [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]],
+        "the row reads red, green, blue first"
+    );
+}
+
 /// A drawing still in its role's root default paints the surface's own colour
 /// for that role; an authored colour keeps the legibility fallback alone.
 #[test]

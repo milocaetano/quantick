@@ -1768,6 +1768,14 @@ fn a_reduction_leaves_the_canvas_with_the_book_that_explains_it() {
         unattributed_off.len() < all.len(),
         "unticking the unattributed reductions painted them anyway"
     );
+    // What is left is the aligned bites, and a bite is a hole and nothing
+    // else: no line on the book, which a busy top of book turned into a
+    // fence of strokes. The bubble that took it carries the mark.
+    assert_eq!(
+        unattributed_off.matches("Mesh(").count(),
+        1,
+        "an aligned bite painted more than its hole"
+    );
     let neither_kind = ink(&OrderflowRenderStyle {
         show_unattributed: false,
         show_aligned: false,
