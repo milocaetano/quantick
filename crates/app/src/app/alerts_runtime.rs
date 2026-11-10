@@ -82,7 +82,7 @@ pub(super) fn deliver(
             let notification = &event.spec.notification;
             outcome = DeliveryOutcome::Delivered;
             if notification.toast {
-                toast.note(event.spec.message.clone(), std::time::Instant::now());
+                toast.note(event.spec.notice(), std::time::Instant::now());
             }
             if notification.popup {
                 popup.show(crate::control::AgentPopup {
