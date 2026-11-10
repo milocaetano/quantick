@@ -103,7 +103,7 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 symbol_bubble_presets = { "BTCUSDT" = "Binance BTC Spot spheres" }
 # Spot BTC keeps "BTCUSDT", the key its saved look has always used.
 symbol_asset_modes = { "BTCUSDT" = { quantity_unit = "BTC", look_key = "BTCUSDT" } }
-symbol_widgets = { "BTCUSDT" = { tick = "0.5", notional_unit = "usd", big_trade_min = 250000 } }
+symbol_widgets = { "BTCUSDT" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
@@ -124,7 +124,7 @@ provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Binance BTC perpetual spheres" }
 symbol_asset_modes = { "BTCUSDT.p" = { quantity_unit = "BTC" } }
-symbol_widgets = { "BTCUSDT.p" = { tick = "0.5", notional_unit = "usd", big_trade_min = 250000 } }
+symbol_widgets = { "BTCUSDT.p" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
 default_layout = "time+flow"
 default_bars = "tick:50"
 

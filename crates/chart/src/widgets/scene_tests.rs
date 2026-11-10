@@ -19,12 +19,12 @@ fn texts(scene: &WidgetScene) -> Vec<&str> {
 fn assert_inside(scene: &WidgetScene) {
     for prim in &scene.prims {
         let points: Vec<[f32; 2]> = match prim {
-            ScenePrim::Rect { rect, .. } => {
+            ScenePrim::Rect(rect, ..) => {
                 vec![[rect[0], rect[1]], [rect[0] + rect[2], rect[1] + rect[3]]]
             }
-            ScenePrim::Text { at, .. } => vec![*at],
-            ScenePrim::Line { points, .. } => points.clone(),
-            ScenePrim::Circle { centre, .. } => vec![*centre],
+            ScenePrim::Text(run) => vec![run.at],
+            ScenePrim::Line(points, _) => points.clone(),
+            ScenePrim::Circle(centre, ..) => vec![*centre],
         };
         for [x, y] in points {
             assert!((0.0..=SIZE.0).contains(&x), "{prim:?} leaves the body");
@@ -48,9 +48,9 @@ fn depth_paints_every_row_with_the_last_price_banded() {
             .any(|text| text.starts_with("unattributed L2 reduction: ask 0.75 at 76200.50")),
         "{texts:?}"
     );
-    let accent = scene.prims.iter().filter(|prim| {
-        matches!(prim, ScenePrim::Rect { token: Token::Accent, rect, .. } if rect[2] == SIZE.0)
-    });
+    let accent = scene.prims.iter().filter(
+        |prim| matches!(prim, ScenePrim::Rect(rect, Token::Accent, _) if rect[2] == SIZE.0),
+    );
     assert_eq!(accent.count(), 1, "one banded last-price row");
     assert_inside(&scene);
     assert_eq!(depth_rows_per_side(SIZE.1), 6);
@@ -71,7 +71,7 @@ fn big_trades_paints_a_bubble_per_row_and_the_presets_as_chips() {
     let circles = scene
         .prims
         .iter()
-        .filter(|prim| matches!(prim, ScenePrim::Circle { .. }))
+        .filter(|prim| matches!(prim, ScenePrim::Circle(..)))
         .count();
     assert_eq!(circles, scene.rows);
     assert!(scene.rows > 0);
@@ -82,9 +82,18 @@ fn big_trades_paints_a_bubble_per_row_and_the_presets_as_chips() {
         .collect();
     assert_eq!(
         chips,
-        [("50k", false), ("250k", true), ("1M", false), ("merge fills", true)]
+        [
+            ("50k", false),
+            ("250k", true),
+            ("1M", false),
+            ("merge fills", true)
+        ]
     );
-    assert!(texts(&scene).iter().any(|text| text.starts_with("last 5 min")));
+    assert!(
+        texts(&scene)
+            .iter()
+            .any(|text| text.starts_with("last 5 min"))
+    );
     assert_inside(&scene);
 }
 
@@ -101,7 +110,8 @@ fn big_trades_takes_its_presets_from_the_layout() {
 #[test]
 fn a_list_cut_by_the_body_counts_only_the_rows_drawn() {
     let layout = big_trades_tests::layout("0", false, NotionalUnit::USD);
-    let scene = big_trades_view(Some(&big_trades_tests::model()), &layout).paint(SIZE.0, 3.0 * ROW_PX);
+    let scene =
+        big_trades_view(Some(&big_trades_tests::model()), &layout).paint(SIZE.0, 3.0 * ROW_PX);
     assert_eq!(scene.rows, 1);
 }
 
@@ -139,7 +149,10 @@ fn a_feed_without_derivatives_paints_the_not_provided_state() {
     let oi = open_interest_view(None, &derivatives_tests::oi_layout());
     let cvd = spot_perp_cvd_view(None, &derivatives_tests::cvd_layout());
     let scenes = [
-        (liquidations.paint(SIZE.0, SIZE.1), LIQUIDATIONS_NOT_PROVIDED),
+        (
+            liquidations.paint(SIZE.0, SIZE.1),
+            LIQUIDATIONS_NOT_PROVIDED,
+        ),
         (oi.paint(SIZE.0, SIZE.1), OPEN_INTEREST_NOT_PROVIDED),
         (cvd.paint(SIZE.0, SIZE.1), SPOT_PERP_NOT_PROVIDED),
     ];

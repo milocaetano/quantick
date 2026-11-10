@@ -99,6 +99,7 @@ mod toolbar;
 mod toolrail;
 mod trade_paint;
 mod ui_state;
+mod widget_surfaces;
 mod widgets;
 mod window_scale;
 mod worker_progress;

@@ -178,7 +178,13 @@ impl SpotPerpCvdView {
         scene.cell([INSET_PX, y], &self.perp_legend, Align::Left);
         scene.cell([width * 0.3, y], &self.spot_legend, Align::Left);
         let note_at = [width - INSET_PX, y];
-        scene.sized(note_at, self.note, Token::TextFaint, Align::Right, TextSize::Small);
+        scene.sized(
+            note_at,
+            self.note,
+            Token::TextFaint,
+            Align::Right,
+            TextSize::Small,
+        );
         scene
     }
 }

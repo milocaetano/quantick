@@ -48,7 +48,11 @@ pub(super) fn model() -> BigTrades {
     }
 }
 
-pub(super) fn layout(min_notional: &str, merge_fills: bool, unit: NotionalUnit) -> BigTradesLayout<'static> {
+pub(super) fn layout(
+    min_notional: &str,
+    merge_fills: bool,
+    unit: NotionalUnit,
+) -> BigTradesLayout<'static> {
     BigTradesLayout {
         presets: &MIN_NOTIONAL_PRESETS,
         min_notional: d(min_notional),

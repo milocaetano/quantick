@@ -241,7 +241,11 @@ impl DepthView {
             let top = y - bar_h / 2.0;
             let bid_w = row.bid_bar.width_px;
             scene.rect([x[1] - bid_w, top, bid_w, bar_h], row.bid_bar.token, 0.35);
-            scene.rect([x[3], top, row.ask_bar.width_px, bar_h], row.ask_bar.token, 0.35);
+            scene.rect(
+                [x[3], top, row.ask_bar.width_px, bar_h],
+                row.ask_bar.token,
+                0.35,
+            );
             let sold_w = row.sold_bar.width_px;
             scene.rect([x[5], top, sold_w, bar_h], row.sold_bar.token, 0.8);
             let bought = [x[5] + sold_w, top, row.bought_bar.width_px, bar_h];

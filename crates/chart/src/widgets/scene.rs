@@ -35,31 +35,38 @@ pub enum TextSize {
     Large,
 }
 
+impl TextSize {
+    /// The point size the text is drawn at.
+    #[must_use]
+    pub const fn points(self) -> f32 {
+        match self {
+            Self::Small => 10.0,
+            Self::Body => 11.5,
+            Self::Large => 18.0,
+        }
+    }
+}
+
+/// One run of text, vertically centred on `at`'s `y`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
+    pub at: [f32; 2],
+    pub text: String,
+    pub token: Token,
+    pub align: Align,
+    pub size: TextSize,
+}
+
 /// One thing to paint.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScenePrim {
-    /// A filled rectangle: `[x, y, width, height]` at `opacity`.
-    Rect {
-        rect: [f32; 4],
-        token: Token,
-        opacity: f32,
-    },
-    /// One run of text, vertically centred on `at`'s `y`.
-    Text {
-        at: [f32; 2],
-        text: String,
-        token: Token,
-        align: Align,
-        size: TextSize,
-    },
-    /// A polyline through `points`.
-    Line { points: Vec<[f32; 2]>, token: Token },
-    /// A filled circle.
-    Circle {
-        centre: [f32; 2],
-        radius: f32,
-        token: Token,
-    },
+    /// A filled `[x, y, width, height]` rectangle at an opacity.
+    Rect([f32; 4], Token, f32),
+    Text(TextRun),
+    /// A polyline through its points.
+    Line(Vec<[f32; 2]>, Token),
+    /// A filled circle: centre and radius.
+    Circle([f32; 2], f32, Token),
 }
 
 /// A pane body as painted.
@@ -84,7 +91,12 @@ impl WidgetScene {
             empty: Some(text.to_owned()),
             ..Self::default()
         };
-        scene.text([width / 2.0, height / 2.0], text, Token::TextMuted, Align::Centre);
+        scene.text(
+            [width / 2.0, height / 2.0],
+            text,
+            Token::TextMuted,
+            Align::Centre,
+        );
         scene
     }
 
@@ -98,13 +110,15 @@ impl WidgetScene {
         if text.is_empty() {
             return;
         }
-        self.prims.push(ScenePrim::Text {
+        let text = text.to_owned();
+        let run = TextRun {
             at,
-            text: text.to_owned(),
+            text,
             token,
             align,
             size,
-        });
+        };
+        self.prims.push(ScenePrim::Text(run));
     }
 
     /// One cell at `at`.
@@ -115,11 +129,7 @@ impl WidgetScene {
     /// A filled rectangle; nothing when it has no area.
     pub fn rect(&mut self, rect: [f32; 4], token: Token, opacity: f32) {
         if rect[2] > 0.0 && rect[3] > 0.0 {
-            self.prims.push(ScenePrim::Rect {
-                rect,
-                token,
-                opacity,
-            });
+            self.prims.push(ScenePrim::Rect(rect, token, opacity));
         }
     }
 
@@ -127,7 +137,7 @@ impl WidgetScene {
     pub fn line(&mut self, points: &[[f32; 2]], dy: f32, token: Token) {
         if points.len() > 1 {
             let points = points.iter().map(|[x, y]| [*x, y + dy]).collect();
-            self.prims.push(ScenePrim::Line { points, token });
+            self.prims.push(ScenePrim::Line(points, token));
         }
     }
 
@@ -147,7 +157,7 @@ impl WidgetScene {
     /// Every text item, in paint order.
     pub fn texts(&self) -> impl Iterator<Item = &str> {
         self.prims.iter().filter_map(|prim| match prim {
-            ScenePrim::Text { text, .. } => Some(text.as_str()),
+            ScenePrim::Text(run) => Some(run.text.as_str()),
             _ => None,
         })
     }

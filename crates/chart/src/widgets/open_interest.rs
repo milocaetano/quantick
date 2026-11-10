@@ -286,7 +286,13 @@ impl OpenInterestView {
         let faint = Token::TextFaint;
         let row = |index| row_y(0.0, index);
         if !self.open_interest.text.is_empty() {
-            scene.sized([INSET_PX, row(0)], "OPEN INTEREST", faint, Align::Left, small);
+            scene.sized(
+                [INSET_PX, row(0)],
+                "OPEN INTEREST",
+                faint,
+                Align::Left,
+                small,
+            );
             let oi = &self.open_interest;
             scene.sized([INSET_PX, row(1)], &oi.text, oi.token, Align::Left, large);
             scene.cell([INSET_PX, row(2)], &self.oi_change, Align::Left);
@@ -294,8 +300,18 @@ impl OpenInterestView {
         }
         if let Some(funding) = &self.funding {
             let left = width / 2.0;
-            scene.sized([left, row(0)], "FUNDING · NEXT IN", faint, Align::Left, small);
-            scene.cell([left + width * 0.22, row(0)], &funding.countdown, Align::Left);
+            scene.sized(
+                [left, row(0)],
+                "FUNDING · NEXT IN",
+                faint,
+                Align::Left,
+                small,
+            );
+            scene.cell(
+                [left + width * 0.22, row(0)],
+                &funding.countdown,
+                Align::Left,
+            );
             let rate = &funding.rate;
             scene.sized([left, row(1)], &rate.text, rate.token, Align::Left, large);
             let mut x = left;
@@ -305,7 +321,13 @@ impl OpenInterestView {
             }
         }
         let top = OI_PLOT_ROWS_ABOVE * ROW_PX;
-        scene.sized([INSET_PX, top], &self.price_label, faint, Align::Left, small);
+        scene.sized(
+            [INSET_PX, top],
+            &self.price_label,
+            faint,
+            Align::Left,
+            small,
+        );
         let oi_at = [width - INSET_PX, top];
         scene.sized(oi_at, &self.oi_label, Token::Accent, Align::Right, small);
         scene.line(&self.price_line, top, Token::TextMuted);

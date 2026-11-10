@@ -169,7 +169,12 @@ fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout<'_>) -> B
         Side::Buy => Token::Buy,
         Side::Sell => Token::Sell,
     };
-    let top = layout.presets.iter().max().copied().unwrap_or(EMPHASIS_NOTIONAL);
+    let top = layout
+        .presets
+        .iter()
+        .max()
+        .copied()
+        .unwrap_or(EMPHASIS_NOTIONAL);
     let emphasised = row.notional >= Decimal::from(top);
     let ink = if emphasised {
         Token::TextPrimary
@@ -239,12 +244,24 @@ impl BigTradesView {
             chips,
             ..WidgetScene::default()
         };
-        let aligns = [Align::Left, Align::Left, Align::Right, Align::Right, Align::Right];
-        let heads: Vec<(&str, f32, Align)> =
-            (0..5).map(|index| (self.columns[index], x[index], aligns[index])).collect();
+        let aligns = [
+            Align::Left,
+            Align::Left,
+            Align::Right,
+            Align::Right,
+            Align::Right,
+        ];
+        let heads: Vec<(&str, f32, Align)> = (0..5)
+            .map(|index| (self.columns[index], x[index], aligns[index]))
+            .collect();
         scene.heads(ROW_PX / 2.0, &heads);
         if let Some(empty) = &self.empty {
-            scene.text([width / 2.0, height / 2.0], empty, Token::TextMuted, Align::Centre);
+            scene.text(
+                [width / 2.0, height / 2.0],
+                empty,
+                Token::TextMuted,
+                Align::Centre,
+            );
             scene.empty = Some(empty.clone());
         }
         let fit = rows_between(ROW_PX, height - ROW_PX);
@@ -262,11 +279,8 @@ impl BigTradesView {
                 scene.cell([x[3] + 2.0, y], fills, Align::Left);
             }
             scene.cell([x[4], y], &row.notional, Align::Right);
-            scene.prims.push(ScenePrim::Circle {
-                centre: [x[5], y],
-                radius: row.bubble_radius_px,
-                token: row.bubble_token,
-            });
+            let bubble = ScenePrim::Circle([x[5], y], row.bubble_radius_px, row.bubble_token);
+            scene.prims.push(bubble);
             scene.rows += 1;
         }
         scene.footer(height, &self.footer);

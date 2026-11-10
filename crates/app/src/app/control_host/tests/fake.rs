@@ -43,9 +43,8 @@ pub(crate) struct FakeWindow {
     health: super::super::super::health::HealthCounters,
     history: quantick_session::HistorySettings,
     /// The assistant's popup lane, read back by the test.
-    pub(crate) agent_popup: crate::surfaces::AgentPopupSurface,
-    /// The acknowledgement toast, read back by the test.
-    pub(crate) toast: crate::surfaces::ToastSurface,
+    /// The popup and the acknowledgement toast, read back by the test.
+    pub(crate) surfaces: crate::surfaces::Surfaces,
     audio: super::super::super::replay_and_history::AlertState,
     /// Every script attached: name, source, attached by an operator.
     pub(crate) attached: Vec<(String, String, bool)>,
@@ -120,8 +119,7 @@ impl FakeWindow {
                 history_reach_span_minutes: 60,
                 venue_lead_in: false,
             },
-            agent_popup: Default::default(),
-            toast: Default::default(),
+            surfaces: Default::default(),
             audio: super::super::super::replay_and_history::AlertState {
                 alerts: Box::new(FakeSpeaker),
                 alert_failure: None,
@@ -177,6 +175,8 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for FakeWindow
 impl quantick_control_handlers::desk::DeskHost for FakeWindow {}
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for FakeWindow {}
 
+impl quantick_control_handlers::widgets::WidgetHost for FakeWindow {}
+
 impl ChromePort for FakeWindow {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         ChromeReads::new(
@@ -199,7 +199,7 @@ impl HealthPort for FakeWindow {
 
 impl AlertsPort for FakeWindow {
     fn alerts(&mut self) -> Alerts<'_> {
-        Alerts::new(&mut self.agent_popup, &mut self.toast, &mut self.audio)
+        Alerts::new(&mut self.surfaces, &mut self.audio)
     }
 }
 

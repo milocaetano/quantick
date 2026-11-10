@@ -211,6 +211,10 @@
           "description": "Defaults off for snapshots produced before deal counters existed.",
           "type": "boolean"
         },
+        "funding": {
+          "default": false,
+          "type": "boolean"
+        },
         "history_boundary": {
           "anyOf": [
             {
@@ -223,6 +227,19 @@
           "description": "Why `history_paging` is off when the feed knows: `venue_retention`\nmeans the venue keeps nothing older. Absent while paging is on, and\non a provider that never pages; optional, so additive to v1."
         },
         "history_paging": {
+          "type": "boolean"
+        },
+        "liquidations": {
+          "default": false,
+          "description": "The derivative streams the widget panes 3-5 gate on; false on every\nprovider today. Optional, so additive to v1.",
+          "type": "boolean"
+        },
+        "open_interest": {
+          "default": false,
+          "type": "boolean"
+        },
+        "spot_perp_pair": {
+          "default": false,
           "type": "boolean"
         },
         "traded_volume": {

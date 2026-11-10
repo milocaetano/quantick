@@ -218,24 +218,50 @@ impl LiquidationsView {
         for (index, totals) in self.totals.iter().enumerate() {
             let left = INSET_PX + slot * index as f32;
             let label_at = [left, ROW_PX / 2.0];
-            scene.sized(label_at, &totals.label, Token::TextFaint, Align::Left, TextSize::Small);
+            scene.sized(
+                label_at,
+                &totals.label,
+                Token::TextFaint,
+                Align::Left,
+                TextSize::Small,
+            );
             scene.cell([left, row_y(0.0, 1)], &totals.long, Align::Left);
-            scene.cell([left + slot / 2.0, row_y(0.0, 1)], &totals.short, Align::Left);
+            scene.cell(
+                [left + slot / 2.0, row_y(0.0, 1)],
+                &totals.short,
+                Align::Left,
+            );
         }
         let base = 2.0 * ROW_PX + self.baseline_y_px;
         scene.rect([0.0, base, width, 1.0], Token::Border, 1.0);
         for bar in &self.bars {
             let short = [bar.x_px, base - bar.short_px, bar.width_px, bar.short_px];
             scene.rect(short, Token::Buy, 1.0);
-            scene.rect([bar.x_px, base, bar.width_px, bar.long_px], Token::Sell, 1.0);
+            scene.rect(
+                [bar.x_px, base, bar.width_px, bar.long_px],
+                Token::Sell,
+                1.0,
+            );
         }
         let top = 2.0 * ROW_PX + 2.0 * self.baseline_y_px + ROW_PX / 2.0;
         let x = LIQUIDATION_COLUMN_SHARES.map(|share| share * width);
-        let aligns = [Align::Left, Align::Right, Align::Right, Align::Right, Align::Right];
-        let heads: Vec<(&str, f32, Align)> =
-            (0..5).map(|index| (self.columns[index], x[index], aligns[index])).collect();
+        let aligns = [
+            Align::Left,
+            Align::Right,
+            Align::Right,
+            Align::Right,
+            Align::Right,
+        ];
+        let heads: Vec<(&str, f32, Align)> = (0..5)
+            .map(|index| (self.columns[index], x[index], aligns[index]))
+            .collect();
         scene.heads(row_y(top, 0), &heads);
-        for (index, row) in self.rows.iter().take(rows_between(top + ROW_PX, height)).enumerate() {
+        for (index, row) in self
+            .rows
+            .iter()
+            .take(rows_between(top + ROW_PX, height))
+            .enumerate()
+        {
             let y = row_y(top + ROW_PX, index);
             if row.emphasised {
                 let band = [0.0, y - ROW_PX / 2.0, width, ROW_PX];

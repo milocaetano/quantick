@@ -6,7 +6,7 @@
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
-use super::{FeedConfig, declared};
+use super::{AppConfig, FeedConfig, declared};
 
 /// The Big Trades thresholds an asset gets when its config names none.
 pub const DEFAULT_BIG_TRADE_PRESETS: [u32; 3] = [50_000, 250_000, 1_000_000];
@@ -121,6 +121,23 @@ impl FeedConfig {
     }
 }
 
+impl AppConfig {
+    /// `symbol`'s widget setup on `feed_id`, and what a quantity on it
+    /// counts (its asset mode's unit; empty without one).
+    #[must_use]
+    pub fn widget_setup(&self, feed_id: &str, symbol: &str) -> (WidgetSetup, String) {
+        let feed = self.feed(feed_id);
+        let setup = feed
+            .map(|feed| feed.widget_setup(symbol))
+            .unwrap_or_default();
+        let mode = feed.and_then(|feed| feed.bubble_asset(symbol).mode);
+        (
+            setup,
+            mode.map(|mode| mode.quantity_unit).unwrap_or_default(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,8 +167,16 @@ mod tests {
 
     #[test]
     fn a_bad_tick_or_a_key_matching_nothing_is_refused() {
-        assert!(feed("{ \"WIN*\" = { tick = \"-1\" } }").validate_widgets().is_err());
+        assert!(
+            feed("{ \"WIN*\" = { tick = \"-1\" } }")
+                .validate_widgets()
+                .is_err()
+        );
         assert!(feed("{ \"BTC\" = { } }").validate_widgets().is_err());
-        assert!(feed("{ \"WIN*\" = { big_trade_presets = [] } }").validate_widgets().is_err());
+        assert!(
+            feed("{ \"WIN*\" = { big_trade_presets = [] } }")
+                .validate_widgets()
+                .is_err()
+        );
     }
 }
