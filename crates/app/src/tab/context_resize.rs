@@ -55,7 +55,8 @@ impl TabCanvas {
         self.context_stack.restore(shares, collapsed);
     }
 
-    /// Fold the upper or the lower of two stacked charts.
+    /// Fold the upper or the lower of two stacked charts, as a launch hook asks.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn fold_context_pane(&mut self, upper: bool) {
         self.context_stack.fold_one(upper);
     }
