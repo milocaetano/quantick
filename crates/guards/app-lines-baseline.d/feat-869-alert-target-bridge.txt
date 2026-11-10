@@ -1,4 +1,4 @@
 # #869 authorized native selector resolution, mutable pane/store borrowing, commit/readback and UI docking.
 # Identity issuance and history policy remain headless; measured residual only.
-crates/app +130
-!budget +130
+crates/app +132
+!budget +132

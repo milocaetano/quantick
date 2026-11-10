@@ -131,6 +131,10 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
         chart.contains(button),
         "bottom-edge action remains inside its chart: {button:?}"
     );
+    assert!(
+        button.y < chart.bottom() - ctx.style().spacing.interact_size.y,
+        "bottom-edge action leaves the chart annotation line clear: {button:?}"
+    );
     click_chart(&mut app, &ctx, button);
     let target = app.active_tab().drawing_pane().drawings.items()[index]
         .durable_identity
