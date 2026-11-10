@@ -247,10 +247,7 @@ impl Tab {
     ) -> PaneRects {
         let palette = theme::get(ui.ctx());
         let context_shown = frame.context_shown;
-        let bar_inputs = crate::toolbar::available_bar_inputs(
-            chrome.capabilities,
-            self.deal_recording_view().as_ref(),
-        );
+        let bar_inputs = self.bar_inputs(chrome);
         let mut rects = PaneRects::default();
         #[cfg(test)]
         self.context_dividers.clear();

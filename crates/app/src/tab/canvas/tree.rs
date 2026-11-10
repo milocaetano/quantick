@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
     CanvasRect, FloatHost, PaneKind, PaneSlot, slot_seat, strip_label, tree_bands,
 };
@@ -30,10 +31,7 @@ impl Tab {
     ) -> (CanvasFrame, PaneRects) {
         self.canvas.last_canvas = area;
         let palette = theme::get(ui.ctx());
-        let bar_inputs = crate::toolbar::available_bar_inputs(
-            chrome.capabilities,
-            self.deal_recording_view().as_ref(),
-        );
+        let bar_inputs = self.bar_inputs(chrome);
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
         let bands = tree_bands(
             &self.canvas.state,
@@ -127,6 +125,12 @@ impl Tab {
         (frame, rects)
     }
 
+    /// What the bars controls may offer on this tab's feed.
+    fn bar_inputs(&self, chrome: &CanvasChrome<'_>) -> BarInputAvailability {
+        let recording = self.deal_recording_view();
+        crate::toolbar::available_bar_inputs(chrome.capabilities, recording.as_ref())
+    }
+
     /// The flow pane in `band`: its surface, its header (right of `grip`
     /// points kept for a floating pane's grip) and its panel.
     fn draw_flow_band(
@@ -137,12 +141,13 @@ impl Tab {
         rects: &mut PaneRects,
     ) {
         let palette = theme::get(ui.ctx());
-        let bar_inputs = crate::toolbar::available_bar_inputs(
-            chrome.capabilities,
-            self.deal_recording_view().as_ref(),
-        );
+        let bar_inputs = self.bar_inputs(chrome);
         rects.pane_bands.push((PaneSide::Flow, band));
-        let pane_areas = split_pane_layout_strip(band);
+        // A floating chart keeps no layout footer: it would draw under it.
+        let mut pane_areas = split_pane_layout_strip(band);
+        if grip > 0.0 {
+            pane_areas.body = band;
+        }
         let areas = split_flow_pane(pane_areas.body, palette.layout(1.0));
         ui.painter().rect_filled(
             pane_areas.body,
@@ -238,16 +243,12 @@ impl Tab {
         };
         match side {
             PaneSide::Time(seat) if seat < built => {
-                let bar_inputs = crate::toolbar::available_bar_inputs(
-                    chrome.capabilities,
-                    self.deal_recording_view().as_ref(),
-                );
-                let pane_areas = split_pane_layout_strip(content);
+                let bar_inputs = self.bar_inputs(chrome);
                 let height = palette.layout(crate::time_header::HEIGHT_PX);
-                let areas = split_pane_header(pane_areas.body, height);
+                let areas = split_pane_header(content, height);
                 let header = areas.header.with_min_x(areas.header.min.x + grip);
                 self.draw_time_header(ui, seat, header, bar_inputs, None);
-                rects.context_charts[seat] = Some((areas.chart, pane_areas.layout_strip));
+                rects.context_charts[seat] = Some((areas.chart, egui::Rect::NOTHING));
                 rects.pane_bands.push((side, content));
             }
             PaneSide::Time(_) => {
@@ -268,6 +269,7 @@ impl Tab {
         self.apply_shared_interactions(&edits);
         self.draw_layer_capsules(ui, chrome, |drawn| drawn == side);
         self.draw_flow_sides(ui, rects.flow_side_row, chrome);
+        self.pane_mut(side).frame.layout_strip = None;
     }
 
     /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".

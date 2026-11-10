@@ -246,3 +246,28 @@ fn pop_out_and_return_round_trip() {
     };
     assert_eq!((rect.w, rect.h), (out.w, out.h), "its size kept");
 }
+
+/// The capture hooks: the acts run through their capabilities once the
+/// canvas drew, the + menu opens, and a floating chart is held for the dock
+/// preview without being dropped.
+#[test]
+fn canvas_hooks_add_hold_and_open_the_menu() {
+    let hooks = [
+        ("QUANTICK_CANVAS_ACTS", "add:timeframe-chart"),
+        ("QUANTICK_ADD_MENU", "1"),
+        ("QUANTICK_CANVAS_HOLD", "2:0.03,0.5"),
+    ];
+    quantick_feed::hooks::captured::set_on_this_thread(Some(&hooks));
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    app.apply_layout_preset(preset("time+flow").unwrap());
+    frames(&mut app, &ctx, 6);
+    quantick_feed::hooks::captured::set_on_this_thread(None);
+    let tab = app.active_tab();
+    let floating = tab.canvas.state.floating();
+    assert_eq!(floating.len(), 1, "{:?}", tab.canvas.state.panes());
+    assert_eq!(floating[0].slot, 2, "the slot the hook holds");
+    assert!(app.chrome.add_menu.open, "the + menu is up");
+    assert!(tab.canvas.floats.held.is_some(), "the chart is held");
+    assert!(drawn(&app, "canvas.dock.left").is_some(), "the drop targets");
+}
