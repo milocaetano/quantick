@@ -639,6 +639,7 @@ impl Tab {
             paper,
             link,
             paper_drag_pane,
+            focus,
             ..
         } = self;
         // Cleared before the loop, set by whichever panes it actually walks: a
@@ -755,8 +756,14 @@ impl Tab {
                 .find(|(id, _)| *id == pane.id)
                 .expect("visible pane style")
                 .1;
+            let footprint_asked = chrome.layers.open_footprint_settings;
             pane.handle_navigation(ui, rect, &mut chrome);
             pane.draw_chart(ui.painter(), rect, &mut chrome);
+            // A settings window edits the focused chart, and this pane's menu
+            // is the one the hand asked from.
+            if !footprint_asked && chrome.layers.open_footprint_settings {
+                *focus = PaneSide::from_index(side);
+            }
             chrome.style = chart_style;
             // Whatever this pane did to the other's marks travels out of the
             // loop: the store it belongs to is the pane that is not borrowed

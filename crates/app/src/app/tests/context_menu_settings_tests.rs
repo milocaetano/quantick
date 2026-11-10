@@ -103,3 +103,65 @@ fn the_footprint_entry_opens_the_footprint_window() {
             .is_open_on(ChartSettingsTab::Footprint)
     );
 }
+
+/// A context chart's menu offers its footprint door and no flow doors, and
+/// the window it opens edits that chart: the menu's chart takes focus.
+#[test]
+fn a_context_charts_footprint_door_edits_that_chart() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    let side = PaneSide::Time(0);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    run_frame(&mut app, &ctx);
+    let target = app
+        .active_tab()
+        .pane(side)
+        .frame
+        .chart_area
+        .expect("the split laid out the context chart")
+        .center();
+    let secondary = |pressed| egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(target), secondary(true)],
+    );
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(target), secondary(false)],
+    );
+    let open = run_frame(&mut app, &ctx);
+    let texts = painted_text(&open);
+    assert!(
+        !texts.iter().any(|text| text == "configure L2\u{2026}"),
+        "the gear's panel belongs to the flow pane: {texts:?}"
+    );
+    let door = painted_text_center(&open, "configure footprint\u{2026}")
+        .unwrap_or_else(|| panic!("the footprint door is in the main menu: {texts:?}"));
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(door),
+            pointer_button(door, true),
+            pointer_button(door, false),
+        ],
+    );
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.surfaces
+            .chart_settings
+            .is_open_on(ChartSettingsTab::Footprint)
+    );
+    assert_eq!(
+        app.active_tab().focused_side(),
+        side,
+        "the footprint window edits the chart whose menu asked"
+    );
+}

@@ -504,6 +504,28 @@ fn the_flow_pane_groups_footprint_l2_and_bubbles_settings_together() {
 }
 
 #[test]
+fn a_blocked_flow_layer_greys_its_own_door_only() {
+    let mut facts = facts();
+    facts.flow_settings = true;
+    facts.layers = vec![
+        footprint_row(None),
+        LayerFact {
+            layer: ChartLayer::Heatmap,
+            blocked: Some(LayerBlock::new("book", "this feed has no book")),
+            visible: false,
+        },
+    ];
+    let entries = describe(&Model::default(), &facts);
+    assert_eq!(entries[2].label, "configure L2\u{2026}");
+    assert_eq!(
+        entries[2].disabled.as_deref(),
+        Some("this feed has no book")
+    );
+    assert_eq!(entries[3].label, "configure bubbles\u{2026}");
+    assert_eq!(entries[3].disabled, None);
+}
+
+#[test]
 fn a_chart_without_the_flow_panel_offers_no_l2_or_bubbles_door() {
     let mut facts = facts();
     facts.layers = vec![footprint_row(None)];

@@ -264,11 +264,19 @@ fn chart_layers(facts: &Facts) -> Vec<Entry> {
 /// layers": the footprint's window on every chart, and on the flow pane the
 /// gear's panel opened on its L2 or bubbles section.
 fn settings_entries(facts: &Facts) -> Vec<Entry> {
+    let blocked = |layer: ChartLayer| {
+        facts
+            .layers
+            .iter()
+            .find(|row| row.layer == layer)
+            .and_then(|row| row.blocked)
+            .map(|block| block.explanation.into())
+    };
     let mut out = Vec::new();
     if let Some(row) = facts
         .layers
         .iter()
-        .find(|row| row.layer == ChartLayer::Footprint && !row.layer.on_tape())
+        .find(|row| row.layer == ChartLayer::Footprint)
     {
         out.push(
             button("configure footprint\u{2026}", MenuIntent::OpenFootprintSettings,
@@ -277,18 +285,24 @@ fn settings_entries(facts: &Facts) -> Vec<Entry> {
         );
     }
     if facts.flow_settings {
-        out.push(button(
-            "configure L2\u{2026}",
-            MenuIntent::OpenLayerSettings(ChartLayer::Heatmap),
-            "the book's depth map and strip \u{2014} in the gear's panel beside this chart",
-            "configure L2",
-        ));
-        out.push(button(
-            "configure bubbles\u{2026}",
-            MenuIntent::OpenLayerSettings(ChartLayer::Bubbles),
-            "the bubbles' size, filter and look \u{2014} in the gear's panel beside this chart",
-            "configure bubbles",
-        ));
+        out.push(
+            button(
+                "configure L2\u{2026}",
+                MenuIntent::OpenLayerSettings(ChartLayer::Heatmap),
+                "the book's depth map and strip \u{2014} in the gear's panel beside this chart",
+                "configure L2",
+            )
+            .disabled(blocked(ChartLayer::Heatmap)),
+        );
+        out.push(
+            button(
+                "configure bubbles\u{2026}",
+                MenuIntent::OpenLayerSettings(ChartLayer::Bubbles),
+                "the bubbles' size, filter and look \u{2014} in the gear's panel beside this chart",
+                "configure bubbles",
+            )
+            .disabled(blocked(ChartLayer::Bubbles)),
+        );
     }
     out
 }
