@@ -228,4 +228,4 @@ For a screen that represents the user's real setup, enable the trio:
 | `QUANTICK_INDICATOR_PICKER=1` | `surfaces/indicator_picker.rs` | Open the centered searchable indicator library on the focused chart at launch, through the toolbar surface owner. |
 | `QUANTICK_WIDGETS=<ids>` | `widget_surfaces/mod.rs` | opens these widget panes |
 
-147 hooks registered.
+148 hooks registered.
