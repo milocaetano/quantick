@@ -47,17 +47,23 @@ fn contract_second_consumer() {
     assert!(bounded.is_empty());
     assert_eq!(
         book.resolve_expiration(ExpirationChoice::EndOfDay, 100, -180),
-        Err(AlertError::Unavailable)
+        Ok(Expiration::At {
+            utc_ms: 10_800_000,
+            display_offset_minutes: -180
+        })
     );
     assert_eq!(
         book.record_delivery(1, DeliveryOutcome::Delivered),
-        Err(AlertError::Unavailable)
+        Err(AlertError::UnknownId)
     );
-    assert_eq!(book.views(), Err(AlertError::Unavailable));
-    assert_eq!(book.history(0, 10), Err(AlertError::Unavailable));
+    assert!(book.views().unwrap().is_empty());
+    assert!(book.history(0, 10).unwrap().is_empty());
     assert_eq!(
         book.command(AlertCommand::ClearHistory, 100),
-        Err(AlertError::Unavailable)
+        Ok(CommandResult {
+            id: None,
+            revision: 0
+        })
     );
     // The sound is the same public value consumed by the original audio sink.
     let cue = sound::Cue::whole(sound::AlertSound::Information);
