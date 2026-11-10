@@ -269,5 +269,8 @@ fn canvas_hooks_add_hold_and_open_the_menu() {
     assert_eq!(floating[0].slot, 2, "the slot the hook holds");
     assert!(app.chrome.add_menu.open, "the + menu is up");
     assert!(tab.canvas.floats.held.is_some(), "the chart is held");
-    assert!(drawn(&app, "canvas.dock.left").is_some(), "the drop targets");
+    assert!(
+        drawn(&app, "canvas.dock.left").is_some(),
+        "the drop targets"
+    );
 }

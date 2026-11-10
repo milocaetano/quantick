@@ -126,7 +126,7 @@ impl Tab {
     }
 
     /// What the bars controls may offer on this tab's feed.
-    fn bar_inputs(&self, chrome: &CanvasChrome<'_>) -> BarInputAvailability {
+    pub(super) fn bar_inputs(&self, chrome: &CanvasChrome<'_>) -> BarInputAvailability {
         let recording = self.deal_recording_view();
         crate::toolbar::available_bar_inputs(chrome.capabilities, recording.as_ref())
     }
