@@ -13,6 +13,9 @@ use crate::footprint_projection::fmt_qty;
 /// The ladder's column heads, left to right.
 pub const DEPTH_COLUMNS: [&str; 6] = ["SOLD", "BID", "PRICE", "ASK", "BOUGHT", "VOLUME"];
 
+/// The footer's note when the published book misses the touch on a side.
+pub const DEPTH_CLIPPED: &str = "book cut to the chart's price window";
+
 /// What the pane says before there is a book or a print to centre on.
 pub const DEPTH_EMPTY: &str = "waiting for the order book";
 
@@ -138,6 +141,9 @@ pub fn depth_view(
             fmt_qty(ask),
             (NEAR_TOUCH_FRACTION * Decimal::ONE_HUNDRED).normalize()
         ));
+    }
+    if model.clipped {
+        footer.push(DEPTH_CLIPPED.to_owned());
     }
     DepthView {
         tick: tick_label(tick),

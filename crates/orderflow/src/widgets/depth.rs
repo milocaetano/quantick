@@ -94,8 +94,12 @@ pub struct DepthModel {
     /// Best ask minus best bid; `None` on a one-sided book.
     pub spread: Option<Decimal>,
     /// Bid and ask size resting within [`NEAR_TOUCH_FRACTION`] of the mid;
-    /// `None` on a one-sided book.
+    /// `None` on a one-sided book or a [`clipped`](Self::clipped) one.
     pub near_touch: Option<(Decimal, Decimal)>,
+    /// The published ladder starts away from the touch on a side (the engine
+    /// cut it to the chart's price window), so the cells near the touch are
+    /// not the whole book and say so.
+    pub clipped: bool,
 }
 
 /// Build the ladder. `None` when there is neither a print nor a two-sided
@@ -165,7 +169,9 @@ pub fn build_depth(input: &DepthInput<'_>) -> Option<DepthModel> {
         (Some(bid), Some(ask)) => Some(ask.price() - bid.price()),
         _ => None,
     };
-    let near_touch = mid.map(|mid| {
+    let clipped =
+        misses_touch(&ladder.bids, ladder.best_bid) || misses_touch(&ladder.asks, ladder.best_ask);
+    let near_touch = mid.filter(|_| !clipped).map(|mid| {
         let band = mid * NEAR_TOUCH_FRACTION;
         let within = |levels: &[BookLevel], keep: &dyn Fn(Decimal) -> bool| {
             levels
@@ -184,7 +190,13 @@ pub fn build_depth(input: &DepthInput<'_>) -> Option<DepthModel> {
         last_price,
         spread,
         near_touch,
+        clipped,
     })
+}
+
+/// The side's list does not start at the whole book's best level.
+fn misses_touch(levels: &[BookLevel], best: Option<BookLevel>) -> bool {
+    best.is_some_and(|best| levels.first().map(|level| level.price()) != Some(best.price()))
 }
 
 /// The tape's latest print: highest exchange time, then highest id, then
@@ -217,13 +229,15 @@ struct Reductions {
     asks: BTreeMap<Decimal, Decimal>,
     traded_bids: BTreeMap<Decimal, Decimal>,
     traded_asks: BTreeMap<Decimal, Decimal>,
-    /// The current book's deepest bid and ask. The ladder is published
-    /// clipped (level count and view window) without saying where, so past
-    /// its deepest level a missing size is not evidence of anything and is
-    /// left unlabelled — no claim rather than a guessed one. A pull of the
-    /// outermost levels is therefore not labelled.
-    bid_floor: Option<Decimal>,
-    ask_ceiling: Option<Decimal>,
+    /// The rows each side of the current ladder covers, as (near edge,
+    /// deepest row). The ladder is published clipped (level count and the
+    /// chart's price window) without saying where, so outside the span a
+    /// missing size is not evidence of anything and is left unlabelled — no
+    /// claim rather than a guessed one. The near edge is open when the list
+    /// starts at the whole book's best level. A pull of the outermost levels
+    /// is therefore not labelled.
+    bid_span: Option<(Option<Decimal>, Decimal)>,
+    ask_span: Option<(Option<Decimal>, Decimal)>,
 }
 
 impl Reductions {
@@ -233,6 +247,7 @@ impl Reductions {
         input: &DepthInput<'_>,
         grouping: EffectiveGrouping,
     ) -> Self {
+        let ladder = input.ladder;
         let mut traded_bids = BTreeMap::new();
         let mut traded_asks = BTreeMap::new();
         let evidence = input
@@ -253,16 +268,8 @@ impl Reductions {
             asks: sum_levels(&earlier.asks, grouping),
             traded_bids,
             traded_asks,
-            bid_floor: input
-                .ladder
-                .bids
-                .last()
-                .map(|level| bucket_for_price(level.price(), grouping)),
-            ask_ceiling: input
-                .ladder
-                .asks
-                .last()
-                .map(|level| bucket_for_price(level.price(), grouping)),
+            bid_span: span(&ladder.bids, ladder.best_bid, grouping),
+            ask_span: span(&ladder.asks, ladder.best_ask, grouping),
         }
     }
 
@@ -281,18 +288,39 @@ impl Reductions {
             };
             (get(before) - get(now) - get(traded)).max(Decimal::ZERO)
         };
-        let bid = if self.bid_floor.is_some_and(|floor| price >= floor) {
+        let bid = if self.bid_span.is_some_and(|(ceiling, floor)| {
+            price >= floor && ceiling.is_none_or(|ceiling| price <= ceiling)
+        }) {
             unexplained(&self.bids, bids_now, &self.traded_bids)
         } else {
             Decimal::ZERO
         };
-        let ask = if self.ask_ceiling.is_some_and(|ceiling| price <= ceiling) {
+        let ask = if self.ask_span.is_some_and(|(floor, ceiling)| {
+            floor.is_none_or(|floor| price >= floor) && price <= ceiling
+        }) {
             unexplained(&self.asks, asks_now, &self.traded_asks)
         } else {
             Decimal::ZERO
         };
         (bid, ask)
     }
+}
+
+/// A side's covered rows as (near edge, deepest row): the near edge is
+/// `None` (open) when the list starts at the book's best level.
+fn span(
+    levels: &[BookLevel],
+    best: Option<BookLevel>,
+    grouping: EffectiveGrouping,
+) -> Option<(Option<Decimal>, Decimal)> {
+    let row = |level: &BookLevel| bucket_for_price(level.price(), grouping);
+    let deepest = row(levels.last()?);
+    let near = if misses_touch(levels, best) {
+        levels.first().map(row)
+    } else {
+        None
+    };
+    Some((near, deepest))
 }
 
 /// Flag every row whose bid or ask is [`WALL_MEDIAN_MULTIPLE`] times the

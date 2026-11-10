@@ -207,3 +207,21 @@ fn a_print_ahead_of_the_clock_is_still_in_the_totals() {
     assert_eq!(model.rows.len(), 1);
     assert_eq!(model.window_buy_notional, d("2000000"));
 }
+
+#[test]
+fn a_print_delivered_twice_counts_once() {
+    let once = prints();
+    let mut twice = prints();
+    twice.push(once[4].clone());
+    for merge_fills in [true, false] {
+        let params = BigTradesParams {
+            min_notional: d("250000"),
+            merge_fills,
+            max_rows: 10,
+        };
+        assert_eq!(
+            big_trades(&twice, &params, NOW_MS),
+            big_trades(&once, &params, NOW_MS)
+        );
+    }
+}

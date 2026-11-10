@@ -137,6 +137,7 @@ fn ladder_rows_match_golden() {
     assert_eq!(model.spread, Some(d("1.0")));
     // Mid 1000.5, band 1.0005: bids from 999.4995, asks to 1001.5005.
     assert_eq!(model.near_touch, Some((d("2.5"), d("5.5"))));
+    assert!(!model.clipped);
 
     let labels: Vec<(Decimal, &str)> = model
         .rows
@@ -246,4 +247,37 @@ fn a_repeated_id_does_not_make_the_centre_order_dependent() {
         .last_price
     };
     assert_eq!(build(&forward), build(&backward));
+}
+
+#[test]
+fn a_ladder_cut_away_from_the_touch_labels_nothing_it_cannot_see() {
+    let earlier = earlier();
+    // The engine cut the current bids to a chart window at or below 999.0:
+    // the whole book's best bid is still 1000.0, the list starts at 999.0.
+    let mut clipped = later();
+    clipped.bids.retain(|level| level.price() <= d("999.0"));
+    let prints = prints();
+    let model = build_depth(&DepthInput {
+        earlier: Some((&earlier, EARLIER_AT_MS)),
+        ladder: &clipped,
+        ladder_at_ms: LATER_AT_MS,
+        prints: &prints,
+        tick: d("0.5"),
+        rows_per_side: 4,
+    })
+    .expect("model");
+    assert!(model.clipped);
+    assert_eq!(model.near_touch, None);
+    for row in &model.rows {
+        if row.price > d("999.0") {
+            assert_eq!(row.bid_unattributed, Decimal::ZERO, "{}", row.price);
+        }
+    }
+    // The ask side still starts at its touch and keeps its label.
+    let pulled = model
+        .rows
+        .iter()
+        .find(|row| row.price == d("1001.5"))
+        .expect("row");
+    assert_eq!(pulled.ask_unattributed, d("2"));
 }

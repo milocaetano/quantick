@@ -13,7 +13,7 @@
 //! MT5 bridge restarts its sequence per session), so a fold by id would drop
 //! real fills. Every print counts once, by position.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quantick_engine::Side;
 use rust_decimal::Decimal;
@@ -78,7 +78,21 @@ pub fn big_trades(prints: &[Aggression], params: &BigTradesParams, now_ms: i64) 
     // Key: time, side, and — unmerged — the print's position, so every print
     // stays its own row.
     let mut folds: BTreeMap<(i64, bool, usize), Fold> = BTreeMap::new();
+    // A print delivered twice (a reconnect or backfill overlap) is one print:
+    // same id, time, side, price and quantity. A repeated id with any other
+    // field different is a different print.
+    let mut seen = BTreeSet::new();
     for (index, print) in prints.iter().enumerate() {
+        let identity = (
+            print.agg_id,
+            print.timestamp_ms,
+            print.side == Side::Sell,
+            print.price,
+            print.quantity,
+        );
+        if !seen.insert(identity) {
+            continue;
+        }
         let position = if params.merge_fills { 0 } else { index };
         let key = (print.timestamp_ms, print.side == Side::Sell, position);
         folds

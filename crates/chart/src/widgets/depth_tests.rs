@@ -2,7 +2,7 @@ use quantick_appearance::Token;
 use quantick_orderflow::widgets::depth::{DepthModel, DepthRow};
 use rust_decimal::Decimal;
 
-use super::depth::{DEPTH_COLUMNS, DEPTH_EMPTY, DepthView, depth_view};
+use super::depth::{DEPTH_CLIPPED, DEPTH_COLUMNS, DEPTH_EMPTY, DepthView, depth_view};
 use super::{WidgetBar, WidgetCell};
 
 fn d(text: &str) -> Decimal {
@@ -38,6 +38,7 @@ fn model() -> DepthModel {
         last_price: d("76200.00"),
         spread: Some(d("0.50")),
         near_touch: Some((d("16.5"), d("5.25"))),
+        clipped: false,
     }
 }
 
@@ -182,4 +183,16 @@ fn assert_no_thousands_separator(view: &DepthView) {
     for row in &view.rows {
         assert!(!row.price.text.contains(','), "{}", row.price.text);
     }
+}
+
+#[test]
+fn a_clipped_book_says_so_in_the_footer() {
+    let mut model = model();
+    model.near_touch = None;
+    model.clipped = true;
+    let view = depth_view(Some(&model), d("0.50"), 64.0, 80.0);
+    assert_eq!(
+        view.footer,
+        vec!["spread 0.50".to_owned(), DEPTH_CLIPPED.to_owned()]
+    );
 }
