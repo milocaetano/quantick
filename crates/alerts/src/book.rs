@@ -170,67 +170,268 @@ pub struct EditorView {
     pub summary: String,
 }
 
-/// Empty scaffold. Child implementation supplies storage and evaluation;
-/// command/readback requests truthfully report unavailable until then.
-#[derive(Debug, Default)]
-pub struct AlertBook {
-    _reserved: (),
+#[path = "book_editor.rs"]
+mod editor;
+#[path = "book_lifecycle.rs"]
+mod lifecycle;
+#[path = "book_predicate.rs"]
+mod predicate;
+use crate::input::ObservationKind;
+use crate::spec::{FORMAT_VERSION, Frequency, MAX_ALERTS, MAX_CONDITIONS, MAX_HISTORY};
+use std::collections::VecDeque;
+#[derive(Debug)]
+struct Entry {
+    saved: SavedAlert,
+    baselines: [predicate::Baseline; MAX_CONDITIONS],
+    status: AlertStatus,
+    epoch: Option<u64>,
+    last_close: Option<BarIdentity>,
+    reseed: bool,
+    session_clock_known: bool,
 }
-
+impl Entry {
+    fn new(saved: SavedAlert) -> Self {
+        Self {
+            saved,
+            baselines: [predicate::Baseline::default(); MAX_CONDITIONS],
+            status: AlertStatus::Suspended(Unavailable::SourceInactive),
+            epoch: None,
+            last_close: None,
+            reseed: false,
+            session_clock_known: false,
+        }
+    }
+    fn clear(&mut self) {
+        self.baselines.fill(predicate::Baseline::default());
+        self.last_close = None;
+        self.reseed = true;
+    }
+    fn status(&self, utc_ms: i64) -> AlertStatus {
+        if self.saved.completed {
+            AlertStatus::Completed
+        } else if matches!(self.saved.spec.expiration,Expiration::At{utc_ms:cutoff,..} if utc_ms>=cutoff)
+        {
+            AlertStatus::Expired
+        } else if !self.saved.enabled {
+            AlertStatus::Paused
+        } else {
+            self.status
+        }
+    }
+}
+/// Bounded deterministic alert runtime. All clocks and geometry are injected.
+#[derive(Debug)]
+pub struct AlertBook {
+    entries: Vec<Entry>,
+    log: VecDeque<AlertEvent>,
+    next_id: u64,
+    next_event_sequence: u64,
+    utc_ms: i64,
+}
+impl Default for AlertBook {
+    fn default() -> Self {
+        Self {
+            entries: Vec::with_capacity(MAX_ALERTS),
+            log: VecDeque::with_capacity(MAX_HISTORY),
+            next_id: 1,
+            next_event_sequence: 1,
+            utc_ms: 0,
+        }
+    }
+}
 impl AlertBook {
-    pub fn evaluate(&mut self, _input: &AlertInput<'_>, _out: &mut impl AlertEventSink) {}
-
-    /// Expiration advances without inventing a price observation on quiet tape.
-    pub fn tick(&mut self, _utc_ms: i64, _session_ms: u64) {}
-
-    pub fn command(
-        &mut self,
-        _command: AlertCommand,
-        _utc_ms: i64,
-    ) -> Result<CommandResult, AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn evaluate(&mut self, input: &AlertInput<'_>, out: &mut impl AlertEventSink) {
+        self.utc_ms = input.utc_ms;
+        for entry in &mut self.entries {
+            if entry.saved.spec.market != *input.market {
+                continue;
+            }
+            if matches!(
+                entry.status(input.utc_ms),
+                AlertStatus::Completed | AlertStatus::Expired | AlertStatus::Paused
+            ) {
+                continue;
+            }
+            let availability = input.availability.and_then(|()| {
+                if input.price.is_finite() && input.coordinate.is_finite() {
+                    Ok(())
+                } else {
+                    Err(Unavailable::InvalidGeometry)
+                }
+            });
+            if let Err(reason) = availability {
+                entry.clear();
+                entry.status = AlertStatus::Suspended(reason);
+                continue;
+            }
+            if entry.epoch.is_some_and(|epoch| epoch != input.bar.epoch) {
+                entry.clear();
+            }
+            entry.epoch = Some(input.bar.epoch);
+            if entry.saved.spec.frequency == Frequency::PerBarClose {
+                if input.kind != ObservationKind::CommittedClose {
+                    continue;
+                }
+                if entry.last_close == Some(input.bar) {
+                    continue;
+                }
+                entry.last_close = Some(input.bar);
+            }
+            let mut qualifies = true;
+            let mut unavailable = None;
+            for (condition, state) in entry
+                .saved
+                .spec
+                .conditions
+                .iter()
+                .zip(entry.baselines.iter_mut())
+            {
+                match predicate::judge(condition, input, state) {
+                    Ok(result) => qualifies &= result,
+                    Err(reason) => {
+                        unavailable = Some(reason);
+                        qualifies = false;
+                    }
+                }
+            }
+            if let Some(reason) = unavailable {
+                entry.clear();
+                entry.status = AlertStatus::Suspended(reason);
+                continue;
+            }
+            entry.status = AlertStatus::Monitoring;
+            if entry.reseed {
+                entry.reseed = false;
+                continue;
+            }
+            let saved = &mut entry.saved;
+            let cadence = match saved.spec.frequency {
+                Frequency::Once => true,
+                Frequency::PerBar | Frequency::PerBarClose => {
+                    saved.last_bar_epoch != Some(input.bar.epoch)
+                        || saved.last_bar_sequence != Some(input.bar.sequence)
+                }
+                Frequency::PerMinute => match (
+                    saved.last_bar_epoch,
+                    saved.last_fired_session_ms,
+                    saved.last_fired_utc_ms,
+                ) {
+                    (Some(epoch), Some(last), _)
+                        if epoch == input.bar.epoch && entry.session_clock_known =>
+                    {
+                        input
+                            .session_ms
+                            .checked_sub(last)
+                            .is_some_and(|delta| delta >= 60_000)
+                    }
+                    (_, _, Some(last)) => input
+                        .utc_ms
+                        .checked_sub(last)
+                        .is_some_and(|delta| delta >= 60_000),
+                    _ => true,
+                },
+            };
+            if !qualifies || !cadence {
+                continue;
+            }
+            entry.session_clock_known = true;
+            saved.last_bar_epoch = Some(input.bar.epoch);
+            saved.last_bar_sequence = Some(input.bar.sequence);
+            saved.last_fired_utc_ms = Some(input.utc_ms);
+            saved.last_fired_session_ms = Some(input.session_ms);
+            saved.completed = saved.spec.frequency == Frequency::Once;
+            let mut event = AlertEvent {
+                sequence: self.next_event_sequence,
+                definition_revision: saved.revision,
+                spec: saved.spec.clone(),
+                utc_ms: input.utc_ms,
+                session_ms: input.session_ms,
+                bar_epoch: input.bar.epoch,
+                bar_sequence: input.bar.sequence,
+                price: input.price,
+                delivery: DeliveryOutcome::Pending,
+            };
+            self.next_event_sequence = self.next_event_sequence.saturating_add(1);
+            if !out.try_push(event.clone()) {
+                event.delivery = DeliveryOutcome::Suppressed;
+            }
+            if self.log.len() == MAX_HISTORY {
+                self.log.pop_front();
+            }
+            self.log.push_back(event);
+        }
     }
-
-    pub fn validate(&self, _spec: &AlertSpec) -> Result<(), AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn tick(&mut self, utc_ms: i64, _session_ms: u64) {
+        self.utc_ms = utc_ms;
     }
-
-    pub fn editor(&self, _draft: AlertSpec) -> Result<EditorView, AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn validate(&self, spec: &AlertSpec) -> Result<(), AlertError> {
+        editor::validate(spec)
     }
-
-    pub fn resolve_expiration(
-        &self,
-        _choice: ExpirationChoice,
-        _utc_ms: i64,
-        _display_offset_minutes: i32,
-    ) -> Result<Expiration, AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn editor(&self, draft: AlertSpec) -> Result<EditorView, AlertError> {
+        let errors = self.validate(&draft).err().into_iter().collect();
+        Ok(EditorView {
+            summary: editor::summary(&draft),
+            draft,
+            errors,
+        })
     }
-
     pub fn record_delivery(
         &mut self,
-        _sequence: u64,
-        _outcome: DeliveryOutcome,
+        sequence: u64,
+        outcome: DeliveryOutcome,
     ) -> Result<(), AlertError> {
-        Err(AlertError::Unavailable)
+        let event = self
+            .log
+            .iter_mut()
+            .find(|event| event.sequence == sequence)
+            .ok_or(AlertError::UnknownId)?;
+        event.delivery = outcome;
+        Ok(())
     }
-
-    pub fn reset(&mut self, _market: &MarketRef, _reason: ResetReason, _bar: BarIdentity) {}
-
-    pub fn restore(&mut self, _document: AlertDocument, _utc_ms: i64) -> Result<(), AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn reset(&mut self, market: &MarketRef, reason: ResetReason, bar: BarIdentity) {
+        for entry in &mut self.entries {
+            if entry.saved.spec.market == *market {
+                entry.clear();
+                entry.epoch = Some(bar.epoch);
+                entry.status = AlertStatus::Suspended(match reason {
+                    ResetReason::Hydration => Unavailable::Hydrating,
+                    _ => Unavailable::SourceInactive,
+                });
+            }
+        }
     }
-
     pub fn document(&self) -> Result<AlertDocument, AlertError> {
-        Err(AlertError::Unavailable)
+        Ok(AlertDocument {
+            version: FORMAT_VERSION,
+            next_id: self.next_id,
+            next_event_sequence: self.next_event_sequence,
+            definitions: self
+                .entries
+                .iter()
+                .map(|entry| entry.saved.clone())
+                .collect(),
+            history: self.log.iter().cloned().collect(),
+        })
     }
-
     pub fn views(&self) -> Result<Vec<AlertView>, AlertError> {
-        Err(AlertError::Unavailable)
+        Ok(self
+            .entries
+            .iter()
+            .map(|entry| AlertView {
+                spec: entry.saved.spec.clone(),
+                revision: entry.saved.revision,
+                status: entry.status(self.utc_ms),
+                summary: editor::summary(&entry.saved.spec),
+            })
+            .collect())
     }
-
-    pub fn history(&self, _after: u64, _limit: usize) -> Result<Vec<AlertEvent>, AlertError> {
-        Err(AlertError::Unavailable)
+    pub fn history(&self, after: u64, limit: usize) -> Result<Vec<AlertEvent>, AlertError> {
+        Ok(self
+            .log
+            .iter()
+            .filter(|event| event.sequence > after)
+            .take(limit.min(MAX_HISTORY))
+            .cloned()
+            .collect())
     }
 }
