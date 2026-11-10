@@ -49,6 +49,7 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                     reference: FlowReference::from(style),
                     radius_limit: style.max_radius,
                     merge_support_radius: 6.0,
+                    region: Default::default(),
                     exclude_opening: false,
                 },
             );

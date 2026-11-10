@@ -20,6 +20,20 @@ pub(crate) const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 /// of the native 100 ms cell keeps facts whole.
 pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
 
+/// The candles a zoom region may span, narrowest first: powers of two, so a
+/// wider rung's regions are whole unions of a narrower rung's.
+pub(crate) const FLOW_REGION_CANDLE_LADDER: [usize; 12] =
+    [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1_024, 2_048];
+
+/// The least screen width, in logical pixels, of a zoom region: the widest
+/// hull a merged region may span, so the region's bounds, anchored in candles,
+/// cut no more merges than the hull already does.
+pub const FLOW_REGION_MIN_WIDTH_PX: f64 = FLOW_MERGE_WIDTH_PX;
+
+/// A held zoom region is kept until its half would be this many times
+/// [`FLOW_REGION_MIN_WIDTH_PX`] wide, so a steady zoom keeps its rung.
+pub const FLOW_REGION_HOLD_BAND: f64 = 1.25;
+
 /// Tick spheres merge at a held price scale (pixels per price unit): the
 /// held scale is kept while the live one stays within this factor of it, so
 /// a pan or an axis fit never regroups a sphere; leaving the band is a zoom

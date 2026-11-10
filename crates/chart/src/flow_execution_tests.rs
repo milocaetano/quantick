@@ -181,6 +181,7 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
         });
     }
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -236,6 +237,7 @@ fn an_unrepresentable_reference_reads_the_named_fallback() {
         side: Side::Buy,
     });
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1e30,
@@ -275,6 +277,7 @@ fn tick_reference_mode_changes_at_eof_without_changing_execution_regions() {
         });
     }
     let mut tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_quantity: 1.0,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
@@ -337,6 +340,7 @@ fn a_busy_tape_never_starves_the_seed_of_spheres() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..6_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -402,6 +406,7 @@ fn a_busy_seed_fill_is_bounded_and_the_live_edge_publishes_at_once() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..SEED).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -480,6 +485,7 @@ fn seed_and_live_candles_all_get_spheres() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..1_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -544,6 +550,7 @@ fn a_pan_keeps_every_tick_sphere_on_screen() {
         });
     }
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4.0,
@@ -664,6 +671,7 @@ fn bench_flow_frames_over_five_days() {
     state.ingest_backfill(&history);
     drop(history);
     let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,

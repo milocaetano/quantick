@@ -100,6 +100,7 @@ fn recorded_flow_cold_enable_and_layout_costs() {
         reference: FlowReference::VisibleRegions,
         radius_limit: 7.0,
         merge_support_radius: 6.0,
+        region: Default::default(),
         exclude_opening: true,
     };
     let request = FlowRequest {

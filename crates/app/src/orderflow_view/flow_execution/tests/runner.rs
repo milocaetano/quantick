@@ -31,6 +31,7 @@ fn request(end: usize) -> FlowRequest {
             reference: FlowReference::Typed(900.into()),
             radius_limit: 7.0,
             merge_support_radius: 12.0,
+            region: Default::default(),
             exclude_opening: true,
         },
     }

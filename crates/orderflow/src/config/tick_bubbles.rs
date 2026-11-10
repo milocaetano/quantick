@@ -147,6 +147,7 @@ mod grouping_tests {
     fn an_invalid_reference_falls_back_to_the_named_quantity() {
         for invalid in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
             let mut style = super::TickBubbleStyle {
+                zoom_regions: false,
                 viewport_scale: None,
                 reference_mode: crate::TickReferenceMode::Fixed,
                 reference_quantity: invalid,
@@ -195,6 +196,12 @@ pub struct TickBubbleStyle {
     /// preserve the fixed or visible-floor policy of saved appearances.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport_scale: Option<super::ViewportBubbleScale>,
+    /// Spheres merge inside regions of whole candles chosen by the zoom
+    /// rather than inside one second of market time: zooming out pools
+    /// neighbouring candles into one sphere, zooming in splits them again.
+    /// Omitted values keep the one-second regions of saved appearances.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub zoom_regions: bool,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub max_radius: f32,
@@ -256,7 +263,9 @@ impl TickBubbleStyle {
             u64::from(self.max_radius.to_bits()),
             u64::from(self.label_min_radius.to_bits()),
             u64::from(self.opacity.to_bits()),
-            self.reference_mode as u64,
+            // The two enumerated policies share one word: the reference mode
+            // in its low bit, the region policy above it.
+            self.reference_mode as u64 | (u64::from(self.zoom_regions) << 1),
             u64::from(viewport.is_some()),
             density[0],
             density[1],

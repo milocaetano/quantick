@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 const HISTORY: FlowBounds = [[0.0, 0.0], [600.0, 400.0]];
 const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
+    zoom_regions: false,
     reference_quantity: 40.0,
     max_radius: 24.0,
     label_min_radius: 8.0,
@@ -63,6 +64,7 @@ fn frame(trades: &[Trade], reference: FlowReference) -> FlowTapeFrame {
             reference,
             radius_limit: 24.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     )

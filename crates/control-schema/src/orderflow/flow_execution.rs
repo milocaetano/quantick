@@ -37,6 +37,10 @@ pub struct FlowExecutionSnapshot {
     pub merge_support_radius_px: CanonicalDecimal,
     /// Intrinsic aligned interval before spatial pooling; never an order identifier.
     pub region_window_ms: WireU64,
+    /// Whole candles a zoom region spans, chosen by the zoom; when present it
+    /// bounds a merge instead of `region_window_ms`.
+    #[serde(default)]
+    pub region_candles: Option<WireU64>,
     pub ignore_opening: bool,
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
@@ -207,6 +211,7 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             ),
             ignore_opening: frame.view.exclude_opening,
             region_window_ms: WireU64(FLOW_REGION_WINDOW_MS as u64),
+            region_candles: frame.view.region.candles().map(wire_usize),
             buy_quantity: canonical_decimal(buy),
             sell_quantity: canonical_decimal(sell),
             trade_count: wire_usize(frame.dots.iter().map(|dot| dot.mark.trade_count).sum()),

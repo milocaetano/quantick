@@ -17496,6 +17496,11 @@
                 ],
                 "default": null,
                 "description": "Present when final visible quantities and the current camera size the spheres."
+              },
+              "zoom_regions": {
+                "default": false,
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -17857,6 +17862,11 @@
                 ],
                 "default": null,
                 "description": "Present when final visible quantities and the current camera size the spheres."
+              },
+              "zoom_regions": {
+                "default": false,
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -18312,6 +18322,11 @@
                 ],
                 "default": null,
                 "description": "Present when final visible quantities and the current camera size the spheres."
+              },
+              "zoom_regions": {
+                "default": false,
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -27050,6 +27065,18 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "Ordinary reference radius; the first daily region can exceed it when excluded."
               },
+              "region_candles": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Whole candles a zoom region spans, chosen by the zoom; when present it\nbounds a merge instead of `region_window_ms`."
+              },
               "region_window_ms": {
                 "$ref": "#/$defs/WireU64",
                 "description": "Intrinsic aligned interval before spatial pooling; never an order identifier."
@@ -27346,6 +27373,11 @@
                 ],
                 "default": null,
                 "description": "Present when final visible quantities and the current camera size the spheres."
+              },
+              "zoom_regions": {
+                "default": false,
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "type": "boolean"
               }
             },
             "required": [

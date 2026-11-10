@@ -61,6 +61,7 @@ fn measure(
         reference: quantick_orderflow::projection::flow_tape::FlowReference::VisibleRegions,
         radius_limit: 12.0,
         merge_support_radius: 12.0,
+        region: Default::default(),
         exclude_opening: true,
     };
     let request = FlowRequest {
