@@ -900,3 +900,77 @@ fn an_old_recipe_reads_with_no_bars() {
     assert_eq!(old.flow_bars, None);
     assert_eq!(old.context_panes[0].bars, None);
 }
+
+/// `Default` follows the market: it never keeps a bar rule, so one market's
+/// flow bar never reaches a new tab on another, and a timeframe change on a
+/// tab on it is no edit.
+#[test]
+fn default_keeps_no_bar_rule_and_a_timeframe_on_it_is_no_edit() {
+    let mut book = held_book();
+    book.open_tab(1);
+    let mut wider = on_bars("tick:2000", "time:300000");
+    wider.split_fraction = Some(0.4);
+    book.observe(1, &wider).unwrap();
+    book.save_to(1).unwrap();
+    let default = book.recipe(DEFAULT_WORKSPACE).unwrap();
+    assert_eq!(default.flow_bars, None);
+    assert_eq!(default.context_panes[0].bars, None);
+    assert_eq!(default.split_fraction, Some(0.4), "the rest is saved");
+    let mut narrower = on_bars("tick:500", "time:60000");
+    narrower.split_fraction = Some(0.4);
+    book.observe(1, &narrower).unwrap();
+    assert!(
+        !book.tab_state(1).unwrap().modified,
+        "the market's bar is no edit"
+    );
+}
+
+/// The Manage dialog greys Delete by the rule `delete` refuses by.
+#[test]
+fn delete_refusal_names_default_and_an_unknown_name_and_spares_the_rest() {
+    let mut book = two_tabs_on_scalp();
+    assert_eq!(
+        book.delete_refusal(DEFAULT_WORKSPACE),
+        Some(WorkspaceRefusal::DefaultProtected)
+    );
+    assert_eq!(
+        book.delete_refusal("Nope"),
+        Some(WorkspaceRefusal::UnknownWorkspace("Nope".to_owned()))
+    );
+    assert_eq!(
+        book.delete_refusal("Scalp"),
+        None,
+        "in use and current, still deletable"
+    );
+    assert_eq!(
+        book.delete(DEFAULT_WORKSPACE),
+        Err(WorkspaceRefusal::DefaultProtected)
+    );
+    assert!(book.delete("Scalp").unwrap().changed);
+    assert_eq!(
+        book.delete("Scalp"),
+        Err(WorkspaceRefusal::UnknownWorkspace("Scalp".to_owned())),
+        "a repeat is refused"
+    );
+}
+
+/// A recipe written before 13f24fa3 kept its intervals apart: read, they land
+/// on the panes, and Default still names none.
+#[test]
+fn an_old_book_s_context_bars_land_on_the_panes() {
+    let book = parse_book(concat!(
+        "version = 1\n",
+        "[recipes.Scalp]\nlayout = \"time+flow\"\ncontext_bars = [\"time:5m\"]\n",
+        "[[recipes.Scalp.context_panes]]\n",
+        "[recipes.Default]\nlayout = \"time+flow\"\ncontext_bars = [\"time:1m\"]\n",
+        "[[recipes.Default.context_panes]]\n",
+    ))
+    .unwrap();
+    let scalp = book.recipe("Scalp").unwrap();
+    assert_eq!(scalp.context_panes[0].bars.as_deref(), Some("time:5m"));
+    assert!(scalp.legacy_context_bars.is_empty());
+    assert_eq!(
+        book.recipe(DEFAULT_WORKSPACE).unwrap().context_panes[0].bars,
+        None
+    );
+}

@@ -202,8 +202,8 @@ impl<'a> WorkspaceRows<'a> {
 
 /// The workspace dialogs: the one asking a name over the Manage one.
 pub(super) fn dialogs(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+    name_dialog(app, ctx, commands); // First, so its Esc is not the Manage one's.
     super::workspace_manage::manage_dialog(app, ctx, commands);
-    name_dialog(app, ctx, commands);
 }
 
 /// The dialog that asks for a name: Enter saves, Esc cancels, and a refusal stands

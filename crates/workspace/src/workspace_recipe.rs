@@ -4,10 +4,12 @@
 //! toggles, the footprint style and each pane's bar rule (the flow bar and the
 //! context charts' intervals), so a workspace reopens on the timeframes it
 //! saved. It never holds drawings, anchored studies or the paper position:
-//! those belong to the market the tab shows. A recipe written before it kept
-//! bar rules holds none, and the tab keeps the rules it had, which a new tab
-//! takes from what its market remembers. The `context_bars` key an older
-//! recipe still carries is ignored: it was written by a rule since reversed.
+//! those belong to the market the tab shows. `Default` names no bar rule: its
+//! tabs, and every new tab, follow what their market remembers, so one
+//! market's flow bar never reaches another through it. A recipe that names
+//! no rule leaves the tab's own, which is no edit. A recipe written before
+//! 13f24fa3 kept its context intervals apart, under `context_bars`; the book
+//! moves them onto the panes when it reads one.
 //!
 //! Indicators are copies, not layout ids. A layout id points into the shared
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
@@ -130,6 +132,11 @@ pub struct WorkspaceRecipe {
     /// The flow pane's bar rule, e.g. `tick:2000`; absent keeps the tab's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_bars: Option<String>,
+    /// The context intervals a recipe written before 13f24fa3 kept apart from
+    /// its panes, read and never written: [`Self::adopt_legacy_bars`] moves
+    /// them onto the panes.
+    #[serde(default, rename = "context_bars", skip_serializing)]
+    pub legacy_context_bars: Vec<String>,
 }
 
 impl Default for WorkspaceRecipe {
@@ -148,6 +155,7 @@ impl Default for WorkspaceRecipe {
             layers: BTreeMap::new(),
             footprint_style: None,
             flow_bars: None,
+            legacy_context_bars: Vec::new(),
         }
     }
 }
@@ -255,6 +263,53 @@ impl WorkspaceRecipe {
                 saved.or(tab.get(slot)).cloned().unwrap_or_default()
             })
             .collect()
+    }
+
+    /// Move the intervals an old recipe kept apart onto its panes, each
+    /// pane that names no rule of its own taking its place's.
+    pub fn adopt_legacy_bars(&mut self) {
+        let legacy = std::mem::take(&mut self.legacy_context_bars);
+        for (pane, rule) in self.context_panes.iter_mut().zip(legacy) {
+            pane.bars.get_or_insert(rule);
+        }
+    }
+
+    /// This recipe naming no bar rule, as `Default` keeps it.
+    #[must_use]
+    pub fn without_bars(&self) -> Self {
+        let mut bare = self.clone();
+        bare.flow_bars = None;
+        for pane in &mut bare.context_panes {
+            pane.bars = None;
+        }
+        bare
+    }
+
+    /// `copy` read against this recipe: a bar rule this recipe does not name
+    /// is the tab's own, never an edit, so it is left out.
+    #[must_use]
+    pub fn masked(&self, copy: &Self) -> Self {
+        let mut read = copy.clone();
+        if self.flow_bars.is_none() {
+            read.flow_bars = None;
+        }
+        for (slot, pane) in read.context_panes.iter_mut().enumerate() {
+            if self
+                .context_panes
+                .get(slot)
+                .is_none_or(|mine| mine.bars.is_none())
+            {
+                pane.bars = None;
+            }
+        }
+        read
+    }
+
+    /// Whether the tab holding `copy` shows this recipe, its own bar rules
+    /// aside where this recipe names none.
+    #[must_use]
+    pub fn holds(&self, copy: &Self) -> bool {
+        *self == self.masked(copy)
     }
 
     /// The bar rules the recipe names that differ from the tab's, by pane

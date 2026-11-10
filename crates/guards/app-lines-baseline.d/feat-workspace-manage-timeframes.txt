@@ -11,3 +11,8 @@
 # `WorkspaceRecipe::rules_over`.
 crates/app +66
 !budget +66
+# Review round: a bar rule the feed refuses on a workspace switch is logged
+# (WORKSPACE_BAR_RULE_REFUSED) instead of dropped, and the Manage dialog
+# greys Delete by the book's own `delete_refusal`.
+crates/app +2
+!budget +2

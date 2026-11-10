@@ -7,7 +7,6 @@
 use eframe::egui;
 use quantick_control_schema::window_menu as text;
 use quantick_session::workspace_menu::{DeleteClick, WorkspaceCommand};
-use quantick_stores::workspaces::DEFAULT_WORKSPACE;
 
 use super::MenuCommand;
 use crate::app::QuantickApp;
@@ -51,7 +50,7 @@ pub(super) fn manage_dialog(
                             ui,
                             text::tab_count_label(row.tabs.len()),
                         ));
-                        let protected = row.name == DEFAULT_WORKSPACE;
+                        let protected = book.delete_refusal(&row.name).is_some();
                         let why = text::DEFAULT_PROTECTED_HOVER;
                         if dialog.armed.as_deref() == Some(row.name.as_str()) {
                             let moved = crate::app::tab_workspaces::symbols_of(tabs, &row.tabs);
