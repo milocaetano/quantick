@@ -28406,6 +28406,13 @@
                 "description": "Stable for as long as the control is what it is.\n\nDerived from identity — a tab's ID, a pane's ID, a layer's or a tool's\ndeclared name — never from a position on screen or an index into this\nlist. Two captures a hundred frames apart name the same button the same\nway, which is what makes it possible to point at one, look away, and\npoint at it again.",
                 "type": "string"
               },
+              "description": {
+                "description": "What the control shows or does, in the very words its tooltip carries,\nwhere it has more to say than its label.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "label": {
                 "description": "What the control is called, for a human reading the answer.",
                 "type": "string"

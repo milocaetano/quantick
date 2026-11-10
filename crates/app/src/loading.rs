@@ -454,9 +454,16 @@ fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
     })
 }
 
-/// The slot, with its right edge at `right`, on its own layer so a menu wins.
-pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) {
-    let palette = crate::theme::get(ui.ctx());
+/// The slot, with its right edge at `right`, on its own layer so a menu wins;
+/// in `ink`, or the loading meta grey.
+pub fn draw_slot(
+    ui: &egui::Ui,
+    right: f32,
+    strip: egui::Rect,
+    slot: &Slot<'_>,
+    ink: Option<egui::Color32>,
+) {
+    let ink = ink.unwrap_or(crate::theme::get(ui.ctx()).loading_meta());
     let layer = egui::LayerId::new(LOADING_ORDER, ui.id().with("loading_slot"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(strip);
     if slot.job && !reduced_motion() {
@@ -468,19 +475,11 @@ pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) 
     let y = strip.center().y;
     if let Some(glyph) = glyph {
         let size = glyph.size();
-        painter.galley(
-            egui::pos2(x, y - size.y / 2.0),
-            glyph,
-            palette.loading_meta(),
-        );
+        painter.galley_with_override_text_color(egui::pos2(x, y - size.y / 2.0), glyph, ink);
         x += size.x + SLOT_ICON_GAP_PX;
     }
     let size = words.size();
-    painter.galley(
-        egui::pos2(x, y - size.y / 2.0),
-        words,
-        palette.loading_meta(),
-    );
+    painter.galley_with_override_text_color(egui::pos2(x, y - size.y / 2.0), words, ink);
 }
 
 #[cfg(test)]
@@ -516,7 +515,7 @@ mod tests {
                         job: false,
                         text: "the slot",
                     };
-                    draw_slot(ui, screen.right(), screen, &slot);
+                    draw_slot(ui, screen.right(), screen, &slot, None);
                 });
                 let menu = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("menu"));
                 ctx.layer_painter(menu).rect_filled(screen, 0.0, MENU);

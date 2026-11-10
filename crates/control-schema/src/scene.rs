@@ -167,6 +167,10 @@ pub struct SceneControlSnapshot {
     pub control_id: String,
     /// What the control is called, for a human reading the answer.
     pub label: String,
+    /// What the control shows or does, in the very words its tooltip carries,
+    /// where it has more to say than its label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub role: SceneRoleDto,
     pub owner: SceneOwnerSnapshot,
     /// Whether the control is currently the chosen one of its group: the
@@ -291,6 +295,7 @@ pub fn pane_header_controls(
     let control = |what: &str, note: &str, capability_id: &str| SceneControlSnapshot {
         control_id: format!("pane_header.{pane_id}.{what}"),
         label: format!("{pane_title} {what}{note}"),
+        description: None,
         role: SceneRoleDto::Action,
         owner: SceneOwnerSnapshot {
             kind: SceneOwnerKindDto::Tab,

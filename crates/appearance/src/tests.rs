@@ -181,8 +181,18 @@ fn bundled_light_changes_every_semantic_color_and_preserves_readable_text() {
     let dark = ResolvedTheme::default();
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     assert!(!light.dark);
+    // The order-flow band's keys and gear read the same on both bands, as the
+    // trader chose them.
+    let shared = [
+        Token::FlowKeyLitDot,
+        Token::FlowKeyUnlitDot,
+        Token::FlowKeyUpInk,
+        Token::FlowKeyUnlitInk,
+        Token::FlowGearInk,
+    ];
     for token in Token::ALL {
-        assert_ne!(light.color(token), dark.color(token), "{}", token.key());
+        let same = light.color(token) == dark.color(token);
+        assert_eq!(same, shared.contains(&token), "{}", token.key());
     }
     for background in [Token::Canvas, Token::Chrome, Token::Inset] {
         for text in [Token::TextPrimary, Token::TextMuted, Token::TextSupport] {

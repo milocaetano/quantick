@@ -234,7 +234,7 @@ fn each_pane_paints_only_the_controls_it_accepts() {
             rect.bottom() <= area.top(),
             "{control:?} sits off the chart"
         );
-        assert!(rect.left() > area.center().x, "{control:?} stands right");
+        assert!(rect.right() < area.center().x, "{control:?} stands left");
     }
     let strip = flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
     let footprint = flow_control(&app, HeaderControl::Layer(LayerToggle::Footprint));
@@ -321,6 +321,10 @@ fn the_scene_reads_the_side_switches() {
     }
     assert_eq!(side(&app, "trail")["label"], "Trail");
     assert_eq!(side(&app, "tape")["label"], "Tape");
+    // What each side shows, in the words of its tooltip.
+    use quantick_chart::pane_header::{TAPE_DESCRIPTION, TRAIL_DESCRIPTION};
+    assert_eq!(side(&app, "trail")["description"], TRAIL_DESCRIPTION);
+    assert_eq!(side(&app, "tape")["description"], TAPE_DESCRIPTION);
 
     click_side(&mut app, &ctx, TAPE);
     assert_eq!(side(&app, "tape")["selected"], false);
@@ -346,10 +350,10 @@ fn the_side_switches_wear_their_words_and_lose_them_on_a_narrow_line() {
     let wide = flow_control(&app, TRAIL).width();
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     for _ in 0..2 {
-        run_frame_at(&mut app, &ctx, egui::vec2(330.0, 700.0));
+        run_frame_at(&mut app, &ctx, egui::vec2(240.0, 700.0));
     }
     let bare = flow_control(&app, TRAIL).width();
-    assert!(bare < wide, "{bare} at 330, {wide} wide");
+    assert!(bare < wide, "{bare} at 240, {wide} wide");
     assert_eq!(bare, quantick_chart::pane_header::segment_px(None));
 }
 
@@ -1089,7 +1093,7 @@ fn the_scene_names_each_header_control_and_its_call() {
     assert_eq!(strip["availability"]["available"], true);
 }
 
-/// On a narrow pane the words and the mark go; the switches and strip keep the right end,
+/// On a narrow pane the words and the mark go; the switches and the gear stay,
 /// nothing overlaps, and what clipped away the scene does not list.
 #[test]
 fn a_narrow_header_drops_the_mark_and_never_overlaps() {
@@ -2639,7 +2643,7 @@ fn the_flow_time_axis_stands_on_the_frame_tone() {
 
 /// The docked capsules, on the flow pane's sides and on a time pane alike, stand
 /// bare: no case encloses their icons, and neighbouring icons keep clear air
-/// between them. The band's keys are not icons: they wear bodies (below).
+/// between them. The band's keys wear no body either (below).
 #[test]
 fn the_headers_paint_no_wrapper_behind_their_icons() {
     let ctx = egui::Context::default();
@@ -2697,17 +2701,8 @@ fn the_headers_paint_no_wrapper_behind_their_icons() {
     }
 }
 
-/// What a key on the band wears, read off the shapes a frame painted.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum KeyBody {
-    /// Raised: a 2 px shadow, the body graded top to bottom, a light lip on top.
-    Lit,
-    /// A dark cut-out sunk into the band, inside a rim of this colour.
-    Sunk(egui::Color32),
-}
-
-fn key_body(output: &egui::FullOutput, key: egui::Rect) -> Option<KeyBody> {
-    use crate::theme::{FLOW_KEY_DOWN, FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_LIP, FLOW_KEY_UP_TOP};
+/// Every shape a frame painted, flattened.
+fn flat_shapes(output: &egui::FullOutput) -> Vec<egui::Shape> {
     fn flat(shape: &egui::Shape, found: &mut Vec<egui::Shape>) {
         match shape {
             egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| flat(shape, found)),
@@ -2719,72 +2714,97 @@ fn key_body(output: &egui::FullOutput, key: egui::Rect) -> Option<KeyBody> {
         .shapes
         .iter()
         .for_each(|clipped| flat(&clipped.shape, &mut shapes));
-    let filled = |rect: egui::Rect, fill| {
-        shapes.iter().any(|shape| {
-            matches!(shape, egui::Shape::Rect(seen) if seen.rect == rect && seen.fill == fill)
-        })
-    };
-    let graded = shapes.iter().any(|shape| match shape {
-        egui::Shape::Mesh(mesh) => {
-            let tones = [FLOW_KEY_UP_TOP, FLOW_KEY_UP_BOTTOM];
-            key.expand(0.01).contains_rect(mesh.calc_bounds())
-                && tones.map(|tone| mesh.vertices.iter().any(|at| at.color == tone)) == [true; 2]
-        }
-        _ => false,
-    });
-    let lip = shapes.iter().any(|shape| match shape {
-        egui::Shape::LineSegment { points, stroke } => {
-            points[0].y == key.top() + 0.5
-                && stroke.color == egui::epaint::ColorMode::Solid(FLOW_KEY_UP_LIP)
-        }
-        _ => false,
-    });
-    let shadow = key.translate(egui::vec2(0.0, 2.0));
-    if filled(shadow, crate::theme::FLOW_KEY_UP_SHADOW) && filled(key, FLOW_KEY_UP_BOTTOM) {
-        return (graded && lip).then_some(KeyBody::Lit);
-    }
-    let rim = shapes.iter().find_map(|shape| match shape {
-        egui::Shape::Rect(seen) if seen.rect == key.shrink(0.5) => Some(seen.stroke.color),
-        _ => None,
-    });
-    rim.filter(|_| filled(key, FLOW_KEY_DOWN))
-        .map(KeyBody::Sunk)
+    shapes
 }
 
-/// The band's keys wear the two bodies the trader chose: a shown side's key raised
-/// and lit, the other a dark cut-out sunk into the band; the gear raised only while
-/// its panel is open; and a market hold sinks the tape's key inside a red rim.
+/// What a key on the band wears: its dot's fill and whether it glows, and the
+/// fill of any body painted under it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct KeyLook {
+    dot: Option<egui::Color32>,
+    glow: bool,
+    body: Option<egui::Color32>,
+}
+
+fn key_look(shapes: &[egui::Shape], key: egui::Rect) -> KeyLook {
+    use quantick_chart::pane_header::{KEY_DOT_PX, segment_px};
+    let center = key.left_center() + egui::vec2(segment_px(None) / 2.0, 0.0);
+    let circles = |bigger: bool| {
+        shapes.iter().filter_map(move |shape| match shape {
+            egui::Shape::Circle(circle)
+                if circle.center == center
+                    && (circle.radius > KEY_DOT_PX / 2.0) == bigger
+                    && (bigger || circle.radius == KEY_DOT_PX / 2.0) =>
+            {
+                Some(circle.fill)
+            }
+            _ => None,
+        })
+    };
+    let body = shapes.iter().find_map(|shape| match shape {
+        egui::Shape::Rect(seen) if key.expand(3.0).contains_rect(seen.rect) => Some(seen.fill),
+        egui::Shape::Mesh(mesh) if key.expand(3.0).contains_rect(mesh.calc_bounds()) => {
+            Some(egui::Color32::TRANSPARENT)
+        }
+        _ => None,
+    });
+    KeyLook {
+        dot: circles(false).next_back(),
+        glow: circles(true).next().is_some(),
+        body,
+    }
+}
+
+/// The band's keys wear no body: a dot lit and glowing for a shown side, grey for
+/// the other, red while the market holds the tape. The gear is bare until its
+/// panel opens, then sinks into a well.
 #[test]
-fn the_band_keys_are_raised_when_lit_and_sunk_when_not() {
+fn the_band_keys_wear_a_dot_and_no_body() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     // No pointer on the band, for a whole frame: a hovered key is brighter.
-    let bodies = |app: &mut QuantickApp| {
+    let looks = |app: &mut QuantickApp| {
         run_frame_with_events(app, &ctx, vec![egui::Event::PointerGone]);
-        let output = run_frame(app, &ctx);
-        [TRAIL, TAPE, GEAR].map(|control| key_body(&output, flow_control(app, control)))
+        let shapes = flat_shapes(&run_frame(app, &ctx));
+        [TRAIL, TAPE, GEAR].map(|control| key_look(&shapes, flow_control(app, control)))
     };
-    let (lit, sunk) = (
-        Some(KeyBody::Lit),
-        Some(KeyBody::Sunk(crate::theme::FLOW_KEY_DOWN_RIM)),
-    );
+    let palette = crate::theme::get(&ctx);
+    let lit = KeyLook {
+        dot: Some(palette.flow_key_lit_dot()),
+        glow: true,
+        body: None,
+    };
+    let unlit = KeyLook {
+        dot: Some(palette.flow_key_unlit_dot()),
+        glow: false,
+        body: None,
+    };
+    let bare = KeyLook {
+        dot: None,
+        glow: false,
+        body: None,
+    };
     assert_eq!(
-        bodies(&mut app),
-        [lit, lit, sunk],
+        looks(&mut app),
+        [lit, lit, bare],
         "both sides, the panel shut"
     );
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::CandlesOnly);
-    assert_eq!(bodies(&mut app), [lit, sunk, sunk], "the tape put away");
+    assert_eq!(looks(&mut app), [lit, unlit, bare], "the tape put away");
     let gear = flow_control(&app, GEAR).center();
     click_chart(&mut app, &ctx, gear);
     run_frame(&mut app, &ctx);
     assert!(panel_open(&app));
+    let well = KeyLook {
+        body: Some(palette.flow_key_down()),
+        ..bare
+    };
     assert_eq!(
-        bodies(&mut app),
-        [lit, sunk, lit],
-        "the open panel lights the gear"
+        looks(&mut app),
+        [lit, unlit, well],
+        "the open panel sinks the gear"
     );
 
     app.active_tab_mut()
@@ -2795,11 +2815,131 @@ fn the_band_keys_are_raised_when_lit_and_sunk_when_not() {
         ..app.active_tab().connection.state()
     };
     app.active_tab_mut().tape_mut().observe_market(quiet);
-    let [_, tape, _] = bodies(&mut app);
+    let [_, tape, _] = looks(&mut app);
     assert_eq!(
         tape,
-        Some(KeyBody::Sunk(crate::theme::WARN)),
+        KeyLook {
+            dot: Some(crate::theme::WARN),
+            ..unlit
+        },
         "held by the market"
+    );
+}
+
+/// The band reads left to right: the mark, its rule, Trail, Tape; the gear ends
+/// it on the right. Dark keeps its slate band, Light turns graphite, each with its
+/// own ink and closing rule.
+#[test]
+fn the_band_reads_mark_rule_keys_and_gear_in_both_themes() {
+    let rgb = egui::Color32::from_rgb;
+    for (source, band, ink, rule) in [
+        (
+            quantick_appearance::DARK,
+            rgb(0x1E, 0x24, 0x33),
+            rgb(0xE8, 0xEC, 0xF2),
+            rgb(0x2E, 0x36, 0x48),
+        ),
+        (
+            quantick_appearance::LIGHT,
+            rgb(0x4A, 0x50, 0x59),
+            rgb(0xF2, 0xF4, 0xF7),
+            rgb(0x3A, 0x3F, 0x45),
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _ends) = flow_fixture(&ctx);
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        run_frame(&mut app, &ctx);
+        let output = run_frame(&mut app, &ctx);
+        let shapes = flat_shapes(&output);
+        let mark = painted_text_rects(&output, "ORDER FLOW")[0];
+        let [trail, tape, gear] = [TRAIL, TAPE, GEAR].map(|control| flow_control(&app, control));
+        assert!(
+            mark.right() < trail.left() && trail.right() < tape.left(),
+            "{mark:?} {trail:?} {tape:?}"
+        );
+        assert!(tape.right() < gear.left(), "{tape:?} {gear:?}");
+        let fill = shapes.iter().any(|shape| {
+            matches!(shape, egui::Shape::Rect(seen)
+                if seen.fill == band && seen.rect.contains_rect(trail.union(gear)))
+        });
+        assert!(fill, "the band's fill");
+        let lines = |colour: egui::Color32| {
+            shapes
+                .iter()
+                .filter_map(move |shape| match shape {
+                    egui::Shape::LineSegment { points, stroke }
+                        if stroke.color == egui::epaint::ColorMode::Solid(colour) =>
+                    {
+                        Some(*points)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let separator = lines(ink.gamma_multiply(0.35));
+        assert!(
+            separator
+                .iter()
+                .any(|[from, to]| from.x == to.x && from.x > mark.right() && from.x < trail.left()),
+            "the rule between the mark and the keys: {separator:?}"
+        );
+        assert!(
+            lines(rule)
+                .iter()
+                .any(|[from, to]| from.y == to.y && from.y > gear.bottom()),
+            "the band's closing rule"
+        );
+        let mark_ink = shapes.iter().find_map(|shape| match shape {
+            egui::Shape::Text(text) if text.galley.text() == "ORDER FLOW" => {
+                Some(text.galley.job.sections[0].format.color)
+            }
+            _ => None,
+        });
+        assert_eq!(mark_ink, Some(ink), "the mark's ink");
+    }
+}
+
+/// A key's tooltip: its name and shortcut on the first line, then what its side
+/// shows, then why it refuses; the same words the scene carries.
+#[test]
+fn a_key_tooltip_names_the_key_and_says_what_its_side_shows() {
+    use quantick_chart::pane_header::{TAPE_DESCRIPTION, TRAIL_DESCRIPTION};
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let tip = |app: &mut QuantickApp, control: HeaderControl, description: &str| {
+        let at = flow_control(app, control).center();
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        (0..90)
+            .map(|_| painted_text(&run_frame(app, &ctx)))
+            .find(|texts| texts.iter().any(|text| text == description))
+            .unwrap_or_else(|| panic!("{control:?} shows its tooltip"))
+    };
+    let shortcut = |side| ctx.format_shortcut(&crate::chart_layers::shortcuts::side_shortcut(side));
+    let texts = tip(&mut app, TRAIL, TRAIL_DESCRIPTION);
+    for wanted in ["Trail".to_owned(), shortcut(LaneSide::Trail)] {
+        assert!(texts.contains(&wanted), "{wanted} in {texts:?}");
+    }
+    let texts = tip(&mut app, TAPE, TAPE_DESCRIPTION);
+    for wanted in ["Tape".to_owned(), shortcut(LaneSide::Tape)] {
+        assert!(texts.contains(&wanted), "{wanted} in {texts:?}");
+    }
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::CandlesOnly);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let texts = tip(&mut app, TRAIL, TRAIL_DESCRIPTION);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "the last side showing stays"),
+        "the refusal follows: {texts:?}"
     );
 }
 

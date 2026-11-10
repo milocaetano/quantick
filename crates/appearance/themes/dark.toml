@@ -27,6 +27,13 @@ flow_key_up_edge = { premultiplied = [0, 0, 0, 153] }
 flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
 flow_key_up_ink = "#ffffff"
 flow_band_rule = "#2e3648"
+# The band: Dark keeps the frame's slate under it. Its keys carry no body,
+# a dot lit or unlit beside the word, and the gear is bare.
+flow_band = "#1e2433"
+flow_key_lit_dot = "#3AF0B2"
+flow_key_unlit_dot = "#6B7482"
+flow_key_unlit_ink = "#9AA3B0"
+flow_gear_ink = "#C9CFD8"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
 candle_preview_background = "#0C0F16"
 candle_preview_bid = "#14B9E6"

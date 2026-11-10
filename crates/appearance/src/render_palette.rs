@@ -54,6 +54,21 @@ impl<T: Copy> RenderPalette<T> {
     pub fn flow_band_rule(&self) -> T {
         *self.get(Token::FlowBandRule)
     }
+    pub fn flow_band(&self) -> T {
+        *self.get(Token::FlowBand)
+    }
+    pub fn flow_key_lit_dot(&self) -> T {
+        *self.get(Token::FlowKeyLitDot)
+    }
+    pub fn flow_key_unlit_dot(&self) -> T {
+        *self.get(Token::FlowKeyUnlitDot)
+    }
+    pub fn flow_key_unlit_ink(&self) -> T {
+        *self.get(Token::FlowKeyUnlitInk)
+    }
+    pub fn flow_gear_ink(&self) -> T {
+        *self.get(Token::FlowGearInk)
+    }
 
     pub fn trade_selection_halo(&self) -> T {
         *self.get(Token::TradeSelectionHalo)
