@@ -839,7 +839,7 @@ mod tests {
                 "{gone:?} is still painted: {painted}"
             );
         }
-        for kept in ["Scalp", "fps", "cpu", "price: manual", "WDOU26"] {
+        for kept in ["fps", "cpu", "price: manual", "WDOU26"] {
             assert!(painted.contains(kept), "{kept:?} is missing: {painted}");
         }
     }

@@ -56,10 +56,8 @@ pub(crate) fn tree_bands(
     (state.rects(canvas).into_iter())
         .filter_map(|(slot, rect)| {
             let side = sides.iter().find(|(held, _)| *held == slot)?.1;
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(rect.x, rect.y),
-                egui::vec2(rect.w, rect.h),
-            );
+            let rect =
+                egui::Rect::from_min_size(egui::pos2(rect.x, rect.y), egui::vec2(rect.w, rect.h));
             Some(TreeBand {
                 side,
                 rect: inset_seams(rect, area),

@@ -176,7 +176,11 @@ impl<'a> WorkspaceRows<'a> {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         super::menus::flat_rows(ui);
                         self.action_row(ui, RowId::WorkspaceAutosave, commands);
-                        let line = if auto { "Every change is saved".to_owned() } else { format!("Save with {keys}") };
+                        let line = if auto {
+                            "Every change is saved".to_owned()
+                        } else {
+                            format!("Save with {keys}")
+                        };
                         ui.label(crate::theme::supporting_text(ui, line));
                         ui.separator();
                         let save = egui::Button::new(format!("Save \u{201c}{workspace}\u{201d}"))
@@ -184,7 +188,11 @@ impl<'a> WorkspaceRows<'a> {
                         let save = ui.add_enabled(modified && !auto, save);
                         if modified && !auto {
                             let dot = save.rect.left_center() + egui::vec2(-1.0, 0.0);
-                            ui.painter().circle_filled(dot, 2.5, crate::theme::get(ui.ctx()).accent());
+                            ui.painter().circle_filled(
+                                dot,
+                                2.5,
+                                crate::theme::get(ui.ctx()).accent(),
+                            );
                         }
                         if save.clicked() {
                             Self::push(commands, WorkspaceCommand::SaveTo);

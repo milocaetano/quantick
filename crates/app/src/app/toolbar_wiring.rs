@@ -58,7 +58,7 @@ impl QuantickApp {
             tz: self.runtime.tz,
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
-        let capsule = super::capsule_wiring::CapsuleState::of(self);
+        let capsule = super::capsule_wiring::CapsuleState::of(self, ctx);
         let mut capsule_rects = self.chrome.capsule;
         let deal_recording = self.active_tab().deal_recording_view();
         #[cfg(any(feature = "scenario-harness", test))]
@@ -72,15 +72,7 @@ impl QuantickApp {
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
         let mut toolbar_door = None;
-        let window_menu = toolbar::WindowMenuDoor {
-            open: (self.chrome.window_menu)
-                .opened_from(ctx.viewport_id(), super::menu_bar::MenuDoor::Toolbar),
-            hover: format!(
-                "Window menu ({})",
-                super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
-            ),
-            rect: &mut toolbar_door,
-        };
+        let window_menu = capsule.door(&mut toolbar_door);
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
@@ -123,13 +115,8 @@ impl QuantickApp {
         &mut self,
         preset: &'static crate::canvas_layout::LayoutPreset,
     ) {
-        let Some(layout) = CanvasLayout::from_preset(preset) else {
-            return;
-        };
         let tab = self.active_tab_mut();
-        tab.set_layout(layout);
-        // Picked, the layout draws its thumbnail: the column painter's split
-        // lands where the preset's tree puts the flow pane.
+        tab.set_layout(CanvasLayout::from_preset(preset));
         tab.canvas.split_to_preset();
     }
 

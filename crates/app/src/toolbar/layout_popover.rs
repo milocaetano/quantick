@@ -60,61 +60,83 @@ pub fn draw(
         .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, DROP_PX))
         .constrain(true)
         .show(ctx, |ui| {
-            egui::Frame::menu(ui.style()).inner_margin(PAD_PX).show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, GAP_PX / 2.0);
-                let caption = |ui: &mut egui::Ui, text: String| {
-                    ui.label(egui::RichText::new(text).size(LABEL_PX).color(palette.text_muted()));
-                };
-                caption(ui, format!("LAYOUT OF {}", model.workspace.to_uppercase()));
-                ui.horizontal_top(|ui| {
-                    for (group, title) in [
-                        (PresetGroup::WithFlow, "WITH FLOW"),
-                        (PresetGroup::Timeframes, "TIMEFRAMES"),
-                    ] {
-                        if group == PresetGroup::Timeframes {
-                            ui.separator();
-                        }
-                        ui.vertical(|ui| {
-                            caption(ui, title.to_owned());
-                            let presets = LAYOUT_PRESETS.iter().filter(|p| p.group == group);
-                            let presets: Vec<_> = presets.collect();
-                            for row in presets.chunks(2) {
-                                ui.horizontal(|ui| {
-                                    for preset in row {
-                                        let rect = cell(ui, preset, model);
-                                        if rect.1.clicked() {
-                                            actions.push(ToolbarAction::SetLayout(preset));
-                                        }
-                                        cells.push((*preset, rect.0));
-                                    }
-                                });
+            egui::Frame::menu(ui.style())
+                .inner_margin(PAD_PX)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, GAP_PX / 2.0);
+                    let caption = |ui: &mut egui::Ui, text: String| {
+                        ui.label(
+                            egui::RichText::new(text)
+                                .size(LABEL_PX)
+                                .color(palette.text_muted()),
+                        );
+                    };
+                    caption(ui, format!("LAYOUT OF {}", model.workspace.to_uppercase()));
+                    ui.horizontal_top(|ui| {
+                        for (group, title) in [
+                            (PresetGroup::WithFlow, "WITH FLOW"),
+                            (PresetGroup::Timeframes, "TIMEFRAMES"),
+                        ] {
+                            if group == PresetGroup::Timeframes {
+                                ui.separator();
                             }
+                            ui.vertical(|ui| {
+                                caption(ui, title.to_owned());
+                                let presets = LAYOUT_PRESETS.iter().filter(|p| p.group == group);
+                                let presets: Vec<_> = presets.collect();
+                                for row in presets.chunks(2) {
+                                    ui.horizontal(|ui| {
+                                        for preset in row {
+                                            let rect = cell(ui, preset, model);
+                                            if rect.1.clicked() {
+                                                actions.push(ToolbarAction::SetLayout(preset));
+                                            }
+                                            cells.push((*preset, rect.0));
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    if model.layout_unsaved {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            caption(
+                                ui,
+                                format!(
+                                    "Changed in \u{201c}{}\u{201d} \u{b7} not saved",
+                                    model.workspace
+                                ),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let keys = egui::RichText::new("Ctrl+S")
+                                        .monospace()
+                                        .color(palette.text_muted());
+                                    ui.label(keys);
+                                },
+                            );
                         });
                     }
                 });
-                if model.layout_unsaved {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        caption(ui, format!("Changed in \u{201c}{}\u{201d} \u{b7} not saved", model.workspace));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let keys = egui::RichText::new("Ctrl+S").monospace().color(palette.text_muted());
-                            ui.label(keys);
-                        });
-                    });
-                }
-            });
         });
     let outside = ctx.input(|input| {
         input.pointer.any_pressed()
-            && input.pointer.interact_pos().is_some_and(|at| {
-                !anchor.contains(at) && !area.response.rect.contains(at)
-            })
+            && input
+                .pointer
+                .interact_pos()
+                .is_some_and(|at| !anchor.contains(at) && !area.response.rect.contains(at))
     });
     (cells, outside)
 }
 
 /// One preset: its tree in miniature and its name, wrapped at " + ".
-fn cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, model: &PopoverModel<'_>) -> (egui::Rect, egui::Response) {
+fn cell(
+    ui: &mut egui::Ui,
+    preset: &'static LayoutPreset,
+    model: &PopoverModel<'_>,
+) -> (egui::Rect, egui::Response) {
     let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
     let response = response.on_hover_text(preset.label);
@@ -123,14 +145,20 @@ fn cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, model: &PopoverModel<'
         painter.rect_filled(rect, CORNER_RADIUS, palette.control());
     }
     if model.current == Some(preset) {
-        painter.rect_stroke(rect, CORNER_RADIUS, egui::Stroke::new(RING_PX, palette.accent()));
+        painter.rect_stroke(
+            rect,
+            CORNER_RADIUS,
+            egui::Stroke::new(RING_PX, palette.accent()),
+        );
     }
     let thumb = egui::Rect::from_min_size(
         egui::pos2(rect.center().x - THUMBNAIL.x / 2.0, rect.top() + 4.0),
         THUMBNAIL,
     );
     super::capsule::paint_tree(painter, thumb, preset.tree);
-    let name = preset.label.replacen(" + ", "\n+ ", usize::from(preset.label.len() > 12));
+    let name = preset
+        .label
+        .replacen(" + ", "\n+ ", usize::from(preset.label.len() > 12));
     painter.text(
         egui::pos2(rect.center().x, thumb.bottom() + 3.0),
         egui::Align2::CENTER_TOP,
@@ -139,12 +167,21 @@ fn cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, model: &PopoverModel<'
         palette.text_primary(),
     );
     if model.saved == Some(preset) {
-        let tag = painter.layout_no_wrap("saved".to_owned(), egui::FontId::proportional(9.0), palette.text_muted());
+        let tag = painter.layout_no_wrap(
+            "saved".to_owned(),
+            egui::FontId::proportional(9.0),
+            palette.text_muted(),
+        );
         let at = egui::Rect::from_min_size(
             egui::pos2(thumb.right() - tag.size().x - 4.0, thumb.top() - 5.0),
             tag.size() + egui::vec2(6.0, 2.0),
         );
-        painter.rect(at, 4.0, palette.chrome(), egui::Stroke::new(1.0_f32, palette.border()));
+        painter.rect(
+            at,
+            4.0,
+            palette.chrome(),
+            egui::Stroke::new(1.0_f32, palette.border()),
+        );
         painter.galley(at.min + egui::vec2(3.0, 1.0), tag, palette.text_muted());
     }
     (rect, response)
@@ -159,7 +196,11 @@ mod tests {
     fn the_popover_names_no_preset_of_its_own() {
         let source = include_str!("layout_popover.rs");
         for preset in LAYOUT_PRESETS {
-            assert!(!source.contains(&format!("\"{}\"", preset.id)), "{}", preset.id);
+            assert!(
+                !source.contains(&format!("\"{}\"", preset.id)),
+                "{}",
+                preset.id
+            );
         }
     }
 }

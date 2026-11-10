@@ -76,15 +76,19 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.workspace.set",
         title: "Put a tab on a saved workspace",
-        reach: "the status bar's workspace cell",
-        keys: &[(Source::Hotkey, "WORKSPACE_MENU_SHORTCUT")],
+        reach: "the capsule's workspace name, Ctrl+Shift+O",
+        keys: &[
+            (Source::Hotkey, "WORKSPACE_MENU_SHORTCUT"),
+            (Source::ToolbarAction, "ToggleWorkspaceMenu"),
+        ],
         mapping: Mapping::Capabilities(&["tab.workspace.set"]),
     },
     UiBehaviour {
         id: "workspace.save_to",
         title: "Save a tab's edits to its workspace",
-        reach: "window menu, Save to",
+        reach: "the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S",
         keys: &[
+            (Source::ToolbarAction, "SaveWorkspace"),
             (Source::MenuEntry, "Save to workspace"),
             (Source::Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
         ],
@@ -100,14 +104,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.new",
         title: "Make a new, empty workspace for a tab",
-        reach: "the status bar's workspace cell, New workspace",
+        reach: "the capsule's workspace menu, New workspace",
         keys: &[(Source::MenuEntry, "New workspace\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.new"]),
     },
     UiBehaviour {
         id: "workspace.autosave.set",
         title: "Turn auto save layout changes on or off",
-        reach: "the status bar's auto save check, or the workspace cell's menu",
+        reach: "the capsule's workspace menu, Auto save",
         keys: &[(Source::MenuEntry, "Auto save layout changes")],
         mapping: Mapping::Capabilities(&["workspace.autosave.set"]),
     },
@@ -122,7 +126,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         id: "workspace.manage",
         title: "List every workspace with its tabs, to rename or delete one (its tabs move to \
                 Default), Delete confirmed in the row",
-        reach: "window menu, Workspace, Manage workspaces\u{2026}, or the workspace cell's menu",
+        reach: "window menu, Workspace, Manage workspaces\u{2026}, or the capsule's workspace menu",
         keys: &[(Source::MenuEntry, "Manage workspaces\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.list", "workspace.rename", "workspace.delete"]),
     },

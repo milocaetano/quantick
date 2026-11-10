@@ -267,7 +267,8 @@ fn chip_and_snapshot_read_one_state() {
             (symbol, venue),
             (status.symbol.as_str(), status.venue.as_str())
         );
-        assert_eq!(status.modified, app.tab_workspace_row(tab).1);
+        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        assert_eq!(capsule.marks().1, app.tab_workspace_row(tab).1);
     }
     assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
 }
@@ -283,7 +284,11 @@ fn autosave_on_never_marks_an_edit() {
     edit_split(&mut app, first, 0.31);
     frames(&mut app, 2);
     assert!(!app.runtime.workspace.book.tab_row(first).1);
-    assert!(!app.status_model().modified);
+    assert!(
+        !crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default())
+            .marks()
+            .1
+    );
 }
 
 /// A command reads the active tab before it acts. An edit first seen there
@@ -684,9 +689,8 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
 }
 
-/// The status bar's workspace cell reads the book's row: the same name and
-/// mark, on a clean tab and on an edited one, and never a mark with autosave
-/// on. Home shows no cell.
+/// The capsule reads the book's row: the same name and mark, on a clean tab
+/// and on an edited one, and never a mark with autosave on.
 #[test]
 fn chip_and_status_cell_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-cell-state", "layouts.toml");
@@ -702,17 +706,12 @@ fn chip_and_status_cell_read_one_state() {
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
-        let status = app.status_model();
+        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
         let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
-        assert_eq!(
-            (status.workspace, status.modified),
-            (Some(workspace), modified)
-        );
+        let (name, unsaved, _) = capsule.marks();
+        assert_eq!((name.to_owned(), unsaved), (workspace, modified));
     }
     assert!(app.runtime.workspace.book.tab_row(first).1);
-    let surface = &mut app.chrome.title_bar.surface;
-    super::super::home_wiring::show_home(&app.runtime.tabs, surface);
-    assert_eq!(app.status_model().workspace, None, "no cell on Home");
 }
 
 /// A torn-off window's cell opens the menu on its own tab, the main window's

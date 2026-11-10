@@ -23,10 +23,12 @@ pub(super) struct CapsuleState {
     popover_open: bool,
     current: Option<&'static LayoutPreset>,
     saved: Option<&'static LayoutPreset>,
+    door_open: bool,
+    door_hover: String,
 }
 
 impl CapsuleState {
-    pub(super) fn of(app: &QuantickApp) -> Self {
+    pub(super) fn of(app: &QuantickApp, ctx: &egui::Context) -> Self {
         let tab = app.runtime.tabs.active_id();
         let book = &app.runtime.workspace.book;
         let (workspace, unsaved) = book.tab_row(tab);
@@ -34,7 +36,10 @@ impl CapsuleState {
         let saved = book.book().recipe(&workspace).map(|recipe| {
             super::canvas_wiring::recipe_state(recipe, super::canvas_wiring::recipe_layout(recipe))
         });
-        let layout_unsaved = unsaved && saved.as_ref().is_some_and(|saved| !same_layout(saved, live));
+        let layout_unsaved = unsaved
+            && saved
+                .as_ref()
+                .is_some_and(|saved| !same_layout(saved, live));
         Self {
             tree: live.tree().clone(),
             unsaved,
@@ -44,7 +49,30 @@ impl CapsuleState {
             current: live.preset(),
             saved: saved.as_ref().and_then(CanvasState::preset),
             workspace,
+            door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
+            door_hover: format!(
+                "Window menu ({})",
+                super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
+            ),
         }
+    }
+
+    /// The toolbar's `≡`, writing where it was drawn into `rect`.
+    pub(super) fn door<'a>(
+        &'a self,
+        rect: &'a mut Option<egui::Rect>,
+    ) -> crate::toolbar::WindowMenuDoor<'a> {
+        crate::toolbar::WindowMenuDoor {
+            open: self.door_open,
+            hover: self.door_hover.clone(),
+            rect,
+        }
+    }
+
+    /// The name, the floppy's dot and the miniature's dot.
+    #[cfg(test)]
+    pub(super) fn marks(&self) -> (&str, bool, bool) {
+        (&self.workspace, self.unsaved, self.layout_unsaved)
     }
 
     pub(super) fn model(&self) -> CapsuleModel<'_> {
@@ -55,6 +83,7 @@ impl CapsuleState {
             layout_unsaved: self.layout_unsaved,
             menu_open: self.menu_open,
             popover_open: self.popover_open,
+            compact: false,
         }
     }
 }
@@ -113,7 +142,9 @@ pub(super) fn settle(
             layout_unsaved: state.layout_unsaved,
         };
         let (drawn, outside) = layout_popover::draw(ctx, rects.miniature, &model, &mut rest);
-        let picked = rest.iter().any(|action| matches!(action, ToolbarAction::SetLayout(_)));
+        let picked = rest
+            .iter()
+            .any(|action| matches!(action, ToolbarAction::SetLayout(_)));
         app.chrome.layout_picker_open = !(outside || picked);
         cells = drawn;
     }
@@ -144,20 +175,50 @@ fn publish(
     if let Some(door) = door {
         let open = menu.opened_from(viewport, MenuDoor::Toolbar);
         let capability = Some(OPEN_WINDOW_MENU_CAPABILITY_ID);
-        controls.push(control("window_menu", "Window menu", door, open, capability));
+        controls.push(control(
+            "window_menu",
+            "Window menu",
+            door,
+            open,
+            capability,
+        ));
     }
     let layout = state.current.map_or("Custom layout", |preset| preset.label);
-    controls.push(control("capsule.layout", layout, rects.miniature, app.chrome.layout_picker_open, None));
+    controls.push(control(
+        "capsule.layout",
+        layout,
+        rects.miniature,
+        app.chrome.layout_picker_open,
+        None,
+    ));
     let workspace_open = menu.tab_workspace.chip_menu_on(tab);
-    controls.push(control("capsule.workspace", &state.workspace, rects.name, workspace_open, None));
+    controls.push(control(
+        "capsule.workspace",
+        &state.workspace,
+        rects.name,
+        workspace_open,
+        None,
+    ));
     if let Some(floppy) = rects.floppy {
         let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
-        controls.push(control("capsule.save", "Save workspace", floppy, false, save));
+        controls.push(control(
+            "capsule.save",
+            "Save workspace",
+            floppy,
+            false,
+            save,
+        ));
     }
     for (preset, rect) in cells {
         let id = format!("layout_popover.{}", preset.id);
         let selected = state.current == Some(*preset);
-        controls.push(control(&id, preset.label, *rect, selected, Some(PICK_LAYOUT_CAPABILITY_ID)));
+        controls.push(control(
+            &id,
+            preset.label,
+            *rect,
+            selected,
+            Some(PICK_LAYOUT_CAPABILITY_ID),
+        ));
     }
     app.chrome.toolbar_controls = controls;
 }

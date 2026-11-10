@@ -276,12 +276,7 @@ fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
             input.preset_id
         ))
     })?;
-    let layout = CanvasLayout::from_preset(preset).ok_or_else(|| {
-        ControlError::invalid_request(format!(
-            "the canvas cannot draw the preset {} yet",
-            preset.id
-        ))
-    })?;
+    let layout = CanvasLayout::from_preset(preset);
     let tab = app
         .tabs_mut()
         .tab_at_mut(index)

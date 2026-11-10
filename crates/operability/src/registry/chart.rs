@@ -155,9 +155,10 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.preset.apply",
         title: "Switch the canvas to another arrangement",
-        reach: "toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
+        reach: "the capsule's layout popover, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
         keys: &[
             (Source::ToolbarAction, "SetLayout"),
+            (Source::ToolbarAction, "ToggleLayoutPopover"),
             (Source::LayoutPreset, "flow"),
             (Source::LayoutPreset, "time+flow"),
             (Source::LayoutPreset, "time+time+flow"),
@@ -177,7 +178,14 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
             (Source::Hotkey, "LAYOUT_PRESET_KEYS"),
             (Source::MenuEntry, "Layout"),
         ],
-        mapping: capability!("layout.preset.apply"),
+        mapping: capability!("layout.preset.apply", "canvas.layout.pick"),
+    },
+    UiBehaviour {
+        id: "canvas.window_menu.open",
+        title: "Open the window menu from the toolbar's list door",
+        reach: "the toolbar's list door at its left end",
+        keys: &[(Source::ToolbarAction, "ToggleWindowMenu")],
+        mapping: capability!("canvas.window_menu.open"),
     },
 ];
 

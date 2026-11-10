@@ -20,7 +20,7 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
 mod canvas_wiring;
-mod capsule_wiring;
+pub(crate) mod capsule_wiring;
 pub(crate) use canvas_wiring::view as canvas_view;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;

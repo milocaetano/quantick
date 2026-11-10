@@ -63,14 +63,17 @@ fn canvas_area(app: &QuantickApp) -> CanvasRect {
 /// The active tab's workspace as last saved, if it has a save.
 fn saved_recipe(app: &QuantickApp) -> Option<&WorkspaceRecipe> {
     let book = &app.runtime.workspace.book;
-    book.book().recipe(&book.tab_row(app.runtime.tabs.active_id()).0)
+    book.book()
+        .recipe(&book.tab_row(app.runtime.tabs.active_id()).0)
 }
 
 /// Whether the active tab's workspace differs from its save now: never while
 /// auto save is on, which writes every change through.
 pub(super) fn unsaved(app: &QuantickApp) -> bool {
     let live = super::tab_workspaces::live_recipe(&app.runtime, app.runtime.tabs.active_id());
-    let differs = saved_recipe(app).zip(live).is_some_and(|(saved, live)| !saved.holds(&live));
+    let differs = saved_recipe(app)
+        .zip(live)
+        .is_some_and(|(saved, live)| !saved.holds(&live));
     differs && !app.runtime.workspace.book.autosave()
 }
 
@@ -101,8 +104,14 @@ fn act_on(app: &mut QuantickApp, act: CanvasAct) -> Result<(bool, Option<u32>), 
             (state.float(slot, rect)?, Some(slot))
         }
         CanvasAct::Dock { slot, edge } => (state.dock(slot, edge_of(edge))?, Some(slot)),
-        CanvasAct::Park { slot, corner } => (state.park(slot, corner_of(corner), area)?, Some(slot)),
-        CanvasAct::PopOut { slot, monitor, rect } => {
+        CanvasAct::Park { slot, corner } => {
+            (state.park(slot, corner_of(corner), area)?, Some(slot))
+        }
+        CanvasAct::PopOut {
+            slot,
+            monitor,
+            rect,
+        } => {
             let kept = state.floating().iter().find(|pane| pane.slot == slot);
             let kept = kept.map(|pane| match &pane.host {
                 FloatHost::Canvas { rect } | FloatHost::OsWindow { rect, .. } => *rect,
@@ -187,9 +196,27 @@ pub(crate) fn view(state: &CanvasState) -> CanvasView {
             },
         })
         .collect();
+    let floating = (state.floating().iter())
+        .map(|pane| {
+            let (monitor, rect) = match &pane.host {
+                FloatHost::Canvas { rect } => (None, rect),
+                FloatHost::OsWindow { monitor, rect } => (Some(monitor.clone()), rect),
+            };
+            let point = |value: f32| value.round() as i32;
+            quantick_control_schema::canvas::CanvasPlaceDto {
+                slot: pane.slot,
+                monitor,
+                x: point(rect.x),
+                y: point(rect.y),
+                w: point(rect.w),
+                h: point(rect.h),
+            }
+        })
+        .collect();
     CanvasView {
         preset_id: state.preset().map(|preset| preset.id.to_owned()),
         panes,
+        floating,
     }
 }
 
@@ -207,7 +234,7 @@ pub(super) fn saved_state(canvas: &crate::tab::layout::TabCanvas) -> Option<Canv
 pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
     (recipe.canvas.as_ref())
         .and_then(CanvasState::preset)
-        .and_then(CanvasLayout::from_preset)
+        .map(CanvasLayout::from_preset)
         .unwrap_or_else(|| CanvasLayout::from(recipe.layout))
 }
 

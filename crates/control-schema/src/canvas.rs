@@ -188,6 +188,22 @@ pub struct CanvasView {
     pub preset_id: Option<String>,
     /// Every pane, in slot order.
     pub panes: Vec<CanvasPaneDto>,
+    /// Where each floating pane stands, in whole points: over the canvas, or
+    /// on `monitor` for one in its own window.
+    #[serde(default)]
+    pub floating: Vec<CanvasPlaceDto>,
+}
+
+/// A floating pane's place, rounded to whole points.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CanvasPlaceDto {
+    pub slot: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
 }
 
 /// The canvas as it stands after a canvas call.
@@ -311,7 +327,10 @@ pub const READBACKS: &[Readback] = &[
         "the toolbar.window_menu control is listed and selected",
         &[EVERY_OPTIONAL_TEST],
     ),
-    edit(PICK_LAYOUT_CAPABILITY_ID, "the tab's canvas names the picked preset"),
+    edit(
+        PICK_LAYOUT_CAPABILITY_ID,
+        "the tab's canvas names the picked preset",
+    ),
     edit(MINIMIZE_CAPABILITY_ID, "the pane reads minimized"),
     edit(MAXIMIZE_CAPABILITY_ID, "the pane reads maximized"),
     edit(RESTORE_CAPABILITY_ID, "the pane reads docked"),
@@ -319,7 +338,10 @@ pub const READBACKS: &[Readback] = &[
     edit(ADD_WIDGET_CAPABILITY_ID, "a new floating pane is listed"),
     edit(FLOAT_CAPABILITY_ID, "the pane reads floating"),
     edit(DOCK_CAPABILITY_ID, "the pane reads docked"),
-    edit(PARK_CAPABILITY_ID, "the pane still reads floating; its place moved"),
+    edit(
+        PARK_CAPABILITY_ID,
+        "the pane still reads floating; its place moved",
+    ),
     edit(POP_OUT_CAPABILITY_ID, "the pane reads os_window"),
     edit(RETURN_CAPABILITY_ID, "the pane reads floating"),
 ];

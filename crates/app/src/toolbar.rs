@@ -242,11 +242,12 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             } else {
                 0.0
             };
-            let capsule_run = capsule::width(ui, &model.capsule) - W_PICKER;
-            let plan = collapse_plan(
-                ui.available_width() - rec_width - WINDOW_MENU_RUN_PX - capsule_run,
-                W_TRADE,
-            );
+            let fixed = ui.available_width() - rec_width - WINDOW_MENU_RUN_PX + W_PICKER;
+            let mut plan = collapse_plan(fixed - capsule::width(ui, &model.capsule), W_TRADE);
+            if !plan.trade_inline {
+                model.capsule.compact = true;
+                plan = collapse_plan(fixed - capsule::width(ui, &model.capsule), W_TRADE);
+            }
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let door = &mut model.window_menu;
@@ -617,12 +618,27 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     };
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
-    // Right-aligned: the exits open left of the entries, which never move.
+    // Left-aligned after History: the exits open right of the entries,
+    // which never move.
     let flat = 2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_GAP_PX;
     let width = if paper.close.is_some() { W_TRADE } else { flat };
     let row = egui::Layout::left_to_right(egui::Align::Center);
     ui.allocate_ui_with_layout(egui::vec2(width, 24.0), row, |ui| {
         ui.spacing_mut().item_spacing.x = TRADE_GAP_PX;
+        let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
+            .on_hover_text(&paper.buy.hover)
+            .on_disabled_hover_text(locked);
+        #[cfg(test)]
+        ui.data_mut(|data| data.insert_temp(egui::Id::new("toolbar_buy_response"), buy.id));
+        if buy.clicked() {
+            actions.push(ToolbarAction::PaperBuy);
+        }
+        let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
+            .on_hover_text(&paper.sell.hover)
+            .on_disabled_hover_text(locked);
+        if sell.clicked() {
+            actions.push(ToolbarAction::PaperSell);
+        }
         // The exit controls, on the same surface as the entries: an open
         // position must never require a dock dive to leave or flip (audit
         // pain 1, B2). Outlined, not filled — leaving is deliberate. Fixed
@@ -664,20 +680,6 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
             if reverse.clicked() {
                 actions.push(ToolbarAction::PaperReverse);
             }
-        }
-        let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
-            .on_hover_text(&paper.buy.hover)
-            .on_disabled_hover_text(locked);
-        #[cfg(test)]
-        ui.data_mut(|data| data.insert_temp(egui::Id::new("toolbar_buy_response"), buy.id));
-        if buy.clicked() {
-            actions.push(ToolbarAction::PaperBuy);
-        }
-        let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
-            .on_hover_text(&paper.sell.hover)
-            .on_disabled_hover_text(locked);
-        if sell.clicked() {
-            actions.push(ToolbarAction::PaperSell);
         }
     });
 }
@@ -917,10 +919,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(rules.len(), 4, "four full-height separators: {rules:?}");
+        assert_eq!(rules.len(), 5, "five full-height separators: {rules:?}");
         let (buy, _) = entry_rects(&shapes);
         assert_eq!(
-            rules[3].right() + SEPARATOR_AIR_PX,
+            rules[2].right() + SEPARATOR_AIR_PX,
             buy.expect("BUY").left()
         );
         let history = shapes
@@ -960,11 +962,11 @@ mod tests {
         );
     }
 
-    /// The row draws picker, market, history, trade, panels, left to right:
-    /// asserted on the painted shapes of a full-width toolbar, with the
-    /// picker's custom-layout glyph standing for its face.
+    /// The row draws the list door, market, history, trade, capsule and
+    /// panels, left to right: asserted on the painted shapes of a full-width
+    /// toolbar, the capsule by its workspace name.
     #[test]
-    fn the_row_draws_picker_market_history_trade_panels() {
+    fn the_row_draws_door_market_history_trade_capsule_panels() {
         let shapes = toolbar_shapes(flat_trade(true), 1920.0);
         let (buy, sell) = entry_rects(&shapes);
         let (buy, sell) = (buy.expect("BUY inline"), sell.expect("SELL inline"));
@@ -980,20 +982,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("{needle} was not painted"))
         };
         let order = [
-            text_x(icons::LAYOUT),
+            text_x(icons::LIST),
             text_x("BTCUSDT"),
             text_x("History"),
             buy.left(),
             sell.left(),
+            text_x("Default"),
             text_x(icons::TRAY),
         ];
         assert!(
             order.is_sorted(),
-            "picker, market, history, BUY, SELL, tray: {order:?}"
+            "door, market, history, BUY, SELL, capsule, tray: {order:?}"
         );
         assert_eq!(sell.left() - buy.right(), TRADE_GAP_PX);
         assert_eq!(buy.size(), egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0));
-        assert!(order[5] > 1920.0 - 40.0, "the tray sits at the right edge");
+        assert!(
+            sell.right() < 1920.0 / 2.0,
+            "TRADE stands left, after History"
+        );
+        assert!(order[6] > 1920.0 - 40.0, "the tray sits at the right edge");
     }
 
     /// Opening a position never changes what folds: at every window width,
@@ -1315,8 +1322,8 @@ mod tests {
         for _ in 0..2 {
             let output = ctx.run(input(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    // Right to left, as in the toolbar's right-hand run.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    // Left to right, as in the toolbar's left run.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                         let mut actions = Vec::new();
                         draw_trade(ui, paper, &mut actions);
                         assert!(actions.is_empty(), "no clicks, no actions");

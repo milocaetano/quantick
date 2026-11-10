@@ -42,6 +42,9 @@ pub struct CapsuleModel<'a> {
     pub menu_open: bool,
     /// The layout popover hangs from the miniature.
     pub popover_open: bool,
+    /// A short row: the name gives way to its caret (its hover still names
+    /// it), so TRADE keeps its place.
+    pub compact: bool,
 }
 
 /// Where the capsule's parts ended up, for the popover, the workspace menu
@@ -63,15 +66,26 @@ impl Default for CapsuleRects {
     }
 }
 
+/// The name the capsule paints: none while compact.
+fn shown_name<'a>(model: &CapsuleModel<'a>) -> &'a str {
+    if model.compact { "" } else { model.workspace }
+}
+
 /// The width [`draw`] takes, floppy included, for the collapse plan.
 pub fn width(ui: &egui::Ui, model: &CapsuleModel<'_>) -> f32 {
     let font = egui::TextStyle::Button.resolve(ui.style());
     let text = |text: &str| {
-        let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE);
+        let galley =
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE);
         galley.size().x
     };
-    let floppy = if model.unsaved { HEIGHT_PX + FLOPPY_GAP_PX } else { 0.0 };
-    PAD_PX * 5.0 + MINIATURE.x + 1.0 + text(model.workspace) + text(icons::CARET_DOWN) + floppy
+    let floppy = if model.unsaved {
+        HEIGHT_PX + FLOPPY_GAP_PX
+    } else {
+        0.0
+    };
+    PAD_PX * 5.0 + MINIATURE.x + 1.0 + text(shown_name(model)) + text(icons::CARET_DOWN) + floppy
 }
 
 /// Draw the capsule right to left (the toolbar's right run grows inwards).
@@ -83,26 +97,40 @@ pub fn draw(
     let palette = theme::get(ui.ctx());
     let font = egui::TextStyle::Button.resolve(ui.style());
     let name = ui.painter().layout_no_wrap(
-        model.workspace.to_owned(),
+        shown_name(model).to_owned(),
         font.clone(),
         palette.text_primary(),
     );
-    let caret = ui.painter().layout_no_wrap(
-        icons::CARET_DOWN.to_owned(),
-        font,
-        palette.text_muted(),
-    );
+    let caret =
+        ui.painter()
+            .layout_no_wrap(icons::CARET_DOWN.to_owned(), font, palette.text_muted());
     let name_w = PAD_PX + name.size().x + PAD_PX + caret.size().x + PAD_PX;
     let mini_w = PAD_PX + MINIATURE.x + PAD_PX;
-    let (whole, _) =
-        ui.allocate_exact_size(egui::vec2(mini_w + 1.0 + name_w, HEIGHT_PX), egui::Sense::hover());
+    let (whole, _) = ui.allocate_exact_size(
+        egui::vec2(mini_w + 1.0 + name_w, HEIGHT_PX),
+        egui::Sense::hover(),
+    );
     let miniature = egui::Rect::from_min_size(whole.min, egui::vec2(mini_w, HEIGHT_PX));
-    let name_rect = egui::Rect::from_min_max(egui::pos2(miniature.right() + 1.0, whole.top()), whole.max);
-    let layout = ui.interact(miniature, ui.id().with("capsule_layout"), egui::Sense::click());
-    let menu = ui.interact(name_rect, ui.id().with("capsule_workspace"), egui::Sense::click());
+    let name_rect =
+        egui::Rect::from_min_max(egui::pos2(miniature.right() + 1.0, whole.top()), whole.max);
+    let layout = ui.interact(
+        miniature,
+        ui.id().with("capsule_layout"),
+        egui::Sense::click(),
+    );
+    let menu = ui.interact(
+        name_rect,
+        ui.id().with("capsule_workspace"),
+        egui::Sense::click(),
+    );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    painter.rect(whole, ROUNDING_PX, ui.visuals().widgets.inactive.weak_bg_fill, stroke);
+    painter.rect(
+        whole,
+        ROUNDING_PX,
+        ui.visuals().widgets.inactive.weak_bg_fill,
+        stroke,
+    );
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
@@ -118,21 +146,32 @@ pub fn draw(
         painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
     let text_left = name_rect.left() + PAD_PX;
-    painter.galley(egui::pos2(text_left, whole.center().y - name.size().y / 2.0), name, palette.text_primary());
     painter.galley(
-        egui::pos2(name_rect.right() - PAD_PX - caret.size().x, whole.center().y - caret.size().y / 2.0),
+        egui::pos2(text_left, whole.center().y - name.size().y / 2.0),
+        name,
+        palette.text_primary(),
+    );
+    painter.galley(
+        egui::pos2(
+            name_rect.right() - PAD_PX - caret.size().x,
+            whole.center().y - caret.size().y / 2.0,
+        ),
         caret,
         palette.text_muted(),
     );
     if layout.on_hover_text("Layout (Ctrl+Shift+1…)").clicked() {
         actions.push(ToolbarAction::ToggleLayoutPopover);
     }
-    if menu.on_hover_text("Workspace").clicked() {
+    if menu
+        .on_hover_text(format!("Workspace \u{201c}{}\u{201d}", model.workspace))
+        .clicked()
+    {
         actions.push(ToolbarAction::ToggleWorkspaceMenu);
     }
     let floppy = model.unsaved.then(|| {
         ui.add_space(FLOPPY_GAP_PX);
-        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(HEIGHT_PX), egui::Sense::click());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::Vec2::splat(HEIGHT_PX), egui::Sense::click());
         let painter = ui.painter();
         let fill = if response.hovered() {
             palette.control()
@@ -140,9 +179,22 @@ pub fn draw(
             ui.visuals().widgets.inactive.weak_bg_fill
         };
         painter.rect(rect, ROUNDING_PX, fill, stroke);
-        painter.text(rect.center(), egui::Align2::CENTER_CENTER, icons::FLOPPY_DISK, egui::FontId::proportional(13.0), palette.text_primary());
-        painter.circle_filled(rect.right_top() + egui::vec2(-3.0, 3.0), DOT_RADIUS_PX, palette.accent());
-        if response.on_hover_text(format!("Save \u{201c}{}\u{201d} (Ctrl+S)", model.workspace)).clicked() {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::FLOPPY_DISK,
+            egui::FontId::proportional(13.0),
+            palette.text_primary(),
+        );
+        painter.circle_filled(
+            rect.right_top() + egui::vec2(-3.0, 3.0),
+            DOT_RADIUS_PX,
+            palette.accent(),
+        );
+        if response
+            .on_hover_text(format!("Save \u{201c}{}\u{201d} (Ctrl+S)", model.workspace))
+            .clicked()
+        {
             actions.push(ToolbarAction::SaveWorkspace);
         }
         rect
@@ -161,14 +213,22 @@ pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
     let kinds = tree.panes();
     let area = CanvasRect::new(rect.left(), rect.top(), rect.width(), rect.height());
     for (slot, pane) in tree.rects(area) {
-        let block = egui::Rect::from_min_size(egui::pos2(pane.x, pane.y), egui::vec2(pane.w, pane.h));
-        let flow = kinds.iter().any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
+        let block =
+            egui::Rect::from_min_size(egui::pos2(pane.x, pane.y), egui::vec2(pane.w, pane.h));
+        let flow = kinds
+            .iter()
+            .any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
         let (fill, line) = if flow {
             (theme::active_tint(palette.accent()), palette.accent())
         } else {
             (egui::Color32::TRANSPARENT, palette.text_faint())
         };
-        painter.rect(block.shrink(0.5), 1.0, fill, egui::Stroke::new(PANE_STROKE_PX, line));
+        painter.rect(
+            block.shrink(0.5),
+            1.0,
+            fill,
+            egui::Stroke::new(PANE_STROKE_PX, line),
+        );
     }
 }
 
@@ -185,6 +245,7 @@ pub(crate) mod tests {
             layout_unsaved: false,
             menu_open: false,
             popover_open: false,
+            compact: false,
         }
     }
 }

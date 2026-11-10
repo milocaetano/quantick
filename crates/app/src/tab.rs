@@ -104,14 +104,14 @@ impl CanvasLayout {
     /// the four arrangements the column painter draws keep their variants,
     /// every other entry is drawn from its tree.
     #[must_use]
-    pub fn from_preset(preset: &'static LayoutPreset) -> Option<Self> {
-        Some(match preset.id {
+    pub fn from_preset(preset: &'static LayoutPreset) -> Self {
+        match preset.id {
             "flow" => CanvasLayout::Single,
             "time" => CanvasLayout::Time,
             "time+flow" => CanvasLayout::TimeAndFlow,
             "stack2+flow" => CanvasLayout::TimeTimeAndFlow,
             _ => CanvasLayout::Preset(preset),
-        })
+        }
     }
 
     /// Whether the column painter draws this layout; every other one is

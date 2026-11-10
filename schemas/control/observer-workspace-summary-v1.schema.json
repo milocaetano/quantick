@@ -13,6 +13,118 @@
       ],
       "type": "string"
     },
+    "CanvasPaneDto": {
+      "description": "One pane of the canvas after the call.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CanvasPaneKind"
+        },
+        "mode": {
+          "$ref": "#/$defs/CanvasPaneMode"
+        },
+        "slot": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot",
+        "kind",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "CanvasPaneKind": {
+      "description": "What a pane is for.",
+      "enum": [
+        "time",
+        "flow"
+      ],
+      "type": "string"
+    },
+    "CanvasPaneMode": {
+      "description": "How a pane is shown.",
+      "enum": [
+        "docked",
+        "minimized",
+        "maximized",
+        "floating",
+        "os_window"
+      ],
+      "type": "string"
+    },
+    "CanvasPlaceDto": {
+      "description": "A floating pane's place, rounded to whole points.",
+      "properties": {
+        "h": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "monitor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slot": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "w": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "x": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "y": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "type": "object"
+    },
+    "CanvasView": {
+      "description": "One tab's canvas as the workspace summary reads it: the readback every\ncanvas edit reconciles against.",
+      "properties": {
+        "floating": {
+          "default": [],
+          "description": "Where each floating pane stands, in whole points: over the canvas, or\non `monitor` for one in its own window.",
+          "items": {
+            "$ref": "#/$defs/CanvasPlaceDto"
+          },
+          "type": "array"
+        },
+        "panes": {
+          "description": "Every pane, in slot order.",
+          "items": {
+            "$ref": "#/$defs/CanvasPaneDto"
+          },
+          "type": "array"
+        },
+        "preset_id": {
+          "description": "The preset the docked panes match; absent for a custom arrangement.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "panes"
+      ],
+      "type": "object"
+    },
     "LayoutTabSnapshot": {
       "description": "One layout tab, as the strip lists it.",
       "properties": {
@@ -226,6 +338,18 @@
       "properties": {
         "active": {
           "type": "boolean"
+        },
+        "canvas": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanvasView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The canvas model: the preset the docked panes match and every pane's\nmode. Additive; absent from a build that predates it."
         },
         "context_collapsed": {
           "default": false,

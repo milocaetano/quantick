@@ -40,7 +40,8 @@ pub struct TabCanvas {
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
     pub(crate) last_canvas: egui::Rect,
     /// Every pane band the last drawn frame laid out, header to strip.
-    pub(crate) drawn_bands: SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
+    pub(crate) drawn_bands:
+        SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by `Tab::apply_pending_layout` on the following frame.
     pub(super) pending_context_panes: usize,
