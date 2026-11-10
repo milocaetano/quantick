@@ -27,27 +27,6 @@ impl<T: Copy> RenderPalette<T> {
     pub fn flow_key_down_shade(&self) -> T {
         *self.get(Token::FlowKeyDownShade)
     }
-    pub fn flow_key_down_rim(&self) -> T {
-        *self.get(Token::FlowKeyDownRim)
-    }
-    pub fn flow_key_down_ink(&self) -> T {
-        *self.get(Token::FlowKeyDownInk)
-    }
-    pub fn flow_key_up_top(&self) -> T {
-        *self.get(Token::FlowKeyUpTop)
-    }
-    pub fn flow_key_up_bottom(&self) -> T {
-        *self.get(Token::FlowKeyUpBottom)
-    }
-    pub fn flow_key_up_lip(&self) -> T {
-        *self.get(Token::FlowKeyUpLip)
-    }
-    pub fn flow_key_up_edge(&self) -> T {
-        *self.get(Token::FlowKeyUpEdge)
-    }
-    pub fn flow_key_up_shadow(&self) -> T {
-        *self.get(Token::FlowKeyUpShadow)
-    }
     pub fn flow_key_up_ink(&self) -> T {
         *self.get(Token::FlowKeyUpInk)
     }

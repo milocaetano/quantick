@@ -55,7 +55,7 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment};
+use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
 use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
@@ -464,13 +464,16 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let folds = app.tab_reads().tabs().panel_folds();
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
-            let mut description = None;
+            // What a side shows, whatever its key reads, as its tooltip says.
+            let description = match control {
+                HeaderControl::Side(side) => Some(side_description(side).to_owned()),
+                _ => None,
+            };
             let (label, role, selected, blocked, capability) = match control {
                 HeaderControl::Side(side) => {
                     let segment = pane
                         .flow_header_state()
                         .map(|state| SideSegment::of(side, &state));
-                    description = segment.map(|segment| segment.description().to_owned());
                     (
                         segment.map_or("", SideSegment::word),
                         SceneRoleDto::Toggle,
