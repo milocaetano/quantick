@@ -33,135 +33,124 @@
 //! the fraction it reads back: an `f32` in 0..1 is accurate to far better
 //! than half a unit in the sixth place.
 
-use crate::app::{LayoutPort, TabsMutPort, TabsPort};
-pub(crate) use quantick_control_schema::layout_v2::*;
-
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-
+use quantick_control::{
+    error::ControlError,
+    registry::{CapabilityDescriptor, RegistryError},
+    wire::ActorContext,
+};
+use quantick_control_host::actions::ActionHandler;
+use quantick_control_schema::layout::*;
+use quantick_control_schema::layout_v2::{ResizeInputV2, descriptor, exact};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-
 use serde_json::Value;
-
-use super::super::actions::ActionRegistry;
-use super::super::gateway::ControlAccess;
 
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
 // own, so the answer and the readback are one number written one way.
-use super::super::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
+use quantick_control_schema::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
 
-use super::{
-    APPLY_PRESET_CAPABILITY_ID, BAR_SPEC_CAPABILITY_ID, COLLAPSE_CAPABILITY_ID,
-    EXPAND_CAPABILITY_ID, FLOW_COLLAPSE_CAPABILITY_ID, FLOW_EXPAND_CAPABILITY_ID,
-    FOCUS_CAPABILITY_ID, INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID, RESIZE_CAPABILITY_ID,
-};
+use super::{LayoutHost, parse};
+use crate::dock::ActionDock;
 
-/// Every layout call with a v2 handler that answers its exact fraction.
-const CALLS: [(&str, super::super::actions::ActionHandler); 10] = [
-    (APPLY_PRESET_CAPABILITY_ID, apply_preset),
-    (MOVE_PANE_CAPABILITY_ID, move_pane),
-    (RESIZE_CAPABILITY_ID, resize),
-    (COLLAPSE_CAPABILITY_ID, collapse),
-    (EXPAND_CAPABILITY_ID, expand),
-    (FLOW_COLLAPSE_CAPABILITY_ID, collapse_flow),
-    (FLOW_EXPAND_CAPABILITY_ID, expand_flow),
-    (FOCUS_CAPABILITY_ID, focus),
-    (INTERVAL_CAPABILITY_ID, set_interval),
-    (BAR_SPEC_CAPABILITY_ID, set_bar_spec),
-];
-
-/// Dock v2 of every call in [`CALLS`]. Runs after v1 is registered: each v2
+/// Dock v2 of every layout call that answers its exact fraction. Each v2
 /// descriptor is the v1 descriptor with the version, the result schema and
 /// — for resize — the input schema replaced, so the two cannot drift apart in
 /// anything but what v2 changes.
-pub(super) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    for (id, handler) in CALLS {
-        let v1 = registry
-            .lookup(id, super::CAPABILITY_VERSION)
-            .map(|action| action.descriptor.clone())
-            .ok_or_else(|| RegistryError::Unknown {
-                kind: "capability",
-                id: id.to_owned(),
-            })?;
+pub(super) fn register<H: LayoutHost + ?Sized, A>(
+    registry: &mut impl ActionDock<H, A>,
+) -> Result<(), RegistryError> {
+    let calls: [(CapabilityDescriptor, ActionHandler<H, A>); 10] = [
+        (apply_preset_descriptor(), apply_preset),
+        (move_pane_descriptor(), move_pane),
+        (resize_descriptor(), resize),
+        (collapse_descriptor(), collapse),
+        (expand_descriptor(), expand),
+        (flow_collapse_descriptor(), collapse_flow),
+        (flow_expand_descriptor(), expand_flow),
+        (focus_descriptor(), focus),
+        (interval_descriptor(), set_interval),
+        (bar_spec_descriptor(), set_bar_spec),
+    ];
+    for (v1, handler) in calls {
         registry.register(descriptor(v1), handler)?;
     }
     Ok(())
 }
 
-fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn apply_preset<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::apply_preset(app, access, actor, input)?)
 }
 
-fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn move_pane<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::move_pane(app, access, actor, input)?)
 }
 
-fn collapse<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn collapse<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::collapse(app, access, actor, input)?)
 }
 
-fn expand<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn expand<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::expand(app, access, actor, input)?)
 }
 
-fn collapse_flow<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn collapse_flow<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::collapse_flow(app, access, actor, input)?)
 }
 
-fn expand_flow<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn expand_flow<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::expand_flow(app, access, actor, input)?)
 }
 
-fn focus<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn focus<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::focus(app, access, actor, input)?)
 }
 
-fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn set_interval<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::set_interval(app, access, actor, input)?)
 }
 
-fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn set_bar_spec<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
@@ -170,14 +159,13 @@ fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
 
 /// Resize, with the share read as an exact decimal and handed to the v1 body
 /// as the number it has always taken — in process, where no wire is crossed.
-fn resize<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
+fn resize<H: LayoutHost + ?Sized, A>(
+    app: &mut H,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input: ResizeInputV2 = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let input: ResizeInputV2 = parse(input)?;
     let fraction: Decimal = input
         .fraction
         .as_str()
@@ -206,8 +194,7 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
     // been shown.
     let index = super::tab_index(app, input.target)?;
     let drawn = app
-        .tab_reads()
-        .tab_at(index)
+        .layout_tab(index)
         .is_some_and(|tab| tab.last_canvas_width() > 0.0);
     if !drawn {
         return Err(ControlError::invalid_request(
