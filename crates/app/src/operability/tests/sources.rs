@@ -368,7 +368,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     for variant in enum_variants("app", "TabAction") {
         entries.push(Registered::new(Source::TabAction, variant));
     }
-    for variant in enum_variants("app", "ToolboxDock") {
+    for variant in enum_variants("chart-interaction", "ToolboxDock") {
         entries.push(Registered::new(Source::ToolboxDock, variant));
     }
     for variant in enum_variants("feed", "NoticeAction") {
