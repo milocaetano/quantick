@@ -20,9 +20,10 @@
 //! - **Server wall time** → converted to UTC with the bridge's declared offset,
 //!   exactly like ticks, so book and trades share one timeline.
 //! - **Truncated depth** → coverage is always
-//!   [`BookCoverage::Limited`], never `Full`. Liquidity leaving the visible
-//!   window is reported as removed because that is all the terminal knows;
-//!   labelling the coverage is what keeps that honest.
+//!   [`BookCoverage::Window`], never `Full`. The differ still zeroes a level
+//!   that leaves the visible ladder, because the book must stop holding it;
+//!   the label is what lets the history tell that end of observation from a
+//!   withdrawal, so it is never drawn as one.
 //! - **Market-order rows** (`BOOK_TYPE_*_MARKET`, no meaningful price) → skipped
 //!   and counted. They are not resting liquidity.
 //! - **Crossed images** (B3 publishes them during the pre-open auction) →
@@ -175,7 +176,7 @@ impl BookMapper {
             // Saturating: the offset is declared by whatever dialed our port,
             // so an absurd value must not panic the feed task.
             offset_ms: server_utc_offset_s.saturating_mul(1000),
-            differ: SnapshotDiffer::new(BookCoverage::Limited { levels_per_side }),
+            differ: SnapshotDiffer::new(BookCoverage::Window { levels_per_side }),
             last_utc_ms: None,
             last_published_ms: None,
             bids: Vec::new(),
@@ -469,7 +470,7 @@ mod tests {
         assert_eq!(snapshot.bids().len(), 2);
         assert_eq!(
             snapshot.coverage(),
-            BookCoverage::Limited {
+            BookCoverage::Window {
                 levels_per_side: 20
             }
         );
@@ -737,7 +738,7 @@ mod tests {
         assert_eq!(price_step, None);
         assert_eq!(
             snapshot.coverage(),
-            BookCoverage::Limited {
+            BookCoverage::Window {
                 levels_per_side: ASSUMED_BOOK_LEVELS
             }
         );

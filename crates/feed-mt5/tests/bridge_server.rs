@@ -963,7 +963,7 @@ async fn depth_images_become_a_snapshot_then_deltas_when_capture_is_on() {
     // it goes — the chart must never present it as the whole exchange book.
     assert_eq!(
         snapshot.coverage(),
-        quantick_orderbook::BookCoverage::Limited { levels_per_side: 5 }
+        quantick_orderbook::BookCoverage::Window { levels_per_side: 5 }
     );
 
     assert!(matches!(

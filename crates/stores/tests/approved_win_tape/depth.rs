@@ -83,7 +83,7 @@ struct Book {
 impl Book {
     fn new() -> Self {
         Self {
-            differ: SnapshotDiffer::new(BookCoverage::Limited {
+            differ: SnapshotDiffer::new(BookCoverage::Window {
                 levels_per_side: BOOK_LEVELS as usize,
             }),
         }

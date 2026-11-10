@@ -113,8 +113,9 @@ pub struct VisualLiquidityRun {
 
 /// One factual change between two visual-range quantities.
 ///
-/// Window clipping, retention clipping, snapshot starts, coverage ends and gap
-/// boundaries are excluded. Consumers may therefore turn reductions into
+/// Window clipping, retention clipping, snapshot starts, coverage ends, gap
+/// boundaries and levels that left a sliding depth view
+/// ([`LiquidityRun::left_view`]) are excluded. Consumers may therefore turn reductions into
 /// neutral "displayed liquidity decreased" events without inventing causes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityTransition {
@@ -170,6 +171,9 @@ impl GroupKey {
 struct Change {
     starts: Decimal,
     ends: Decimal,
+    /// Quantity whose observation ended here: it stops being drawn, and
+    /// nothing is said about where it went.
+    left_view: Decimal,
     observed: bool,
 }
 
@@ -233,8 +237,12 @@ pub fn sweep_grouped_runs<'a>(
             && end_ms <= render_end
         {
             let end = changes.entry(end_ms).or_default();
-            end.ends += run.quantity;
-            end.observed = true;
+            if run.left_view {
+                end.left_view += run.quantity;
+            } else {
+                end.ends += run.quantity;
+                end.observed = true;
+            }
         }
     }
 
@@ -246,7 +254,7 @@ pub fn sweep_grouped_runs<'a>(
 
         for (timestamp_ms, change) in changes {
             let before = quantity;
-            let after = before - change.ends + change.starts;
+            let after = before - change.ends - change.left_view + change.starts;
             debug_assert!(after >= Decimal::ZERO, "grouped liquidity became negative");
             if after == before {
                 continue;
@@ -273,7 +281,7 @@ pub fn sweep_grouped_runs<'a>(
                     side,
                     price_bucket: key.price_bucket,
                     timestamp_ms,
-                    before,
+                    before: before - change.left_view,
                     after,
                 });
             }
