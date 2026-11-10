@@ -337,6 +337,7 @@ pub(crate) struct Surfaces {
     pub strategy_popup: StrategyPopupSurface,
     /// The window's acknowledgement channel, with Undo where the act has one.
     pub toast: ToastSurface,
+    pub widgets: crate::widget_surfaces::WidgetSurfaces,
 }
 
 impl Surfaces {

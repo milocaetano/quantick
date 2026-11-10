@@ -19,6 +19,7 @@ pub mod scale;
 pub mod tape_clock;
 pub mod tape_view;
 pub mod timeline;
+pub mod widgets;
 
 // This facade is intentionally wider than the first UI integration. Keeping
 // the public DTOs here gives later renderers one stable import surface.

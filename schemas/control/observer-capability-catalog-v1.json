@@ -22202,6 +22202,285 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Closes one widget pane's floating window, as its close button does.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "widget.close",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which pane.",
+        "properties": {
+          "id": {
+            "description": "`depth`, `big_trades`, `liquidations`, `open_interest` or\n`spot_perp_cvd`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "WidgetInput",
+        "type": "object"
+      },
+      "module": "widget",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A pane after an open or a close.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "open": {
+            "description": "Whether its window is on screen now.",
+            "type": "boolean"
+          },
+          "provided": {
+            "description": "Whether the active tab's feed provides what the pane shows; when\nfalse the pane says so instead of drawing data.",
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "open",
+          "provided"
+        ],
+        "title": "WidgetState",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Closing a closed pane is the same state, so a stale or repeated call can only hide it.",
+      "title": "Close a widget pane",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens one widget pane in its floating window over the chart, reading the active tab: depth (the DOM ladder), big_trades, liquidations, open_interest or spot_perp_cvd. A pane whose data the feed does not provide opens and says so; provided reports which. Read what it paints with widget.read.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "widget.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which pane.",
+        "properties": {
+          "id": {
+            "description": "`depth`, `big_trades`, `liquidations`, `open_interest` or\n`spot_perp_cvd`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "WidgetInput",
+        "type": "object"
+      },
+      "module": "widget",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A pane after an open or a close.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "open": {
+            "description": "Whether its window is on screen now.",
+            "type": "boolean"
+          },
+          "provided": {
+            "description": "Whether the active tab's feed provides what the pane shows; when\nfalse the pane says so instead of drawing data.",
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "open",
+          "provided"
+        ],
+        "title": "WidgetState",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening an open pane is the same state, so a stale or repeated call can only show it.",
+      "title": "Open a widget pane",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Returns what one widget pane paints for the active tab, open or not: its chips, the rows it lays out, the empty-state sentence when it has no data, and every text item in paint order (at most 512). Built from the same scene the window draws, so the read and the screen agree.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "widget.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which pane.",
+        "properties": {
+          "id": {
+            "description": "`depth`, `big_trades`, `liquidations`, `open_interest` or\n`spot_perp_cvd`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "WidgetInput",
+        "type": "object"
+      },
+      "module": "widget",
+      "output_schema": {
+        "$defs": {
+          "WidgetChip": {
+            "description": "A header chip and whether it is the one in force.",
+            "properties": {
+              "on": {
+                "type": "boolean"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "on"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What the pane paints for the active tab, built from the same scene the\nwindow draws.",
+        "properties": {
+          "chips": {
+            "items": {
+              "$ref": "#/$defs/WidgetChip"
+            },
+            "type": "array"
+          },
+          "empty": {
+            "description": "What the pane says instead of data, when it has none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "market": {
+            "description": "The active tab's market, as the header names it.",
+            "type": "string"
+          },
+          "open": {
+            "description": "Whether its window is on screen now.",
+            "type": "boolean"
+          },
+          "provided": {
+            "description": "Whether the active tab's feed provides what the pane shows; when\nfalse the pane says so instead of drawing data.",
+            "type": "boolean"
+          },
+          "rows": {
+            "description": "Data rows laid out: ladder rows, prints, liquidations or points.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "texts": {
+            "description": "Every text item in paint order, at most [`MAX_READ_TEXTS`].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "open",
+          "provided",
+          "market",
+          "chips",
+          "rows",
+          "texts"
+        ],
+        "title": "WidgetRead",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read a widget pane",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second until another tab saves that workspace), a second tab on that workspace holding edits (one copy is written: of every tab there holding edits, the active tab's, else the lowest id's), or a copy a restart brought back differing. Such a tab holds its edits as with autosave off: autosave never writes it, closing it or exiting asks, and a switch drops it. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace (never one marked as above), and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
       "destructive": false,
       "dry_run_supported": false,
@@ -23058,6 +23337,11 @@
       "description": "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated.",
       "id": "trade",
       "title": "Trade"
+    },
+    {
+      "description": "The widget panes, each in its floating window over the chart.",
+      "id": "widget",
+      "title": "Widget"
     },
     {
       "description": "Open tabs, pane layout, and current focus.",
@@ -24776,6 +25060,10 @@
                 "description": "Defaults off for snapshots produced before deal counters existed.",
                 "type": "boolean"
               },
+              "funding": {
+                "default": false,
+                "type": "boolean"
+              },
               "history_boundary": {
                 "anyOf": [
                   {
@@ -24788,6 +25076,19 @@
                 "description": "Why `history_paging` is off when the feed knows: `venue_retention`\nmeans the venue keeps nothing older. Absent while paging is on, and\non a provider that never pages; optional, so additive to v1."
               },
               "history_paging": {
+                "type": "boolean"
+              },
+              "liquidations": {
+                "default": false,
+                "description": "The derivative streams the widget panes 3-5 gate on; false on every\nprovider today. Optional, so additive to v1.",
+                "type": "boolean"
+              },
+              "open_interest": {
+                "default": false,
+                "type": "boolean"
+              },
+              "spot_perp_pair": {
+                "default": false,
                 "type": "boolean"
               },
               "traded_volume": {

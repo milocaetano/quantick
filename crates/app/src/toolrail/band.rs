@@ -48,7 +48,7 @@ impl ToolRail {
             let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
                 .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
                 .active(armed)
-                .active_marker(self.dock.marker_edge())
+                .active_marker(super::marker_edge(self.dock))
                 .hover_text(tool.hover_text())
                 .show(ui);
             self.paint_draft_badge(ui, &response, Tool::Drawing(tool), drawings);
