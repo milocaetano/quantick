@@ -183,60 +183,212 @@ fn row_measure(detail: bool) -> impl Fn(usize, &str) -> f32 {
     move |_, text: &str| text.chars().count() as f32 * advance
 }
 
-fn fitted_width(fitted: &FittedPieces, measure: &impl Fn(usize, &str) -> f32) -> f32 {
-    let words: f32 = fitted
-        .left
-        .iter()
-        .enumerate()
-        .map(|(i, piece)| measure(i, piece))
-        .sum();
-    words + SIDE_GAP + measure(fitted.left.len(), &fitted.right)
-}
-
 const SIDE_GAP: f32 = 8.0;
 
-/// The trader's capture at the default dock: rows ran to three and four
-/// lines. Each line now stays one line at 280 and 320 px: the figure
-/// whole and flush right, the words cut at their end - side, size and
-/// prices first on line one, the clock and duration first on line two.
-#[test]
-fn a_trade_row_keeps_two_lines_at_the_docked_widths() {
-    for (dock, width) in ROW_WORDS_PX {
-        let head = ["SHORT 6", "  173603.33 → 173662"];
-        let measure = row_measure(false);
-        let first = fit_pieces(width, SIDE_GAP, &head, "-70.40", false, &measure);
-        assert_eq!(first.right, "-70.40", "the figure is never cut at {dock}");
-        assert!(!first.stacked, "never under the words at {dock}");
-        assert!(
-            fitted_width(&first, &measure) <= width,
-            "{first:?} at {dock}"
-        );
-        assert_eq!(first.left[0], "SHORT 6", "side and size first at {dock}");
+/// The trader's rows at the 320 px dock: a BTCUSDT row on the WINZ26
+/// chart and a Replay row, as the capture wrote them.
+fn capture_rows() -> [TradeRowText<'static>; 2] {
+    [
+        TradeRowText {
+            head: "LONG 1",
+            route: "75099.03 → 75070.01",
+            lead: "-29.02",
+            mark: "▷",
+            symbol: "BTCUSDT",
+            clock: "17:31:34",
+            held: "36m 35s",
+            reason: "take profit",
+            behind: "-29.02 pts",
+        },
+        TradeRowText {
+            head: "SHORT 6",
+            route: "173603.33 → 173662",
+            lead: "-70.40",
+            mark: "▷",
+            symbol: "",
+            clock: "17:31:34",
+            held: "36m 35s",
+            reason: "take profit",
+            behind: "-58.67 pts ×6",
+        },
+    ]
+}
 
-        let detail = ["17:31:34 · 36m 35s · take profit"];
-        let measure = row_measure(true);
-        let second = fit_pieces(width, SIDE_GAP, &detail, "-58.67 pts ×6", false, &measure);
-        assert_eq!(second.right, "-58.67 pts ×6");
-        assert!(
-            fitted_width(&second, &measure) <= width,
-            "{second:?} at {dock}"
-        );
-        assert!(
-            second.left[0].starts_with("17:31:34 · 36m 35s"),
-            "the clock and duration stay at {dock}: {second:?}"
-        );
-        assert!(second.left[0].ends_with('…'), "the reason is cut, visibly");
+/// The line-one measure for a fitted row: the lead is piece 2 there, and
+/// it stays in line one's font when it moves to line two.
+fn lines_width(fit: &TradeRowFit) -> [f32; 2] {
+    let (head, detail) = (row_measure(false), row_measure(true));
+    let right = |fit: &FittedPieces, wide: f32| {
+        if fit.right.is_empty() {
+            0.0
+        } else {
+            SIDE_GAP + wide
+        }
+    };
+    let one: f32 = fit.head.left.iter().map(|piece| head(0, piece)).sum();
+    let two: f32 = fit.detail.left.iter().map(|piece| detail(0, piece)).sum();
+    let lead = if fit.lead_below {
+        head(2, &fit.detail.right)
+    } else {
+        detail(5, &fit.detail.right)
+    };
+    [
+        one + right(&fit.head, head(2, &fit.head.right)),
+        two + right(&fit.detail, lead),
+    ]
+}
+
+/// The capture at 320 px read `75099.03 → 75070.0…` and cut BTCUSDT
+/// away. Line one now holds side, size and the whole route; the mark, the
+/// instrument and the clock open line two; at 280 the lead moves down
+/// rather than cut a price.
+#[test]
+fn a_trade_row_never_cuts_a_price_or_its_instrument_at_the_docked_widths() {
+    for (dock, width) in ROW_WORDS_PX {
+        for text in capture_rows() {
+            let fit = fit_trade_row(
+                width,
+                SIDE_GAP,
+                &text,
+                row_measure(false),
+                row_measure(true),
+            );
+            assert_eq!(
+                fit.head.left,
+                [text.head.to_owned(), format!("  {}", text.route)],
+                "side, size and the whole route at {dock}"
+            );
+            let opening = if text.symbol.is_empty() {
+                format!("{} {}", text.mark, text.clock)
+            } else {
+                format!("{} {} · {}", text.mark, text.symbol, text.clock)
+            };
+            assert!(
+                fit.detail.left.concat().starts_with(&opening),
+                "{opening} opens line two whole at {dock}: {fit:?}"
+            );
+            assert_eq!(fit.lead_below, dock == 280.0, "at {dock}: {fit:?}");
+            if fit.lead_below {
+                assert_eq!(
+                    (fit.head.right.as_str(), fit.detail.right.as_str()),
+                    ("", text.lead)
+                );
+            } else {
+                assert_eq!(
+                    (fit.head.right.as_str(), fit.detail.right.as_str()),
+                    (text.lead, text.behind)
+                );
+            }
+            for (line, wide) in lines_width(&fit).into_iter().enumerate() {
+                assert!(wide <= width, "line {line} is {wide} at {dock}: {fit:?}");
+            }
+        }
     }
-    // Wide enough, nothing is cut.
-    let roomy = fit_pieces(
-        400.0,
-        SIDE_GAP,
-        &["SHORT 6", "  173603.33 → 173662"],
-        "-70.40",
-        false,
-        row_measure(false),
+    let [btc, replay] = capture_rows();
+    let at_320 = |text| {
+        fit_trade_row(
+            256.0,
+            SIDE_GAP,
+            &text,
+            row_measure(false),
+            row_measure(true),
+        )
+    };
+    assert_eq!(
+        at_320(btc).detail.left.concat(),
+        "▷ BTCUSDT · 17:31:34 · 36m 35s"
     );
-    assert_eq!(roomy.left, ["SHORT 6", "  173603.33 → 173662"]);
+    assert_eq!(
+        at_320(replay).detail.left.concat(),
+        "▷ 17:31:34 · 36m 35s · take…"
+    );
+    // Wide enough, nothing is cut or moved.
+    let roomy = fit_trade_row(400.0, SIDE_GAP, &btc, row_measure(false), row_measure(true));
+    assert!(!roomy.lead_below);
+    assert_eq!(
+        roomy.detail.left.concat(),
+        "▷ BTCUSDT · 17:31:34 · 36m 35s · take profit"
+    );
+}
+
+/// Line two gives way in a fixed order as the row narrows: the reason is
+/// cut, then dropped, then the duration goes whole, then the qualifier;
+/// the mark, the instrument and the clock never.
+#[test]
+fn line_two_cuts_the_reason_then_drops_the_duration_then_the_qualifier() {
+    let text = TradeRowText {
+        head: "L 1",
+        route: "1 → 2",
+        mark: "▷",
+        symbol: "BTCUSDT",
+        clock: "17:31:34",
+        held: "36m 35s",
+        reason: "take profit",
+        behind: "+1 pts",
+        ..TradeRowText::default()
+    };
+    let line = |chars: usize| {
+        let fit = fit_trade_row(
+            chars as f32 * 6.0,
+            6.0,
+            &text,
+            |_, t| mono(t),
+            |_, t| mono(t),
+        );
+        (fit.detail.left.concat(), fit.detail.right)
+    };
+    // 20 protected + 10 duration + 14 reason, a 1-char gap, 6 qualifier.
+    assert_eq!(line(51).0, "▷ BTCUSDT · 17:31:34 · 36m 35s · take profit");
+    assert_eq!(line(45).0, "▷ BTCUSDT · 17:31:34 · 36m 35s · take…");
+    assert_eq!(line(40).0, "▷ BTCUSDT · 17:31:34 · 36m 35s");
+    assert_eq!(
+        line(30),
+        ("▷ BTCUSDT · 17:31:34".to_owned(), "+1 pts".to_owned())
+    );
+    assert_eq!(line(22), ("▷ BTCUSDT · 17:31:34".to_owned(), String::new()));
+}
+
+/// A Replay header at the docked widths cut its own span. The span never
+/// goes: the net goes first, the count stays, then the stem is cut.
+#[test]
+fn a_session_header_keeps_its_span_and_count_before_its_stem() {
+    let left = ["▾ ", "▷ ", "Replay", " · 09:04–12:02"];
+    let head =
+        |width: f32| fit_session_head(width, SIDE_GAP, &left, (26, "+1901.80 BRL"), |_, t| mono(t));
+    // 24 chars of words, 17 of figures, 8 px of gap.
+    assert_eq!(head(254.0).right, "26 · +1901.80 BRL");
+    assert_eq!(head(254.0).left, left);
+    assert_eq!(head(200.0).right, "26", "the net goes first");
+    assert_eq!(head(200.0).left, left, "the stem whole while it fits");
+    assert_eq!(head(160.0).left, ["▾ ", "▷ ", "Repl…", " · 09:04–12:02"]);
+    assert_eq!(head(125.0).left, ["▾ ", "▷ ", "", "09:04–12:02"]);
+    for (dock, width) in ROW_WORDS_PX {
+        let left = ["▾ ", "▷ ", "Replay · rerun 2", " · 09:04–12:02"];
+        let fit = fit_session_head(
+            width,
+            SIDE_GAP,
+            &left,
+            (26, "+1901.80 BRL"),
+            row_measure(false),
+        );
+        assert!(
+            fit.left.concat().ends_with(" · 09:04–12:02"),
+            "the span is whole at {dock}: {fit:?}"
+        );
+        assert!(fit.right.starts_with("26"), "and the count at {dock}");
+    }
+}
+
+#[test]
+fn a_session_title_splits_into_its_stem_and_its_span() {
+    use crate::report::sessions::title_span;
+    assert_eq!(title_span("Live · 12:16–13:56"), ("Live", " · 12:16–13:56"));
+    assert_eq!(
+        title_span("Replay · rerun 2 · 09:04–12:02"),
+        ("Replay · rerun 2", " · 09:04–12:02")
+    );
+    assert_eq!(title_span("Replay"), ("Replay", ""));
+    assert_eq!(title_span("desk · notes"), ("desk · notes", ""));
 }
 
 /// A cut lands on the piece it falls in; the pieces after it are dropped,

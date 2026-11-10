@@ -9,14 +9,15 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_appearance::paper::{RowKind, RowLook, SESSION_HEAD_PAD, ledger_row};
+use quantick_appearance::paper::{RowKind, RowLook, SESSION_HEAD_PAD, SIDE_GAP_PX, ledger_row};
 use quantick_paper::report::LoadedHistory;
+use quantick_paper::report::fit::fit_session_head;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress, complete_tag,
     tag_suggestions,
 };
 use quantick_paper::report::session_edit::JournalEdit;
-use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
+use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef, title_span};
 use quantick_sim::history::SessionSource;
 
 use super::rows::{Bold, draw_header};
@@ -257,21 +258,22 @@ impl LedgerSessions {
 }
 
 /// A session's header, the top of its box inside the day's card, on one
-/// line: a large caret, the source glyph and `Live · 12:16–13:56` (cut at
-/// its end where it would not fit), its count and leading figure flush
-/// right (`paper::RowKind::Session`). A click folds it; the menu renames or
-/// deletes it, the confirm naming it as the header does.
+/// line: a large caret, the source glyph and `Live · 12:16–13:56`, its count
+/// and leading figure flush right; narrow, the figure goes, then the stem is
+/// cut, never the span ([`fit_session_head`]). A click folds it; the menu
+/// renames or deletes it, the confirm naming it as the header does.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
     let palette = theme::get(ui.ctx());
     let look = ledger_row(palette.resolved.dark, RowKind::Session);
     let glyph = source_glyph(&palette, head.source, &look);
-    let figures = format!("{} \u{00b7} {}", head.count, head.net.1);
+    let (stem, span) = title_span(&head.title);
+    let figures = (head.count, head.net.1.as_str());
     let response = draw_header(
         ui,
         &look,
-        (&head.title, glyph),
-        &figures,
-        (SESSION_HEAD_PAD, Bold::Neither, false),
+        (&[stem, span], glyph),
+        &|width, texts, measure| fit_session_head(width, SIDE_GAP_PX, texts, figures, measure),
+        (SESSION_HEAD_PAD, Bold::Neither),
         (head.folded, head.focused),
     );
     let mut press = None;

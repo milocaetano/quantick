@@ -139,22 +139,22 @@ fn trade_row(width: f32, trade: &ClosedTrade) -> Vec<(String, egui::Rect)> {
 }
 
 /// The trader's screenshot: side, round trip, instrument and points ran
-/// into one another. Narrow, the words are cut at their end and both
-/// figures stay whole, each flush right on its own line.
+/// into one another. Narrow, the route and the instrument stay whole and
+/// the lead moves under the route rather than cut it; wide, both figures
+/// stand flush right, one per line.
 #[test]
 fn a_trade_row_at_the_docked_width_keeps_its_result_and_overlaps_nothing() {
     let trade = short_four();
     let (lead, behind) = PnlReader::plain().of("WINZ26").closed_split(&trade);
+    let whole = |texts: &[(String, egui::Rect)], figure: &String| {
+        texts.iter().any(|(text, _)| text == figure)
+    };
 
     let narrow = trade_row(NARROW_PX, &trade);
     assert_apart(&narrow, NARROW_PX);
-    assert!(has(&narrow, "SHORT 4"), "the side is never cut: {narrow:?}");
-    for figure in [&lead, &behind] {
-        assert!(
-            narrow.iter().any(|(text, _)| text == figure),
-            "{figure} is never cut: {narrow:?}"
-        );
-    }
+    assert!(has(&narrow, "SHORT 4  211980.5 → 211855"), "{narrow:?}");
+    assert!(has(&narrow, "WINZ26 · 10:58:16"), "{narrow:?}");
+    assert!(whole(&narrow, &lead), "{lead} is never cut: {narrow:?}");
     assert!(
         !has(&narrow, "21 Oct"),
         "the day's card carries the date: {narrow:?}"
@@ -170,6 +170,9 @@ fn a_trade_row_at_the_docked_width_keeps_its_result_and_overlaps_nothing() {
         has(&wide, "211980.5 → 211855"),
         "and its whole route: {wide:?}"
     );
+    for figure in [&lead, &behind] {
+        assert!(whole(&wide, figure), "{figure} is whole: {wide:?}");
+    }
 }
 
 /// Every galley painted, with how many rows it laid out.
@@ -203,9 +206,10 @@ fn painted_rows(width: f32, draw: impl FnMut(&mut egui::Ui)) -> Vec<(String, usi
 }
 
 /// The trader's capture at the default 320 px dock, and at 280: inside its
-/// session box a trade row is exactly two lines - nothing wraps, its
-/// figures are whole and flush right, its words cut at their end - and a
-/// Replay session's header is one line.
+/// session box a trade row is exactly two lines - nothing wraps, its lead
+/// is whole and flush right (on line two where line one has no room beside
+/// the route, the qualifier giving way) - and a Replay session's header is
+/// one line that keeps its span and count.
 #[test]
 fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
     let trade = ClosedTrade {
@@ -253,11 +257,10 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
             }
         }
         assert_eq!(lines.len(), 2, "two lines at {width}: {texts:?}");
-        for figure in [&lead, &behind] {
-            let (_, _, rect) = texts
-                .iter()
-                .find(|(text, ..)| text == figure)
-                .unwrap_or_else(|| panic!("{figure} is whole at {width}: {texts:?}"));
+        let shown = |figure: &String| texts.iter().any(|(text, ..)| text == figure);
+        assert!(shown(&lead), "{lead} is whole at {width}: {texts:?}");
+        for figure in [&lead, &behind].into_iter().filter(|figure| shown(figure)) {
+            let (_, _, rect) = texts.iter().find(|(text, ..)| text == figure).unwrap();
             let words = texts.iter().filter(|(text, ..)| text != figure);
             assert!(
                 words
@@ -289,7 +292,14 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
             texts.iter().any(|(text, ..)| text.contains("Replay")),
             "{texts:?}"
         );
-        assert!(texts.iter().any(|(text, ..)| text == "12 · -316.09 BRL"));
+        assert!(
+            texts.iter().any(|(text, ..)| text.ends_with("09:04–12:02")),
+            "the span is never cut at {width}: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|(text, ..)| text.starts_with("12")),
+            "and the count stays: {texts:?}"
+        );
         let tops: Vec<f32> = texts.iter().map(|(_, _, rect)| rect.center().y).collect();
         assert!(
             tops.iter().all(|top| (top - tops[0]).abs() <= 3.0),
@@ -322,8 +332,83 @@ fn a_day_header_at_the_docked_width_keeps_its_count_and_money() {
     assert!(has(&wide, DAY_NET), "and the whole net: {wide:?}");
 }
 
+/// The capture at 320 px cut `75070.01` to `75070.0…` and dropped the
+/// BTCUSDT that names a row off the WINZ26 chart. At both docked widths
+/// every price and the instrument are on screen whole.
 #[test]
-fn a_session_row_at_the_docked_width_cuts_its_name_and_keeps_its_net() {
+fn a_trade_row_shows_its_whole_prices_and_instrument_at_the_docked_widths() {
+    let btc = ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        entry_price: Decimal::new(7_509_903, 2),
+        exit_price: Decimal::new(7_507_001, 2),
+        opened_ms: CLOSED_MS - 2_195_000,
+        closed_ms: CLOSED_MS,
+        pnl_points: Decimal::new(-2_902, 2),
+        ..short_four()
+    };
+    let win = ClosedTrade {
+        side: Side::Sell,
+        quantity: Decimal::from(6),
+        entry_price: Decimal::new(17_360_333, 2),
+        exit_price: Decimal::from(173_662),
+        pnl_points: Decimal::new(-35_202, 2),
+        ..btc.clone()
+    };
+    let in_box =
+        quantick_appearance::paper::ledger_frame(Some([false, false]), Some([false, false]));
+    let rows = [
+        (&btc, "BTCUSDT", Some("BTCUSDT"), "75099.03 → 75070.01"),
+        (&win, "WINZ26", None, "173603.33 → 173662"),
+    ];
+    for width in [280.0, 320.0] {
+        for (trade, symbol, named, route) in rows {
+            let pnl = PnlReader::plain().of(symbol);
+            let meta = TradeMeta {
+                session: None,
+                trade_ref: TradeRef::default(),
+                source: Some(SessionSource::Replay),
+                tags: &[],
+                pnl,
+            };
+            let texts = painted_text(width, |ui| {
+                framed(ui, &in_box, |ui| {
+                    draw_ledger_row(
+                        ui,
+                        trade,
+                        meta,
+                        (symbol, "WINZ26"),
+                        false,
+                        false,
+                        TzOffset::new(0),
+                    );
+                });
+            });
+            assert_apart(&texts, width);
+            assert!(has(&texts, route), "{route} whole at {width}: {texts:?}");
+            if let Some(named) = named {
+                let line = texts
+                    .iter()
+                    .find(|(text, _)| text.contains(named))
+                    .unwrap_or_else(|| panic!("{named} on screen at {width}: {texts:?}"));
+                assert!(
+                    line.0.contains(&format!("{named} · 10:58:16")),
+                    "the instrument and the clock open line two whole: {texts:?}"
+                );
+            }
+            let (lead, _) = pnl.closed_split(trade);
+            assert!(
+                texts.iter().any(|(text, _)| text == &lead),
+                "{lead} whole at {width}: {texts:?}"
+            );
+        }
+    }
+}
+
+/// A Replay header at 320 px read `Replay · 09:04–12…` beside a whole
+/// `26 · +1901.80 BRL`: tight, the net goes and the span stays.
+#[test]
+fn a_session_row_at_the_docked_width_keeps_its_span_and_count() {
     let head = SessionHead {
         key: SessionKey::parse("WINZ26/2026-10-21-replay.csv").unwrap(),
         title: "morning replay of the opening drive · 10:50–10:58".to_owned(),
@@ -337,11 +422,16 @@ fn a_session_row_at_the_docked_width_cuts_its_name_and_keeps_its_net() {
     let texts = painted_text(NARROW_PX, |ui| _ = draw_session_head(ui, &head));
     assert_apart(&texts, NARROW_PX);
     assert!(
-        has(&texts, "morning replay") && has(&texts, "…") && has(&texts, "11 · +115.20 BRL"),
-        "the name is cut at its end, the leading figure whole: {texts:?}"
+        has(&texts, "morning replay") && has(&texts, "…") && has(&texts, "10:50–10:58"),
+        "the name is cut at its end, the span whole: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|(text, _)| text == "11"),
+        "the count stays where the net goes: {texts:?}"
     );
     let wide = painted_text(WIDE_PX, |ui| _ = draw_session_head(ui, &head));
     assert!(has(&wide, &head.title), "wide, it is whole: {wide:?}");
+    assert!(has(&wide, "11 · +115.20 BRL"), "with its net: {wide:?}");
 }
 
 #[test]

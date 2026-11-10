@@ -9,7 +9,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::pnl::PnlReader;
 pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
-use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, nesting};
+use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting};
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
 };
@@ -19,7 +19,7 @@ use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, liv
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
-    draw_more_row, draw_open_row, framed, push_groups,
+    draw_more_row, draw_open_row, framed,
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
@@ -760,34 +760,6 @@ fn saved_items<'a>(
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// The list's rows, newest first, and whether an inline edit row was placed.
-fn ledger_rows<'a>(
-    live: &'a [Item<'a>],
-    hidden_live: usize,
-    saved: &'a [Item<'a>],
-    kept: usize,
-    remaining: usize,
-    view: &GroupView<'_>,
-) -> (Vec<LedgerRow<'a>>, bool) {
-    let mut rows = Vec::new();
-    let mut inline_placed = false;
-    if !live.is_empty() || hidden_live > 0 {
-        rows.push(LedgerRow::Header("THIS SESSION", live.len()));
-        if hidden_live > 0 {
-            rows.push(LedgerRow::HiddenLive(hidden_live));
-        }
-        push_groups(&mut rows, live, view, &mut inline_placed);
-    }
-    if !saved.is_empty() {
-        rows.push(LedgerRow::Header("EARLIER SESSIONS", kept));
-        push_groups(&mut rows, saved, view, &mut inline_placed);
-    }
-    if remaining > 0 {
-        rows.push(LedgerRow::More(remaining));
-    }
-    (rows, inline_placed)
 }
 
 /// The strip under the list: trades and win rate over everything in scope,

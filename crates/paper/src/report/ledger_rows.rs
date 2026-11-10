@@ -1,4 +1,5 @@
 //! Virtual ledger rows resolved before a renderer lays them out.
+use super::fit::TradeRowText;
 use super::sessions::{
     SessionKey, SessionLabel, SessionRow, TradeRef, clock_second, group_by_day_and_session,
     place_session_rows, session_title, source_word, span_of,
@@ -54,8 +55,8 @@ pub struct TradeMeta<'a> {
 
 /// What a trade row writes, decided here so a test reads it: the side and
 /// size, the round trip, the instrument where it is not the chart's
-/// ([`shown_symbol`]), the source, the P&L pair and the detail line. The
-/// day's card above carries the date, so no row repeats it.
+/// ([`shown_symbol`]), the source, the P&L pair and the detail line's
+/// facts. The day's card above carries the date, so no row repeats it.
 pub struct TradeWords<'a> {
     pub side: Side,
     pub head: String,
@@ -65,7 +66,9 @@ pub struct TradeWords<'a> {
     /// The leading figure, written on line one, and the one that keeps it
     /// honest, on line two ([`SymbolPnl::row_split`]).
     pub pnl: (String, String),
-    pub detail: String,
+    /// The detail line's facts: the closing clock, how long it was held,
+    /// and why it ended with its tags ([`trade_detail_parts`]).
+    pub detail: [String; 3],
 }
 
 impl<'a> TradeWords<'a> {
@@ -78,9 +81,9 @@ impl<'a> TradeWords<'a> {
         (instrument, chart): (&'a str, &str),
         tz: TzOffset,
     ) -> Self {
-        let mut detail = trade_detail(trade, tz);
+        let mut detail = trade_detail_parts(trade, tz);
         if !meta.tags.is_empty() {
-            detail.push_str(&format!(" · #{}", meta.tags.join(" #")));
+            detail[2].push_str(&format!(" · #{}", meta.tags.join(" #")));
         }
         Self {
             side: trade.side,
@@ -125,7 +128,25 @@ impl<'a> TradeWords<'a> {
                 .open_points
                 .map(|points| pnl.row_split(points, summary.quantity))
                 .unwrap_or_default(),
-            detail: format!("{held} · at the last print"),
+            detail: [String::new(), held, "at the last print".to_owned()],
+        }
+    }
+
+    /// The row's words as [`super::fit::fit_trade_row`] fits them, after the source
+    /// `mark` the painter draws.
+    #[must_use]
+    pub fn row_text<'s>(&'s self, mark: &'s str) -> TradeRowText<'s> {
+        let [clock, held, reason] = &self.detail;
+        TradeRowText {
+            head: &self.head,
+            route: &self.route,
+            lead: &self.pnl.0,
+            mark,
+            symbol: self.symbol.unwrap_or_default(),
+            clock,
+            held,
+            reason,
+            behind: &self.pnl.1,
         }
     }
 }
@@ -143,12 +164,18 @@ pub fn shown_symbol<'a>(instrument: &'a str, chart: &str) -> Option<&'a str> {
 /// trade was held, and why it ended - every character spent on the reason.
 #[must_use]
 pub fn trade_detail(trade: &ClosedTrade, tz: TzOffset) -> String {
-    format!(
-        "{} · {} · {}",
+    trade_detail_parts(trade, tz).join(" · ")
+}
+
+/// [`trade_detail`]'s facts apart, so a narrow row cuts the reason and
+/// drops the duration while the clock stays.
+#[must_use]
+pub fn trade_detail_parts(trade: &ClosedTrade, tz: TzOffset) -> [String; 3] {
+    [
         clock_second(trade.closed_ms, tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
         trade.exit_reason.as_str().replace('_', " "),
-    )
+    ]
 }
 
 /// One trade before it is cut into rows.
@@ -265,6 +292,35 @@ pub fn push_groups<'a>(
             }));
         }
     }
+}
+
+/// The list's rows, newest first, and whether an inline edit row was placed.
+#[must_use]
+pub fn ledger_rows<'a>(
+    live: &'a [Item<'a>],
+    hidden_live: usize,
+    saved: &'a [Item<'a>],
+    kept: usize,
+    remaining: usize,
+    view: &GroupView<'_>,
+) -> (Vec<LedgerRow<'a>>, bool) {
+    let mut rows = Vec::new();
+    let mut inline_placed = false;
+    if !live.is_empty() || hidden_live > 0 {
+        rows.push(LedgerRow::Header("THIS SESSION", live.len()));
+        if hidden_live > 0 {
+            rows.push(LedgerRow::HiddenLive(hidden_live));
+        }
+        push_groups(&mut rows, live, view, &mut inline_placed);
+    }
+    if !saved.is_empty() {
+        rows.push(LedgerRow::Header("EARLIER SESSIONS", kept));
+        push_groups(&mut rows, saved, view, &mut inline_placed);
+    }
+    if remaining > 0 {
+        rows.push(LedgerRow::More(remaining));
+    }
+    (rows, inline_placed)
 }
 
 /// The containers that hold one row, and where it stands in each as
@@ -756,7 +812,7 @@ mod tests {
         assert_eq!(words.head, "SHORT 2");
         assert_eq!(words.route, "100 → -177");
         assert_eq!(words.symbol, None);
-        assert_eq!(words.detail, "13:17:43 · 38m 34s · manual · #fade");
+        assert_eq!(words.detail, ["13:17:43", "38m 34s", "manual · #fade"]);
         assert_eq!(
             words.pnl,
             ("-138.5 pts ×2".to_owned(), "— set pt value".to_owned()),

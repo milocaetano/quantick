@@ -17,7 +17,7 @@ use quantick_appearance::paper::{
 };
 use quantick_engine::Side;
 use quantick_paper::pnl::SymbolPnl;
-use quantick_paper::report::fit::fit_pieces;
+use quantick_paper::report::fit::{FittedPieces, fit_pieces, fit_trade_row};
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
@@ -29,7 +29,7 @@ use crate::theme::{self, BOLD_STRIKE_PX};
 use crate::timezone::TzOffset;
 
 pub(super) use quantick_paper::report::ledger_rows::{
-    GroupView, Item, LedgerRow, TradeMeta, TradeWords, push_groups,
+    GroupView, Item, LedgerRow, TradeMeta, TradeWords,
 };
 
 /// What one painted ledger row reported back.
@@ -127,8 +127,11 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
 /// One piece of a line's words: its text, font and ink.
 type Piece = (String, egui::FontId, egui::Color32);
 
+/// A line's figure, laid out from its text.
+type Figures<'f> = &'f dyn Fn(&str) -> egui::text::LayoutJob;
+
 /// One line's words from the left and its figure flush right, never wrapped
-/// ([`fit_pieces`]); a `stack` line may put the figure under the words.
+/// (`paper::report::fit`); a stacked line puts the figure under the words.
 struct Line {
     left: Arc<egui::Galley>,
     right: Option<Arc<egui::Galley>>,
@@ -136,19 +139,8 @@ struct Line {
 }
 
 impl Line {
-    fn lay(
-        painter: &egui::Painter,
-        pieces: &[Piece],
-        (right, figures): (&str, &dyn Fn(&str) -> egui::text::LayoutJob),
-        width: f32,
-        stack: bool,
-    ) -> Self {
-        let texts: Vec<&str> = pieces.iter().map(|(text, ..)| text.as_str()).collect();
-        let measure = |index: usize, text: &str| match pieces.get(index) {
-            Some((_, font, _)) => text_width(painter, text, font),
-            None => painter.layout_job(figures(text)).size().x,
-        };
-        let fitted = fit_pieces(width, SIDE_GAP_PX, &texts, right, stack, measure);
+    /// A fitted line's galleys, each piece in its font and ink.
+    fn of(painter: &egui::Painter, pieces: &[Piece], fitted: &FittedPieces, ink: Figures) -> Self {
         let mut left = egui::text::LayoutJob::default();
         for ((_, font, color), text) in pieces.iter().zip(&fitted.left) {
             if !text.is_empty() {
@@ -157,7 +149,7 @@ impl Line {
         }
         Self {
             left: painter.layout_job(left),
-            right: (!fitted.right.is_empty()).then(|| painter.layout_job(figures(&fitted.right))),
+            right: (!fitted.right.is_empty()).then(|| painter.layout_job(ink(&fitted.right))),
             stacked: fitted.stacked,
         }
     }
@@ -206,6 +198,19 @@ impl Line {
     }
 }
 
+/// How wide piece `index` of `pieces` paints; past the last piece, how
+/// wide `figures` lays the text out.
+fn measure<'p>(
+    painter: &'p egui::Painter,
+    pieces: &'p [Piece],
+    figures: Figures<'p>,
+) -> impl Fn(usize, &str) -> f32 + 'p {
+    move |index, text| match pieces.get(index) {
+        Some((_, font, _)) => text_width(painter, text, font),
+        None => painter.layout_job(figures(text)).size().x,
+    }
+}
+
 /// Which side of a [`Line`] reads bold.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Bold {
@@ -247,16 +252,21 @@ fn signed_figures(
     })
 }
 
+/// Fits a header's pieces to a width, given each piece's measured width.
+pub(super) type HeadFit<'a> =
+    dyn Fn(f32, &[&str], &dyn Fn(usize, &str) -> f32) -> FittedPieces + 'a;
+
 /// A day's or a session's header: a large caret, an optional glyph and the
-/// title, `figures` flush right, inside `pad`, on one [`Line`]. Hovered, or
-/// `lit` (the session F2 acts on), it takes the hover fill inside its
-/// container's border; `folded`, it closes the container, so its fill rounds there too.
+/// title's pieces, its figures flush right, on one [`Line`] `fit` decides,
+/// inside `pad`. Hovered, or `lit` (the session F2 acts on), it takes the
+/// hover fill inside its container's border; `folded`, it closes the
+/// container, so its fill rounds there too.
 pub(super) fn draw_header(
     ui: &mut egui::Ui,
     look: &RowLook,
-    (title, glyph): (&str, Option<(&str, egui::Color32)>),
-    figures: &str,
-    (pad, bold, stack): (Margin, Bold, bool),
+    (title, glyph): (&[&str], Option<(&str, egui::Color32)>),
+    fit: &HeadFit<'_>,
+    (pad, bold): (Margin, Bold),
     (folded, lit): (bool, bool),
 ) -> egui::Response {
     let palette = theme::get(ui.ctx());
@@ -269,11 +279,15 @@ pub(super) fn draw_header(
     if let Some((glyph, color)) = glyph {
         left.push((format!("{glyph} "), palette.body_font(10.0), color));
     }
-    left.push((title.to_owned(), palette.mono_font(TITLE_PX), ink));
+    for piece in title {
+        left.push(((*piece).to_owned(), palette.mono_font(TITLE_PX), ink));
+    }
     let (small, detail) = (palette.mono_font(DETAIL_PX), *palette.get(look.detail));
     let right = |text: &str| signed_figures(&palette, look, text, small.clone(), detail);
     let width = (ui.available_width() - pad.left - pad.right).max(1.0);
-    let line = Line::lay(ui.painter(), &left, (figures, &right), width, stack);
+    let texts: Vec<&str> = left.iter().map(|(text, ..)| text.as_str()).collect();
+    let fitted = fit(width, &texts, &measure(ui.painter(), &left, &right));
+    let line = Line::of(ui.painter(), &left, &fitted, &right);
     let size = egui::vec2(ui.available_width(), line.height() + pad.top + pad.bottom);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
@@ -306,9 +320,9 @@ pub(super) fn draw_day_header(
     draw_header(
         ui,
         &look,
-        (&title, None),
-        &figures,
-        (DAY_PAD, Bold::Left, true),
+        (&[&title], None),
+        &|width, texts, measure| fit_pieces(width, SIDE_GAP_PX, texts, &figures, true, measure),
+        (DAY_PAD, Bold::Left),
         (folded, false),
     )
     .on_hover_text(format!(
@@ -372,9 +386,8 @@ pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, pnl: SymbolPnl<'_
     paint_trade(ui, &words, false, egui::Sense::hover());
 }
 
-/// A trade's plate in its card colour, its side rule, and its two [`Line`]s:
-/// the side, size and round trip with the leading figure flush right, the
-/// detail with the figure behind it. Only the plate answers the pointer.
+/// A trade's plate in its card colour, its side rule, and its two [`Line`]s
+/// as [`fit_trade_row`] words them. Only the plate answers the pointer.
 fn paint_trade(
     ui: &mut egui::Ui,
     words: &TradeWords<'_>,
@@ -387,23 +400,25 @@ fn paint_trade(
     let ink = *palette.get(look.ink);
     let detail = *palette.get(look.detail_at(selected));
     let (title, small) = (palette.mono_font(TITLE_PX), palette.mono_font(DETAIL_PX));
-    let mut head: Vec<Piece> = vec![
-        (words.head.clone(), title.clone(), ink),
-        (format!("  {}", words.route), title.clone(), detail),
-    ];
-    if let Some(symbol) = words.symbol {
-        head.push((format!("  {symbol}"), title.clone(), detail));
-    }
-    if let Some((glyph, color)) = source_glyph(&palette, words.source, &look) {
-        head.push((format!("  {glyph}"), title.clone(), color));
-    }
-    let lower: [Piece; 1] = [(words.detail.clone(), small.clone(), detail)];
+    let (mark, mark_ink) = source_glyph(&palette, words.source, &look).unwrap_or(("", detail));
+    let text = words.row_text(mark);
+    let piece = |text: &str, font: &egui::FontId, ink| (text.to_owned(), font.clone(), ink);
+    let head = [(text.head, ink), (text.route, detail)].map(|(t, c)| piece(t, &title, c));
+    let mut lower = vec![piece(mark, &small, mark_ink)];
+    let facts = [text.symbol, text.clock, text.held, text.reason];
+    lower.extend(facts.map(|fact| piece(fact, &small, detail)));
     let width = (ui.available_width() - TRADE_EDGE_PX - TRADE_PAD.left - TRADE_PAD.right).max(1.0);
     let painter = ui.painter().clone();
     let lead = |text: &str| signed_figures(&palette, &look, text, title.clone(), ink);
     let behind = |text: &str| signed_figures(&palette, &look, text, small.clone(), detail);
-    let first = Line::lay(&painter, &head, (&words.pnl.0, &lead), width, false);
-    let second = Line::lay(&painter, &lower, (&words.pnl.1, &behind), width, false);
+    let (one, two) = (
+        measure(&painter, &head, &lead),
+        measure(&painter, &lower, &behind),
+    );
+    let fit = fit_trade_row(width, SIDE_GAP_PX, &text, one, two);
+    let under: Figures = if fit.lead_below { &lead } else { &behind };
+    let first = Line::of(&painter, &head, &fit.head, &lead);
+    let second = Line::of(&painter, &lower, &fit.detail, under);
     let plate_height =
         TRADE_PAD.top + first.height() + LINE_GAP_PX + second.height() + TRADE_PAD.bottom;
     let (plate, response) =
@@ -422,7 +437,8 @@ fn paint_trade(
         let at = plate.min + egui::vec2(TRADE_EDGE_PX + TRADE_PAD.left, TRADE_PAD.top);
         let below = egui::vec2(0.0, first.height() + LINE_GAP_PX);
         first.paint(&painter, at, width, Bold::Right);
-        second.paint(&painter, at + below, width, Bold::Neither);
+        let bold = [Bold::Neither, Bold::Right][usize::from(fit.lead_below)];
+        second.paint(&painter, at + below, width, bold);
     }
     response
 }

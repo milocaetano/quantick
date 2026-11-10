@@ -238,6 +238,23 @@ pub fn session_title(stem: &str, span: Option<(i64, i64)>, tz: TzOffset) -> Stri
     }
 }
 
+/// A [`session_title`] split into its stem and its span with the separator
+/// before it (` · 09:04–12:02`), so a narrow header can cut the stem and
+/// keep the clock. A title without a span is all stem.
+#[must_use]
+pub fn title_span(title: &str) -> (&str, &str) {
+    let is_span = |tail: &str| {
+        tail.contains('\u{2013}')
+            && tail
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == ':' || c == '\u{2013}')
+    };
+    match title.rsplit_once(" · ") {
+        Some((stem, tail)) if is_span(tail) => title.split_at(stem.len()),
+        _ => (title, ""),
+    }
+}
+
 /// The first entry and the last exit among `trades`.
 #[must_use]
 pub fn span_of<'t>(trades: impl IntoIterator<Item = &'t ClosedTrade>) -> Option<(i64, i64)> {
