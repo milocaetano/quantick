@@ -91,7 +91,7 @@ impl PaperAccount {
             summary,
             mark_price: venue.mark_price(),
             held_ms,
-            pnl: self.core.open_pnl_text(),
+            source: self.core.session_source(),
         })
     }
 

@@ -63,8 +63,8 @@ pub struct OpenRow {
     /// from a clock — the tape says how long, so a replay's ages are the
     /// recording's, not this afternoon's.
     pub held_ms: Option<i64>,
-    /// The open profit as the ticket words it; `None` before a print.
-    pub pnl: Option<String>,
+    /// Where its trades come from: a live position is never unrecorded.
+    pub source: quantick_sim::history::SessionSource,
 }
 
 /// What the report and the ledger read about the trading session they
@@ -97,4 +97,17 @@ pub struct ReportEnv<'a> {
     pub open: Option<OpenRow>,
     /// How every P&L figure here is worded: the ticket's own reader.
     pub pnl: crate::pnl::PnlReader<'a>,
+}
+
+impl<'a> ReportEnv<'a> {
+    /// This session's closes, as the ledger's cut stretches their sessions'
+    /// labels with them.
+    #[must_use]
+    pub fn live_closes(&self) -> super::ledger_state::LiveCloses<'a> {
+        super::ledger_state::LiveCloses {
+            trades: self.session_trades,
+            at: self.session_trade_at,
+            sources: self.session_trade_sources,
+        }
+    }
 }

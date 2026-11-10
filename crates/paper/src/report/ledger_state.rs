@@ -119,11 +119,36 @@ pub enum SessionPress {
     Apply(JournalEdit),
 }
 
-/// The saved rows a filter keeps and every session's label, for the filter
-/// and timezone it was cut with.
+/// This session's own closes as the host holds them, index-aligned: the
+/// trades, where each was journaled and the source it closed under.
+#[derive(Clone, Copy, Default)]
+pub struct LiveCloses<'a> {
+    pub trades: &'a [ClosedTrade],
+    pub at: &'a [Option<JournaledTrade>],
+    pub sources: &'a [SessionSource],
+}
+
+impl<'a> LiveCloses<'a> {
+    /// Each journaled close: its session, its source and the trade.
+    fn journaled(
+        self,
+    ) -> impl Iterator<Item = (&'a SessionKey, Option<SessionSource>, &'a ClosedTrade)> {
+        self.trades
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, trade)| {
+                let at = self.at.get(index)?.as_ref()?;
+                Some((&at.session, self.sources.get(index).copied(), trade))
+            })
+    }
+}
+
+/// The saved rows a filter keeps and every session's label, for the filter,
+/// timezone and count of this session's closes it was cut with.
 pub struct LedgerCut {
     tz: TzOffset,
     filter: LedgerFilter,
+    live: usize,
     /// Positions in the history's rows, oldest first.
     pub kept: Vec<usize>,
     pub labels: BTreeMap<SessionKey, SessionLabel>,
@@ -181,23 +206,33 @@ impl LedgerState {
     }
 
     /// Cut the saved rows for the filter in force, unless the standing cut
-    /// was made for this filter in this timezone. The labels are built once
-    /// per cut and serve the rows and the live trades alike.
-    pub fn ensure_cut(&mut self, history: Option<&LoadedHistory>, tz: TzOffset) {
+    /// was made for this filter in this timezone with as many of `live`'s
+    /// closes. The labels are built once per cut and serve the rows and the
+    /// live trades alike; a close since the folder was read stretches its
+    /// session's span, so the header, the search and the delete confirm
+    /// name it the same way.
+    pub fn ensure_cut(
+        &mut self,
+        history: Option<&LoadedHistory>,
+        live: LiveCloses<'_>,
+        tz: TzOffset,
+    ) {
+        let closes = live.trades.len();
         if self
             .cut
             .as_ref()
-            .is_some_and(|cut| cut.tz == tz && cut.filter == self.view.filter)
+            .is_some_and(|cut| cut.tz == tz && cut.filter == self.view.filter && cut.live == closes)
         {
             return;
         }
-        let labels = history.map_or_else(BTreeMap::new, |history| session_labels(history, tz));
+        let labels = session_labels(history, live.journaled(), tz);
         let kept = history.map_or_else(Vec::new, |history| {
             kept_rows(history, &labels, &self.view.filter, tz)
         });
         self.cut = Some(LedgerCut {
             tz,
             filter: self.view.filter.clone(),
+            live: closes,
             kept,
             labels,
         });
