@@ -6593,6 +6593,9 @@ fn canvas_actions_drive_through_the_control_plane() {
     assert_eq!(back["changed"], true);
     let time = app.active_tab().canvas.state.tree().panes()[0].0;
     let time_pane = serde_json::json!({ "slot": time });
+    app.active_tab_mut().canvas.menus.open = Some(time);
+    settle(&mut app);
+    look(&app, &mut seen);
     call(&mut app, wire::MAXIMIZE_CAPABILITY_ID, time_pane.clone());
     app.active_tab_mut().canvas.menus.open = Some(time);
     settle(&mut app);

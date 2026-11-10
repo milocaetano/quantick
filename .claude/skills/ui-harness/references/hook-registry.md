@@ -17,6 +17,7 @@ Owner keys (other paths appear in full):
 
 | Key | Declared in |
 | --- | --- |
+| wiring | `app/canvas_wiring.rs` |
 | host | `app/control_host.rs` |
 | hooks | `app/launch_hooks.rs` |
 | feed | `crates/feed/src/lib.rs` |
@@ -228,5 +229,8 @@ For a screen that represents the user's real setup, enable the trio:
 
 | `QUANTICK_INDICATOR_PICKER=1` | `surfaces/indicator_picker.rs` | Open the centered searchable indicator library on the focused chart at launch, through the toolbar surface owner. |
 | `QUANTICK_WIDGETS=<ids>` | `widget_surfaces/mod.rs` | opens these widget panes |
+| `QUANTICK_ADD_MENU=1` | wiring | the toolbar's + menu open; one-shot |
+| `QUANTICK_CANVAS_ACTS=<acts>` | wiring | `;`-separated canvas acts on the first drawn frame, each through its `canvas.*` capability: `add:<widget>`, `dock:<slot>:<edge>`, `park:<slot>:<corner>`, `<verb>:<slot>` for float, pop_out, return, minimize, maximize, restore, remove |
+| `QUANTICK_CANVAS_HOLD=<slot>:<x>,<y>` | wiring | a floating chart held by its grip, the pointer pinned at that share of the canvas: the dock preview stays up |
 
-149 hooks registered.
+152 hooks registered.

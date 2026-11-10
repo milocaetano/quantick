@@ -184,6 +184,7 @@ impl Tab {
     ) {
         let floating = self.floating_sides();
         let (ctx, canvas) = (ui.ctx().clone(), self.canvas.last_canvas);
+        self.canvas.floats.drawn.clear();
         for (slot, side, host) in floating {
             let window = match host {
                 FloatHost::Canvas { rect } => {
@@ -200,12 +201,23 @@ impl Tab {
                 let (grip, content) = floating_panes::window_grip(ui);
                 self.draw_solo(tab_id, ui, chrome, (side, content, grip));
             });
-            self.canvas.floats.record(slot, events);
+            self.canvas.floats.windows.push((slot, events));
         }
         let canvas_state = &mut self.canvas;
         let floats = &mut canvas_state.floats;
         floating_panes::preview(&ctx, floats, &canvas_state.state, canvas);
-        canvas_state.menus.drawn.extend(floats.drawn.drain(..));
+        let drawn = floats.drawn.drain(..).map(|(id, label, rect, capability)| {
+            let (rect, capability) = (floating_panes::screen_rect(rect), Some(capability));
+            let selected = false;
+            crate::toolbar::DrawnControl {
+                id,
+                label,
+                rect,
+                selected,
+                capability,
+            }
+        });
+        canvas_state.menus.drawn.extend(drawn);
     }
 
     /// One floating chart's own pane pass, in `content` on `ui`'s layer or

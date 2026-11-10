@@ -1,0 +1,4 @@
+# +481: the generated hook-registry rows for QUANTICK_ADD_MENU, QUANTICK_CANVAS_ACTS
+# and QUANTICK_CANVAS_HOLD, the capture hooks for the + menu, the floating
+# charts and the dock preview (#866); their prose is cut to one clause each.
+.claude/skills/ui-harness/ +481

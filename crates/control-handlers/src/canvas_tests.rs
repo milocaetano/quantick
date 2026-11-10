@@ -286,3 +286,97 @@ fn menu_rows_and_dialog_answers_take_the_capabilities_acts() {
     });
     assert_eq!(confirmed(RemoveAnswer::Remove, 0), removed);
 }
+
+/// What a held chart's drop, its window and the launch hooks ask for, as the
+/// acts the capabilities take.
+#[test]
+fn drops_windows_and_hooks_become_canvas_acts() {
+    use crate::canvas::{
+        PRIMARY_MONITOR, drop_act, drop_targets, held_by_hook, hook_acts, moved, placed_pop_out,
+        surface_widget, window_act,
+    };
+    use quantick_control_schema::canvas::{CanvasCorner, CanvasEdge};
+    use quantick_workspace::canvas::{
+        CanvasRect, CanvasState, Corner, DropOutcome, Edge, PaneKind, preset,
+    };
+    let area = CanvasRect::new(0.0, 40.0, 1200.0, 800.0);
+    let named = |_: CanvasRect| Some("DISPLAY2".to_owned());
+    let dock = drop_act(3, DropOutcome::Dock(Edge::Left), (0.0, 0.0), named);
+    let edge = CanvasEdge::Left;
+    assert_eq!(dock, CanvasAct::Dock { slot: 3, edge });
+    let park = drop_act(3, DropOutcome::Park(Corner::TopRight), (0.0, 0.0), named);
+    let corner = CanvasCorner::TopRight;
+    assert_eq!(park, CanvasAct::Park { slot: 3, corner });
+    let past = CanvasRect::new(1300.0, 100.0, 400.0, 300.0);
+    let CanvasAct::PopOut { monitor, rect, .. } =
+        drop_act(3, DropOutcome::PopOut(past), (100.0, 50.0), named)
+    else {
+        panic!("past the window's edge it pops out");
+    };
+    assert_eq!(monitor.as_deref(), Some("DISPLAY2"));
+    let rect = rect.expect("its place");
+    assert_eq!(
+        (rect.x, rect.y),
+        (1400.0, 150.0),
+        "moved by the window's origin"
+    );
+
+    let closed = window_act(3, (None, true), named);
+    assert_eq!(closed, Some(CanvasAct::Return { slot: 3 }));
+    assert_eq!(window_act(3, (None, false), named), None);
+    assert!(matches!(
+        window_act(3, (Some(past), false), named),
+        Some(CanvasAct::PopOut { .. })
+    ));
+    assert!(moved(past, CanvasRect::new(1300.0, 101.5, 400.0, 300.0)));
+    assert!(!moved(past, CanvasRect::new(1300.4, 100.0, 400.0, 300.0)));
+
+    let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
+    let menu = CanvasAct::PopOut {
+        slot: 0,
+        monitor: None,
+        rect: None,
+    };
+    let CanvasAct::PopOut {
+        rect: Some(rect), ..
+    } = placed_pop_out(menu, &state, area, (10.0, 20.0))
+    else {
+        panic!("a pop-out from the menu opens where the chart stands");
+    };
+    assert_eq!((rect.x, rect.y), (10.0, 60.0));
+    assert!(drop_targets(&state, area).is_empty(), "nothing floats");
+    let added = state.add(PaneKind::Time, area).unwrap();
+    let targets = drop_targets(&state, area);
+    assert_eq!(targets.len(), 8, "four edges dock, four corners park");
+    assert!(
+        targets
+            .iter()
+            .any(|(id, ..)| id == "canvas.park.bottom_right")
+    );
+    let (held, share) = held_by_hook(&state, &format!("{added}:0.02,0.5")).unwrap();
+    assert_eq!((held.slot(), share), (added, (0.02, 0.5)));
+    assert!(
+        held_by_hook(&state, "0:0.5,0.5").is_none(),
+        "a docked chart is not held"
+    );
+
+    let acts = hook_acts("add:timeframe-chart; dock:2:left;park:2:bottom_right;pop_out:2;nonsense");
+    assert_eq!(acts.len(), 4, "{acts:?}");
+    assert_eq!(
+        acts[1],
+        CanvasAct::Dock {
+            slot: 2,
+            edge: CanvasEdge::Left
+        }
+    );
+    let depth = CanvasAct::AddWidget {
+        widget_id: "depth".to_owned(),
+    };
+    assert_eq!(surface_widget(&depth), Some("depth"));
+    assert_eq!(
+        surface_widget(&acts[0]),
+        None,
+        "a chart lands on the canvas"
+    );
+    assert_eq!(PRIMARY_MONITOR, "primary");
+}

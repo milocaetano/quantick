@@ -15,7 +15,7 @@ use quantick_workspace::canvas::{
 };
 
 use crate::theme;
-use crate::toolbar::DrawnControl;
+use quantick_control_schema::canvas::FLOAT_CAPABILITY_ID;
 
 /// The grip's width at a floating chart's header left end.
 pub(crate) const GRIP_PX: f32 = 22.0;
@@ -41,8 +41,9 @@ pub(crate) struct FloatingPanes {
     pub(crate) held: Option<FloatGesture>,
     pub(crate) dropped: Option<(PaneSlot, DropOutcome)>,
     pub(crate) windows: Vec<(PaneSlot, WindowEvents)>,
-    /// The canvas's drop targets as drawn, for the scene.
-    pub(crate) drawn: Vec<DrawnControl>,
+    /// The grips and the canvas's drop targets as drawn, for the scene: id,
+    /// label, place and the capability that does what they do.
+    pub(crate) drawn: Vec<(String, String, CanvasRect, &'static str)>,
     /// The window's desktop origin, in points, as last read.
     pub(crate) origin: (f32, f32),
     /// A pointer a capture holds the gesture at, in place of the hand's.
@@ -51,12 +52,6 @@ pub(crate) struct FloatingPanes {
 }
 
 impl FloatingPanes {
-    pub(crate) fn record(&mut self, slot: PaneSlot, events: WindowEvents) {
-        if events != WindowEvents::default() {
-            self.windows.push((slot, events));
-        }
-    }
-
     fn pointer(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
         #[cfg(any(feature = "scenario-harness", test))]
         if self.pinned.is_some() {
@@ -139,16 +134,20 @@ pub(crate) fn frame(
     ui.painter().rect_filled(rect, 0.0, palette.chrome());
     let content = rect.shrink(OUTLINE_PX);
     let pointer = floats.pointer(ui.ctx()).map(model_point);
-    let held = grip(ui, content);
     let from = model_rect(rect);
+    let ring = rect.expand(RESIZE_GRIP_PX);
+    let edge = ui.interact(ring, ui.id().with("edges"), Sense::drag());
+    let held = grip(ui, content);
+    let (id, float) = (format!("floating.{slot}.grip"), FLOAT_CAPABILITY_ID);
+    floats
+        .drawn
+        .push((id, "Move chart".to_owned(), model_rect(held.rect), float));
     let pressed = ui
         .input(|input| input.pointer.press_origin())
         .map(model_point);
     if let (true, Some(start)) = (held.drag_started(), pressed.or(pointer)) {
         floats.held = Some(FloatGesture::Move { slot, from, start });
     }
-    let ring = rect.expand(RESIZE_GRIP_PX);
-    let edge = ui.interact(ring, ui.id().with("edges"), Sense::drag());
     let edges = pointer.and_then(|pointer| ResizeEdges::at(from, pointer).zip(Some(pointer)));
     if let (true, Some((edges, start))) = (edge.drag_started(), edges) {
         floats.held = Some(FloatGesture::Resize {
@@ -259,18 +258,7 @@ fn pill(painter: &egui::Painter, at: egui::Pos2, text: &str, (fill, ink): (Color
 /// it, as the scene's controls.
 fn publish_targets(floats: &mut FloatingPanes, state: &CanvasState, canvas: Rect) {
     let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas));
-    floats.drawn.clear();
-    floats.drawn.extend(
-        targets
-            .into_iter()
-            .map(|(id, label, rect, capability)| DrawnControl {
-                id,
-                label,
-                rect: screen_rect(rect),
-                selected: false,
-                capability: Some(capability),
-            }),
-    );
+    floats.drawn.extend(targets);
 }
 
 /// A chart in its own OS window at `rect` (desktop points), drawn by

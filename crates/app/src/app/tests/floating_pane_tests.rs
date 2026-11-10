@@ -4,7 +4,6 @@
 use super::*;
 
 use crate::canvas_layout::preset;
-use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_workspace::canvas::{
     CanvasRect, Corner, FloatHost, PARK_MARGIN_PX, PaneKind, PaneMode, WIDGETS, park_rect,
 };
@@ -50,9 +49,12 @@ fn save(app: &mut QuantickApp, ctx: &egui::Context) {
 
 /// Put the tab back on its workspace as saved, as opening it does.
 fn reload(app: &mut QuantickApp, ctx: &egui::Context) {
+    let id = app.runtime.tabs.active_id();
     let book = &app.runtime.workspace.book;
-    let name = book.tab_row(app.runtime.tabs.active_id()).0;
-    crate::app::tab_workspaces::apply_workspace_command(app, WorkspaceCommand::Set(name));
+    let saved = book.book().recipe(&book.tab_row(id).0).cloned();
+    let recipe = saved.expect("the tab's workspace is saved");
+    let mut host = crate::app::tab_workspaces::BookTabs(app);
+    quantick_workspace::book_upkeep::show_recipe(&mut host, id, &recipe);
     frames(app, ctx, 6);
 }
 
@@ -226,13 +228,14 @@ fn pop_out_and_return_round_trip() {
         .unwrap();
     frames(&mut app, &ctx, 2);
     save(&mut app, &ctx);
+    let moved = CanvasRect::new(40.0, 60.0, 500.0, 300.0);
+    let tab = app.active_tab_mut();
+    tab.canvas.state.pop_out(slot, primary, moved).unwrap();
     reload(&mut app, &ctx);
     let state = &app.active_tab().canvas.state;
-    assert_eq!(
-        state.mode(slot),
-        Some(PaneMode::OsWindow),
-        "its monitor is there"
-    );
+    let (monitor, rect) = (primary.to_owned(), out);
+    let saved = FloatHost::OsWindow { monitor, rect };
+    assert_eq!(state.host(slot), Some(&saved), "its monitor is there");
     assert_eq!(
         state.mode(gone),
         Some(PaneMode::Floating),
