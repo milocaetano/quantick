@@ -296,6 +296,9 @@ impl DrawingController {
             }
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {
+            if let Some(after) = host.drawing_at(edit.tab, edit.side, edit.index) {
+                drawings::remember_last_style(&mut self.presets, &edit.before, after);
+            }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
         if ask.toggle_selected_hidden {
