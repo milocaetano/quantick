@@ -52,7 +52,7 @@ impl ToolRail {
         let response = IconButton::new(icon, TOOLRAIL_ICON)
             .vector_icon(strokes, dots, letter)
             .active(armed)
-            .active_marker(self.dock.marker_edge())
+            .active_marker(super::marker_edge(self.dock))
             .hover_text(hover)
             .show(ui);
         let badge_shown = shown
