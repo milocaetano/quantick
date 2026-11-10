@@ -108,3 +108,4 @@ a bound.
 | 774 | 2026-11-06 | feat/workspace-autosave | feat/quantick-new-layout | 31729 | 53 | `crates/app/src/control/gateway/server.rs` (1205) |
 | 776 | 2026-11-06 | fix/drawing-contrast-on-light | feat/quantick-new-layout | 1926 | 5 | `crates/app/src/surfaces/drawing_chrome/mod.rs` (397) |
 | 786 | 2026-11-07 | feat/venue-candles-per-interval | main | 27169 | 28 | `crates/app/src/tab/feed.rs` (1015) |
+| 880 | 2026-11-10 | feat/864-toolbar-capsule | feature/workspace-canvas | 49784 | 41 | `crates/app/src/pane_header.rs` (970) |
