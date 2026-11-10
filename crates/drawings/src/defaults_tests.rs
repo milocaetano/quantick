@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{LastStyle, PresetHost, new_drawing_from_defaults};
+use super::{PresetHost, new_drawing_from_defaults, remember_style};
 use crate::{DRAWING_TOOLS, DrawingStyle, DrawingTool, ToolCatalog};
 use quantick_chart::style::PremultipliedRgba;
 
@@ -79,35 +79,28 @@ fn only_the_pencil_remembers_its_last_look() {
 }
 
 #[test]
-fn a_pencil_recolour_reaches_the_next_stroke_once_the_gesture_ends() {
+fn a_pencil_restyle_reaches_the_next_stroke() {
     let brush = tool("brush");
     let mut host = CountingHost::default();
-    let mut last = LastStyle::default();
-    let before = brush.default_style();
-    let mut after = before;
-    after.color = PremultipliedRgba::from_rgb(0x30, 0x90, 0xE0);
-    last.note(brush, before, after);
-    // A picker drag notes every frame; the bank is written at the end only.
-    let mut wider = after;
-    wider.width_px = 4.0;
-    last.note(brush, after, wider);
-    assert_eq!(host.style_writes, 0, "nothing persists mid-gesture");
-    assert!(last.flush(&mut host));
+    let style = restyled(brush);
+    assert!(remember_style(
+        &mut host,
+        brush,
+        brush.default_style(),
+        style
+    ));
     assert_eq!(host.style_writes, 1);
-    assert_eq!(new_drawing_from_defaults(&host, brush).style, wider);
-    assert!(!last.flush(&mut host), "a flush consumes what it wrote");
+    assert_eq!(new_drawing_from_defaults(&host, brush).style, style);
 }
 
 #[test]
 fn an_edit_that_leaves_the_style_alone_is_not_remembered() {
-    // Toggling the magnet or "all timeframes" on an older, red stroke must
-    // not drag the pencil back to red.
+    // Toggling the magnet on an older stroke, or a picker drag that came
+    // back to where it started, must not drag the pencil to that look.
     let brush = tool("brush");
     let mut host = CountingHost::default();
-    let mut last = LastStyle::default();
     let style = restyled(brush);
-    last.note(brush, style, style);
-    assert!(!last.flush(&mut host));
+    assert!(!remember_style(&mut host, brush, style, style));
     assert_eq!(host.style_writes, 0);
 }
 
@@ -115,9 +108,12 @@ fn an_edit_that_leaves_the_style_alone_is_not_remembered() {
 fn other_tools_keep_their_explicit_save_as_default() {
     let line = tool("trend-line");
     let mut host = CountingHost::default();
-    let mut last = LastStyle::default();
-    last.note(line, line.default_style(), restyled(line));
-    assert!(!last.flush(&mut host));
+    assert!(!remember_style(
+        &mut host,
+        line,
+        line.default_style(),
+        restyled(line)
+    ));
     assert_eq!(host.default_style(line.id()), None);
 }
 
@@ -127,8 +123,31 @@ fn a_look_already_stored_is_not_written_again() {
     let mut host = CountingHost::default();
     let style = restyled(brush);
     host.set_default_style(brush.id(), Some(style));
-    let mut last = LastStyle::default();
-    last.note(brush, brush.default_style(), style);
-    assert!(!last.flush(&mut host));
+    assert!(!remember_style(
+        &mut host,
+        brush,
+        brush.default_style(),
+        style
+    ));
     assert_eq!(host.style_writes, 1, "only the setup write");
+}
+
+#[test]
+fn going_back_to_the_built_in_look_forgets_the_default() {
+    // Stored as nothing, the built-in look keeps following the theme.
+    let brush = tool("brush");
+    let mut host = CountingHost::default();
+    let style = restyled(brush);
+    host.set_default_style(brush.id(), Some(style));
+    assert!(remember_style(
+        &mut host,
+        brush,
+        style,
+        brush.default_style()
+    ));
+    assert_eq!(host.default_style(brush.id()), None);
+    assert!(
+        !remember_style(&mut host, brush, style, brush.default_style()),
+        "nothing stored and nothing to store"
+    );
 }

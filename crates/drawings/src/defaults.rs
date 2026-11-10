@@ -111,40 +111,40 @@ pub fn has_saved_default<T: ToolCatalog>(host: &dyn PresetHost, tool: T) -> bool
         || host.default_preset(tool_id).is_some()
 }
 
-/// The look the trader last gave an object of a tool that remembers it (the
-/// pencil), carried to the tool's default once the edit gesture ends.
-///
-/// For such a tool, changing a stroke's colour or width *is* the answer to
-/// "what should the next stroke look like" — no "save as default" button.
-/// The write waits for the gesture's end because a colour-picker drag edits
-/// every frame, and every default write persists the bank to disk.
-#[derive(Debug, Default)]
-pub struct LastStyle {
-    pending: Option<(&'static str, DrawingStyle)>,
+/// Carry a finished edit's look forward as the default of a tool that
+/// remembers it (the pencil): for such a tool, recolouring a stroke *is* the
+/// answer to "what should the next stroke look like". Called once per edit
+/// gesture, at its end, with the object as the gesture found and left it —
+/// never per frame, because a colour-picker drag edits every frame and each
+/// default write persists the bank. Answers whether it wrote.
+pub fn remember_last_style<T: ToolCatalog>(
+    host: &mut dyn PresetHost,
+    before: &Drawing<T>,
+    after: &Drawing<T>,
+) -> bool {
+    // A mark someone else placed is restyled for its own sake; it says
+    // nothing about the trader's own pencil.
+    before.author.is_none() && remember_style(host, after.tool, before.style, after.style)
 }
 
-impl LastStyle {
-    /// Note one applied edit. Only a tool that opts in, and only an edit that
-    /// changed the look: toggling the magnet on an older stroke must not drag
-    /// the pencil back to that stroke's colour.
-    pub fn note<T: ToolCatalog>(&mut self, tool: T, before: DrawingStyle, after: DrawingStyle) {
-        if tool.remembers_last_style() && before != after {
-            self.pending = Some((tool.id(), after));
-        }
+fn remember_style<T: ToolCatalog>(
+    host: &mut dyn PresetHost,
+    tool: T,
+    before: DrawingStyle,
+    after: DrawingStyle,
+) -> bool {
+    // An edit that left the look alone (magnet, hide, a drag that came back
+    // to where it started) must not drag the pencil to this stroke's look.
+    if !tool.remembers_last_style() || before == after {
+        return false;
     }
-
-    /// The edit gesture ended: store what was noted, unless the bank already
-    /// holds that look. Answers whether it wrote.
-    pub fn flush(&mut self, host: &mut dyn PresetHost) -> bool {
-        let Some((tool_id, style)) = self.pending.take() else {
-            return false;
-        };
-        if host.default_style(tool_id) == Some(style) {
-            return false;
-        }
-        host.set_default_style(tool_id, Some(style));
-        true
+    // The built-in look is stored as nothing, so it keeps following the theme.
+    let wanted = (after != tool.themed_style(host.theme())).then_some(after);
+    if host.default_style(tool.id()) == wanted {
+        return false;
     }
+    host.set_default_style(tool.id(), wanted);
+    true
 }
 
 #[cfg(test)]

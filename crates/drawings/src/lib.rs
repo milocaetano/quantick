@@ -52,8 +52,8 @@ pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(any(test, feature = "test-support"))]
 pub use defaults::NullPresetHost;
 pub use defaults::{
-    LastStyle, PresetHost, has_saved_default, new_drawing_from_defaults, reset_tool_default,
-    save_tool_default,
+    PresetHost, has_saved_default, new_drawing_from_defaults, remember_last_style,
+    reset_tool_default, save_tool_default,
 };
 pub use family::{
     AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
@@ -109,7 +109,7 @@ pub trait ToolCatalog: Copy + PartialEq + std::fmt::Debug {
         self.default_style()
     }
     /// Whether editing a mark's look also sets the look the next mark of
-    /// this tool opens with. See [`LastStyle`].
+    /// this tool opens with. See [`remember_last_style`].
     fn remembers_last_style(self) -> bool {
         false
     }
