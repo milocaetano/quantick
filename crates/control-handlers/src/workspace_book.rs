@@ -156,6 +156,10 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             menu.open_rename(tab, &from);
             return None;
         }
+        WorkspaceCommand::BeginManage => {
+            menu.open_manage(tab);
+            return None;
+        }
         WorkspaceCommand::SubmitDialog => {
             return submit_name_dialog(host, &mut to, menu, symbol);
         }

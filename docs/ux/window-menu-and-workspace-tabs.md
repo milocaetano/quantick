@@ -215,15 +215,21 @@ snapshot reads it as `auto_save`.
   stays open and its close asks nothing, so no answer is thrown away.
 - What counts as a change: indicators (add, remove, settings, style), panes
   (add, remove, divider, kind), the layout strip (new, switch, rename,
-  delete), layers, footprint style, drawings, anchored studies. Never a
-  change: pane timeframe, flow bar size, bubbles, history reach, zoom, scroll,
-  selection. Pane timeframes are kept on the tab, as flow bar size is, and a
-  workspace switch never changes them. A new tab on a market opens its
-  context charts on the timeframes that market remembers (its open tab's,
-  else the ones its tab closed on), as it opens on the market's flow bar.
+  delete), layers, footprint style, pane timeframes and the flow bar rule,
+  drawings, anchored studies. Never a change: bubbles, history reach, zoom,
+  scroll, selection. A workspace keeps each pane's bar rule (the context
+  charts' intervals, the flow bar such as Tick 2000 or Renko 30), and opening
+  or switching to it restores them. What a market remembers (its open tab's
+  timeframes, else the ones its tab closed on, and its flow bar) is only the
+  fallback: for a new tab, and for a workspace saved before workspaces kept
+  bar rules, which names none.
 - "Save as new…" names a workspace for this tab alone; the other tabs stay.
-- Deleting a workspace in use moves its tabs to Default and the toast names
-  them; the last workspace cannot be deleted. Delete asks a second click.
+- Delete lives only in the Manage workspaces dialog, the last row of the
+  workspace menus after New workspace: every workspace with its tab count,
+  a check on the tab's own, and per row Rename and Delete (greyed on Default,
+  with the reason). Deleting a workspace in use moves its tabs to Default and
+  the toast names them. Delete asks inside its row first, naming the tabs
+  that move.
 
 ### Market settings never travel with a workspace
 

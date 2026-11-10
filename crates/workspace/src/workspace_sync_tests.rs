@@ -418,6 +418,7 @@ fn a_layer_moved_on_a_context_pane_is_an_edit_of_that_pane_only() {
     let pane = |on: bool| ContextPaneRecipe {
         indicators: Vec::new(),
         layers: BTreeMap::from([("bubbles".to_owned(), on)]),
+        bars: None,
     };
     let settled = WorkspaceRecipe {
         context_panes: vec![pane(true), pane(true)],
@@ -428,6 +429,7 @@ fn a_layer_moved_on_a_context_pane_is_an_edit_of_that_pane_only() {
             ContextPaneRecipe {
                 indicators: Vec::new(),
                 layers: BTreeMap::new(),
+                bars: None,
             };
             2
         ],
@@ -461,4 +463,34 @@ fn a_new_tab_joins_its_chosen_workspace_and_none_leaves_it_alone() {
         sync.adoption(5, false, false),
         TabAdoption::Restore { workspace, copy: None } if workspace == "Swing"
     ));
+}
+
+/// A recipe saved before workspaces kept timeframes holds none: the tab's own
+/// bars are no edit until the trader moves one.
+#[test]
+fn a_recipe_without_bars_reads_the_tab_s_own_bars_as_no_edit() {
+    use crate::workspace_recipe::ContextPaneRecipe;
+    let on = |flow: &str, time: &str| WorkspaceRecipe {
+        flow_bars: Some(flow.to_owned()),
+        context_panes: vec![ContextPaneRecipe {
+            bars: Some(time.to_owned()),
+            ..ContextPaneRecipe::default()
+        }],
+        ..WorkspaceRecipe::default()
+    };
+    let old = WorkspaceRecipe {
+        context_panes: vec![ContextPaneRecipe::default()],
+        ..WorkspaceRecipe::default()
+    };
+    let mut sync = TabRecipeSync::default();
+    sync.settle(1, on("tick:500", "time:60000"));
+    assert_eq!(sync.observe(1, on("tick:500", "time:60000"), &old), None);
+    let moved = sync
+        .observe(1, on("tick:2000", "time:60000"), &old)
+        .expect("a flow bar change is an edit");
+    assert_eq!(moved.flow_bars.as_deref(), Some("tick:2000"));
+    assert_eq!(
+        moved.context_panes[0].bars, None,
+        "the untouched pane keeps none"
+    );
 }

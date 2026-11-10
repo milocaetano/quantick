@@ -15,7 +15,7 @@ pub enum RowId {
     WorkspaceNew,
     WorkspaceRename,
     WorkspaceAutosave,
-    WorkspaceDelete,
+    ManageWorkspaces,
     SaveDesk,
     TogglePanels,
     MarketReplay,
@@ -126,7 +126,8 @@ const ORDERFLOW_PANEL_BEHAVIOUR: &str = crate::orderflow_settings::OPEN_CAPABILI
 const TOOLBAR_BEHAVIOUR: &str = "toolrail.dock.set";
 const HELP_BEHAVIOUR: &str = "window.help.open";
 const NO_EDITS_HOVER: &str = "This tab holds no edits";
-const DEFAULT_PROTECTED_HOVER: &str = "Default cannot be deleted or renamed";
+/// Why Default's Rename and Delete are greyed, in the menu and the dialog.
+pub const DEFAULT_PROTECTED_HOVER: &str = "Default cannot be deleted or renamed";
 
 /// Every command row of the window menu, in no particular order.
 pub const ROWS: &[Row] = &[
@@ -165,11 +166,11 @@ pub const ROWS: &[Row] = &[
         "workspace.autosave.set",
     ),
     Row {
-        disabled_hover: Some(DEFAULT_PROTECTED_HOVER),
+        hover: Some("Every workspace, with its Rename and Delete"),
         ..row(
-            RowId::WorkspaceDelete,
-            "Delete workspace",
-            "workspace.delete",
+            RowId::ManageWorkspaces,
+            "Manage workspaces\u{2026}",
+            "workspace.manage",
         )
     },
     Row {
@@ -288,10 +289,10 @@ pub const fn submenu(id: SubmenuId) -> (&'static str, &'static [Item]) {
             &[
                 Item::Live(LiveRows::WorkspaceList),
                 Item::Row(RowId::WorkspaceSaveAsNew),
-                Item::Row(RowId::WorkspaceNew),
                 Item::Row(RowId::WorkspaceRename),
-                Item::Row(RowId::WorkspaceDelete),
                 Item::Row(RowId::WorkspaceAutosave),
+                Item::Row(RowId::WorkspaceNew),
+                Item::Row(RowId::ManageWorkspaces),
                 Item::Separator,
                 Item::Submenu(SubmenuId::Layouts),
                 Item::Submenu(SubmenuId::Layout),
@@ -459,12 +460,13 @@ pub fn save_to_short_label(workspace: &str) -> String {
 }
 
 /// The status bar cell's menu, under its caption, the workspace list and
-/// `Save to`, top to bottom.
+/// `Save to`, top to bottom. It ends on New and Manage, as the designer's
+/// menu does; Delete lives only in the Manage dialog.
 pub const CELL_MENU_ROWS: &[RowId] = &[
     RowId::WorkspaceSaveAsNew,
-    RowId::WorkspaceNew,
     RowId::WorkspaceRename,
-    RowId::WorkspaceDelete,
+    RowId::WorkspaceNew,
+    RowId::ManageWorkspaces,
 ];
 
 /// The cell's hover.
@@ -486,7 +488,26 @@ pub fn save_to_hover(followers: &[String]) -> String {
     }
 }
 
-/// The armed delete row, stating what the second click does.
+/// The Manage workspaces dialog's title.
+pub const MANAGE_DIALOG_TITLE: &str = "Manage workspaces";
+/// A dialog row's buttons.
+pub const MANAGE_RENAME: &str = "Rename\u{2026}";
+pub const MANAGE_DELETE: &str = "Delete";
+pub const MANAGE_CLOSE: &str = "Close";
+/// The hover on the current workspace's check.
+pub const MANAGE_CURRENT_HOVER: &str = "This tab's workspace";
+
+/// How many tabs use a workspace, as the dialog's row says it.
+#[must_use]
+pub fn tab_count_label(tabs: usize) -> String {
+    match tabs {
+        0 => "No tabs".to_owned(),
+        1 => "1 tab".to_owned(),
+        many => format!("{many} tabs"),
+    }
+}
+
+/// The armed delete, stating what the confirmation does.
 #[must_use]
 pub fn delete_armed_label(workspace: &str, moved: &[String]) -> String {
     if moved.is_empty() {
@@ -653,15 +674,33 @@ mod tests {
     }
 
     #[test]
-    fn the_cell_menu_lists_the_workspace_rows_with_new_after_save_as() {
+    fn the_cell_menu_ends_on_new_and_manage_and_holds_no_delete() {
         assert_eq!(
             CELL_MENU_ROWS,
             [
                 RowId::WorkspaceSaveAsNew,
-                RowId::WorkspaceNew,
                 RowId::WorkspaceRename,
-                RowId::WorkspaceDelete,
+                RowId::WorkspaceNew,
+                RowId::ManageWorkspaces,
             ]
+        );
+        let manage = row_of(RowId::ManageWorkspaces);
+        assert_eq!(
+            (manage.label, manage.behaviour),
+            ("Manage workspaces\u{2026}", "workspace.manage")
+        );
+        let (_, workspace) = submenu(SubmenuId::Workspace);
+        let rows: Vec<_> = workspace
+            .iter()
+            .filter_map(|item| match item {
+                Item::Row(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            rows.windows(2)
+                .any(|pair| pair == [RowId::WorkspaceNew, RowId::ManageWorkspaces]),
+            "the window menu's workspace rows put Manage right after New too"
         );
         let new = row_of(RowId::WorkspaceNew);
         assert_eq!(

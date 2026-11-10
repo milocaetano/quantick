@@ -878,47 +878,70 @@ fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
     #[allow(clippy::cast_precision_loss)]
     let moved = bars(&app) != [slot as f32];
     assert!(moved, "the re-cut moved the bar offset: {:?}", bars(&app));
-    let state = app.runtime.workspace.book.book().tab_state(tab);
-    assert!(!state.expect("adopted").modified, "a re-cut is no edit");
-    assert_eq!(held(&app), None, "and holds nothing");
+    let changes = held(&app)
+        .expect("the bar change is a workspace edit")
+        .changes;
+    assert_eq!(
+        changes,
+        ["timeframe"],
+        "the re-cut level is no drawing edit"
+    );
     // The next real edit writes the whole pane back, the re-cut level with
     // it: only the new level is the trader's.
     place_level(&mut app, PaneSide::Flow, 101.0);
     frames(&mut app, 2);
     let changes = held(&app).expect("the new level is held").changes;
-    assert_eq!(changes, ["1 drawing"], "the re-cut level is not counted");
+    assert_eq!(
+        changes,
+        ["timeframe", "1 drawing"],
+        "the re-cut level is not counted"
+    );
 }
 
-/// The pane timeframe is the tab's: a switch onto a workspace saved from a tab
-/// on another interval keeps the pane on its own.
+/// Golden: a workspace remembers its timeframes. A saved on 5m and Tick 2000,
+/// B on 1m and Tick 500; switching back to A reopens 5m and Tick 2000.
 #[test]
-fn a_workspace_switch_never_changes_a_pane_timeframe() {
+fn a_workspace_switch_restores_the_timeframes_it_saved() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 50);
     let tab = app.runtime.tabs.active_id();
-    let hour = quantick_engine::bar_registry::BUILTIN_BARS.parse("time:3600000");
-    app.active_tab_mut()
-        .set_pane_bar_spec(1, hour.expect("a time bar"))
-        .expect("the time pane takes it");
-    frames(&mut app, 2);
-    let timeframe = |app: &QuantickApp| {
-        app.active_tab().time_panes[0]
-            .state
-            .spec()
-            .to_config_string()
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let put = |app: &mut QuantickApp, flow: &str, time: &str| {
+        let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
+        let tab = app.active_tab_mut();
+        tab.set_pane_bar_spec(0, rules.parse(flow).expect("a flow rule"))
+            .expect("taken");
+        tab.set_pane_bar_spec(1, rules.parse(time).expect("a time rule"))
+            .expect("taken");
+        frames(app, 3);
     };
-    let before = timeframe(&app);
-    let mut five = live_recipe(&app.runtime, tab).expect("an open tab");
-    five.split_fraction = Some(0.3);
+    let shown = |app: &QuantickApp| {
+        let tab = app.active_tab();
+        let rule = |pane: &crate::pane::ChartPane| pane.state.spec().to_config_string();
+        (rule(&tab.flow_pane), rule(&tab.time_panes[0]))
+    };
+    put(&mut app, "tick:2000", "time:300000");
+    let a = shown(&app);
     let book = app.runtime.workspace.book.book_mut();
-    book.observe(tab, &five).expect("held");
-    book.save_as(tab, "Five").expect("a free name");
-    set_tab_workspace(&mut app, tab, "Default").expect("a known workspace");
-    frames(&mut app, 3);
-    assert_eq!(timeframe(&app), before, "Default left the interval alone");
-    set_tab_workspace(&mut app, tab, "Five").expect("a known workspace");
-    frames(&mut app, 3);
-    assert_eq!(timeframe(&app), before, "and so did Five");
+    book.save_as(tab, "A").expect("a free name");
+    put(&mut app, "tick:500", "time:60000");
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(
+        state.expect("adopted").modified,
+        "a timeframe change marks A"
+    );
+    let b = shown(&app);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(tab, "B").expect("a free name");
+    assert_ne!(a, b);
+    set_tab_workspace(&mut app, tab, "A").expect("a known workspace");
+    frames(&mut app, 4);
+    assert_eq!(shown(&app), a, "A reopens on its own timeframes");
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "and reads clean");
+    set_tab_workspace(&mut app, tab, "B").expect("a known workspace");
+    frames(&mut app, 4);
+    assert_eq!(shown(&app), b, "and B on its");
 }
 
 /// A new tab on a market opens its context chart on the interval that market

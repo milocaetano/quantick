@@ -374,7 +374,11 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
     assert_eq!(second.0, 2);
     let live = capture_recipe(&tab, &layouts, (BTreeMap::new(), Vec::new()), None);
     assert_eq!(live.layout, DeclaredLayout::TimeAndFlow);
-    assert_eq!(live.context_panes.len(), 1, "the interval is the market's");
+    assert_eq!(
+        live.context_panes.len(),
+        1,
+        "one context pane, from time_bars"
+    );
     assert_eq!(live.split_fraction, Some(0.25));
     assert_eq!(
         live.flow_indicators,
@@ -490,10 +494,12 @@ fn a_full_recipe_round_trips_through_the_file_exactly() {
             ContextPaneRecipe {
                 indicators: vec![ema()],
                 layers: BTreeMap::from([("grid".to_owned(), true)]),
+                bars: None,
             },
             ContextPaneRecipe {
                 indicators: Vec::new(),
                 layers: BTreeMap::new(),
+                bars: None,
             },
         ],
         layers: BTreeMap::from([("grid".to_owned(), false)]),
@@ -561,6 +567,7 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
         ContextPaneRecipe {
             indicators: vec![ema()],
             layers: BTreeMap::new(),
+            bars: None,
         };
         2
     ];
@@ -798,4 +805,172 @@ fn a_restored_copy_that_differs_reads_modified_with_autosave_on() {
     assert!(next.unsaved_edits(1).is_some());
     assert!(next.autosave_winners(&[1], 1).is_empty());
     assert_eq!(state(&next, 2), ("Scalp".to_owned(), false));
+}
+
+/// The tab's bar rules, as the window reads them into a recipe.
+fn on_bars(flow: &str, time: &str) -> WorkspaceRecipe {
+    let tab: SavedTab = toml::from_str(&format!(
+        "feed = \"mt5\"\nsymbol = \"WINV26\"\nlayout = \"time+flow\"\n\
+         flow_bars = \"{flow}\"\ncontext_bars = [\"{time}\"]\n"
+    ))
+    .unwrap();
+    capture_recipe(
+        &tab,
+        &LayoutBook::starter(Vec::new()),
+        (BTreeMap::new(), Vec::new()),
+        None,
+    )
+}
+
+/// Golden: a workspace remembers its timeframes. A saved on 5m and Tick 2000,
+/// B on 1m and Tick 500; back on A, the tab is handed 5m and Tick 2000.
+#[test]
+fn a_workspace_reopens_on_the_timeframes_it_saved() {
+    let mut book = held_book();
+    book.open_tab(1);
+    book.observe(1, &on_bars("tick:2000", "time:300000"))
+        .unwrap();
+    book.save_as(1, "A").unwrap();
+    book.observe(1, &on_bars("tick:500", "time:60000")).unwrap();
+    assert!(
+        book.tab_state(1).unwrap().modified,
+        "a timeframe change is an edit"
+    );
+    assert_eq!(
+        book.unsaved_edits(1).unwrap().changes,
+        ["timeframe"],
+        "and the close prompt names it"
+    );
+    book.save_as(1, "B").unwrap();
+    book.set(1, "A").unwrap();
+    let a = book.tab_copy(1).unwrap();
+    assert_eq!(a.flow_bars.as_deref(), Some("tick:2000"));
+    assert_eq!(a.context_panes[0].bars.as_deref(), Some("time:300000"));
+    book.set(1, "B").unwrap();
+    let b = book.tab_copy(1).unwrap();
+    assert_eq!(b.flow_bars.as_deref(), Some("tick:500"));
+    assert_eq!(b.context_panes[0].bars.as_deref(), Some("time:60000"));
+}
+
+/// The recipe's rule wins on each pane that has one; a pane it says nothing
+/// of keeps the tab's, and a pane the tab lacks opens on the default.
+#[test]
+fn a_recipe_s_context_bars_lay_over_the_tab_s() {
+    let recipe = WorkspaceRecipe {
+        context_panes: vec![
+            ContextPaneRecipe::default(),
+            ContextPaneRecipe {
+                bars: Some("time:300000".to_owned()),
+                ..ContextPaneRecipe::default()
+            },
+        ],
+        ..WorkspaceRecipe::default()
+    };
+    assert_eq!(
+        recipe.context_bars_over(&["time:60000".to_owned()]),
+        ["time:60000", "time:300000"]
+    );
+    assert_eq!(
+        WorkspaceRecipe::default().context_bars_over(&["time:60000".to_owned()]),
+        ["time:60000"]
+    );
+    let with_flow = WorkspaceRecipe {
+        flow_bars: Some("tick:2000".to_owned()),
+        ..recipe.clone()
+    };
+    assert_eq!(
+        with_flow.rules_over(
+            "tick:500",
+            &["time:60000".to_owned(), "time:300000".to_owned()]
+        ),
+        [(0, "tick:2000")],
+        "only a rule the tab does not show yet is put on it"
+    );
+    assert_eq!(
+        recipe.rules_over("tick:500", &["time:60000".to_owned()]),
+        [(2, "time:300000")]
+    );
+}
+
+/// A recipe written before workspaces kept timeframes reads with none.
+#[test]
+fn an_old_recipe_reads_with_no_bars() {
+    let old: WorkspaceRecipe =
+        toml::from_str("layout = \"time+flow\"\n[[context_panes]]\n").unwrap();
+    assert_eq!(old.flow_bars, None);
+    assert_eq!(old.context_panes[0].bars, None);
+}
+
+/// `Default` follows the market: it never keeps a bar rule, so one market's
+/// flow bar never reaches a new tab on another, and a timeframe change on a
+/// tab on it is no edit.
+#[test]
+fn default_keeps_no_bar_rule_and_a_timeframe_on_it_is_no_edit() {
+    let mut book = held_book();
+    book.open_tab(1);
+    let mut wider = on_bars("tick:2000", "time:300000");
+    wider.split_fraction = Some(0.4);
+    book.observe(1, &wider).unwrap();
+    book.save_to(1).unwrap();
+    let default = book.recipe(DEFAULT_WORKSPACE).unwrap();
+    assert_eq!(default.flow_bars, None);
+    assert_eq!(default.context_panes[0].bars, None);
+    assert_eq!(default.split_fraction, Some(0.4), "the rest is saved");
+    let mut narrower = on_bars("tick:500", "time:60000");
+    narrower.split_fraction = Some(0.4);
+    book.observe(1, &narrower).unwrap();
+    assert!(
+        !book.tab_state(1).unwrap().modified,
+        "the market's bar is no edit"
+    );
+}
+
+/// The Manage dialog greys Delete by the rule `delete` refuses by.
+#[test]
+fn delete_refusal_names_default_and_an_unknown_name_and_spares_the_rest() {
+    let mut book = two_tabs_on_scalp();
+    assert_eq!(
+        book.delete_refusal(DEFAULT_WORKSPACE),
+        Some(WorkspaceRefusal::DefaultProtected)
+    );
+    assert_eq!(
+        book.delete_refusal("Nope"),
+        Some(WorkspaceRefusal::UnknownWorkspace("Nope".to_owned()))
+    );
+    assert_eq!(
+        book.delete_refusal("Scalp"),
+        None,
+        "in use and current, still deletable"
+    );
+    assert_eq!(
+        book.delete(DEFAULT_WORKSPACE),
+        Err(WorkspaceRefusal::DefaultProtected)
+    );
+    assert!(book.delete("Scalp").unwrap().changed);
+    assert_eq!(
+        book.delete("Scalp"),
+        Err(WorkspaceRefusal::UnknownWorkspace("Scalp".to_owned())),
+        "a repeat is refused"
+    );
+}
+
+/// A recipe written before 13f24fa3 kept its intervals apart: read, they land
+/// on the panes, and Default still names none.
+#[test]
+fn an_old_book_s_context_bars_land_on_the_panes() {
+    let book = parse_book(concat!(
+        "version = 1\n",
+        "[recipes.Scalp]\nlayout = \"time+flow\"\ncontext_bars = [\"time:5m\"]\n",
+        "[[recipes.Scalp.context_panes]]\n",
+        "[recipes.Default]\nlayout = \"time+flow\"\ncontext_bars = [\"time:1m\"]\n",
+        "[[recipes.Default.context_panes]]\n",
+    ))
+    .unwrap();
+    let scalp = book.recipe("Scalp").unwrap();
+    assert_eq!(scalp.context_panes[0].bars.as_deref(), Some("time:5m"));
+    assert!(scalp.legacy_context_bars.is_empty());
+    assert_eq!(
+        book.recipe(DEFAULT_WORKSPACE).unwrap().context_panes[0].bars,
+        None
+    );
 }

@@ -324,6 +324,12 @@ pub fn parse_book(text: &str) -> Result<WorkspaceBook, BookParseError> {
     book.recipes
         .entry(DEFAULT_WORKSPACE.to_owned())
         .or_default();
+    for (name, recipe) in &mut book.recipes {
+        recipe.adopt_legacy_bars();
+        if name == DEFAULT_WORKSPACE {
+            *recipe = recipe.without_bars();
+        }
+    }
     Ok(book)
 }
 
@@ -671,7 +677,7 @@ impl WorkspaceBook {
             return None;
         }
         let mut changes = (self.baseline(state).filter(|_| modified))
-            .map(|base| state.copy.changes_from(base))
+            .map(|base| base.masked(&state.copy).changes_from(base))
             .unwrap_or_default();
         changes.extend((held > 0).then(|| drawings_change(held)));
         Some(UnsavedEdits {
@@ -701,7 +707,19 @@ impl WorkspaceBook {
     }
 
     fn is_modified(&self, state: &TabWorkspace) -> bool {
-        self.baseline(state).is_none_or(|base| *base != state.copy)
+        self.baseline(state)
+            .is_none_or(|base| !base.holds(&state.copy))
+    }
+
+    /// Why `name` cannot be deleted, or `None` when it can: what greys the
+    /// Manage dialog's Delete, the same rule [`Self::delete`] refuses by.
+    #[must_use]
+    pub fn delete_refusal(&self, name: &str) -> Option<WorkspaceRefusal> {
+        if name == DEFAULT_WORKSPACE {
+            return Some(WorkspaceRefusal::DefaultProtected);
+        }
+        (!self.recipes.contains_key(name))
+            .then(|| WorkspaceRefusal::UnknownWorkspace(name.to_owned()))
     }
 
     /// A tab's panes stand, showing `live`. On the factory `Default`, a clean
@@ -719,7 +737,7 @@ impl WorkspaceBook {
             && let Some(state) = self.tabs.get_mut(&tab)
         {
             state.copy = live.clone();
-            state.opened = Some(live.clone());
+            state.opened = Some(live.without_bars());
         }
     }
 
@@ -766,7 +784,8 @@ impl WorkspaceBook {
             .resolve(workspace)
             .unwrap_or(DEFAULT_WORKSPACE)
             .to_owned();
-        let copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
+        let mut copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
+        copy.adopt_legacy_bars();
         self.tabs.insert(tab, TabWorkspace::on(&name, copy));
         self.unsynced.remove(&tab);
         if self.autosave && self.differs(tab) {
@@ -898,7 +917,11 @@ impl WorkspaceBook {
                 tabs_changed,
             });
         }
-        let recipe = saver.copy.clone();
+        let recipe = if workspace == DEFAULT_WORKSPACE {
+            saver.copy.without_bars()
+        } else {
+            saver.copy.clone()
+        };
         for other in &tabs_changed {
             if let Some(state) = self.tabs.get_mut(other) {
                 state.copy = recipe.clone();
@@ -1031,12 +1054,10 @@ impl WorkspaceBook {
     /// # Errors
     /// `name` is `Default`, or no workspace has it, as on a repeat.
     pub fn delete(&mut self, name: &str) -> Result<DeleteOutcome, WorkspaceRefusal> {
-        if name == DEFAULT_WORKSPACE {
-            return Err(WorkspaceRefusal::DefaultProtected);
+        if let Some(refusal) = self.delete_refusal(name) {
+            return Err(refusal);
         }
-        let Some(recipe) = self.recipes.remove(name) else {
-            return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
-        };
+        let recipe = self.recipes.remove(name).expect("delete_refusal found it");
         self.renamed.retain(|_, current| current != name);
         let fallback = self.default_recipe().clone();
         let mut outcome = DeleteOutcome {
@@ -1050,7 +1071,7 @@ impl WorkspaceBook {
             state.workspace = DEFAULT_WORKSPACE.to_owned();
             state.opened = None;
             outcome.moved.push(*tab);
-            if state.copy == recipe {
+            if recipe.holds(&state.copy) {
                 state.copy.clone_from(&fallback);
                 outcome.adopted.push(*tab);
             } else {
@@ -1095,12 +1116,12 @@ pub fn capture_recipe(
     (layers, context_layers): (BTreeMap<String, bool>, Vec<BTreeMap<String, bool>>),
     footprint_style: Option<String>,
 ) -> WorkspaceRecipe {
-    let intervals = if tab.context_bars.is_empty() {
-        tab.time_bars.iter().count()
+    let context_bars = if tab.context_bars.is_empty() {
+        tab.time_bars.iter().cloned().collect()
     } else {
-        tab.context_bars.len()
+        tab.context_bars.clone()
     };
-    let panes = tab.context_layouts.len().max(intervals);
+    let panes = tab.context_layouts.len().max(context_bars.len());
     // A pane the stack has not sized yet is automatic and open, which is what
     // a missing entry means: one reading for both, or a fresh pane is an edit.
     let mut context_heights = tab.context_heights.clone();
@@ -1119,10 +1140,13 @@ pub fn capture_recipe(
             .map(|pane| ContextPaneRecipe {
                 indicators: indicators_of(layouts, tab.context_layouts.get(pane).copied()),
                 layers: context_layers.get(pane).cloned().unwrap_or_default(),
+                bars: context_bars.get(pane).cloned(),
             })
             .collect(),
         layers,
         footprint_style,
+        flow_bars: Some(tab.flow_bars.clone()),
+        legacy_context_bars: Vec::new(),
     }
 }
 

@@ -1,6 +1,6 @@
 //! The workspace menus' state, apart from their pixels: the status bar cell's
-//! menu, the delete that asks twice, the dialog that asks for a name and the
-//! close that asks per tab holding edits.
+//! menu, the Manage workspaces dialog whose delete asks twice, the dialog that
+//! asks for a name and the close that asks per tab holding edits.
 
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 
@@ -18,6 +18,8 @@ pub enum WorkspaceCommand {
     BeginNew,
     /// Ask a new name for this workspace.
     BeginRename(String),
+    /// Open the Manage workspaces dialog.
+    BeginManage,
     Delete(String),
     /// The dialog's Enter.
     SubmitDialog,
@@ -53,13 +55,35 @@ pub struct NameDialog {
     pub wants_focus: bool,
 }
 
-/// What a click on the delete row meant.
+/// What a click on a row's Delete meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteClick {
-    /// The first click: the row now states the outcome.
+    /// The first click: the row now states the outcome and asks.
     Armed,
     /// The second click on the same workspace.
     Confirmed,
+}
+
+/// The Manage workspaces dialog: every workspace, with its Rename and Delete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManageDialog {
+    /// The tab whose menu opened it: the dialog shows in that tab's window.
+    pub tab: u64,
+    /// The workspace whose Delete asks for its confirmation.
+    pub armed: Option<String>,
+}
+
+impl ManageDialog {
+    /// A click on `name`'s Delete. Arming another workspace disarms the first,
+    /// so no confirmation ever lands on a name it did not read.
+    pub fn click_delete(&mut self, name: &str) -> DeleteClick {
+        if self.armed.as_deref() == Some(name) {
+            self.armed = None;
+            return DeleteClick::Confirmed;
+        }
+        self.armed = Some(name.to_owned());
+        DeleteClick::Armed
+    }
 }
 
 /// The menus' state across frames.
@@ -69,7 +93,7 @@ pub struct WorkspaceMenuState {
     /// and acts in the window presenting that tab, so a torn-off window's
     /// cell never reaches another window's tab.
     pub chip_menu: Option<u64>,
-    pub armed_delete: Option<String>,
+    pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
 }
@@ -79,12 +103,43 @@ impl WorkspaceMenuState {
     /// on that tab, or close it when it was already open there.
     pub fn toggle_chip_menu(&mut self, tab: u64) {
         self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
-        self.armed_delete = None;
     }
 
     pub fn close_chip_menu(&mut self) {
         self.chip_menu = None;
-        self.armed_delete = None;
+    }
+
+    /// Open the Manage workspaces dialog in the window presenting `tab`.
+    pub fn open_manage(&mut self, tab: u64) {
+        self.manage = Some(ManageDialog { tab, armed: None });
+    }
+
+    pub fn close_manage(&mut self) {
+        self.manage = None;
+    }
+
+    /// Open a surface on `tab` as a capture asks (`QUANTICK_WORKSPACE_MENU`):
+    /// `cell` the cell's menu, `manage` the dialog, `manage:delete=<name>`
+    /// with that row's Delete armed, `manage:rename=<name>` with its Rename
+    /// asked over it. Answers false, opening nothing, for any other token.
+    pub fn stage(&mut self, tab: u64, token: &str) -> bool {
+        let (surface, row) = token.split_once(':').unwrap_or((token, ""));
+        match (surface, row.split_once('=')) {
+            ("cell", None) => self.toggle_chip_menu(tab),
+            ("manage", None) => self.open_manage(tab),
+            ("manage", Some(("delete", name))) => {
+                self.open_manage(tab);
+                if let Some(dialog) = &mut self.manage {
+                    dialog.click_delete(name);
+                }
+            }
+            ("manage", Some(("rename", name))) => {
+                self.open_manage(tab);
+                self.open_rename(tab, name);
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// The window presenting `presented` (`None` on Home) holds `window`'s
@@ -116,17 +171,6 @@ impl WorkspaceMenuState {
     #[must_use]
     pub fn chip_menu_on(&self, tab: u64) -> bool {
         self.chip_menu == Some(tab)
-    }
-
-    /// A click on the delete row of `name`. Arming another workspace disarms
-    /// the first, so no second click ever lands on a name it did not read.
-    pub fn click_delete(&mut self, name: &str) -> DeleteClick {
-        if self.armed_delete.as_deref() == Some(name) {
-            self.armed_delete = None;
-            return DeleteClick::Confirmed;
-        }
-        self.armed_delete = Some(name.to_owned());
-        DeleteClick::Armed
     }
 
     fn open_dialog(&mut self, tab: u64, mode: NameDialogMode, name: String) {
@@ -176,30 +220,60 @@ impl WorkspaceMenuState {
 mod tests {
     use super::*;
 
+    fn managing() -> ManageDialog {
+        let mut state = WorkspaceMenuState::default();
+        state.open_manage(7);
+        state.manage.expect("opened")
+    }
+
     #[test]
     fn delete_asks_twice_for_the_same_name() {
-        let mut state = WorkspaceMenuState::default();
-        assert_eq!(state.click_delete("Scalp"), DeleteClick::Armed);
-        assert_eq!(state.click_delete("Scalp"), DeleteClick::Confirmed);
-        assert_eq!(state.armed_delete, None);
+        let mut dialog = managing();
+        assert_eq!(dialog.click_delete("Scalp"), DeleteClick::Armed);
+        assert_eq!(dialog.click_delete("Scalp"), DeleteClick::Confirmed);
+        assert_eq!(dialog.armed, None);
     }
 
     #[test]
     fn a_second_click_on_another_name_only_moves_the_arm() {
-        let mut state = WorkspaceMenuState::default();
-        state.click_delete("Scalp");
-        assert_eq!(state.click_delete("Tape"), DeleteClick::Armed);
-        assert_eq!(state.armed_delete.as_deref(), Some("Tape"));
+        let mut dialog = managing();
+        dialog.click_delete("Scalp");
+        assert_eq!(dialog.click_delete("Tape"), DeleteClick::Armed);
+        assert_eq!(dialog.armed.as_deref(), Some("Tape"));
     }
 
     #[test]
-    fn closing_the_chip_menu_disarms_the_delete() {
+    fn a_capture_stages_each_workspace_surface_and_refuses_the_rest() {
         let mut state = WorkspaceMenuState::default();
-        state.toggle_chip_menu(7);
-        state.click_delete("Scalp");
-        state.close_chip_menu();
-        assert_eq!(state.chip_menu, None);
-        assert_eq!(state.armed_delete, None);
+        assert!(state.stage(7, "cell"));
+        assert!(state.chip_menu_on(7));
+        assert!(state.stage(7, "manage:delete=Scalp"));
+        assert_eq!(
+            state.manage.as_ref().unwrap().armed.as_deref(),
+            Some("Scalp")
+        );
+        assert!(state.stage(7, "manage:rename=Scalp"));
+        assert!(
+            state.dialog.is_some(),
+            "the rename is asked over the dialog"
+        );
+        let mut fresh = WorkspaceMenuState::default();
+        assert!(!fresh.stage(7, "manage:drop=Scalp"));
+        assert!(!fresh.stage(7, "file"));
+        assert_eq!(fresh, WorkspaceMenuState::default(), "nothing opened");
+    }
+
+    #[test]
+    fn reopening_the_manage_dialog_disarms_the_delete() {
+        let mut state = WorkspaceMenuState::default();
+        state.open_manage(7);
+        if let Some(dialog) = &mut state.manage {
+            dialog.click_delete("Scalp");
+        }
+        state.close_manage();
+        assert_eq!(state.manage, None);
+        state.open_manage(7);
+        assert_eq!(state.manage.expect("opened").armed, None);
     }
 
     #[test]

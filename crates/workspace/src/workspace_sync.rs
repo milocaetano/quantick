@@ -229,6 +229,22 @@ impl TabRecipeSync {
         if copy.footprint_style.is_none() && edit.footprint_style == baseline.footprint_style {
             edit.footprint_style = None;
         }
+        // A recipe saved before workspaces kept bar rules holds none: the
+        // tab's own rule is no edit until the trader moves it.
+        if copy.flow_bars.is_none() && edit.flow_bars == baseline.flow_bars {
+            edit.flow_bars = None;
+        }
+        for (index, pane) in edit.context_panes.iter_mut().enumerate() {
+            let kept = copy
+                .context_panes
+                .get(index)
+                .is_none_or(|pane| pane.bars.is_none());
+            let unmoved =
+                baseline.context_panes.get(index).map(|pane| &pane.bars) == Some(&pane.bars);
+            if kept && unmoved {
+                pane.bars = None;
+            }
+        }
         (edit != *copy).then_some(edit)
     }
 

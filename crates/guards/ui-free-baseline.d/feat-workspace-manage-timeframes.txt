@@ -1,0 +1,11 @@
+# Raised by 3 lines for `feat/workspace-manage-timeframes`: putting a
+# workspace's bar rules on the panes (`tab_workspaces::apply_recipe_canvas`)
+# calls the tab's own `set_pane_bar_spec`, which only `app` holds, and logs a
+# rule the feed refuses. Which rules apply is decided headless, by
+# `WorkspaceRecipe::rules_over`.
+crates/app +3
+!budget +3
+# Test round: the QUANTICK_WORKSPACE_MENU capture hook's read and refusal
+# log; the token is parsed headless by `WorkspaceMenuState::stage`.
+crates/app +7
+!budget +7
