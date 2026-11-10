@@ -352,6 +352,7 @@ mod tests {
             quantity: dec(quantity),
             start_ms,
             end_ms,
+            left_view: false,
         }
     }
 
@@ -479,5 +480,48 @@ mod tests {
         assert!(grouped.transitions.is_empty());
         assert_eq!(grouped.runs[0].start_ms, 0);
         assert_eq!(grouped.runs[0].quantity, dec("8"));
+    }
+
+    #[test]
+    fn a_run_that_left_the_view_is_not_a_transition() {
+        let left = LiquidityRun {
+            left_view: true,
+            ..run(BookSide::Bid, "100", "4", 100, Some(500))
+        };
+        let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, dec("5"));
+        let grouped = sweep_grouped_runs([&left], [&coverage(100, None)], grouping, window());
+        assert!(grouped.transitions.is_empty());
+        assert_eq!(grouped.runs.len(), 1, "the band still ends where it did");
+        assert_eq!(grouped.runs[0].end_ms, 500);
+    }
+
+    #[test]
+    fn a_range_reports_only_the_reduction_it_observed() {
+        // One visual range, two base levels: 101 slides out of view while 100
+        // really drops from eight to four.
+        let runs = [
+            LiquidityRun {
+                left_view: true,
+                ..run(BookSide::Bid, "101", "10", 100, Some(500))
+            },
+            run(BookSide::Bid, "100", "8", 100, Some(500)),
+            run(BookSide::Bid, "100", "4", 500, None),
+        ];
+        let grouping =
+            EffectiveGrouping::resolve(DisplayGrouping::Multiple(2), Decimal::ONE, dec("5"));
+        let grouped = sweep_grouped_runs(&runs, [&coverage(100, None)], grouping, window());
+        assert_eq!(
+            grouped.transitions,
+            [LiquidityTransition {
+                generation: 7,
+                side: BookSide::Bid,
+                price_bucket: dec("100"),
+                timestamp_ms: 500,
+                before: dec("8"),
+                after: dec("4"),
+            }]
+        );
+        let quantities: Vec<_> = grouped.runs.iter().map(|run| run.quantity).collect();
+        assert_eq!(quantities, [dec("18"), dec("4")]);
     }
 }

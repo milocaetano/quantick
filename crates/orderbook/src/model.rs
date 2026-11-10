@@ -64,6 +64,14 @@ pub enum BookCoverage {
         /// Maximum number of levels returned per side.
         levels_per_side: usize,
     },
+    /// The source republishes its whole visible ladder, at most this many
+    /// levels on each side, and nothing outside it. The ladder slides with the
+    /// price, so a level that drops off its far end left the view: the source
+    /// stopped reporting it, it did not report it gone.
+    Window {
+        /// Maximum number of levels the ladder shows per side.
+        levels_per_side: usize,
+    },
 }
 
 /// A complete replacement for the currently known local book.
