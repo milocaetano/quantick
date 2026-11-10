@@ -12,6 +12,22 @@ Exact immutable harness: `.artifacts/alerts-ui-native/bin/quantick-alerts-485a77
 - [Independent consumer](alerts-agent-consumer.md): final supported-schema and admitted local transport checks pass, including explicit removal permission, stale revisions, retries and history retention. The fixed-scope MCP adapter cannot request deletion; a supported local client with explicit scope and app grant can. Optional MCP opt-in is follow-up work.
 - [Simulated trader review](alerts-trader-review.md): persona feedback and inspected final captures, not observed trader input.
 - [Native performance](alerts-native-performance.md): historical results remain separate from the exact-final matched refresh and its host-load limits.
-- [Pending interaction matrix](alerts-native-interaction-checklist.md): independent native mouse/keyboard/scroll/Escape/focus workflows still required for C11.
+- [Native interaction matrix](alerts-native-interaction-checklist.md): C11, run with real Windows input on 2026-11-10.
 
-The supported Windows input helper previously failed with a missing pipe (OS error 2). Static images, socket calls and unit input injection are not substitutes. No acceptance-ready claim is made. The concrete next action is to restore the supported helper and complete the pending matrix on the identified executable.
+## C11 native interaction (2026-11-10)
+
+The supported helper still failed with a missing pipe (OS error 2). C11 was therefore run with guarded `SendInput` instead: every mouse, wheel and key event was sent only after checking that the isolated demo held the foreground and the cursor was inside it. The executables, captures and input logs are in the checklist.
+
+- **Defects found and fixed.** The pass found seven defects, all fixed in commits `03b2fdf4`, `3e7232dd`, `44e19bb9` and `5858a812`, each with a regression test: the context bar covered the editor; the summary showed debug names; the operator popup hid choices; the expiration error contradicted its preview; a search claimed there were no alerts; Tab focus landed out of view; a toast came up empty.
+- **Rechecked natively.** All seven fixes were rechecked with native input on the rebuilt executables.
+- **Checks after the fixes.** On the final tree, app tests: 2,268 passed, 26 ignored. Clippy and guards are clean.
+
+The matrix now passes, except for these open items:
+
+- The storage-error state was not driven natively.
+- A stale-revision action was not driven natively.
+- Whether the preview sound was audible is unverified.
+- Focus restoration after closing was not checked.
+- The inspector was not opened.
+
+**Review gap.** These fixes came after the exhausted two-round review budget and have had no independent review. No review marker was written and no acceptance-ready claim is made. Whether the post-review fixes need one more review, and the observations at the end of the checklist, are for the trader to decide.
