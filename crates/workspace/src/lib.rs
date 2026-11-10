@@ -6,6 +6,7 @@ pub mod bundle;
 pub mod canvas_layout;
 pub mod context_opening;
 pub mod dock;
+pub mod drawing_identity;
 pub mod indicator_document;
 pub mod layout_commit;
 pub mod layout_document;

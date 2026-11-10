@@ -40,6 +40,7 @@ fn level(id: u64, price: f64, shared: bool) -> SavedDrawing {
         shared,
         payload: None,
         text: None,
+        durable_identity: None,
         origin: None,
         bars: None,
     }
