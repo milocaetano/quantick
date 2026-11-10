@@ -122,9 +122,12 @@ pub fn remember_last_style<T: ToolCatalog>(
     before: &Drawing<T>,
     after: &Drawing<T>,
 ) -> bool {
-    // A mark someone else placed is restyled for its own sake; it says
-    // nothing about the trader's own pencil.
-    before.author.is_none() && remember_style(host, after.tool, before.style, after.style)
+    // Two different objects (the list moved under the gesture) say nothing
+    // about each other. A mark someone else placed is restyled for its own
+    // sake; it says nothing about the trader's own pencil.
+    before.id == after.id
+        && before.author.is_none()
+        && remember_style(host, after.tool, before.style, after.style)
 }
 
 fn remember_style<T: ToolCatalog>(
