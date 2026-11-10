@@ -485,3 +485,47 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
         "the bar returns once the alert surface closes"
     );
 }
+
+/// Native C11: a search matching nothing read "No alerts. Create one for a
+/// price or drawing." while alerts existed. A filtered-out list says so.
+#[test]
+fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
+    use crate::surfaces::{Surface, SurfaceEnv, alerts::AlertSurface, alerts::Request};
+    let (app, _commands) = app_with_history(200);
+    let mut book = quantick_alerts::AlertBook::default();
+    book.command(AlertCommand::Create(spec(&app)), 0)
+        .expect("the alert is valid");
+    let mut surface = AlertSurface::default();
+    let open = Request {
+        open: true,
+        ..Request::default()
+    };
+    surface.apply(&mut book, open).expect("opening is admitted");
+    surface.search = "nothing matches".into();
+    let env = SurfaceEnv {
+        alerts: Some(&book),
+        ..SurfaceEnv::quiet(std::time::Instant::now())
+    };
+    let ctx = egui::Context::default();
+    let mut labels = Vec::new();
+    for _ in 0..3 {
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            surface.draw(ctx, &env);
+        });
+        labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+    }
+    assert!(
+        labels
+            .iter()
+            .any(|text| text == "No alerts match the search."),
+        "{labels:?}"
+    );
+    assert!(!labels.iter().any(|text| text.starts_with("No alerts. ")));
+}

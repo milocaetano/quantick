@@ -39,7 +39,7 @@ pub(crate) struct AlertSurface {
     pending_fixture: Option<Subview>,
     draft: Option<Draft>,
     history: bool,
-    search: String,
+    pub(crate) search: String,
     newest_first: bool,
     error: Option<String>,
 }

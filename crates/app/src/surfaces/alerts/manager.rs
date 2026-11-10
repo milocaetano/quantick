@@ -55,6 +55,7 @@ impl AlertSurface {
             error(ui, "Alert definitions are unavailable.");
             return;
         };
+        let total = views.len();
         views.retain(|view| {
             view.spec
                 .name
@@ -71,7 +72,10 @@ impl AlertSurface {
             views.reverse();
         }
         if views.is_empty() {
-            ui.label("No alerts. Create one for a price or drawing.");
+            ui.label(match total {
+                0 => "No alerts. Create one for a price or drawing.",
+                _ => "No alerts match the search.",
+            });
         }
         for view in views {
             ui.push_id(view.spec.id.0, |ui| {
