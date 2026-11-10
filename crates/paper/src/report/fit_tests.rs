@@ -309,6 +309,12 @@ fn a_trade_row_never_cuts_a_price_or_its_instrument_at_the_docked_widths() {
         roomy.detail.left.concat(),
         "▷ BTCUSDT · 17:31:34 · 36m 35s · take profit"
     );
+    // Narrower than any dock (an enlarged font), the entry price stays and
+    // the exit is marked, never dropped in silence.
+    let cramped = fit_trade_row(60.0, SIDE_GAP, &btc, row_measure(false), row_measure(true));
+    let entry = btc.route.split_once(" → ").unwrap().0;
+    assert_eq!(cramped.head.left[1], format!("  {entry} → …"));
+    assert!(cramped.lead_below);
 }
 
 /// Line two gives way in a fixed order as the row narrows: the reason is

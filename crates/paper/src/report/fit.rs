@@ -245,11 +245,13 @@ pub struct TradeRowFit {
 }
 
 /// Fit a trade row into `width`, never cutting a price, the instrument or
-/// the clock. Line one keeps side, size and the whole route; when the lead
+/// the clock at any docked width. Line one keeps side, size and the whole
+/// route; when the lead
 /// cannot stand beside them it moves to line two's right and the qualifier
 /// gives way to it. Line two cuts the reason at its end, then drops it,
 /// then drops the duration (a figure goes whole or not at all), then drops
-/// the qualifier. Only a font no docked width holds cuts what is left.
+/// the qualifier. Only a font no docked width holds marks the exit price
+/// "…" (the entry stays) and then elides side and size.
 /// `head(i, text)` measures line one's piece `i`, the lead at 2; `detail`
 /// measures line two's piece `i`, the qualifier at 5.
 pub fn fit_trade_row(
@@ -269,12 +271,14 @@ pub fn fit_trade_row(
         (vec![text.head.to_owned(), full], lead.to_owned())
     } else {
         let entry = text.route.split_once(" → ").map(|(entry, _)| entry);
-        let routes = [Some(full), entry.map(|entry| format!("  {entry} → …"))];
-        let route = routes
-            .into_iter()
-            .flatten()
-            .find(|route| words(route) <= width)
-            .unwrap_or_default();
+        // Past any docked width (an enlarged font) the exit price yields to
+        // a marked "…", never silently: the entry always stays.
+        let short = entry.map(|entry| format!("  {entry} → …"));
+        let route = if words(&full) <= width {
+            full
+        } else {
+            short.unwrap_or(full)
+        };
         let side = elide_to_width(text.head, width - head(1, &route), |t| head(0, t));
         (vec![side, route], String::new())
     };
