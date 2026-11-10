@@ -549,7 +549,7 @@ impl PresetHost for RecordingPresetHost<'_> {
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct DrawingChromeAsk {
-    pub alert_target: Option<quantick_alerts::DurableDrawingRef>,
+    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
     /// Replace the temporary secondary-drag ruler with the chosen durable
     /// drawing through its registered annotation action.
     pub place_quick_range: Option<quick_range::PendingRangePlacement>,
@@ -645,6 +645,7 @@ impl DrawingChromeAsk {
         );
         self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
+        self.alert_target = self.alert_target.take().or(other.alert_target);
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
             .commit_edit_gesture

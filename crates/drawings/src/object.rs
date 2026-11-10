@@ -116,6 +116,15 @@ impl<T> Drawing<T> {
 }
 
 impl Drawing<crate::DrawingTool> {
+    /// Geometry families that the alert target contract can address.
+    #[must_use]
+    pub fn supports_alert_target(&self) -> bool {
+        matches!(
+            self.tool.id(),
+            "trend-line" | "parallel-channel" | "rectangle"
+        )
+    }
+
     /// Whether the OHLC magnet moves this object's anchors at all: a tool
     /// that snaps by its own rule (a mark, an anchored VWAP) has no magnet.
     #[must_use]

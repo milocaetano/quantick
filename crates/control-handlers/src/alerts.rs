@@ -2,6 +2,16 @@
 use quantick_alerts::{AlertCommand, AlertError, AlertEvent, AlertSpec, AlertView, CommandResult};
 
 pub trait AlertDefinitionsPort {
+    /// Success is returned only after a committed document contains the identity.
+    fn alert_resolve_target(
+        &mut self,
+        _selector: quantick_control_schema::alerts::DrawingSelector,
+    ) -> Result<
+        quantick_alerts::DurableDrawingRef,
+        quantick_control_schema::alerts::TargetResolveError,
+    > {
+        Err(quantick_control_schema::alerts::TargetResolveError::Unavailable)
+    }
     fn alert_book(&self) -> &quantick_alerts::AlertBook;
     fn alert_book_at(&mut self) -> (&mut quantick_alerts::AlertBook, i64);
     fn alert_command(&mut self, command: AlertCommand) -> Result<CommandResult, AlertError> {

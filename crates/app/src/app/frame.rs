@@ -811,7 +811,15 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        self.surfaces.alerts.open_drawing(ask.alert_target.take());
+        if let Some(selector) = ask.alert_target.take() {
+            match self.layout_adapter().resolve_alert_target(selector) {
+                Ok(target) => self.surfaces.alerts.open_drawing(Some(target)),
+                Err(error) => self
+                    .surfaces
+                    .toast
+                    .note(format!("Alert target unavailable: {error:?}"), now),
+            }
+        }
         if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;
             let result = self.control_action(
