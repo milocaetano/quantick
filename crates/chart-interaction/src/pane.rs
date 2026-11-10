@@ -552,28 +552,32 @@ mod tests {
         );
         assert_eq!(model.viewport.px_per_bar(), 16.0);
     }
+    fn canvas_repeat(canvas: Option<CanvasHit>, repeat: CanvasRepeat) -> Intent {
+        Intent::ReturnToLive {
+            tape: false,
+            overlay: None,
+            canvas,
+            repeat: Some(repeat),
+        }
+    }
     /// A double click on a candle asks for the chart settings and leaves
-    /// the view where the trader put it; on empty canvas it asks for nothing
-    /// and returns to the live edge at the overview spacing.
+    /// the view where the trader put it; on empty canvas, a divider or a
+    /// drawing it asks for nothing, returns to the live edge at the spacing
+    /// the trader had, and asks the next frame to centre the last price.
     #[test]
     fn a_canvas_double_click_splits_on_the_candle() {
         let mut model = Model::default();
-        model
-            .viewport
-            .set_px_per_bar(crate::viewport::MAX_CANDLE_WIDTH);
+        model.viewport.set_px_per_bar(40.0);
         model.viewport.pan_pixels(512.0, 400);
         let before = (
             model.viewport.px_per_bar(),
             model.viewport.right_edge_bar(400),
         );
         assert!(CanvasHit::Candle.opens_chart_settings());
+        assert!(CanvasRepeat::Double.opens_chart_settings(Some(CanvasHit::Candle)));
         let candle = update(
             &mut model,
-            Intent::ReturnToLive {
-                tape: false,
-                overlay: None,
-                canvas: Some(CanvasHit::Candle),
-            },
+            canvas_repeat(Some(CanvasHit::Candle), CanvasRepeat::Double),
         );
         assert!(candle.is_empty());
         assert_eq!(
@@ -585,25 +589,20 @@ mod tests {
             "the candle double click moves nothing"
         );
         assert!(!model.viewport.follows_live());
+        assert!(!model.take_live_centre(), "nor centres the price");
 
-        assert!(!model.live_overview(), "no laid-out candles, nothing moves");
-        assert!(!model.viewport.follows_live());
-        model.candles_px = 960.0;
-        let empty = CanvasHit::Empty;
-        assert!(!empty.opens_chart_settings());
-        let _ = update(
-            &mut model,
-            Intent::ReturnToLive {
-                tape: false,
-                overlay: None,
-                canvas: Some(empty),
-            },
-        );
-        assert!(model.viewport.follows_live());
-        assert_eq!(model.viewport.px_per_bar(), 6.0, "960 px / 160 bars");
+        for canvas in [Some(CanvasHit::Empty), None] {
+            model.viewport.pan_pixels(512.0, 400);
+            assert!(!CanvasRepeat::Double.opens_chart_settings(canvas));
+            let effects = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Double));
+            assert!(effects.is_empty(), "{canvas:?}");
+            assert!(model.viewport.follows_live(), "{canvas:?}: back to live");
+            assert_eq!(model.viewport.px_per_bar(), 40.0, "{canvas:?}: spacing kept");
+            assert!(model.take_live_centre(), "{canvas:?}: the price centres");
+            assert!(!model.take_live_centre(), "once");
+        }
 
-        // The live chip and every other target keep the plain snap.
-        model.viewport.set_px_per_bar(40.0);
+        // The live chip keeps the plain snap: no centring, spacing kept.
         model.viewport.pan_pixels(400.0, 400);
         let _ = update(
             &mut model,
@@ -611,40 +610,180 @@ mod tests {
                 tape: false,
                 overlay: None,
                 canvas: None,
+                repeat: None,
             },
         );
         assert!(model.viewport.follows_live());
         assert_eq!(model.viewport.px_per_bar(), 40.0);
+        assert!(!model.take_live_centre());
+    }
+    /// The third click on the canvas does the double click's return, then
+    /// widens the candles by [`TRIPLE_CLICK_ZOOM`], up to the widest a
+    /// candle may be.
+    #[test]
+    fn a_canvas_triple_click_also_zooms_the_candles_in() {
+        use crate::viewport::{MAX_CANDLE_WIDTH, TRIPLE_CLICK_ZOOM};
+        assert_eq!(TRIPLE_CLICK_ZOOM, 2.0);
+        for canvas in [Some(CanvasHit::Empty), None] {
+            let mut model = Model::default();
+            model.viewport.set_px_per_bar(20.0);
+            let _ = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Double));
+            assert!(model.take_live_centre());
+            assert_eq!(model.viewport.px_per_bar(), 20.0, "the double keeps it");
+            model.viewport.pan_pixels(300.0, 400);
+            let effects = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Triple));
+            assert!(effects.is_empty());
+            assert!(model.viewport.follows_live(), "{canvas:?}");
+            assert_eq!(model.viewport.px_per_bar(), 40.0, "{canvas:?}: twice");
+            assert!(model.take_live_centre(), "{canvas:?}: centred again");
+            model.viewport.set_px_per_bar(MAX_CANDLE_WIDTH - 10.0);
+            let _ = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Triple));
+            assert_eq!(model.viewport.px_per_bar(), MAX_CANDLE_WIDTH, "clamped");
+        }
+    }
+    /// The candle, the tape and an overlay answered the double click; the
+    /// third click asks nothing more of them.
+    #[test]
+    fn a_triple_click_repeats_nothing_on_the_candle_tape_or_overlay() {
+        let mut model = Model::default();
+        model.viewport.set_px_per_bar(20.0);
+        model.viewport.pan_pixels(300.0, 400);
+        let before = (
+            model.viewport.px_per_bar(),
+            model.viewport.right_edge_bar(400),
+        );
+        assert!(!CanvasRepeat::Triple.opens_chart_settings(Some(CanvasHit::Candle)));
+        let candle = update(
+            &mut model,
+            canvas_repeat(Some(CanvasHit::Candle), CanvasRepeat::Triple),
+        );
+        let tape = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: true,
+                overlay: None,
+                canvas: None,
+                repeat: Some(CanvasRepeat::Triple),
+            },
+        );
+        let overlay = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: Some(7),
+                canvas: None,
+                repeat: Some(CanvasRepeat::Triple),
+            },
+        );
+        assert!(candle.is_empty() && tape.is_empty() && overlay.is_empty());
+        assert_eq!(model.pending_settings, None, "no second overlay dialog");
+        assert_eq!(
+            (
+                model.viewport.px_per_bar(),
+                model.viewport.right_edge_bar(400)
+            ),
+            before
+        );
+        assert!(!model.take_live_centre());
+        // Their double clicks are what they always were.
+        let tape = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: true,
+                overlay: None,
+                canvas: None,
+                repeat: Some(CanvasRepeat::Double),
+            },
+        );
+        assert_eq!(tape, [Effect::TapeLive]);
+        let _ = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: Some(7),
+                canvas: None,
+                repeat: Some(CanvasRepeat::Double),
+            },
+        );
+        assert_eq!(model.pending_settings, Some(7));
+    }
+    /// The named call's two centred returns are the gestures' own.
+    #[test]
+    fn the_live_centre_is_the_gestures_return() {
+        let mut model = Model::default();
+        model.viewport.set_px_per_bar(12.0);
+        model.viewport.pan_pixels(300.0, 400);
+        model.live_centre(false);
+        assert!(model.viewport.follows_live());
+        assert_eq!(model.viewport.px_per_bar(), 12.0);
+        assert!(model.take_live_centre());
+        model.live_centre(true);
+        assert_eq!(model.viewport.px_per_bar(), 24.0);
+        assert!(model.take_live_centre());
     }
     /// A rail click followed by a placement click, or two quick anchors, is
     /// not the canvas's double click; two clicks on the free canvas are.
     #[test]
     fn a_double_click_counts_only_when_both_clicks_were_the_canvas() {
-        const SINGLE: WindowClick = WindowClick::Canvas { double: false };
-        const DOUBLE: WindowClick = WindowClick::Canvas { double: true };
-        assert_eq!(WindowClick::of(false, true, true), WindowClick::None);
-        assert_eq!(WindowClick::of(true, false, true), WindowClick::Elsewhere);
-        assert_eq!(WindowClick::of(true, true, true), DOUBLE);
+        const SINGLE: WindowClick = WindowClick::Canvas { repeat: None };
+        const DOUBLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Double),
+        };
+        assert_eq!(CanvasRepeat::of(false, false), None);
+        assert_eq!(CanvasRepeat::of(true, false), Some(CanvasRepeat::Double));
+        assert_eq!(CanvasRepeat::of(false, true), Some(CanvasRepeat::Triple));
+        let double = Some(CanvasRepeat::Double);
+        assert_eq!(WindowClick::of(false, true, double), WindowClick::None);
+        assert_eq!(WindowClick::of(true, false, double), WindowClick::Elsewhere);
+        assert_eq!(WindowClick::of(true, true, double), DOUBLE);
         let mut gate = DoubleClickGate::default();
-        assert!(!gate.observe(1, WindowClick::Elsewhere), "the drawing rail");
-        assert!(!gate.observe(2, DOUBLE), "the placement click after it");
+        assert_eq!(gate.observe(1, WindowClick::Elsewhere), None, "the rail");
+        assert_eq!(gate.observe(2, DOUBLE), None, "the placement click after it");
         let mut anchors = DoubleClickGate::default();
-        assert!(!anchors.observe(1, WindowClick::Elsewhere), "tool armed");
-        assert!(!anchors.observe(2, DOUBLE), "the second, tool disarmed");
+        assert_eq!(anchors.observe(1, WindowClick::Elsewhere), None, "armed");
+        assert_eq!(anchors.observe(2, DOUBLE), None, "the second, disarmed");
         let mut canvas = DoubleClickGate::default();
-        assert!(!canvas.observe(1, SINGLE));
-        assert!(!canvas.observe(2, WindowClick::None), "idle frames between");
-        assert!(canvas.observe(3, DOUBLE), "two clicks on the canvas");
+        assert_eq!(canvas.observe(1, SINGLE), None);
+        assert_eq!(canvas.observe(2, WindowClick::None), None, "idle between");
+        assert_eq!(canvas.observe(3, DOUBLE), double, "two canvas clicks");
+    }
+    /// The third click counts only after the canvas's own double click: a
+    /// toolkit triple whose double the gate refused is no triple either.
+    #[test]
+    fn a_triple_click_counts_only_after_the_canvas_double_click() {
+        const SINGLE: WindowClick = WindowClick::Canvas { repeat: None };
+        const DOUBLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Double),
+        };
+        const TRIPLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Triple),
+        };
+        let mut canvas = DoubleClickGate::default();
+        assert_eq!(canvas.observe(1, SINGLE), None);
+        assert_eq!(canvas.observe(2, DOUBLE), Some(CanvasRepeat::Double));
+        assert_eq!(canvas.observe(3, WindowClick::None), None);
+        assert_eq!(canvas.observe(4, TRIPLE), Some(CanvasRepeat::Triple));
+        let mut rail = DoubleClickGate::default();
+        assert_eq!(rail.observe(1, WindowClick::Elsewhere), None);
+        assert_eq!(rail.observe(2, DOUBLE), None, "refused double");
+        assert_eq!(rail.observe(3, TRIPLE), None, "so no triple");
+        let mut missed = DoubleClickGate::default();
+        assert_eq!(missed.observe(1, SINGLE), None);
+        assert_eq!(missed.observe(2, DOUBLE), Some(CanvasRepeat::Double));
+        assert_eq!(missed.observe(5, TRIPLE), None, "frames went unseen");
     }
     /// A canvas click, then frames the pane never ran (a tab switch, where
     /// any click went unseen): the next canvas click is no double click.
     #[test]
     fn a_frame_the_canvas_missed_forgets_its_last_click() {
+        const DOUBLE: WindowClick = WindowClick::Canvas {
+            repeat: Some(CanvasRepeat::Double),
+        };
         let mut gate = DoubleClickGate::default();
-        assert!(!gate.observe(1, WindowClick::Canvas { double: false }));
-        assert!(!gate.observe(4, WindowClick::Canvas { double: true }));
+        assert_eq!(gate.observe(1, WindowClick::Canvas { repeat: None }), None);
+        assert_eq!(gate.observe(4, DOUBLE), None);
         // Seen again back to back, the next pair counts.
-        assert!(gate.observe(5, WindowClick::Canvas { double: true }));
+        assert_eq!(gate.observe(5, DOUBLE), Some(CanvasRepeat::Double));
     }
     #[test]
     fn close_commits_once_and_ignores_a_replaced_drawing() {

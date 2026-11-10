@@ -1,7 +1,6 @@
 // Pane model integration preserves the existing chart behavior.
 use super::*;
 use quantick_chart_interaction::pane::CanvasHit;
-use quantick_chart_interaction::viewport::MAX_CANDLE_WIDTH;
 
 /// Two surfaces that must agree: the tag a trader reads off the axis and
 /// the slot a control client reads out of the cursor scope are one answer,
@@ -169,21 +168,20 @@ fn a_click_off_the_canvas_then_one_on_a_candle_is_no_double_click() {
     assert!(!pane.model.viewport.follows_live());
 }
 
-/// On empty canvas the double click opens nothing and returns to the live
-/// edge at the overview spacing; panned back into history, a second one
-/// does it again at the same spacing.
-#[test]
-fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
-    let ctx = egui::Context::default();
-    let (mut pane, areas) = panned_pane(&ctx, MAX_CANDLE_WIDTH);
-    let overview = pane
-        .model
-        .viewport
-        .overview_px_per_bar(pane.model.candles_px);
-    assert!(overview < MAX_CANDLE_WIDTH, "the overview is a zoom-out");
+/// Well above every fixture candle (1..2) on the 0..3 axis.
+fn open_canvas(pane: &ChartPane, areas: &PlotAreas) -> egui::Pos2 {
     let (_, _, _, scale) = pane.hit_test().last_projection().expect("drawn");
-    // Well above every fixture candle (1..2) on the 0..3 axis.
-    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(2.6));
+    egui::pos2(areas.chart.center().x, scale.y(2.6))
+}
+
+/// On empty canvas the double click opens nothing, returns to the live edge
+/// at the spacing the trader had and asks the frame to centre the last
+/// price; panned back into history, a second one does it again.
+#[test]
+fn a_double_click_on_empty_canvas_returns_to_live_and_keeps_the_spacing() {
+    let ctx = egui::Context::default();
+    let (mut pane, areas) = panned_pane(&ctx, 40.0);
+    let open_canvas = open_canvas(&pane, &areas);
     for round in ["first", "second"] {
         assert_eq!(
             double_click_asking(&mut pane, &ctx, TEST_PLOT, open_canvas),
@@ -191,13 +189,42 @@ fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
             "the {round} double click opens no dialog"
         );
         assert!(pane.model.viewport.follows_live(), "{round}: back to live");
-        assert_eq!(pane.model.viewport.px_per_bar(), overview, "{round}");
+        assert_eq!(pane.model.viewport.px_per_bar(), 40.0, "{round}: kept");
+        assert!(pane.model.take_live_centre(), "{round}: price centred");
         // Back into history, and a second of idle frames: past twice the
         // double-click delay, so the toolkit reads the next pair as no triple.
-        pane.model.viewport.pan_pixels(40.0 * overview, 200);
+        pane.model.viewport.pan_pixels(400.0, 200);
         assert!(!pane.model.viewport.follows_live());
         for _ in 0..60 {
             let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
         }
     }
+}
+
+/// The third click on open canvas: the double click's return, then the
+/// candles twice as wide, the price centred again.
+#[test]
+fn a_triple_click_on_empty_canvas_also_zooms_the_candles_in() {
+    let ctx = egui::Context::default();
+    let (mut pane, areas) = panned_pane(&ctx, 20.0);
+    let open_canvas = open_canvas(&pane, &areas);
+    let mut asked = false;
+    for (click, pressed) in [(1, true), (1, false), (2, true), (2, false)] {
+        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
+            .1
+            .open_chart_settings;
+        if click == 2 && !pressed {
+            assert_eq!(pane.model.viewport.px_per_bar(), 20.0, "the double");
+            assert!(pane.model.take_live_centre());
+        }
+    }
+    for pressed in [true, false] {
+        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
+            .1
+            .open_chart_settings;
+    }
+    assert!(!asked, "no dialog");
+    assert!(pane.model.viewport.follows_live());
+    assert_eq!(pane.model.viewport.px_per_bar(), 40.0, "the triple doubles");
+    assert!(pane.model.take_live_centre(), "and centres again");
 }

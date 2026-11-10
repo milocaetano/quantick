@@ -375,6 +375,49 @@ mod tests {
         assert_eq!(v.resolve(AUTO), (90.0, 100.0));
     }
 
+    /// The canvas double click: the last price at mid-height, every bar of
+    /// the auto-fit still on the axis — inside the view, above it or below.
+    #[test]
+    fn centre_on_puts_the_price_mid_axis_and_keeps_every_bar() {
+        for (price, expected) in [
+            (108.0, (100.0, 116.0)),
+            (101.0, (92.0, 110.0)),
+            (120.0, (100.0, 140.0)),
+            (90.0, (70.0, 110.0)),
+        ] {
+            let mut v = PriceView::new();
+            assert!(v.centre_on(price, AUTO), "{price}");
+            assert!(!v.is_auto(), "{price}: a manual frame");
+            let (lo, hi) = v.resolve(AUTO);
+            assert_eq!((lo, hi), expected, "{price}");
+            assert!((f64::midpoint(lo, hi) - price).abs() < 1e-9);
+            assert!(lo <= AUTO.0 && hi >= AUTO.1, "{price}: no bar clipped");
+        }
+    }
+
+    /// Upside down the price still lands mid-height, and stays upside down.
+    #[test]
+    fn centre_on_keeps_the_orientation() {
+        for inverted in [false, true] {
+            let mut v = PriceView::new();
+            v.set_inverted(inverted);
+            v.pan(30.0, AUTO);
+            assert!(v.centre_on(104.0, AUTO));
+            assert_eq!(v.is_inverted(), inverted);
+            let scale = v.scale(AUTO, 0.0, 600.0);
+            assert!((scale.y(104.0) - 300.0).abs() < 1e-3, "{inverted}");
+        }
+    }
+
+    #[test]
+    fn centre_on_refuses_what_it_cannot_frame() {
+        let mut v = PriceView::new();
+        assert!(!v.centre_on(f64::NAN, AUTO));
+        assert!(!v.centre_on(105.0, (f64::NAN, 110.0)));
+        assert!(!v.centre_on(105.0, (105.0, 105.0)), "no span to hold");
+        assert!(v.is_auto(), "a refused centre leaves the frame alone");
+    }
+
     #[test]
     fn scale_carries_the_orientation() {
         let mut v = PriceView::new();

@@ -335,10 +335,67 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     disable_test_gateway(&mut app, &ctx);
 }
 
-/// The open-canvas double-click, by name: the candles back to the live edge
-/// at the overview spacing the gesture lands on; the tape has no overview.
+/// The canvas's double and triple click, by name: the candles back to the
+/// live edge at the spacing they had (the triple's twice that), and once the
+/// next frame fits the live view, the last price at mid-height with every
+/// bar still on the axis. The tape has no such return.
 #[test]
-fn the_live_overview_call_matches_the_open_canvas_double_click() {
+fn the_live_centre_calls_match_the_canvas_double_and_triple_click() {
+    use rust_decimal::prelude::ToPrimitive as _;
+    const RESET: &str = "chart.time_axis.reset";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane_id = pane.id;
+    let last = pane.state.bars().last().unwrap().close.to_f64().unwrap();
+    let directory = gateway_test_directory("time-axis-live-centre");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab_id = app.runtime.tabs.active_id().to_string();
+    let payload = |axis: &str, to: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis, "to": to});
+    for (to, spacing) in [("live_centre", 20.0_f32), ("live_centre_zoom_in", 40.0)] {
+        let viewport = &mut app.active_tab_mut().flow_pane.model.viewport;
+        viewport.set_px_per_bar(20.0);
+        viewport.pan_pixels(640.0, 200);
+        assert!(!viewport.follows_live());
+        let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles", to));
+        let viewport = &success_result(&candles)["viewport"];
+        assert_eq!(viewport["follows_live"], true, "{to}");
+        let px = viewport["pixels_per_bar"].as_str().unwrap();
+        assert_eq!(px.parse::<f32>().unwrap(), spacing, "{to}");
+        run_frame(&mut app, &ctx);
+        let readback = read_viewport(&mut app, &mut client, pane_id);
+        assert_eq!(readback["price_auto_fit"], false, "{to}: a held frame");
+        let bound = |name: &str| {
+            readback["price_range"][name]
+                .as_str()
+                .unwrap()
+                .parse::<f64>()
+                .unwrap()
+        };
+        let (low, high) = (bound("low"), bound("high"));
+        assert!(
+            (f64::midpoint(low, high) - last).abs() < 1e-6,
+            "{to}: {last} mid-axis in {low}..{high}"
+        );
+        let auto = app.active_tab().flow_pane.frame.auto_range.unwrap();
+        assert!(low <= auto.0 && high >= auto.1, "{to}: no bar clipped");
+        let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape", to));
+        assert_eq!(error_code(&tape), Some(codes::INVALID_REQUEST), "{to}");
+    }
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// `to: live_overview`, kept for callers that ask for it: the candles back
+/// to the live edge at the overview spacing; the tape has no overview.
+#[test]
+fn the_live_overview_call_returns_the_candles_to_a_live_overview() {
     const RESET: &str = "chart.time_axis.reset";
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
