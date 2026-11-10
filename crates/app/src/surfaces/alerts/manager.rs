@@ -42,6 +42,7 @@ impl AlertSurface {
                 if let Some(message) = &self.error {
                     error(ui, message);
                 }
+                super::editor::follow_focus(ui);
             });
     }
     fn draw_rows(
@@ -56,17 +57,11 @@ impl AlertSurface {
             return;
         };
         let total = views.len();
+        let needle = self.search.to_lowercase();
         views.retain(|view| {
-            view.spec
-                .name
-                .to_lowercase()
-                .contains(&self.search.to_lowercase())
-                || view
-                    .spec
-                    .market
-                    .symbol
-                    .to_lowercase()
-                    .contains(&self.search.to_lowercase())
+            let spec = &view.spec;
+            spec.name.to_lowercase().contains(&needle)
+                || spec.market.symbol.to_lowercase().contains(&needle)
         });
         if self.newest_first {
             views.reverse();

@@ -831,9 +831,7 @@ impl DrawingChromeSurface {
         self.pending_open_settings |= self.shared.open;
     }
 
-    /// This frame's facts from the window. `text_edit`: ask for the caret on
-    /// the next frame — the placement that just happened wants its note
-    /// typed. `surface_over`: a floating surface (Alerts) owns the pointer.
+    /// The window's facts: a placed note wants the caret; Alerts owns the pointer.
     pub fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
         self.pending_text_edit |= text_edit;
         self.surface_over = surface_over;

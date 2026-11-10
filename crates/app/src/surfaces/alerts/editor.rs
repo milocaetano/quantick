@@ -54,6 +54,7 @@ impl AlertSurface {
                 if let Some(message) = &self.error {
                     error(ui, message);
                 }
+                follow_focus(ui);
             });
         ui.separator();
         let mut cancel = false;
@@ -165,12 +166,7 @@ fn conditions(
                             .find(|choice| choice.target.as_ref() == Some(target))
                             .map(|choice| choice.kind),
                     };
-                    let label = quantick_alerts::operators::OPERATORS
-                        .iter()
-                        .find(|item| item.operator == predicate.operator)
-                        .map_or("Select operator", |item| {
-                            quantick_alerts::operators::label(kind, item.operator)
-                        });
+                    let label = quantick_alerts::operators::label(kind, predicate.operator);
                     egui::ComboBox::from_id_salt(("operator", kind.map(|kind| kind as u8)))
                         .selected_text(label)
                         .show_ui(ui, |ui| {
@@ -444,4 +440,13 @@ pub(super) fn summary(spec: &AlertSpec, context: Option<&Context>) -> String {
             .find(|c| c.target.as_ref() == Some(target))?;
         Some((choice.name.clone(), choice.kind))
     })
+}
+/// egui does not scroll to a control that gains keyboard focus by Tab.
+pub(super) fn follow_focus(ui: &egui::Ui) {
+    use egui::{Align::Center, style::ScrollAnimation};
+    let id = ui.memory(|memory| memory.focused());
+    let seen = id.and_then(|id| ui.ctx().read_response(id));
+    if let Some(seen) = seen.filter(|r| r.gained_focus() && ui.min_rect().contains_rect(r.rect)) {
+        seen.scroll_to_me_animation(Some(Center), ScrollAnimation::none());
+    }
 }

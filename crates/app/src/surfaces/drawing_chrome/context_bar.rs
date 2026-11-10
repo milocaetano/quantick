@@ -118,9 +118,8 @@ pub(crate) fn draw(
     // opaque to the pointer, so leaving it up would let it eat the click that
     // places the next object — the selection it belongs to is the one they
     // just finished, not the one they are starting.
-    // The manager already exposes these actions. Keep the parked position,
-    // but give its footer the pointer until it closes. An open floating
-    // surface such as Alerts owns the pointer the same way.
+    // The manager (or an open Alerts surface) owns the pointer until it closes;
+    // the bar keeps its parked position.
     if env.drawing_tool_armed || chrome.manager_open() || chrome.surface_over {
         return ask;
     }

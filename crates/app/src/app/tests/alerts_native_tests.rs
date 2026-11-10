@@ -529,3 +529,57 @@ fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
     );
     assert!(!labels.iter().any(|text| text.starts_with("No alerts. ")));
 }
+
+/// Native C11, short window: Tab moved focus to Expiration and the footer
+/// while the editor body stayed scrolled to the top, so the focused control
+/// sat hidden behind the footer. Every Tab stop must be on screen.
+#[test]
+fn tab_keeps_the_focused_control_visible_in_a_short_alert_editor() {
+    use crate::surfaces::{Surface, SurfaceEnv, alerts::AlertSurface};
+    let (app, _commands) = app_with_history(200);
+    let tab = app.active_tab();
+    let context =
+        super::super::alerts_runtime::context(tab, &tab.flow_pane, app.runtime.tabs.active_id(), 0);
+    let book = quantick_alerts::AlertBook::default();
+    let mut surface = AlertSurface::default();
+    surface.open_drawing(None);
+    let env = SurfaceEnv {
+        alerts: Some(&book),
+        alert_context: Some(&context),
+        ..SurfaceEnv::quiet(std::time::Instant::now())
+    };
+    let ctx = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 360.0));
+    let mut frame = |events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            surface.draw(ctx, &env);
+        })
+    };
+    for _ in 0..3 {
+        frame(Vec::new());
+    }
+    for step in 0..9 {
+        frame(vec![key_press(egui::Key::Tab)]);
+        let output = frame(Vec::new());
+        let footer = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Cancel" => Some(text.pos.y),
+                _ => None,
+            })
+            .expect("the footer is drawn");
+        let focused = ctx.memory(|memory| memory.focused()).expect("Tab focuses");
+        let rect = ctx.read_response(focused).expect("drawn").rect;
+        let in_footer = (rect.top() - footer).abs() < 8.0;
+        assert!(
+            in_footer || rect.bottom() <= footer,
+            "Tab stop {step} at {rect:?} is hidden behind the footer at {footer}"
+        );
+    }
+}
