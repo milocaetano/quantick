@@ -6493,3 +6493,144 @@ fn every_refused_agent_sound_is_reported_and_the_alarm_state_is_untouched() {
         "an agent's sound call must not mark the trader's alarm as already reported"
     );
 }
+
+/// C19: every canvas action runs through the control plane with a readable
+/// result, and the observer scene names a control that operates it: the
+/// window menu, a layout, minimize, maximize, restore, remove, add widget,
+/// float, dock, park, pop out and return.
+#[test]
+fn canvas_actions_drive_through_the_control_plane() {
+    use quantick_control_schema::canvas as wire;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    let size = TEST_WINDOW;
+    let settle = |app: &mut QuantickApp| {
+        for _ in 0..4 {
+            run_frame_at(app, &ctx, size);
+        }
+    };
+    settle(&mut app);
+    let mut seen = std::collections::BTreeSet::new();
+    let look = |app: &QuantickApp, seen: &mut std::collections::BTreeSet<String>| {
+        let scene = observer_scene(app);
+        let controls = scene["controls"]
+            .as_array()
+            .expect("a control list")
+            .clone();
+        seen.extend(
+            controls
+                .iter()
+                .filter_map(|control| control["capability_id"].as_str().map(str::to_owned)),
+        );
+    };
+    let call = |app: &mut QuantickApp, id: &str, input: serde_json::Value| {
+        let origin = crate::control::ActionOrigin::Human;
+        let out = app
+            .control_action(id, 1, origin, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        settle(app);
+        out
+    };
+    let open = call(
+        &mut app,
+        wire::OPEN_WINDOW_MENU_CAPABILITY_ID,
+        serde_json::json!({}),
+    );
+    assert_eq!(open["open"], true, "the window menu reads back open");
+    look(&app, &mut seen);
+    let picked = call(
+        &mut app,
+        wire::PICK_LAYOUT_CAPABILITY_ID,
+        serde_json::json!({ "preset_id": "time+flow" }),
+    );
+    assert_eq!(picked["preset_id"], "time+flow");
+    app.chrome.layout_picker_open = true;
+    settle(&mut app);
+    look(&app, &mut seen);
+    let added = call(
+        &mut app,
+        wire::ADD_WIDGET_CAPABILITY_ID,
+        serde_json::json!({ "widget_id": "timeframe-chart" }),
+    );
+    let slot = added["slot"].as_u64().expect("the added chart's slot") as u32;
+    assert!(
+        added["panes"]
+            .as_array()
+            .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "floating"))
+    );
+    app.chrome.add_menu.open = true;
+    settle(&mut app);
+    look(&app, &mut seen);
+    let pane = serde_json::json!({ "slot": slot });
+    let docked = call(
+        &mut app,
+        wire::DOCK_CAPABILITY_ID,
+        serde_json::json!({ "slot": slot, "edge": "left" }),
+    );
+    assert_eq!(docked["preset_id"], "time+time+flow");
+    let floated = call(&mut app, wire::FLOAT_CAPABILITY_ID, pane.clone());
+    assert_eq!(floated["changed"], true);
+    look(&app, &mut seen);
+    let parked = call(
+        &mut app,
+        wire::PARK_CAPABILITY_ID,
+        serde_json::json!({ "slot": slot, "corner": "top_left" }),
+    );
+    assert!(parked["panes"].is_array());
+    app.active_tab_mut().canvas.menus.open = Some(slot);
+    settle(&mut app);
+    look(&app, &mut seen);
+    let out = call(&mut app, wire::POP_OUT_CAPABILITY_ID, pane.clone());
+    assert!(
+        out["panes"]
+            .as_array()
+            .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "os_window"))
+    );
+    app.active_tab_mut().canvas.menus.open = Some(slot);
+    settle(&mut app);
+    look(&app, &mut seen);
+    let back = call(&mut app, wire::RETURN_CAPABILITY_ID, pane.clone());
+    assert_eq!(back["changed"], true);
+    let time = app.active_tab().canvas.state.tree().panes()[0].0;
+    let time_pane = serde_json::json!({ "slot": time });
+    app.active_tab_mut().canvas.menus.open = Some(time);
+    settle(&mut app);
+    look(&app, &mut seen);
+    call(&mut app, wire::MAXIMIZE_CAPABILITY_ID, time_pane.clone());
+    app.active_tab_mut().canvas.menus.open = Some(time);
+    settle(&mut app);
+    look(&app, &mut seen);
+    call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane.clone());
+    let folded = call(&mut app, wire::MINIMIZE_CAPABILITY_ID, time_pane.clone());
+    assert_eq!(folded["changed"], true);
+    look(&app, &mut seen);
+    call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane);
+    app.active_tab_mut().canvas.menus.open = Some(slot);
+    settle(&mut app);
+    look(&app, &mut seen);
+    let removed = call(
+        &mut app,
+        wire::REMOVE_CAPABILITY_ID,
+        serde_json::json!({ "slot": slot, "confirm": true }),
+    );
+    assert_eq!(removed["changed"], true);
+    for id in [
+        wire::OPEN_WINDOW_MENU_CAPABILITY_ID,
+        wire::PICK_LAYOUT_CAPABILITY_ID,
+        wire::MINIMIZE_CAPABILITY_ID,
+        wire::MAXIMIZE_CAPABILITY_ID,
+        wire::RESTORE_CAPABILITY_ID,
+        wire::REMOVE_CAPABILITY_ID,
+        wire::ADD_WIDGET_CAPABILITY_ID,
+        wire::FLOAT_CAPABILITY_ID,
+        wire::DOCK_CAPABILITY_ID,
+        wire::PARK_CAPABILITY_ID,
+        wire::POP_OUT_CAPABILITY_ID,
+        wire::RETURN_CAPABILITY_ID,
+    ] {
+        assert!(
+            seen.contains(id),
+            "no scene control operates {id}: {seen:?}"
+        );
+    }
+}

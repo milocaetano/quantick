@@ -429,6 +429,36 @@ impl CanvasState {
         Ok(true)
     }
 
+    /// Bring every pane whose OS window sat on a monitor not in `monitors`
+    /// back over `canvas`, centred, its size kept as far as the canvas
+    /// allows. Answers the slots it brought back, in slot order.
+    pub fn settle_monitors(&mut self, monitors: &[String], canvas: CanvasRect) -> Vec<PaneSlot> {
+        let gone: Vec<PaneSlot> = (self.floating.iter())
+            .filter(|pane| match &pane.host {
+                FloatHost::OsWindow { monitor, .. } => !monitors.contains(monitor),
+                FloatHost::Canvas { .. } => false,
+            })
+            .map(|pane| pane.slot)
+            .collect();
+        for slot in &gone {
+            let _ = self.return_to_canvas(*slot, canvas);
+        }
+        gone
+    }
+
+    /// Whether this canvas is `preset` as the preset itself numbers it: what a
+    /// save may leave out and rebuild from the preset's name alone.
+    #[must_use]
+    pub fn numbered_as(&self, preset: &LayoutPreset) -> bool {
+        *self == Self::from_preset(preset)
+    }
+
+    /// Where a pane floats or stands in its own window, if it does.
+    #[must_use]
+    pub fn host(&self, slot: PaneSlot) -> Option<&FloatHost> {
+        Some(&self.floating[self.floating_index(slot)?].host)
+    }
+
     fn set_host(&mut self, slot: PaneSlot, host: FloatHost) -> Result<bool, CanvasRefusal> {
         if let Some(index) = self.floating_index(slot) {
             let changed = self.floating[index].host != host;
@@ -482,9 +512,14 @@ impl CanvasState {
     }
 }
 
-/// Whether removing `slot` should ask first: only when `saved`, the
+/// Whether removing `live`'s `slot` should ask first: only when `saved`, the
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
+///
+/// Compared by slot, the pane's identity for its life: a save keeps the
+/// canvas whenever it is not [`CanvasState::numbered_as`] its preset, so a
+/// saved tab and the live one always number their panes alike, and a slot
+/// added since the save is one the save never held.
 #[must_use]
-pub fn remove_needs_confirm(saved: &CanvasState, slot: PaneSlot) -> bool {
-    saved.holds(slot)
+pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
+    saved.holds(slot) && live.holds(slot)
 }

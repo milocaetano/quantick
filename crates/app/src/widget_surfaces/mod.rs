@@ -28,6 +28,11 @@ pub(crate) const WIDGET_SURFACES: [WidgetSpec; 5] = [
     WidgetSpec { id: "spot_perp_cvd", title: "SPOT vs PERP CVD", gate: |caps| caps.spot_perp_pair, book: false, tape: false, scene: handlers::spot_perp_cvd_scene },
 ];
 
+/// Whether a feed with `capabilities` serves the surface `id`.
+pub(crate) fn serves(id: &str, capabilities: &crate::config::FeedCapabilities) -> bool {
+    (WIDGET_SURFACES.iter()).any(|spec| spec.id == id && (spec.gate)(capabilities))
+}
+
 /// A pane body's size before its window first lays out, and its window's.
 const BODY: (f32, f32) = (440.0, 320.0);
 const GAP: f32 = 12.0;

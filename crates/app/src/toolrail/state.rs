@@ -263,11 +263,6 @@ impl ToolRail {
         self.repeat
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_repeat(&mut self, repeat: bool) {
-        self.repeat = repeat;
-    }
-
     /// Whether placed anchors snap to the bar's open / high / low / close.
     #[must_use]
     pub fn magnet(&self) -> bool {
@@ -297,12 +292,6 @@ impl ToolRail {
                 .is_some_and(|stage| stage != RailStage::Minimal)
     }
 
-    /// Where the magnet button was drawn, for tests that click it.
-    #[cfg(test)]
-    pub(crate) fn magnet_button_rect(&self) -> Option<egui::Rect> {
-        self.magnet_rect
-    }
-
     /// Ask for a family flyout without a click — the
     /// `QUANTICK_TOOLBOX_FLYOUT` hook. The slot honours it on its next draw,
     /// when the anchor rect exists; an unknown family id is simply never
@@ -310,26 +299,6 @@ impl ToolRail {
     #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn request_flyout(&mut self, family_id: String) {
         self.hook_flyout = Some(family_id);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
-        self.button_rects
-            .iter()
-            .flatten()
-            .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn objects_button_rect(&self) -> Option<egui::Rect> {
-        self.objects_rect
-    }
-
-    #[cfg(test)]
-    pub(crate) fn flyout_row_rect(&self, tool: DrawingTool) -> Option<egui::Rect> {
-        self.flyout_rects
-            .iter()
-            .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
     }
 
     /// Tool-arming keys. Escape lives in the app's escape stack (rail drag →
@@ -373,6 +342,35 @@ impl ToolRail {
         if let Some(tool) = armed {
             self.arm(tool);
         }
+    }
+}
+
+#[cfg(test)]
+impl ToolRail {
+    pub(crate) fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
+    }
+
+    /// Where the magnet button was drawn, for tests that click it.
+    pub(crate) fn magnet_button_rect(&self) -> Option<egui::Rect> {
+        self.magnet_rect
+    }
+
+    pub(crate) fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
+        self.button_rects
+            .iter()
+            .flatten()
+            .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
+    }
+
+    pub(crate) fn objects_button_rect(&self) -> Option<egui::Rect> {
+        self.objects_rect
+    }
+
+    pub(crate) fn flyout_row_rect(&self, tool: DrawingTool) -> Option<egui::Rect> {
+        self.flyout_rects
+            .iter()
+            .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
     }
 }
 

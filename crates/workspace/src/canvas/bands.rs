@@ -8,6 +8,40 @@
 use super::presets::{LAYOUT_PRESETS, LayoutPreset, PaneKind, PresetGroup};
 use super::state::{CanvasState, FloatHost, PaneMode};
 use super::tree::{CanvasRect, PaneSlot, PaneTree};
+use std::collections::BTreeSet;
+
+/// Which built time chart each time slot shows, kept across edits so a
+/// removed chart never moves another; and which charts a removal freed, so
+/// a slot seated on one later takes it fresh, never the removed chart's
+/// interval, indicators and drawings.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Seats {
+    held: Vec<(PaneSlot, usize)>,
+    freed: BTreeSet<usize>,
+    reseed: Vec<usize>,
+}
+
+impl Seats {
+    /// Seat every chart afresh, as a picked layout does: on the charts
+    /// already built, in slot order, with nothing to reseed.
+    pub fn clear(&mut self) {
+        self.held.clear();
+        self.freed.clear();
+        self.reseed.clear();
+    }
+
+    /// The next built chart a new slot sat on after a removal freed it, to
+    /// be built again from the tape; each is answered once.
+    pub fn take_reseed(&mut self) -> Option<usize> {
+        (!self.reseed.is_empty()).then(|| self.reseed.remove(0))
+    }
+
+    /// Every slot with the chart it shows.
+    #[must_use]
+    pub fn held(&self) -> &[(PaneSlot, usize)] {
+        &self.held
+    }
+}
 
 /// One docked pane of the tree, ready to paint.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,7 +66,7 @@ pub struct TreeBand {
 #[must_use]
 pub fn tree_bands(
     state: &CanvasState,
-    seats: &mut Vec<(PaneSlot, usize)>,
+    seats: &mut Seats,
     area: CanvasRect,
     divider: f32,
 ) -> Vec<TreeBand> {
@@ -56,21 +90,13 @@ pub fn tree_bands(
 /// Slots map to the window's charts by kind: the flow slot is the flow pane,
 /// and each time slot keeps the chart `seats` gave it, so removing one chart
 /// never moves another onto a different one.
-pub fn slot_seat(
-    state: &CanvasState,
-    seats: &mut Vec<(PaneSlot, usize)>,
-    slot: PaneSlot,
-) -> Option<Option<usize>> {
+pub fn slot_seat(state: &CanvasState, seats: &mut Seats, slot: PaneSlot) -> Option<Option<usize>> {
     seat_of(&seated(state, seats), seats, slot)
 }
 
 /// The slot that shows built chart `seat` (`None` for the flow pane): the
 /// inverse of [`slot_seat`].
-pub fn seat_slot(
-    state: &CanvasState,
-    seats: &mut Vec<(PaneSlot, usize)>,
-    seat: Option<usize>,
-) -> Option<PaneSlot> {
+pub fn seat_slot(state: &CanvasState, seats: &mut Seats, seat: Option<usize>) -> Option<PaneSlot> {
     let panes = seated(state, seats);
     let mut slots = panes.iter().map(|(slot, ..)| *slot);
     slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
@@ -78,19 +104,31 @@ pub fn seat_slot(
 
 /// `state`'s panes, with `seats` brought up to date: gone slots dropped,
 /// new time slots seated on the lowest free chart.
-fn seated(
-    state: &CanvasState,
-    seats: &mut Vec<(PaneSlot, usize)>,
-) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
+fn seated(state: &CanvasState, seats: &mut Seats) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
     let panes = state.panes();
     let time = |slot: PaneSlot| {
         (panes.iter()).any(|(held, kind, _)| *held == slot && *kind == PaneKind::Time)
     };
-    seats.retain(|(slot, _)| time(*slot));
+    let Seats {
+        held,
+        freed,
+        reseed,
+    } = seats;
+    held.retain(|&(slot, seat)| {
+        let kept = time(slot);
+        if !kept {
+            freed.insert(seat);
+        }
+        kept
+    });
     for (slot, kind, _) in &panes {
-        if *kind == PaneKind::Time && !seats.iter().any(|(held, _)| held == slot) {
-            let free = (0..).find(|pane| !seats.iter().any(|(_, seat)| seat == pane));
-            seats.push((*slot, free.unwrap_or_default()));
+        if *kind == PaneKind::Time && !held.iter().any(|(on, _)| on == slot) {
+            let free = (0..).find(|pane| !held.iter().any(|(_, seat)| seat == pane));
+            let free = free.unwrap_or_default();
+            if freed.remove(&free) {
+                reseed.push(free);
+            }
+            held.push((*slot, free));
         }
     }
     panes
@@ -98,11 +136,11 @@ fn seated(
 
 fn seat_of(
     panes: &[(PaneSlot, PaneKind, PaneMode)],
-    seats: &[(PaneSlot, usize)],
+    seats: &Seats,
     slot: PaneSlot,
 ) -> Option<Option<usize>> {
     let flow = panes.iter().find(|(_, kind, _)| *kind != PaneKind::Time);
-    match seats.iter().find(|(held, _)| *held == slot) {
+    match seats.held.iter().find(|(held, _)| *held == slot) {
         Some((_, seat)) => Some(Some(*seat)),
         None => (flow.map(|(held, ..)| *held) == Some(slot)).then_some(None),
     }

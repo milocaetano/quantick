@@ -4,8 +4,9 @@
 //! nothing itself.
 
 use super::presets::PaneKind;
-use super::state::CanvasState;
-use super::tree::PaneSlot;
+use super::state::{CanvasState, PaneMode};
+use super::tree::{CanvasRect, PaneSlot};
+use super::widgets::{WIDGETS, WidgetSpec};
 
 /// How wide the ⋯ stands at a header's right end, in points.
 pub const PANE_MENU_BUTTON_PX: f32 = 24.0;
@@ -19,6 +20,10 @@ pub enum PaneMenuItem {
     Maximize,
     /// Back to its place: from the strip, or from filling the canvas.
     Restore,
+    /// Into its own OS window.
+    OpenInNewWindow,
+    /// From its own OS window back over the canvas.
+    ReturnToCanvas,
     Remove,
 }
 
@@ -30,6 +35,8 @@ impl PaneMenuItem {
             Self::Minimize => "Minimize",
             Self::Maximize => "Maximize",
             Self::Restore => "Restore size",
+            Self::OpenInNewWindow => "Open in new window",
+            Self::ReturnToCanvas => "Return to canvas",
             Self::Remove => "Remove chart",
         }
     }
@@ -41,6 +48,8 @@ impl PaneMenuItem {
             Self::Minimize => "minimize",
             Self::Maximize => "maximize",
             Self::Restore => "restore",
+            Self::OpenInNewWindow => "open_in_new_window",
+            Self::ReturnToCanvas => "return_to_canvas",
             Self::Remove => "remove",
         }
     }
@@ -48,9 +57,15 @@ impl PaneMenuItem {
     /// The row an [`Self::id`] names.
     #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
-        [Self::Minimize, Self::Maximize, Self::Restore, Self::Remove]
-            .into_iter()
-            .find(|item| item.id() == id.trim())
+        const ALL: [PaneMenuItem; 6] = [
+            PaneMenuItem::Minimize,
+            PaneMenuItem::Maximize,
+            PaneMenuItem::Restore,
+            PaneMenuItem::OpenInNewWindow,
+            PaneMenuItem::ReturnToCanvas,
+            PaneMenuItem::Remove,
+        ];
+        ALL.into_iter().find(|item| item.id() == id.trim())
     }
 }
 
@@ -66,21 +81,30 @@ pub fn menu_hook(value: &str) -> Option<(PaneSlot, Option<PaneMenuItem>)> {
 }
 
 /// The rows of `slot`'s menu, top to bottom; a separator stands before
-/// Remove. A maximized chart offers "Restore size" where Maximize stood, and
-/// a row the canvas would refuse (folding or removing its last open chart)
-/// is left out rather than offered and refused.
+/// Remove. A maximized chart offers "Restore size" where Maximize stood, a
+/// chart in its own window offers "Return to canvas" instead of folding or
+/// filling, and a row the canvas would refuse (folding or removing its last
+/// open chart) is left out rather than offered and refused.
 #[must_use]
 pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
+    let windowed = state.mode(slot) == Some(PaneMode::OsWindow);
     let second = if state.maximized() == Some(slot) {
         PaneMenuItem::Restore
     } else {
         PaneMenuItem::Maximize
     };
     let minimize = state.clone().minimize(slot).is_ok();
+    let maximize = state.clone().maximize(slot).is_ok() || second == PaneMenuItem::Restore;
+    let pop_out = !windowed
+        && (state.clone())
+            .pop_out(slot, "", CanvasRect::new(0.0, 0.0, 1.0, 1.0))
+            .is_ok();
     let remove = state.clone().remove(slot).is_ok();
     let rows = [
         (PaneMenuItem::Minimize, minimize),
-        (second, true),
+        (second, maximize),
+        (PaneMenuItem::OpenInNewWindow, pop_out),
+        (PaneMenuItem::ReturnToCanvas, windowed),
         (PaneMenuItem::Remove, remove),
     ];
     rows.into_iter()
@@ -167,4 +191,27 @@ pub fn remove_prompt(
             last,
         ],
     }
+}
+
+/// The add menu's rows, in registry order, each with whether it can be
+/// added now: a chart while the canvas has room, the order flow while the
+/// canvas holds none, and a widget surface when `surface_ready` says its
+/// feed serves it.
+#[must_use]
+pub fn add_menu(
+    state: &CanvasState,
+    surface_ready: impl Fn(&WidgetSpec) -> bool,
+) -> Vec<(&'static WidgetSpec, bool)> {
+    let full = state.panes().len() >= super::presets::MAX_CANVAS_PANES;
+    let has_flow = (state.panes().iter()).any(|(_, kind, _)| *kind == PaneKind::Flow);
+    (WIDGETS.iter())
+        .map(|widget| {
+            let ready = match widget.kind {
+                Some(PaneKind::Flow) => !full && !has_flow,
+                Some(_) => !full,
+                None => surface_ready(widget),
+            };
+            (widget, ready)
+        })
+        .collect()
 }

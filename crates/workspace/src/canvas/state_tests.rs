@@ -87,7 +87,7 @@ fn pane_transitions_and_remove_confirmation() {
     // Removing the last flow lays the rest out as a TIMEFRAMES preset.
     let saved = state.clone();
     assert!(
-        remove_needs_confirm(&saved, flow),
+        remove_needs_confirm(&saved, &state, flow),
         "the save holds the flow pane"
     );
     assert_eq!(state.remove(flow), Ok(true));
@@ -121,8 +121,8 @@ fn pane_transitions_and_remove_confirmation() {
     let mut single = canvas("flow");
     assert_eq!(single.remove(0), Err(CanvasRefusal::LastDockedPane));
     let added = single.add(PaneKind::Time, CANVAS).unwrap();
-    assert!(!remove_needs_confirm(&canvas("flow"), added));
-    assert!(remove_needs_confirm(&canvas("flow"), 0));
+    assert!(!remove_needs_confirm(&canvas("flow"), &single, added));
+    assert!(remove_needs_confirm(&canvas("flow"), &single, 0));
     assert_eq!(single.remove(added), Ok(true));
     assert!(!single.holds(added));
 }
@@ -290,4 +290,51 @@ fn canvas_state_round_trips_and_marks_dirty() {
             layout.preset_id()
         );
     }
+}
+
+/// A tab that reached a layout another way numbers its panes unlike the
+/// preset, so its save keeps the canvas; then the save and the tab share one
+/// numbering, and a chart added after a removal never passes for a saved one.
+#[test]
+fn remove_confirmation_follows_the_pane_not_its_ordinal() {
+    let time_flow = preset("time+flow").unwrap();
+    assert!(canvas("time+flow").numbered_as(time_flow), "a plain save");
+    let mut live = canvas("flow");
+    live.apply_preset(time_flow);
+    assert!(
+        !live.numbered_as(time_flow),
+        "reached from Single: kept whole"
+    );
+    let saved = live.clone();
+    let time = live.tree().panes()[0].0;
+    assert!(remove_needs_confirm(&saved, &live, time), "the saved chart");
+    live.remove(time).unwrap();
+    let added = live.add(PaneKind::Time, CANVAS).unwrap();
+    assert!(!remove_needs_confirm(&saved, &live, added), "a new chart");
+    assert!(!remove_needs_confirm(&saved, &live, time), "gone already");
+    assert!(!remove_needs_confirm(&saved, &live, 77), "no such pane");
+}
+
+/// A chart saved in its own window on a monitor that is gone comes back
+/// over the canvas; one on a monitor still there stays out.
+#[test]
+fn a_window_on_a_gone_monitor_falls_back_to_the_canvas() {
+    let mut state = canvas("time+time+flow");
+    let rect = CanvasRect::new(2000.0, 100.0, 900.0, 600.0);
+    state.pop_out(0, "DISPLAY2", rect).unwrap();
+    state.pop_out(1, "DISPLAY1", rect).unwrap();
+    let back = state.settle_monitors(&["DISPLAY1".to_owned()], CANVAS);
+    assert_eq!(back, vec![0]);
+    assert_eq!(state.mode(0), Some(PaneMode::Floating));
+    assert_eq!(state.mode(1), Some(PaneMode::OsWindow));
+    let Some(FloatHost::Canvas { rect: landed }) = state.host(0) else {
+        panic!("back over the canvas");
+    };
+    assert_eq!((landed.w, landed.h), (900.0, 600.0), "its size kept");
+    assert_eq!(landed.centred_in(CANVAS), *landed, "centred");
+    assert!(
+        state
+            .settle_monitors(&["DISPLAY1".to_owned()], CANVAS)
+            .is_empty()
+    );
 }

@@ -164,18 +164,6 @@ impl StrategyPopupSurface {
         }
     }
 
-    /// The refusal on screen, if any.
-    #[cfg(test)]
-    pub fn error(&self) -> Option<&str> {
-        self.popup.as_ref().and_then(|popup| popup.error.as_deref())
-    }
-
-    /// The form as it stands, for the tests that fill it in.
-    #[cfg(test)]
-    pub fn form_mut(&mut self) -> Option<&mut presets::StoredPreset> {
-        self.popup.as_mut().map(|popup| &mut popup.form)
-    }
-
     /// The alarm section of the arming dialog.
     ///
     /// Its own function because it is the one part of the form that is
@@ -243,6 +231,19 @@ impl StrategyPopupSurface {
         if let Some(reason) = env.alert_failure {
             ui.colored_label(palette.sell(), format!("no sound was played: {reason}"));
         }
+    }
+}
+
+#[cfg(test)]
+impl StrategyPopupSurface {
+    /// The refusal on screen, if any.
+    pub fn error(&self) -> Option<&str> {
+        self.popup.as_ref().and_then(|popup| popup.error.as_deref())
+    }
+
+    /// The form as it stands, for the tests that fill it in.
+    pub fn form_mut(&mut self) -> Option<&mut presets::StoredPreset> {
+        self.popup.as_mut().map(|popup| &mut popup.form)
     }
 }
 

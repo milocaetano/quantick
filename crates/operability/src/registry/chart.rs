@@ -227,7 +227,59 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         )],
         mapping: capability!("canvas.pane.remove"),
     },
+    UiBehaviour {
+        id: "canvas.widget.add",
+        title: "Add a chart or a widget to the canvas",
+        reach: "the toolbar's + left of the capsule, then a row of ADD TO CANVAS",
+        keys: &[(Source::ToolbarAction, "ToggleAddMenu")],
+        mapping: capability!("canvas.widget.add"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.float",
+        title: "Move or resize a floating chart over the canvas",
+        reach: "a floating chart's grip dropped away from the edges and corners, or an edge dragged",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.float"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.dock",
+        title: "Dock a floating chart into the layout at an edge",
+        reach: "a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.dock"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.park",
+        title: "Park a floating chart in a canvas corner",
+        reach: "a floating chart's grip dropped in a canvas corner",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.park"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.pop_out",
+        title: "Open a chart in its own OS window",
+        reach: "a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.pop_out"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.return",
+        title: "Bring a chart from its own window back over the canvas",
+        reach: "the chart window's ⋯ menu, Return to canvas; closing that window",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.return"),
+    },
 ];
+
+/// What a drag on a floating chart's grip is keyed by.
+const GRIP: &str =
+    "the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides";
 
 /// History.
 pub(super) const HISTORY: &[UiBehaviour] = &[

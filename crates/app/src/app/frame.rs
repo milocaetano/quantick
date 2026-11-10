@@ -252,39 +252,6 @@ impl QuantickApp {
         }
     }
 
-    #[cfg(test)]
-    fn draw_frame_with_tail(
-        &mut self,
-        ctx: &egui::Context,
-        now: Instant,
-        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
-        tail: impl IntoIterator<Item = FrameTailStage>,
-    ) {
-        self.draw_frame_with_stages(ctx, now, spawn, FramePlan::stages(), tail);
-    }
-
-    /// Run `stages` in the order given. Production passes the validated
-    /// plan; tests replay a swapped order through these same adapters, via
-    /// the `#[cfg(test)]` door, to show the harm the declared dependencies
-    /// prevent.
-    #[cfg(test)]
-    fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
-        &mut self,
-        ctx: &egui::Context,
-        now: Instant,
-        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
-        stages: impl IntoIterator<Item = FrameStage>,
-        tail: T,
-    ) {
-        self.presentation.context = Some(ctx.clone());
-        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
-        let mut scratch = FrameScratch::default();
-        let mut tail = Some(tail);
-        for stage in stages {
-            self.run_frame_stage(stage, ctx, now, &mut scratch, spawn, &mut tail);
-        }
-    }
-
     fn run_frame_stage<T: IntoIterator<Item = FrameTailStage>>(
         &mut self,
         stage: FrameStage,
@@ -788,6 +755,40 @@ impl QuantickApp {
             spawn,
             stages,
         );
+    }
+}
+
+#[cfg(test)]
+impl QuantickApp {
+    fn draw_frame_with_tail(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        tail: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.draw_frame_with_stages(ctx, now, spawn, FramePlan::stages(), tail);
+    }
+
+    /// Run `stages` in the order given. Production passes the validated
+    /// plan; tests replay a swapped order through these same adapters, via
+    /// the `#[cfg(test)]` door, to show the harm the declared dependencies
+    /// prevent.
+    fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameStage>,
+        tail: T,
+    ) {
+        self.presentation.context = Some(ctx.clone());
+        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
+        let mut scratch = FrameScratch::default();
+        let mut tail = Some(tail);
+        for stage in stages {
+            self.run_frame_stage(stage, ctx, now, &mut scratch, spawn, &mut tail);
+        }
     }
 }
 

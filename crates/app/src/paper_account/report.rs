@@ -58,25 +58,6 @@ impl PaperAccount {
         )
     }
 
-    /// Test-only: the report state this host holds.
-    ///
-    /// The report's own tests moved out with the report, and a handful of
-    /// them still need a host that journals to a real folder, because they
-    /// are about the journal rather than the arithmetic. Reading, not
-    /// reaching: the state's fields stay private to its own module, so a
-    /// test in `paper_report` gets at them exactly the way that module
-    /// does.
-    #[cfg(test)]
-    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
-        &self.report
-    }
-
-    /// Test-only: the report state, mutably.
-    #[cfg(test)]
-    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
-        &mut self.report
-    }
-
     /// The open position as the ledger's top row needs it, or `None` while
     /// flat. Three venue reads gathered into one value so the reader can
     /// never be handed two of the three.
@@ -132,5 +113,25 @@ impl PaperAccount {
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn set_report_list_open(&mut self, open: bool) {
         self.report.set_report_list_open(open);
+    }
+}
+
+#[cfg(test)]
+impl PaperAccount {
+    /// Test-only: the report state this host holds.
+    ///
+    /// The report's own tests moved out with the report, and a handful of
+    /// them still need a host that journals to a real folder, because they
+    /// are about the journal rather than the arithmetic. Reading, not
+    /// reaching: the state's fields stay private to its own module, so a
+    /// test in `paper_report` gets at them exactly the way that module
+    /// does.
+    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
+        &self.report
+    }
+
+    /// Test-only: the report state, mutably.
+    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
+        &mut self.report
     }
 }

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 120 |
+| Reachable by capability | 126 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **174** |
+| **Total** | **180** |
 
-98 of the 174 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 76 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+99 of the 180 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 81 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -99,6 +99,12 @@ The three exclusion classes are closed:
 | `canvas.pane.maximize` | Fill the canvas with one chart | a chart header's ⋯ menu, Maximize | `canvas.pane.maximize` | — |
 | `canvas.pane.restore` | Bring a folded or maximized chart back to its place | a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas | `canvas.pane.restore` | — |
 | `canvas.pane.remove` | Remove a chart from the canvas, asking first when the save holds it | a chart header's ⋯ menu, Remove chart, then the dialog's Remove | `canvas.pane.remove` | — |
+| `canvas.widget.add` | Add a chart or a widget to the canvas | the toolbar's + left of the capsule, then a row of ADD TO CANVAS | `canvas.widget.add` | — |
+| `canvas.pane.float` | Move or resize a floating chart over the canvas | a floating chart's grip dropped away from the edges and corners, or an edge dragged | `canvas.pane.float` | — |
+| `canvas.pane.dock` | Dock a floating chart into the layout at an edge | a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here | `canvas.pane.dock` | — |
+| `canvas.pane.park` | Park a floating chart in a canvas corner | a floating chart's grip dropped in a canvas corner | `canvas.pane.park` | — |
+| `canvas.pane.pop_out` | Open a chart in its own OS window | a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge | `canvas.pane.pop_out` | — |
+| `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
 | `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -237,7 +243,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 20 |
+| `toolbar_action` | 21 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 3 |
@@ -250,7 +256,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 76 |
+| `authored` | 81 |
 
 ## Appendix: rows no registry stands behind
 
@@ -290,6 +296,11 @@ declares nothing here is a guard failure.
 | `canvas.pane.maximize` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.restore` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.remove` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.float` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.dock` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.park` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |

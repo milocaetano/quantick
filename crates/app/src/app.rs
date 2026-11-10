@@ -19,7 +19,7 @@ use eframe::egui;
 use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
-mod canvas_wiring;
+pub(crate) mod canvas_wiring;
 pub(crate) mod capsule_wiring;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
@@ -495,6 +495,7 @@ impl QuantickApp {
                 window_startup: launch.window,
                 record_deals: None,
                 layout_picker_open: false,
+                add_menu: Default::default(),
                 capsule: Default::default(),
                 toolbar_controls: Vec::new(),
                 layout_rename: None,

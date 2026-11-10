@@ -42,7 +42,10 @@ pub struct TabCanvas {
     /// Which built time pane each time slot of [`Self::state`] shows, kept
     /// across edits so a removed chart never moves another; a picked layout
     /// seats them afresh.
-    pub(crate) seats: Vec<(quantick_workspace::canvas::PaneSlot, usize)>,
+    pub(crate) seats: quantick_workspace::canvas::Seats,
+    /// The floating chart held by its grip or an edge, and what letting go
+    /// or its own window asked for.
+    pub(crate) floats: crate::floating_panes::FloatingPanes,
     /// The charts' ⋯ menus, their strips and the remove dialog.
     pub(crate) menus: crate::pane_menu::PaneMenus,
     /// Every pane band the last drawn frame laid out, header to strip.
@@ -86,7 +89,8 @@ impl Default for TabCanvas {
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
             menus: Default::default(),
-            seats: Vec::new(),
+            seats: Default::default(),
+            floats: Default::default(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -153,6 +157,11 @@ impl TabCanvas {
         slot: usize,
         ids: &mut PaneIdAllocator,
     ) -> Option<ChartPane> {
+        // A chart the canvas holds beyond what a layout asked for (one added
+        // or floating) is built like any other.
+        let time = |(_, kind, _): &(_, PaneKind, _)| *kind == PaneKind::Time;
+        let wanted = self.state.panes().iter().filter(|pane| time(pane)).count();
+        self.pending_context_panes = (self.pending_context_panes).max(wanted.saturating_sub(slot));
         if self.pending_context_panes == 0 {
             return None;
         }
@@ -176,6 +185,15 @@ impl TabCanvas {
                 .map(crate::layouts::LayoutId),
         );
         Some(pane)
+    }
+
+    /// A new chart for `seat`, opening as a chart nobody saved: the canvas's
+    /// opening interval, no saved layout.
+    pub(super) fn fresh_pane(&self, seat: usize, ids: &mut PaneIdAllocator) -> ChartPane {
+        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
+        pane.presentation.candles = quantick_stores::pane_style::restore(&[], seat + 1);
+        pane.layout.opening = Some(None);
+        pane
     }
 
     /// Name the layout a context pane will open on when the stack builds it.
@@ -242,10 +260,12 @@ impl TabCanvas {
     }
 
     /// Whether the column painter draws this frame: a layout it knows, laid
-    /// out as its preset, nothing folded or maximized by the canvas model.
+    /// out as its preset, nothing floating, folded or maximized by the
+    /// canvas model.
     /// Anything else is painted from [`Self::state`]'s tree.
     pub(crate) fn column_painted(&self) -> bool {
         self.layout.is_column()
+            && self.state.floating().is_empty()
             && self.state.maximized().is_none()
             && self.state.minimized().is_empty()
             && self.state.preset() == Some(self.layout.preset())

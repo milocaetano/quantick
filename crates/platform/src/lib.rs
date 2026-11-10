@@ -11,9 +11,11 @@
 #[cfg(windows)]
 mod dpi;
 mod exposed;
+mod monitors;
 mod pump;
 
 pub use exposed::{window_at, window_title};
+pub use monitors::{monitor_at, monitors};
 pub use pump::HiddenRootPump;
 
 /// Give one market child window the Windows 11 DPI-transition rectangle fix.

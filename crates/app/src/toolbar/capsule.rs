@@ -42,6 +42,8 @@ pub struct CapsuleModel<'a> {
     pub menu_open: bool,
     /// The layout popover hangs from the miniature.
     pub popover_open: bool,
+    /// The ADD TO CANVAS menu hangs from the + left of the capsule.
+    pub add_open: bool,
     /// A short row: the name gives way to its caret (its hover still names
     /// it), so TRADE keeps its place.
     pub compact: bool,
@@ -51,6 +53,7 @@ pub struct CapsuleModel<'a> {
 /// and the observer scene.
 #[derive(Clone, Copy, Debug)]
 pub struct CapsuleRects {
+    pub add: Option<egui::Rect>,
     pub floppy: Option<egui::Rect>,
     pub miniature: egui::Rect,
     pub name: egui::Rect,
@@ -59,6 +62,7 @@ pub struct CapsuleRects {
 impl Default for CapsuleRects {
     fn default() -> Self {
         Self {
+            add: None,
             floppy: None,
             miniature: egui::Rect::NOTHING,
             name: egui::Rect::NOTHING,
@@ -200,6 +204,7 @@ pub fn draw(
         rect
     });
     CapsuleRects {
+        add: None,
         floppy,
         miniature,
         name: name_rect,
@@ -245,6 +250,7 @@ pub(crate) mod tests {
             layout_unsaved: false,
             menu_open: false,
             popover_open: false,
+            add_open: false,
             compact: false,
         }
     }

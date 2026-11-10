@@ -138,6 +138,8 @@ fn row(ui: &mut egui::Ui, item: Item, (slot, menus): (PaneSlot, &mut PaneMenus))
         Item::Minimize => icons::MINUS,
         Item::Maximize => icons::CORNERS_OUT,
         Item::Restore => icons::CORNERS_IN,
+        Item::OpenInNewWindow => icons::ARROW_SQUARE_OUT,
+        Item::ReturnToCanvas => icons::ARROW_SQUARE_IN,
         Item::Remove => icons::X,
     };
     let painter = ui.painter();

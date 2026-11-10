@@ -197,6 +197,10 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         legends,
     );
     tab.canvas.state = super::canvas_wiring::recipe_state(recipe);
+    let mut monitors = quantick_platform::monitors();
+    monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
+    let area = super::canvas_wiring::tab_area(&tab.canvas);
+    tab.canvas.state.settle_monitors(&monitors, area);
     let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
     for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
         let put = (rules.parse(rule).map_err(|e| e.to_string())).and_then(|spec| {

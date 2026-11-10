@@ -84,20 +84,6 @@ impl BarSwitchSurface {
         }
     }
 
-    #[cfg(test)]
-    pub fn is_open(&self) -> bool {
-        self.open.is_some()
-    }
-
-    /// What the typed text offers, in the order shown.
-    #[cfg(test)]
-    pub fn candidates(&self) -> Vec<BarConfiguration> {
-        self.open
-            .as_ref()
-            .map(|open| BUILTIN_BARS.quick_matches(&open.query))
-            .unwrap_or_default()
-    }
-
     /// Open on a bare digit when no widget holds the keyboard.
     fn open_on_digit(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) {
         if ctx.memory(|memory| memory.focused().is_some()) {
@@ -110,6 +96,21 @@ impl BarSwitchSurface {
         if let Some(digits) = digits {
             self.open(env.active_tab, env.focused_side, &digits);
         }
+    }
+}
+
+#[cfg(test)]
+impl BarSwitchSurface {
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+
+    /// What the typed text offers, in the order shown.
+    pub fn candidates(&self) -> Vec<BarConfiguration> {
+        self.open
+            .as_ref()
+            .map(|open| BUILTIN_BARS.quick_matches(&open.query))
+            .unwrap_or_default()
     }
 }
 

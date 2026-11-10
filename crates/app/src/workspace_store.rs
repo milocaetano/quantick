@@ -138,12 +138,6 @@ impl WorkspaceStore {
         &mut self.layouts
     }
 
-    /// What the chart-layer file already says.
-    #[cfg(test)]
-    pub(crate) fn layers(&self) -> &SavedLayers {
-        &self.layers
-    }
-
     /// The same, for the per-frame compare that writes a switch down.
     pub(crate) fn layers_mut(&mut self) -> &mut SavedLayers {
         &mut self.layers
@@ -184,38 +178,6 @@ impl WorkspaceStore {
         &mut self.picker
     }
 
-    /// Point a store at a scratch file for the length of one test.
-    ///
-    /// Test-only, and deliberately so: in a running app a store's path is
-    /// resolved once at construction and never moves, which is what makes
-    /// "where does this write?" answerable from the launch alone. A test needs
-    /// the opposite — it builds an app, then redirects one store at the
-    /// temporary file it is about to inspect — and that is the only reason a
-    /// setter exists at all. It compiles out of the shipped binary.
-    #[cfg(test)]
-    pub(crate) fn set_ui_state_path(&mut self, path: PathBuf) {
-        self.paths.ui_state = path;
-    }
-
-    /// See [`Self::set_ui_state_path`].
-    #[cfg(test)]
-    pub(crate) fn set_symbols_path(&mut self, path: PathBuf) {
-        self.paths.symbols = path;
-    }
-
-    /// See [`Self::set_ui_state_path`].
-    #[cfg(test)]
-    pub(crate) fn set_chart_layers_path(&mut self, path: PathBuf) {
-        self.paths.chart_layers = path;
-    }
-
-    /// See [`Self::set_ui_state_path`].
-    #[cfg(test)]
-    pub(crate) fn set_layouts_path(&mut self, path: PathBuf) {
-        self.book.move_beside(&path);
-        self.layouts.set_path(path);
-    }
-
     /// Where trades save this run.
     pub(crate) fn trades_dir(&self) -> &Path {
         &self.trades_dir
@@ -248,6 +210,42 @@ impl WorkspaceStore {
     /// The folder dialog answered, or the channel died.
     pub(crate) fn close_trades_dir_picker(&mut self) {
         self.trades_dir_picker = None;
+    }
+}
+
+#[cfg(test)]
+impl WorkspaceStore {
+    /// What the chart-layer file already says.
+    pub(crate) fn layers(&self) -> &SavedLayers {
+        &self.layers
+    }
+
+    /// Point a store at a scratch file for the length of one test.
+    ///
+    /// Test-only, and deliberately so: in a running app a store's path is
+    /// resolved once at construction and never moves, which is what makes
+    /// "where does this write?" answerable from the launch alone. A test needs
+    /// the opposite — it builds an app, then redirects one store at the
+    /// temporary file it is about to inspect — and that is the only reason a
+    /// setter exists at all. It compiles out of the shipped binary.
+    pub(crate) fn set_ui_state_path(&mut self, path: PathBuf) {
+        self.paths.ui_state = path;
+    }
+
+    /// See [`Self::set_ui_state_path`].
+    pub(crate) fn set_symbols_path(&mut self, path: PathBuf) {
+        self.paths.symbols = path;
+    }
+
+    /// See [`Self::set_ui_state_path`].
+    pub(crate) fn set_chart_layers_path(&mut self, path: PathBuf) {
+        self.paths.chart_layers = path;
+    }
+
+    /// See [`Self::set_ui_state_path`].
+    pub(crate) fn set_layouts_path(&mut self, path: PathBuf) {
+        self.book.move_beside(&path);
+        self.layouts.set_path(path);
     }
 }
 

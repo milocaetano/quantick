@@ -622,12 +622,6 @@ impl Harness {
         true
     }
 
-    #[cfg(test)]
-    pub(crate) fn arm_context_menu(&mut self, pane: ContextMenuPane, layers: bool) {
-        self.context_menu = Some(pane);
-        self.context_menu_layers = layers;
-    }
-
     /// Whether the button held still long enough to press: the `⋮` rides the right
     /// edge, and the window takes its scripted size a few frames in.
     fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
@@ -780,6 +774,14 @@ impl Harness {
     /// even a hooked run photographs a note that expires.
     pub(crate) fn spend_history_note_frame(&mut self) -> HookFrame {
         spend(&mut self.history_note)
+    }
+}
+
+#[cfg(test)]
+impl Harness {
+    pub(crate) fn arm_context_menu(&mut self, pane: ContextMenuPane, layers: bool) {
+        self.context_menu = Some(pane);
+        self.context_menu_layers = layers;
     }
 }
 

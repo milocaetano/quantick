@@ -58,6 +58,9 @@ pub(super) struct ChromeState {
     /// Whether the toolbar's layout popover is open.
     pub(super) layout_picker_open: bool,
 
+    /// The toolbar's + and its ADD TO CANVAS menu.
+    pub(super) add_menu: crate::add_widget::AddMenu,
+
     /// Where the capsule's parts were drawn last frame.
     pub(super) capsule: crate::toolbar::capsule::CapsuleRects,
 
