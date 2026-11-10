@@ -2897,6 +2897,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "quantick-alerts"
+version = "0.1.0"
+dependencies = [
+ "quantick-civil",
+ "quantick-workspace",
+ "serde",
+ "toml 0.8.20",
+]
+
+[[package]]
 name = "quantick-anchored-studies"
 version = "0.1.0"
 dependencies = [
@@ -2915,6 +2925,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.3.4",
  "png",
+ "quantick-alerts",
  "quantick-anchored-studies",
  "quantick-appearance",
  "quantick-backpressure",
@@ -3043,6 +3054,7 @@ dependencies = [
 name = "quantick-control-handlers"
 version = "0.1.0"
 dependencies = [
+ "quantick-alerts",
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
@@ -3343,6 +3355,7 @@ dependencies = [
 name = "quantick-stores"
 version = "0.1.0"
 dependencies = [
+ "quantick-alerts",
  "quantick-appearance",
  "quantick-chart",
  "quantick-engine",
@@ -3362,6 +3375,7 @@ dependencies = [
 name = "quantick-strategy"
 version = "0.1.0"
 dependencies = [
+ "quantick-alerts",
  "quantick-engine",
  "quantick-sim",
  "quantick-workspace",

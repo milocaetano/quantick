@@ -19,6 +19,7 @@ impl<T: Clone + PartialEq> Drawings<T> {
         // name, because two objects answering to one trader-authored name
         // would make every reference ambiguous.
         copy.id = self.alloc_id();
+        copy.durable_identity = None;
         copy.name = None;
         for point in &mut copy.points {
             point.bar += offset_bars;

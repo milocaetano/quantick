@@ -13,6 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
+use super::replay_and_history::play_pending;
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
@@ -450,7 +451,13 @@ impl QuantickApp {
                 super::frame_tail::clean_up_background_strategies(&mut self.runtime.tabs);
             }
             FrameStage::PlayAlerts => {
-                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
+                super::alerts_runtime::deliver(
+                    &mut self.runtime.alerts,
+                    &mut self.audio,
+                    &mut self.surfaces.toast,
+                    &mut self.surfaces.agent_popup,
+                );
+                if let Some(note) = play_pending(&mut self.audio, &mut self.runtime.tabs) {
                     self.alerts().show_toast(note);
                 }
             }
@@ -528,6 +535,7 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
+                alerts: &mut self.runtime.alerts.core.book,
                 indicators: &mut self.runtime.indicators,
                 store: self.runtime.workspace.layouts(),
                 alert_failure: self.audio.alert_failure.as_deref(),
@@ -803,6 +811,7 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
+        self.surfaces.alerts.open_drawing(ask.alert_target.take());
         if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;
             let result = self.control_action(

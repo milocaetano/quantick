@@ -22,15 +22,16 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions in, performance out, over the chart's engine and indicators. |
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
-| `control-handlers` | control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores | Headless-port handlers. |
+| `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores | Headless-port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
-| `stores` | appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `appearance` | — | Versioned colors and typography. |
+| `stores` | alerts, appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
+| `alerts` | civil, workspace | Alerts and sounds. |
+| `appearance` | — | Colors and typography. |
 | `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
-| `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
-| `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
+| `indicator-session` | pine, indicators, engine | Bindings, batches, deltas. |
+| `anchored-studies` | indicators, engine | Resumable profile/anchored-average state; caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |
-| `strategy` | sim, workspace, engine | Armed regions, brackets, the armed-instance state machine, `SignalAlarm` and sounds, preset bank, drawing anchors. |
+| `strategy` | alerts, sim, workspace, engine | Regions, brackets, `SignalAlarm`, presets, drawing anchors. |
 | `control-local` | control | Instance-descriptor directory and blocking loopback client, under one ownership check. |
 | `control-host` | control, engine | Projection registry, admission, idempotency store, event journal. Told the time. |
 | `indicators` | engine | The `Indicator` trait (commit/preview, rollback), incremental `ta.*` kernels, draw objects. |
