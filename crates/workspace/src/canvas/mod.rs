@@ -11,13 +11,16 @@
 //! - [`state`]: one tab's canvas and its transitions.
 //! - [`drop`]: the one rule that decides what a drop does.
 //! - [`widgets`]: what the add button offers.
+//! - [`bands`]: what the window paints a canvas from and compares it by.
 
+pub mod bands;
 pub mod drop;
 pub mod presets;
 pub mod state;
 pub mod tree;
 pub mod widgets;
 
+pub use bands::{LayoutMarks, Signal, TreeBand, inset_seams, same_layout, signal, tree_bands};
 pub use drop::{
     Corner, DOCK_EDGE_BAND_PX, DropTarget, Edge, PARK_CORNER_PX, PARK_MARGIN_PX, drop_target,
     park_rect,
@@ -32,6 +35,8 @@ pub use state::{
 pub use tree::{CanvasPoint, CanvasRect, PaneSlot, PaneTree, SplitAxis};
 pub use widgets::{WIDGETS, WidgetSpec, widget};
 
+#[cfg(test)]
+mod bands_tests;
 #[cfg(test)]
 mod drop_tests;
 #[cfg(test)]

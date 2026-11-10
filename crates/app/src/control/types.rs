@@ -23,6 +23,9 @@ impl From<CanvasLayout> for CanvasLayoutDto {
             CanvasLayout::Time => Self::Time,
             CanvasLayout::TimeAndFlow => Self::TimeAndFlow,
             CanvasLayout::TimeTimeAndFlow => Self::TimeTimeAndFlow,
+            CanvasLayout::Preset(preset) => {
+                CanvasLayout::from(crate::config::DeclaredLayout::nearest(preset)).into()
+            }
         }
     }
 }

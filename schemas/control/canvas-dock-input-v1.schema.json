@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "CanvasEdge": {
+      "description": "A canvas edge a floating chart docks at.",
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "edge": {
+      "$ref": "#/$defs/CanvasEdge"
+    },
+    "slot": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slot",
+    "edge"
+  ],
+  "title": "DockPaneInput",
+  "type": "object"
+}

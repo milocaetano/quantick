@@ -142,6 +142,10 @@ pub struct WorkspaceTab {
     /// Whether the tab holds edits it has not saved to that workspace.
     #[serde(default)]
     pub modified: bool,
+    /// The canvas model: the preset the docked panes match and every pane's
+    /// mode. Additive; absent from a build that predates it.
+    #[serde(default)]
+    pub canvas: Option<crate::canvas::CanvasView>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

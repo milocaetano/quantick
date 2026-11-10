@@ -15,7 +15,7 @@ use super::control_host::LayoutPort as _;
 use super::workspace_runtime::WorkspaceRuntime as Runtime;
 use super::{ArrangementHost, QuantickApp, layout_wiring::LayoutAdapter};
 use crate::pane::{ChartPane, PaneSide};
-use crate::tab::{CanvasCollapseRestore, CanvasLayout, LegendFold};
+use crate::tab::{CanvasCollapseRestore, LegendFold};
 
 fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
     quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers)
@@ -71,8 +71,7 @@ impl TabRecipeHost for BookTabs<'_> {
     fn tab_settled(&self, id: u64) -> bool {
         self.0.runtime.tabs.by_id(id).is_some_and(|tab| {
             tab.panes().all(|(pane, _)| pane.layout_seeded())
-                && tab.time_panes.len()
-                    >= crate::config::DeclaredLayout::from(tab.canvas.layout).context_panes()
+                && tab.time_panes.len() >= tab.canvas.layout.preset().time_panes()
         })
     }
     fn live_recipe(&self, id: u64) -> Option<WorkspaceRecipe> {
@@ -103,7 +102,7 @@ impl TabRecipeHost for BookTabs<'_> {
         app.runtime.workspace.layouts().revision().hash(&mut hash);
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
-                tab.canvas.layout as u8,
+                quantick_workspace::canvas::signal(&tab.canvas.state),
                 tab.canvas.context_collapsed,
                 tab.canvas.flow_collapsed,
             );
@@ -161,7 +160,8 @@ pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe>
     let window = &runtime.footprint_config;
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     let layouts = runtime.workspace.layouts().book();
-    Some(capture_recipe(&saved, layouts, layers, style))
+    let recipe = capture_recipe(&saved, layouts, layers, style);
+    Some(super::canvas_wiring::with_canvas(recipe, &tab.canvas))
 }
 
 pub(super) fn symbols_of(open: &ArrangementHost, tabs: &[u64]) -> Vec<String> {
@@ -184,7 +184,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         time: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
     };
     tab.restore_canvas(
-        CanvasLayout::from(recipe.layout),
+        super::canvas_wiring::recipe_layout(recipe),
         recipe.split_fraction,
         CanvasCollapseRestore {
             context: recipe.context_collapsed,
@@ -196,6 +196,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
+    tab.canvas.state = super::canvas_wiring::recipe_state(recipe);
     let rules = &quantick_engine::bar_registry::BUILTIN_BARS;
     for (address, rule) in recipe.rules_over(&saved.flow_bars, &saved.context_bars) {
         let put = (rules.parse(rule).map_err(|e| e.to_string())).and_then(|spec| {

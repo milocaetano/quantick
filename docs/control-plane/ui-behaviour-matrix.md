@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 115 |
+| Reachable by capability | 116 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **169** |
+| **Total** | **170** |
 
-97 of the 169 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+98 of the 170 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -93,7 +93,8 @@ The three exclusion classes are closed:
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | window menu, Workspace, Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
-| `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply` | — |
+| `layout.preset.apply` | Switch the canvas to another arrangement | the capsule's layout popover, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply`, `canvas.layout.pick` | — |
+| `canvas.window_menu.open` | Open the window menu from the toolbar's list door | the toolbar's list door at its left end | `canvas.window_menu.open` | — |
 | `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -208,13 +209,13 @@ The three exclusion classes are closed:
 | `desk.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | `desk.save` | — |
 | `desk.reopen_on_launch.set` | Keep the arrangement automatically when the window closes | window menu, Desk | `desk.reopen_on_launch.set` | — |
 | `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
-| `tab.workspace.set` | Put a tab on a saved workspace | the status bar's workspace cell | `tab.workspace.set` | — |
-| `workspace.save_to` | Save a tab's edits to its workspace | window menu, Save to | `workspace.save_to` | — |
+| `tab.workspace.set` | Put a tab on a saved workspace | the capsule's workspace name, Ctrl+Shift+O | `tab.workspace.set` | — |
+| `workspace.save_to` | Save a tab's edits to its workspace | the capsule's floppy, its workspace menu, window menu, Save to, Ctrl+S | `workspace.save_to` | — |
 | `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
-| `workspace.new` | Make a new, empty workspace for a tab | the status bar's workspace cell, New workspace | `workspace.new` | — |
-| `workspace.autosave.set` | Turn auto save layout changes on or off | the status bar's auto save check, or the workspace cell's menu | `workspace.autosave.set` | — |
+| `workspace.new` | Make a new, empty workspace for a tab | the capsule's workspace menu, New workspace | `workspace.new` | — |
+| `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, or a row's Rename in Manage workspaces | `workspace.rename` | — |
-| `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the workspace cell's menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
+| `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
@@ -232,7 +233,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 16 |
+| `toolbar_action` | 20 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 3 |

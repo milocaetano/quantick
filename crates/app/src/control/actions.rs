@@ -11,21 +11,11 @@
 
 pub(crate) use quantick_control_schema::attention::*;
 
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use serde_json::Value;
+use quantick_control::registry::RegistryError;
 
 use crate::app::ControlWindow;
 
 use super::gateway::ControlAccess;
-
-/// One action's handler over this application: it mutates the window and
-/// journals through its control access.
-pub(crate) type ActionHandler = fn(
-    &mut ControlWindow,
-    &mut ControlAccess,
-    &ActorContext,
-    &Value,
-) -> Result<Value, ControlError>;
 
 /// The registry over this application: the headless registry in
 /// `quantick_control_host::actions` with the window as its host. Families
@@ -34,9 +24,7 @@ pub(crate) type ActionRegistry =
     quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess>;
 
 /// The annotate tier's identifiers the mark docks into (contract §7).
-pub(crate) use quantick_control_host::authority::{
-    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION,
-};
+pub(crate) use quantick_control_host::authority::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID};
 
 /// The actions every instance registers. A later module adds one descriptor
 /// and one handler here; nothing else opens.
@@ -46,7 +34,8 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::appearance::register_actions(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
-    super::layout::register(&mut registry)?;
+    quantick_control_handlers::layout::register(&mut registry)?;
+    quantick_control_handlers::canvas::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
     quantick_control_handlers::home_tab::register(&mut registry)?;
@@ -86,7 +75,9 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_control_host::authority::{ANNOTATE_EFFECT_ID, TRADE_EFFECT_ID};
+    use quantick_control_host::authority::{
+        ANNOTATE_EFFECT_ID, CAPABILITY_VERSION, TRADE_EFFECT_ID,
+    };
 
     /// The families that moved to `quantick_control_handlers` are still docked
     /// here, behind the effects and permissions the contract names.

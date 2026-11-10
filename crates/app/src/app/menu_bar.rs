@@ -18,7 +18,7 @@ use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
-pub(in crate::app) use menus::{KEBAB_GLYPH, WindowMenuState};
+pub(in crate::app) use menus::{KEBAB_GLYPH, MenuDoor, WindowMenuState};
 
 mod commands;
 mod menus;
@@ -88,11 +88,11 @@ const DOCK_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 /// switch borrowing one would arm a tool on every trader who learned it there.
 const LEGEND_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L);
-/// Saves the workspace — the arrangement the next launch opens on.
+/// Saves the desk — the arrangement the next launch opens on.
 ///
-/// Ctrl+Shift+S rather than the Ctrl+S every editor uses, deliberately: a
-/// trader who reaches for Ctrl+S out of habit mid-session must not silently
-/// redefine what their platform opens on.
+/// Ctrl+Shift+S: Ctrl+S saves the tab's workspace (the capsule's floppy), so
+/// a trader who reaches for it out of habit saves the layout they see and
+/// never silently redefines what their platform opens on.
 const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::S,
@@ -252,7 +252,10 @@ impl QuantickApp {
             apply_menu_command_on(self, ctx, command);
         }
 
-        self.chrome.title_bar.menu_open = self.chrome.window_menu.is_open_on(ctx.viewport_id());
+        self.chrome.title_bar.menu_open = self
+            .chrome
+            .window_menu
+            .opened_from(ctx.viewport_id(), MenuDoor::Kebab);
         self.chrome.title_bar.agent_on = self
             .control
             .control_access
@@ -382,7 +385,11 @@ impl QuantickApp {
 
 /// The menu's panes, each handed exactly the state it shows.
 fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    let Some(kebab) = app.chrome.title_bar.control_rect(KEBAB_CONTROL) else {
+    let door = match app.chrome.window_menu.door() {
+        MenuDoor::Kebab => app.chrome.title_bar.control_rect(KEBAB_CONTROL),
+        MenuDoor::Toolbar => app.chrome.window_menu.toolbar_door,
+    };
+    let Some(door) = door else {
         return;
     };
     let mut state = std::mem::take(&mut app.chrome.window_menu);
@@ -402,17 +409,18 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         recent: app.runtime.workspace.recent_on_disk(),
         focus_live_row: std::cell::Cell::new(false),
     }
-    .show(ctx, &mut state, kebab, commands);
+    .show(ctx, &mut state, door, commands);
     app.chrome.window_menu = state;
 }
 
-/// The status bar's workspace cell: a click, or Ctrl+Shift+O from anywhere in
-/// the window, opens its menu upward from the cell on this window's tab. A
-/// torn-off window's cell reaches its own tab and no other.
+/// The capsule's workspace name: a click, or Ctrl+Shift+O from anywhere in
+/// the window, opens its menu below the name on this window's tab. A torn-off
+/// window's capsule reaches its own tab and no other.
 pub(super) fn workspace_cell(
     app: &mut QuantickApp,
     ctx: &egui::Context,
-    status: &crate::statusbar::StatusResponse,
+    cell: Option<egui::Rect>,
+    clicked: bool,
 ) {
     let (tab, window) = (
         app.runtime.tabs.active_id(),
@@ -420,16 +428,14 @@ pub(super) fn workspace_cell(
     );
     let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
-    let shown = status.workspace_cell.is_some();
-    let open = menu.follow_cell(tab, shown, &window, status.workspace_clicked || pressed);
+    let open = menu.follow_cell(tab, cell.is_some(), &window, clicked || pressed);
     let mut commands = Vec::new();
-    if let Some(cell) = status.workspace_cell.filter(|_| open) {
+    if let Some(cell) = cell.filter(|_| open) {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
         let rows = workspace_rows::WorkspaceRows::of(app);
         rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
     }
     app.chrome.window_menu.tab_workspace = menu;
-    commands.extend(status.workspace_commands().map(MenuCommand::Workspace));
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }

@@ -209,13 +209,6 @@ impl<'a> IconButton<'a> {
         self
     }
 
-    /// Replace the family's square hit target, for a face that is a picture.
-    #[must_use]
-    pub fn hit_size(mut self, hit: egui::Vec2) -> Self {
-        self.hit = hit;
-        self
-    }
-
     /// Paint the idle glyph in primary ink, for a strip read at a glance.
     #[must_use]
     pub fn strong(mut self) -> Self {

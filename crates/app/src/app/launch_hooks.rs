@@ -770,6 +770,7 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// rescued something.
 #[cfg(any(feature = "scenario-harness", test))]
 fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
+    // The window menu hung from the toolbar's list door, as its click does.
     if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU") {
         let tab = app.runtime.tabs.active_id();
         if !app.chrome.window_menu.tab_workspace.stage(tab, &value) {
@@ -780,7 +781,7 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
     if let Some(name) = env.var("QUANTICK_LAYOUT") {
-        let layout = crate::config::DeclaredLayout::parse(&name).map(CanvasLayout::from);
+        let layout = crate::tab::layout::named(&name);
         match layout {
             Some(layout) => app.active_tab_mut().set_layout(layout),
             None => tracing::warn!(

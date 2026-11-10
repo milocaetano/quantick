@@ -26,6 +26,8 @@ use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 
+pub(crate) mod tree;
+
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
 pub struct CanvasChrome<'a> {
@@ -108,6 +110,8 @@ struct CanvasFrame {
     flow_band: egui::Rect,
     collapsed_rail: Option<egui::Rect>,
     flow_rail: Option<egui::Rect>,
+    /// Laid out from the model's tree: no column divider, no rails.
+    tree: bool,
 }
 
 /// Where each visible pane draws this frame, after the context column has
@@ -153,14 +157,21 @@ impl Tab {
         if ui.input(|input| input.viewport().minimized.unwrap_or(false)) {
             return;
         }
-        let frame = self.canvas_frame(area);
         if self.connection.overlay_owns_canvas() {
+            self.canvas.last_canvas = area;
             let plot = self.lead_pane().plot_style(chrome.style, ui.ctx());
             let fill = crate::pane::background_color(&plot);
             ui.painter().rect_filled(area, 0.0, fill);
             return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
         }
-        let rects = self.draw_context_column(ui, &frame, chrome);
+        let (frame, rects) = if self.canvas.column_painted() {
+            let frame = self.canvas_frame(area);
+            let rects = self.draw_context_column(ui, &frame, chrome);
+            (frame, rects)
+        } else {
+            self.draw_tree(ui, area, chrome)
+        };
+        self.canvas.drawn_bands = rects.pane_bands.clone();
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -273,6 +284,7 @@ impl Tab {
             flow_band,
             collapsed_rail,
             flow_rail,
+            tree: false,
         }
     }
 
@@ -796,12 +808,13 @@ impl Tab {
         if frame.time_area.is_some() {
             self.draw_context_dividers(tab_id, ui, &rects.context_dividers);
         }
-        let (Some(_), Some(divider)) = (frame.time_area, frame.divider) else {
+        if let (Some(_), Some(divider)) = (frame.time_area, frame.divider) {
+            let drawn_width = divider.center().x - area.left();
+            if frame.flow_rail.is_none() {
+                self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
+            }
+        } else if !frame.tree {
             return;
-        };
-        let drawn_width = divider.center().x - area.left();
-        if frame.flow_rail.is_none() {
-            self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
         }
         // An accent frame around the focused pane, flow or context, once there
         // is another pane on screen to tell it from: the click that activates

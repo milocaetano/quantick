@@ -41,6 +41,18 @@ capability that cannot change application state.
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
+| `canvas.layout.pick` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.dock` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.float` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.maximize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.minimize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.park` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.pop_out` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.remove` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.restore` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.return` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.widget.add` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.window_menu.open` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.price_tag.progress.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -153,4 +165,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-128 capabilities registered.
+140 capabilities registered.

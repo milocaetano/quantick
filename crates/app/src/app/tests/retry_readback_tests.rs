@@ -737,7 +737,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         (
             "layout.preset.apply",
             LAYOUT_V2,
-            json!({ "preset_id": "time+time+flow" }),
+            json!({ "preset_id": "stack2+flow" }),
             Readback::Moves,
         ),
         (
@@ -917,6 +917,32 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "name": "Renamed" }),
             Readback::Moves,
         ),
+        // The canvas, in an order where each call has something to do: a
+        // layout, one chart folded, maximized and restored, a widget added,
+        // a chart floated and docked back, the widget parked, popped out,
+        // returned and removed.
+        ("canvas.window_menu.open", 1, json!({}), Readback::Moves),
+        (
+            "canvas.layout.pick",
+            1,
+            json!({ "preset_id": "charts-4" }),
+            Readback::Moves,
+        ),
+        ("canvas.pane.minimize", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
+        (
+            "canvas.widget.add",
+            1,
+            json!({ "widget_id": "timeframe-chart" }),
+            Readback::Moves,
+        ),
+        ("canvas.pane.float", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.dock", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.park", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.pop_out", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.return", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.remove", 1, Value::Null, Readback::Moves),
         // Last of all: it closes the active tab, edits or not.
         ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]
@@ -1243,6 +1269,33 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     .set_pending_for_test(crate::workspace_picker::WorkspacePick::Export, receiver);
                 payload
             }
+            "canvas.pane.minimize"
+            | "canvas.pane.maximize"
+            | "canvas.pane.restore"
+            | "canvas.pane.float" => {
+                // The first docked chart; the float leaves the layout.
+                let state = &app.active_tab().canvas.state;
+                json!({ "slot": state.tree().panes()[0].0 })
+            }
+            "canvas.pane.dock" => {
+                // The chart the float row took out of the layout.
+                let state = &app.active_tab().canvas.state;
+                json!({ "slot": state.floating().last().unwrap().slot, "edge": "left" })
+            }
+            "canvas.pane.park"
+            | "canvas.pane.pop_out"
+            | "canvas.pane.return"
+            | "canvas.pane.remove" => {
+                // The widget the add row opened, floating since.
+                let state = &app.active_tab().canvas.state;
+                let slot = state.floating()[0].slot;
+                match capability {
+                    "canvas.pane.park" => json!({ "slot": slot, "corner": "bottom_right" }),
+                    "canvas.pane.pop_out" => json!({ "slot": slot, "monitor": "DISPLAY2" }),
+                    "canvas.pane.remove" => json!({ "slot": slot, "confirm": true }),
+                    _ => json!({ "slot": slot }),
+                }
+            }
             _ => payload,
         };
         let before = readback(&mut app, &ctx, &mut client, capability);
@@ -1405,10 +1458,7 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
         );
     }
     for (capability, payload) in [
-        (
-            "layout.preset.apply",
-            json!({ "preset_id": "time+time+flow" }),
-        ),
+        ("layout.preset.apply", json!({ "preset_id": "stack2+flow" })),
         ("layout.focus.set", json!({ "pane": "1" })),
         ("layout.pane.move", json!({ "from": "1", "to": "2" })),
         ("layout.pane.collapse", json!({})),

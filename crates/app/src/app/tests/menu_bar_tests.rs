@@ -399,3 +399,72 @@ fn the_panel_rows_open_the_order_flow_panel_only_on_a_shown_flow_pane() {
     assert!(!app.chrome.window_menu.open);
     assert!(app.active_tab().tape().settings_panel.is_open());
 }
+
+/// C8: `≡` hangs the window menu below itself, its submenus open rightwards
+/// and it reads pressed; `⋮` still opens it at the top right, and F10 at `⋮`.
+#[test]
+fn list_door_opens_window_menu_below_itself() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let list = app
+        .chrome
+        .window_menu
+        .toolbar_door
+        .expect("the toolbar drew its list button");
+    assert!(
+        list.right() < kebab(&app).left(),
+        "the list sits at the toolbar's left end"
+    );
+    click_sized(&mut app, &ctx, TEST_WINDOW, list.center());
+    // The first frame on a new door sizes the pane; the second paints it.
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&output, "Save desk")
+        .unwrap_or_else(|| panic!("the menu is up: {:?}", painted_text(&output)));
+    assert!(
+        row.x > list.left(),
+        "the menu hangs rightwards from the list"
+    );
+    assert!(row.y > list.bottom(), "the menu drops below the toolbar");
+    let door = app
+        .chrome
+        .toolbar_controls
+        .iter()
+        .find(|c| c.id == "toolbar.window_menu");
+    assert!(door.is_some_and(|door| door.selected), "≡ reads pressed");
+    assert!(
+        !app.chrome.title_bar.kebab_pressed,
+        "⋮ is not the one that opened it"
+    );
+    let help = painted_text_center(&output, "Help").unwrap();
+    click_entry(&mut app, &ctx, &output, "Help");
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let entry = painted_text_center(&output, "Replay file format…").expect("Help opened");
+    assert!(
+        entry.x > help.x,
+        "the submenu opens rightwards: {entry:?} beside {help:?}"
+    );
+    click_sized(&mut app, &ctx, TEST_WINDOW, list.center());
+    let output = run_frame(&mut app, &ctx);
+    assert!(
+        painted_text_center(&output, "Save desk").is_none(),
+        "a second click closes it"
+    );
+
+    open_menu(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&output, "Save desk").expect("⋮ opens the menu");
+    assert!(
+        row.x < kebab(&app).right() && row.x > list.right(),
+        "it hangs from ⋮"
+    );
+    assert!(app.chrome.title_bar.kebab_pressed);
+    let press = vec![key_press(egui::Key::F10)];
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, press.clone());
+    assert!(!app.chrome.window_menu.open, "F10 closes it");
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, press);
+    run_frame(&mut app, &ctx);
+    assert!(app.chrome.title_bar.kebab_pressed, "F10 opens it at ⋮");
+}

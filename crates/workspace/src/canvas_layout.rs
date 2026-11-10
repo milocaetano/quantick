@@ -147,6 +147,34 @@ const _: () = assert!(
 /// one the same drag reaches by carrying on.
 pub const MIN_PANE_WIDTH_PX: f32 = 240.0;
 
+/// Where the divider sits when the split is first shown.
+///
+/// Roughly a third to the context pane, the rest to the flow pane. An even
+/// split says the two charts matter equally, and in quantick they do not: the
+/// heatmap is what the product is for, and the timeframe chart beside it is
+/// context. The opening canvas should say so before the trader touches
+/// anything — a default is an argument about what matters.
+pub const DEFAULT_PANE_FRACTION: f32 = 0.35;
+
+/// Hold a stored split inside the canvas.
+///
+/// A sanity clamp, not a floor. The floor is
+/// [`MIN_PANE_WIDTH_PX`], and it is applied where the canvas
+/// width is known — inside the splitter, on every frame, for every pane.
+/// Holding a *second* floor here as a share of the canvas is what made
+/// collapse-by-drag unreachable: the share (a quarter) always bound before the
+/// width (120 px) could, so a drag restarted at 400 px of a 1600 px canvas
+/// every frame and could never travel far enough in one to dismiss the column.
+/// One floor, one owner, and it is the one that knows how wide the canvas is.
+#[must_use]
+pub fn clamp_pane_fraction(fraction: f32) -> f32 {
+    if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        DEFAULT_PANE_FRACTION
+    }
+}
+
 /// What decides one pane's width.
 ///
 /// Deliberately the same shape as `indicators::PaneSizing`, which solves this

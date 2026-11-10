@@ -149,21 +149,27 @@ fn layout_readability_combined() {
                             rgb(palette.chrome())
                         ) >= 4.5
                     );
-                    let buy = output
-                        .shapes
-                        .iter()
-                        .find_map(|shape| match &shape.shape {
-                            egui::Shape::Text(text) if text.galley.text() == "BUY 1" => Some(text),
-                            _ => None,
-                        })
-                        .expect("actual toolbar BUY label");
-                    let ink = buy
-                        .override_text_color
-                        .unwrap_or_else(|| buy.galley.rows[0].visuals.mesh.vertices[0].color);
+                    // The list door and the capsule leave TRADE inline from
+                    // 1280 points; narrower, §6 folds it into the overflow.
+                    let buy = output.shapes.iter().find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == "BUY 1" => Some(text),
+                        _ => None,
+                    });
                     assert!(
-                        quantick_appearance::contrast::contrast_ratio(rgb(ink), rgb(palette.buy()))
-                            >= 4.5
+                        buy.is_some() || width / scale < 1280.0,
+                        "actual toolbar BUY label at {width}/{scale}"
                     );
+                    if let Some(buy) = buy {
+                        let ink = buy
+                            .override_text_color
+                            .unwrap_or_else(|| buy.galley.rows[0].visuals.mesh.vertices[0].color);
+                        assert!(
+                            quantick_appearance::contrast::contrast_ratio(
+                                rgb(ink),
+                                rgb(palette.buy())
+                            ) >= 4.5
+                        );
+                    }
                 }
                 let reference = egui::Context::default();
                 let mut appearance = quantick_appearance::Appearance::default();

@@ -148,6 +148,9 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 
 /// The canvas: which charts are on screen, where and how wide.
 pub const LAYOUT_MODULE_ID: &str = "layout";
+/// The workspace canvas: its layout catalogue, per-chart menu, add button and
+/// floating charts.
+pub const CANVAS_MODULE_ID: &str = "canvas";
 
 /// Names that once meant something and now split, with what replaced each, and
 /// which of those are named ahead of being built (none today).
@@ -627,6 +630,12 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             id: module(LAYOUT_MODULE_ID),
             title: "Layout".to_owned(),
             description: "The canvas: which charts are on screen, where they sit, and how wide."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(CANVAS_MODULE_ID),
+            title: "Canvas".to_owned(),
+            description: "The workspace canvas: layouts, minimized, maximized, floating and popped-out charts."
                 .to_owned(),
         },
         ModuleDescriptor {

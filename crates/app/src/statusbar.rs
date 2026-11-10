@@ -9,11 +9,8 @@
 //! that breaches its threshold turns
 //! the `warn` token; narrow windows wrap cells without hiding their facts.
 //!
-//! The bar's controls share one raised hover. At the left end the workspace
-//! cell opens the tab's workspace menu upward; while autosave is off and the
-//! tab holds edits it carries the amber mark and a `Save` pill (Ctrl+S). Right
-//! after it, a muted "auto save" check turns autosave on or off
-//! (`workspace.autosave.set`). The timezone picker sits at the right end. A
+//! The bar's controls share one raised hover. The workspace moved to the
+//! toolbar's capsule; the timezone picker sits at the right end. A
 //! `Reconnect`/`Reload` pair once stood in the provenance section, because
 //! the notice card refused to cover a working
 //! chart, and a terminal that froze mid-session left the trader nothing to
@@ -22,7 +19,7 @@
 //! the pair went back out rather than stand as a second way to do the same two
 //! things.
 //!
-//! After the workspace cell comes the window's one word on the feed's global
+//! At the left end stands the window's one word on the feed's global
 //! state, in grey, and it is the recovery popup's door: see
 //! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
 //! for what it opens.
@@ -41,7 +38,6 @@ use crate::timezone::TzOffset;
 use quantick_chart::connection_state::StatusWord;
 use quantick_feed::FeedLatency;
 use quantick_orderflow as orderflow;
-use quantick_session::workspace_menu::WorkspaceCommand;
 
 /// Height of the status line, in pixels (§5 zone 7).
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;
@@ -51,10 +47,6 @@ const STATE_DOT_DIAMETER_PX: f32 = 8.0;
 const CELL_SPACING_PX: f32 = 8.0;
 /// Gap between the state dot and its word, in pixels.
 const DOT_WORD_GAP_PX: f32 = 4.0;
-/// Gap between the workspace cell's name, mark and caret, in pixels.
-const WORKSPACE_GAP_PX: f32 = 4.0;
-/// The mark of a tab holding unsaved workspace edits.
-const EDITED_MARK: &str = "\u{2022}";
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,14 +62,6 @@ pub const SAVES_OFF_LABEL: &str = "SAVES OFF";
 
 /// Everything the bar shows this frame, precomputed by the app.
 pub struct StatusModel {
-    /// The tab's workspace, the row its chip reads; `None` on Home, where
-    /// the cell is absent.
-    pub workspace: Option<String>,
-    /// Whether the tab holds unsaved workspace edits: the amber mark and the
-    /// Save pill. Never while `autosave` is on.
-    pub modified: bool,
-    /// "auto save layout changes", the checkbox after the cell.
-    pub autosave: bool,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -228,26 +212,9 @@ pub struct StatusResponse {
     pub word_rect: Option<egui::Rect>,
     /// The one-click Reconnect beside the word was pressed.
     pub reconnect: bool,
-    /// The workspace cell, while shown: its menu opens upward from it.
-    pub workspace_cell: Option<egui::Rect>,
-    /// The workspace cell was clicked: it opens and closes its menu.
-    pub workspace_clicked: bool,
-    /// The auto save checkbox was flipped to this.
-    pub autosave_set: Option<bool>,
-    /// The cell's Save pill was pressed.
-    pub save_clicked: bool,
 }
 
-impl StatusResponse {
-    /// The workspace calls the cell's checkbox and pill asked for, in order.
-    pub fn workspace_commands(&self) -> impl Iterator<Item = WorkspaceCommand> {
-        let save = self.save_clicked.then_some(WorkspaceCommand::SaveTo);
-        save.into_iter()
-            .chain(self.autosave_set.map(WorkspaceCommand::SetAutosave))
-    }
-}
-
-/// What the feed-state cell, after the workspace cell, shows this frame.
+/// What the feed-state cell shows this frame.
 #[derive(Debug, Clone, Default)]
 pub struct StatusLead<'a> {
     pub word: Option<StatusWord>,
@@ -301,7 +268,6 @@ pub fn draw(
                 // Wrap whole facts as cells, keeping their words together.
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
-                draw_workspace(ui, model, &mut response);
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
                 ui.separator();
@@ -310,49 +276,6 @@ pub fn draw(
             });
         });
     response
-}
-
-/// `⊞ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
-/// a caret pointing where the menu opens.
-fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusResponse) {
-    let palette = theme::get(ui.ctx());
-    use quantick_control_schema::window_menu as text;
-    let Some(workspace) = &model.workspace else {
-        return;
-    };
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let piece = |color| egui::TextFormat::simple(font.clone(), color);
-    let mut job = egui::text::LayoutJob::default();
-    // A Phosphor glyph: the Body face has no U+25A6, which drew as a box.
-    job.append(icons::SQUARES_FOUR, 0.0, piece(palette.text_muted()));
-    job.append(workspace, WORKSPACE_GAP_PX, piece(palette.text_primary()));
-    if model.modified {
-        job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(palette.amber()));
-    }
-    job.append(
-        icons::CARET_UP,
-        WORKSPACE_GAP_PX,
-        piece(palette.text_muted()),
-    );
-    let cell = ui
-        .add(egui::Button::new(job).frame(false))
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(text::CELL_HOVER);
-    response.workspace_cell = Some(cell.rect);
-    response.workspace_clicked = cell.clicked();
-    if model.modified {
-        let shortcut = &crate::app::SAVE_TO_WORKSPACE_SHORTCUT;
-        let keys = ui.ctx().format_shortcut(shortcut);
-        let pill = ui.add(crate::widgets::accent_button(&palette, text::SAVE_PILL));
-        let hover = text::save_pill_hover(workspace, &keys);
-        response.save_clicked = pill.on_hover_text(hover).clicked();
-    }
-    let mut on = model.autosave;
-    let label = egui::RichText::new(text::AUTOSAVE_LABEL).color(palette.text_muted());
-    let check = ui.checkbox(&mut on, label);
-    let check = check.on_hover_text(text::AUTOSAVE_HOVER);
-    response.autosave_set = check.changed().then_some(on);
-    ui.separator();
 }
 
 /// The word: a grey dot and what is true of the feed. Only an attempt pulses.
@@ -749,9 +672,6 @@ mod tests {
         let tz = TzOffset::default();
         for replaying in [false, true] {
             let model = StatusModel {
-                workspace: None,
-                modified: false,
-                autosave: true,
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -846,9 +766,6 @@ mod tests {
     fn the_quote_driven_disclosure_is_really_painted() {
         let ctx = egui::Context::default();
         let model = StatusModel {
-            workspace: None,
-            modified: false,
-            autosave: true,
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,
@@ -922,7 +839,7 @@ mod tests {
                 "{gone:?} is still painted: {painted}"
             );
         }
-        for kept in ["Scalp", "fps", "cpu", "price: manual", "WDOU26"] {
+        for kept in ["fps", "cpu", "price: manual", "WDOU26"] {
             assert!(painted.contains(kept), "{kept:?} is missing: {painted}");
         }
     }

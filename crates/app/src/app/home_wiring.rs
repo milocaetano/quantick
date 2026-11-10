@@ -38,6 +38,9 @@ pub(super) fn observe_market(tabs: &ArrangementHost, surface: &mut StripSurface)
 /// what brings it back on screen.
 pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
     app.chrome.layout_picker_open = false;
+    // Nothing of the toolbar is drawn on Home, so the scene lists none of it.
+    app.chrome.toolbar_controls.clear();
+    app.chrome.window_menu.toolbar_door = None;
     let (tab, config) = app.active_with_config();
     tab.settle_source(config);
     // The dock stage polls these; a picker the menus opened still answers.

@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 72 |
+| deduplicated per connection | 84 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **105** |
+| **Total** | **117** |
 
 ## Capabilities
 
@@ -138,6 +138,18 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `annotate.zone.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `appearance.apply` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `appearance.state` | `source` | the active source matches the candidate; durable reports the last successful load/save | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `attention.mark.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `attention.mark.created` | `payload.note` | an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other | `an_interrupted_attention_mark_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `canvas.layout.pick` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the tab's canvas names the picked preset | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.dock` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads docked | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.float` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads floating | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.maximize` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads maximized | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.minimize` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads minimized | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.park` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane still reads floating; its place moved | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.pop_out` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads os_window | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane is no longer listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.restore` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads docked | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.return` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads floating | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.widget.add` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | a new floating pane is listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.window_menu.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the toolbar.window_menu control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `catalog.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `sources[].symbols` | the feed's symbols no longer list the symbol | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
 | `chart.price_tag.progress.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].price_tag_progress` | every pane of the addressed pane's market reports the requested price_tag_progress | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_tag_progress_call_switches_the_market_and_reads_it_back` |
@@ -228,4 +240,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-105 mutable capabilities registered, 105 with a readback.
+117 mutable capabilities registered, 117 with a readback.

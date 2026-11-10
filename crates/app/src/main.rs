@@ -50,7 +50,6 @@ mod indicator_render;
 mod indicator_worker;
 mod indicators;
 mod launch;
-mod layout_picker;
 mod layout_strip;
 mod layouts;
 mod live_envelope;

@@ -126,6 +126,7 @@ pub(crate) trait ChromePort:
     + quantick_control_handlers::market_palette::MarketPaletteHost
     + quantick_control_handlers::desk::DeskHost
     + quantick_control_handlers::workspace_book::WorkspaceBookHost
+    + quantick_control_handlers::canvas::CanvasHost
     + quantick_control_handlers::widgets::WidgetHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
@@ -524,6 +525,8 @@ pub(crate) struct ChromeReads<'a> {
     drawn: ChromeDrawn,
     title_bar: Option<&'a super::title_bar::TitleBarState>,
     settings_section: Option<quantick_control_schema::settings_sections::SettingsSection>,
+    /// The toolbar's list door, capsule and layout popover, as drawn.
+    pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
 }
 
 /// What the last frame published about the window chrome.
@@ -569,6 +572,7 @@ impl<'a> ChromeReads<'a> {
             drawn,
             title_bar: None,
             settings_section: None,
+            toolbar: &[],
         }
     }
 
@@ -949,6 +953,7 @@ impl ChromePort for QuantickApp {
         );
         reads.title_bar = Some(&self.chrome.title_bar);
         reads.settings_section = self.chrome.window_menu.settings_shown();
+        reads.toolbar = &self.chrome.toolbar_controls;
         reads
     }
 }
