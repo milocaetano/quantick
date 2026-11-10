@@ -118,6 +118,30 @@ impl WorkspaceMenuState {
         self.manage = None;
     }
 
+    /// Open a surface on `tab` as a capture asks (`QUANTICK_WORKSPACE_MENU`):
+    /// `cell` the cell's menu, `manage` the dialog, `manage:delete=<name>`
+    /// with that row's Delete armed, `manage:rename=<name>` with its Rename
+    /// asked over it. Answers false, opening nothing, for any other token.
+    pub fn stage(&mut self, tab: u64, token: &str) -> bool {
+        let (surface, row) = token.split_once(':').unwrap_or((token, ""));
+        match (surface, row.split_once('=')) {
+            ("cell", None) => self.toggle_chip_menu(tab),
+            ("manage", None) => self.open_manage(tab),
+            ("manage", Some(("delete", name))) => {
+                self.open_manage(tab);
+                if let Some(dialog) = &mut self.manage {
+                    dialog.click_delete(name);
+                }
+            }
+            ("manage", Some(("rename", name))) => {
+                self.open_manage(tab);
+                self.open_rename(tab, name);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// The window presenting `presented` (`None` on Home) holds `window`'s
     /// tabs. A menu open on one of them that is no longer the one presented
     /// closes, so it never pops back open when its tab returns. A menu on
@@ -216,6 +240,27 @@ mod tests {
         dialog.click_delete("Scalp");
         assert_eq!(dialog.click_delete("Tape"), DeleteClick::Armed);
         assert_eq!(dialog.armed.as_deref(), Some("Tape"));
+    }
+
+    #[test]
+    fn a_capture_stages_each_workspace_surface_and_refuses_the_rest() {
+        let mut state = WorkspaceMenuState::default();
+        assert!(state.stage(7, "cell"));
+        assert!(state.chip_menu_on(7));
+        assert!(state.stage(7, "manage:delete=Scalp"));
+        assert_eq!(
+            state.manage.as_ref().unwrap().armed.as_deref(),
+            Some("Scalp")
+        );
+        assert!(state.stage(7, "manage:rename=Scalp"));
+        assert!(
+            state.dialog.is_some(),
+            "the rename is asked over the dialog"
+        );
+        let mut fresh = WorkspaceMenuState::default();
+        assert!(!fresh.stage(7, "manage:drop=Scalp"));
+        assert!(!fresh.stage(7, "file"));
+        assert_eq!(fresh, WorkspaceMenuState::default(), "nothing opened");
     }
 
     #[test]

@@ -770,6 +770,12 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// rescued something.
 #[cfg(any(feature = "scenario-harness", test))]
 fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
+    if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU") {
+        let tab = app.runtime.tabs.active_id();
+        if !app.chrome.window_menu.tab_workspace.stage(tab, &value) {
+            tracing::warn!(target: "quantick::app", value = %value, "QUANTICK_WORKSPACE_MENU names no workspace surface");
+        }
+    }
     // Open on a named canvas layout, through the same path the View menu
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
@@ -920,5 +926,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_VENUE_LEAD_IN",
     "QUANTICK_WORKSPACE_EXPORT",
     "QUANTICK_WORKSPACE_IMPORT",
+    "QUANTICK_WORKSPACE_MENU",
     "QUANTICK_WORKSPACE_SAVE"
 ];

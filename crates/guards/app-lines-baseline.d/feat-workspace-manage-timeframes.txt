@@ -16,3 +16,8 @@ crates/app +66
 # greys Delete by the book's own `delete_refusal`.
 crates/app +2
 !budget +2
+# Test round: the QUANTICK_WORKSPACE_MENU capture hook, so an agent can open
+# the cell menu and the Manage dialog (armed Delete, Rename over it); the
+# token is parsed headless by `WorkspaceMenuState::stage`.
+crates/app +7
+!budget +7

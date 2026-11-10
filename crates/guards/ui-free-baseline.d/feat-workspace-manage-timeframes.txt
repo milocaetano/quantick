@@ -5,3 +5,7 @@
 # `WorkspaceRecipe::rules_over`.
 crates/app +3
 !budget +3
+# Test round: the QUANTICK_WORKSPACE_MENU capture hook's read and refusal
+# log; the token is parsed headless by `WorkspaceMenuState::stage`.
+crates/app +7
+!budget +7
