@@ -355,6 +355,10 @@ fn the_side_switches_wear_their_words_and_lose_them_on_a_narrow_line() {
     let bare = flow_control(&app, TRAIL).width();
     assert!(bare < wide, "{bare} at 240, {wide} wide");
     assert_eq!(bare, quantick_chart::pane_header::segment_px(None));
+    assert!(
+        bare >= 20.0,
+        "a bare key is still a target a hand can hit: {bare}"
+    );
 }
 
 /// Each side's plate names it in its header and leaves with its side. How far
@@ -2727,8 +2731,8 @@ struct KeyLook {
 }
 
 fn key_look(shapes: &[egui::Shape], key: egui::Rect) -> KeyLook {
-    use quantick_chart::pane_header::{KEY_DOT_PX, segment_px};
-    let center = key.left_center() + egui::vec2(segment_px(None) / 2.0, 0.0);
+    use quantick_chart::pane_header::{KEY_DOT_PX, key_dot_inset};
+    let center = key.left_center() + egui::vec2(key_dot_inset(true), 0.0);
     let circles = |bigger: bool| {
         shapes.iter().filter_map(move |shape| match shape {
             egui::Shape::Circle(circle)
@@ -2823,6 +2827,64 @@ fn the_band_keys_wear_a_dot_and_no_body() {
             ..unlit
         },
         "held by the market"
+    );
+}
+
+/// With no body to light or sink, a key still answers the hand: a lit key's dot
+/// glows brighter under the pointer, and a held key dims its dot and word.
+#[test]
+fn a_bodiless_key_answers_hover_and_press() {
+    use crate::pane_header::{DOT_GLOW_HOVERED, KEY_PRESSED_OPACITY};
+    use quantick_chart::pane_header::{KEY_DOT_PX, key_dot_inset};
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
+    run_frame(&mut app, &ctx);
+    let key = flow_control(&app, TRAIL);
+    let center = key.left_center() + egui::vec2(key_dot_inset(true), 0.0);
+    // The fills of the circles round the dot, widest first, and the dot's own.
+    let circles = |output: &egui::FullOutput| {
+        let mut found: Vec<_> = flat_shapes(output)
+            .into_iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Circle(circle) if circle.center == center => {
+                    Some((circle.radius, circle.fill))
+                }
+                _ => None,
+            })
+            .collect();
+        found.sort_by(|a, b| b.0.total_cmp(&a.0));
+        found
+    };
+    let palette = crate::theme::get(&ctx);
+    let lit = palette.flow_key_lit_dot();
+    let rest = circles(&run_frame(&mut app, &ctx));
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
+    let hovered = circles(&run_frame(&mut app, &ctx));
+    let glow = DOT_GLOW_HOVERED
+        .map(|(past, strength)| (KEY_DOT_PX / 2.0 + past, lit.gamma_multiply(strength)));
+    assert_eq!(hovered[..2], glow, "a brighter glow under the pointer");
+    assert_ne!(hovered[..2], rest[..2]);
+    assert_eq!(hovered[2], (KEY_DOT_PX / 2.0, lit));
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(center),
+            egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let pressed = circles(&run_frame(&mut app, &ctx));
+    let dimmed = lit.gamma_multiply(KEY_PRESSED_OPACITY);
+    assert_eq!(
+        pressed.last(),
+        Some(&(KEY_DOT_PX / 2.0, dimmed)),
+        "held down"
     );
 }
 

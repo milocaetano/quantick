@@ -399,12 +399,14 @@ pub const KEY_DOT_PX: f32 = 5.0;
 pub const SEGMENT_HEIGHT_PX: f32 = 20.0;
 /// The gap between the Trail and Tape keys; no frame encloses the pair.
 pub const SEGMENT_GAP_PX: f32 = 4.0;
-/// A key's padding either side of its dot, with its word or without it.
+/// A worded key's padding either side of its dot.
 const SEGMENT_PAD_PX: f32 = 4.0;
 /// The gap between a key's dot and its word.
 pub const SEGMENT_WORD_GAP_PX: f32 = 5.0;
 /// The gear's key: its glyph and 3 px either side, with no body.
 pub const GEAR_KEY_PX: f32 = 2.0 * 3.0 + SEGMENT_GLYPH_PX;
+/// What the gear takes off the band's right end: the group gap and its key.
+pub const GEAR_END_PX: f32 = GROUP_GAP_PX + GEAR_KEY_PX;
 /// The rule between the mark and the keys: 1 px wide, this tall.
 pub const MARK_RULE_PX: f32 = 1.0;
 pub const MARK_RULE_HEIGHT_PX: f32 = 14.0;
@@ -420,15 +422,28 @@ pub fn mark_px(text_px: f32) -> f32 {
     }
 }
 
-/// A key's width: its dot alone, or with a word this wide beside it.
+/// A key's width: its padded dot and a word this wide beside it, or, with no
+/// word, a bare key as wide as it is tall, so a hand still hits the small dot.
 #[must_use]
 pub fn segment_px(word_px: Option<f32>) -> f32 {
     word_px.map_or(SEGMENT_BARE_PX, |word| {
-        SEGMENT_BARE_PX + SEGMENT_WORD_GAP_PX + word
+        SEGMENT_DOT_PX + SEGMENT_WORD_GAP_PX + word
     })
 }
 
-const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_PX + KEY_DOT_PX;
+/// Where a key's dot centres, from the key's left edge: in its own padding
+/// beside a word, or in the middle of a bare key.
+#[must_use]
+pub fn key_dot_inset(worded: bool) -> f32 {
+    if worded {
+        SEGMENT_DOT_PX / 2.0
+    } else {
+        SEGMENT_BARE_PX / 2.0
+    }
+}
+
+const SEGMENT_DOT_PX: f32 = 2.0 * SEGMENT_PAD_PX + KEY_DOT_PX;
+const SEGMENT_BARE_PX: f32 = SEGMENT_HEIGHT_PX;
 
 /// What the words beside the dots add to the band, these words being this wide.
 #[must_use]
@@ -533,10 +548,9 @@ pub struct HeaderFit {
 }
 
 /// What the band always keeps, at its barest: the two keys without their words
-/// on the left, a group gap, and the gear's key at the right end. The strip
-/// glyph lives in the trail's capsule, the one side it draws on.
-pub const FLOW_CONTROLS_PX: f32 =
-    2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GROUP_GAP_PX + GEAR_KEY_PX;
+/// on the left, then the gear's end at the right. The strip glyph lives in the
+/// trail's capsule, the one side it draws on.
+pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GEAR_END_PX;
 
 impl HeaderControl {
     /// A section's header, as the flow pane's line lists it, on screen or not.
@@ -590,9 +604,10 @@ pub fn layer_section(layer: ChartLayer) -> PanelSection {
 pub struct HeaderWidths {
     pub strip: f32,
     pub mark: f32,
-    /// The right end at its barest, its own gap included; zero without a tape.
+    /// The band's keys and gear at their barest ([`FLOW_CONTROLS_PX`]), the
+    /// gap between them included; zero without a tape.
     pub controls: f32,
-    /// What the words beside the view control's glyphs add to the right end.
+    /// What the words beside the keys' dots add to the band.
     pub side_words: f32,
     pub slot: f32,
     pub chip_with_words: f32,
@@ -949,7 +964,7 @@ mod tests {
         HeaderWidths {
             strip,
             mark: 70.0,
-            controls: FLOW_CONTROLS_PX + GROUP_GAP_PX,
+            controls: FLOW_CONTROLS_PX,
             side_words: 0.0,
             slot: 120.0,
             chip_with_words: 150.0,
@@ -1131,14 +1146,17 @@ mod tests {
         assert_eq!(BubbleSample::Candle.name(), "Bubble size on the trail");
     }
 
-    /// The bare band is what the words add to: two bodiless keys 4 px apart, a
-    /// 5 px dot padded 4 either side, then the bare gear. The mark brings its rule.
+    /// The bare band is what the words add to: two bodiless keys 4 px apart, each
+    /// a 20 px target round its dot, then the bare gear. A worded key pads its
+    /// 5 px dot 4 either side. The mark brings its rule.
     #[test]
     fn the_band_measures_its_parts() {
-        assert_eq!(segment_px(None), 4.0 + 5.0 + 4.0);
+        assert_eq!(segment_px(None), 20.0, "a hand still hits a bare key");
         assert_eq!(segment_px(Some(30.0)), 13.0 + 5.0 + 30.0);
-        assert_eq!(side_words_px([30.0, 40.0]), 35.0 + 45.0);
-        assert_eq!(FLOW_CONTROLS_PX, 26.0 + 4.0 + 8.0 + 20.0);
+        assert_eq!((key_dot_inset(true), key_dot_inset(false)), (6.5, 10.0));
+        assert_eq!(side_words_px([30.0, 40.0]), 28.0 + 38.0);
+        assert_eq!(FLOW_CONTROLS_PX, 40.0 + 4.0 + 8.0 + 20.0);
+        assert_eq!(GEAR_END_PX, 8.0 + 20.0);
         assert_eq!(SEGMENT_HEIGHT_PX, 3.0 + 14.0 + 3.0);
         assert_eq!(mark_px(70.0), 70.0 + 8.0 + 1.0);
         assert_eq!(mark_px(0.0), 0.0, "no mark, no rule");

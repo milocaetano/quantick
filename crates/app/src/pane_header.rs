@@ -14,12 +14,12 @@ use quantick_chart::flow_band::{
 };
 use quantick_chart::pane_header::{
     BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX,
-    FlowHeaderState, GEAR_KEY_PX, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
-    HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, KEY_DOT_PX, LayerGlyph,
-    LayerToggle, MARK_RULE_HEIGHT_PX, PaneHeader, SAMPLE_RESET_SCALE, SEGMENT_GAP_PX,
-    SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX, SegmentInk, SideSegment,
-    dragged_scale, flow_fit, mark_px, sample_diameter_px, sample_value_text, section_layer,
-    segment_px, side_word, side_words_px,
+    FlowHeaderState, GEAR_END_PX, GEAR_KEY_PX, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk,
+    HeaderControl, HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, KEY_DOT_PX,
+    LayerGlyph, LayerToggle, MARK_RULE_HEIGHT_PX, MARK_RULE_PX, PaneHeader, SAMPLE_RESET_SCALE,
+    SEGMENT_GAP_PX, SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX,
+    SegmentInk, SideSegment, dragged_scale, flow_fit, key_dot_inset, mark_px, sample_diameter_px,
+    sample_value_text, section_layer, segment_px, side_word, side_words_px,
 };
 use quantick_chart::side_label::SIDE_LABEL_PADDING_PX;
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
@@ -70,8 +70,12 @@ const SAMPLE_OFF_STROKE_PX: f32 = 1.2;
 /// A key's word, and the corners of the gear's well while its panel is open.
 const SEGMENT_WORD_SIZE: f32 = 11.5;
 const SEGMENT_ROUNDING: f32 = 3.0;
-/// A lit dot's soft glow, outermost ring first: how far past the dot, how strong.
+/// A lit dot's soft glow, outermost ring first: how far past the dot, how strong;
+/// at rest, then under the pointer.
 const DOT_GLOW: [(f32, f32); 2] = [(3.0, 0.08), (1.5, 0.2)];
+pub(crate) const DOT_GLOW_HOVERED: [(f32, f32); 2] = [(3.0, 0.2), (1.5, 0.45)];
+/// A key held down dims its dot and word this far: no body to sink.
+pub(crate) const KEY_PRESSED_OPACITY: f32 = 0.6;
 /// The rule after the mark and the status words, in the band's ink this strong.
 const MARK_RULE_OPACITY: f32 = 0.35;
 const STATUS_OPACITY: f32 = 0.75;
@@ -235,16 +239,17 @@ pub fn draw_marked(
     if let Some(mark) = mark.filter(|_| fit.mark) {
         let at = egui::pos2(left, inner.center().y - mark.size().y / 2.0);
         ui.painter().galley(at, mark, palette.flow_ink());
-        let x = left + mark_px(mark_text_px) - 0.5;
+        let x = left + mark_px(mark_text_px) - MARK_RULE_PX / 2.0;
         let ink = palette.flow_ink().gamma_multiply(MARK_RULE_OPACITY);
         let half = MARK_RULE_HEIGHT_PX / 2.0;
         let tall = inner.center().y - half..=inner.center().y + half;
-        ui.painter().vline(x, tall, (1.0, ink));
+        ui.painter().vline(x, tall, (MARK_RULE_PX, ink));
         left += mark_px(mark_text_px) + GROUP_GAP_PX;
     }
-    let chip_right = inner.right() - row.state.map_or(0.0, |_| GEAR_KEY_PX + GROUP_GAP_PX);
+    let chip_right = inner.right() - row.state.map_or(0.0, |_| GEAR_END_PX);
     if let Some(dots) = row.chip.as_ref().filter(|_| fit.chip) {
-        loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words);
+        let ink = palette.flow_ink();
+        loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words, ink);
     }
     if let Some(slot) = slot.as_ref().filter(|_| fit.slot) {
         let ink = palette.flow_ink().gamma_multiply(STATUS_OPACITY);
@@ -825,13 +830,15 @@ fn side_segment(
     {
         *intent = Some(asked);
     }
-    let [dot, ink] = key_inks(ui, segment.ink, response.hovered());
+    let (hovered, pressed) = (response.hovered(), response.is_pointer_button_down_on());
+    let dim = if pressed { KEY_PRESSED_OPACITY } else { 1.0 };
+    let [dot, ink] = key_inks(ui, segment.ink, hovered).map(|colour| colour.gamma_multiply(dim));
     let painter = ui.painter();
-    // Where a key without its word would centre its dot, so the word never moves it.
-    let center = rect.left_center() + egui::vec2(segment_px(None) / 2.0, 0.0);
+    let center = rect.left_center() + egui::vec2(key_dot_inset(words), 0.0);
     let radius = KEY_DOT_PX / 2.0;
     if segment.ink == SegmentInk::Lit {
-        for (past, strength) in DOT_GLOW {
+        let glow = if hovered { DOT_GLOW_HOVERED } else { DOT_GLOW };
+        for (past, strength) in glow {
             painter.circle_filled(center, radius + past, dot.gamma_multiply(strength));
         }
     }

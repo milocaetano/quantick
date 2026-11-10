@@ -37,6 +37,11 @@ const DOT_PX: f32 = 6.0;
 const DOT_WORD_GAP_PX: f32 = 4.0;
 const DOT_GAP_PX: f32 = 8.0;
 const DOT_ONLY_GAP_PX: f32 = 6.0;
+/// The chip's grades of its one ink: the words and a trying dot, a waiting
+/// dot, and the pill's border. An ok dot takes the ink whole.
+const CHIP_WORD_SHARE: f32 = 0.75;
+const CHIP_FAINT_SHARE: f32 = 0.4;
+const CHIP_BORDER_SHARE: f32 = 0.35;
 
 /// The slot: a static glyph and 11 pt words.
 const SLOT_PT: f32 = 11.0;
@@ -172,15 +177,14 @@ fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) 
 
 /// Reserve the walking dots' full width with clear ink so words never shift.
 fn steady(
-    palette: &crate::theme::Palette,
+    ink: egui::Color32,
     fonts: &Fonts,
     text: &str,
     font: egui::FontId,
     wrap: f32,
 ) -> Arc<egui::Galley> {
     let dots = text.len() - text.trim_end_matches('.').len();
-    let mut job =
-        egui::text::LayoutJob::simple(text.to_owned(), font.clone(), palette.loading_meta(), wrap);
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font.clone(), ink, wrap);
     let clear = egui::TextFormat::simple(font, egui::Color32::TRANSPARENT);
     let pad = ".".repeat((3 - dots.min(3)) * usize::from(dots > 0));
     job.append(&pad, 0.0, clear);
@@ -218,10 +222,11 @@ fn lay_out_overlay(
     );
     title.wrap.max_width = rect.width();
     let mono = palette.mono_font(META_PT);
+    let meta_ink = palette.loading_meta();
     let (title, meta, control) = ctx.fonts(|fonts| {
         (
             fonts.layout_job(title),
-            steady(&palette, fonts, &words.meta, mono, rect.width()),
+            steady(meta_ink, fonts, &words.meta, mono, rect.width()),
             with_control.then(|| {
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
@@ -320,9 +325,10 @@ pub fn draw_overlay(
 
 /// The width of the chip with its words, and with its dots alone.
 pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
+    let any = egui::Color32::PLACEHOLDER;
     let words: f32 = dots
         .iter()
-        .map(|dot| DOT_PX + DOT_WORD_GAP_PX + word_galley(ui, dot.name).size().x)
+        .map(|dot| DOT_PX + DOT_WORD_GAP_PX + word_galley(ui, dot.name, any).size().x)
         .sum();
     let pad = 2.0 * CHIP_PAD_PX;
     (
@@ -331,24 +337,27 @@ pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
     )
 }
 
-fn word_galley(ui: &egui::Ui, word: &str) -> std::sync::Arc<egui::Galley> {
-    let palette = crate::theme::get(ui.ctx());
-    ui.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            word.to_owned(),
-            palette.mono_font(CHIP_PT),
-            palette.loading_meta(),
-        )
-    })
+fn word_galley(ui: &egui::Ui, word: &str, ink: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    let font = crate::theme::get(ui.ctx()).mono_font(CHIP_PT);
+    ui.fonts(|fonts| fonts.layout_no_wrap(word.to_owned(), font, ink))
 }
 
-/// The chip, with its right edge at `right`. Each dot answers its own hover.
-pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], words: bool) {
-    let palette = crate::theme::get(ui.ctx());
+/// The chip, with its right edge at `right`, graded off `ink`, the surface's
+/// own: on the order-flow band that is the band's light ink. Each dot answers
+/// its own hover.
+pub fn draw_chip(
+    ui: &egui::Ui,
+    right: f32,
+    strip: egui::Rect,
+    dots: &[Dot; 3],
+    words: bool,
+    ink: egui::Color32,
+) {
     let (with_words, alone) = chip_widths(ui, dots);
     let width = if words { with_words } else { alone };
+    let word_ink = ink.gamma_multiply(CHIP_WORD_SHARE);
     let height = CHIP_HEIGHT_PX.max(if words {
-        word_galley(ui, dots[0].name).size().y + 4.0
+        word_galley(ui, dots[0].name, word_ink).size().y + 4.0
     } else {
         0.0
     });
@@ -360,19 +369,19 @@ pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], 
     painter.rect_stroke(
         rect,
         egui::Rounding::same(height / 2.0),
-        egui::Stroke::new(1.0_f32, palette.loading_border()),
+        egui::Stroke::new(1.0_f32, ink.gamma_multiply(CHIP_BORDER_SHARE)),
     );
     let mut x = rect.left() + CHIP_PAD_PX;
     for (index, dot) in dots.iter().enumerate() {
         let center = egui::pos2(x + DOT_PX / 2.0, rect.center().y);
-        painter.circle_filled(center, DOT_PX / 2.0, dot_colour(ui, dot.look));
+        painter.circle_filled(center, DOT_PX / 2.0, dot_colour(ui, dot.look, ink));
         let start = x;
         x += DOT_PX;
         if words {
-            let galley = word_galley(ui, dot.name);
+            let galley = word_galley(ui, dot.name, word_ink);
             let size = galley.size();
             let at = egui::pos2(x + DOT_WORD_GAP_PX, rect.center().y - size.y / 2.0);
-            painter.galley(at, galley, palette.loading_meta());
+            painter.galley(at, galley, word_ink);
             x += DOT_WORD_GAP_PX + size.x;
         }
         let area =
@@ -397,13 +406,13 @@ fn dot_hover(ui: &egui::Ui, area: egui::Rect, index: usize, dot: &Dot) {
     }
 }
 
-/// The dot's ink. Waiting is faint, ok is solid, and only an attempt moves.
-fn dot_colour(ui: &egui::Ui, look: DotLook) -> egui::Color32 {
-    let palette = crate::theme::get(ui.ctx());
+/// The dot's ink, graded off the chip's. Waiting is faint, ok is solid, and only
+/// an attempt moves.
+fn dot_colour(ui: &egui::Ui, look: DotLook, ink: egui::Color32) -> egui::Color32 {
     match look {
-        DotLook::Faint => palette.loading_faint(),
-        DotLook::Solid => palette.loading_title(),
-        DotLook::Pulsing => palette.loading_meta().gamma_multiply(pulse(ui.ctx())),
+        DotLook::Faint => ink.gamma_multiply(CHIP_FAINT_SHARE),
+        DotLook::Solid => ink,
+        DotLook::Pulsing => ink.gamma_multiply(CHIP_WORD_SHARE * pulse(ui.ctx())),
     }
 }
 
@@ -427,7 +436,7 @@ pub struct Slot<'a> {
 
 /// How wide a slot is.
 pub fn slot_width(ui: &egui::Ui, slot: &Slot<'_>) -> f32 {
-    let (glyph, words) = slot_galleys(ui, slot);
+    let (glyph, words) = slot_galleys(ui, slot, egui::Color32::PLACEHOLDER);
     words.size().x + glyph.map_or(0.0, |glyph| glyph.size().x + SLOT_ICON_GAP_PX)
 }
 
@@ -436,21 +445,14 @@ type SlotGalleys = (
     std::sync::Arc<egui::Galley>,
 );
 
-fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
-    let palette = crate::theme::get(ui.ctx());
+/// The slot's galleys in `ink`; the walking dots' padding stays clear.
+fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>, ink: egui::Color32) -> SlotGalleys {
+    let font = crate::theme::get(ui.ctx()).body_font(SLOT_PT);
     ui.fonts(|fonts| {
-        let font = palette.body_font(SLOT_PT);
-        let glyph = slot.job.then(|| {
-            fonts.layout_no_wrap(
-                icons::ARROW_CLOCKWISE.to_owned(),
-                font.clone(),
-                palette.loading_meta(),
-            )
-        });
-        (
-            glyph,
-            steady(&palette, fonts, slot.text, font, f32::INFINITY),
-        )
+        let glyph = slot
+            .job
+            .then(|| fonts.layout_no_wrap(icons::ARROW_CLOCKWISE.to_owned(), font.clone(), ink));
+        (glyph, steady(ink, fonts, slot.text, font, f32::INFINITY))
     })
 }
 
@@ -469,17 +471,17 @@ pub fn draw_slot(
     if slot.job && !reduced_motion() {
         ui.ctx().request_repaint_after(DOT_REPAINT);
     }
-    let (glyph, words) = slot_galleys(ui, slot);
+    let (glyph, words) = slot_galleys(ui, slot, ink);
     let width = slot_width(ui, slot);
     let mut x = right - width;
     let y = strip.center().y;
     if let Some(glyph) = glyph {
         let size = glyph.size();
-        painter.galley_with_override_text_color(egui::pos2(x, y - size.y / 2.0), glyph, ink);
+        painter.galley(egui::pos2(x, y - size.y / 2.0), glyph, ink);
         x += size.x + SLOT_ICON_GAP_PX;
     }
     let size = words.size();
-    painter.galley_with_override_text_color(egui::pos2(x, y - size.y / 2.0), words, ink);
+    painter.galley(egui::pos2(x, y - size.y / 2.0), words, ink);
 }
 
 #[cfg(test)]
@@ -540,6 +542,89 @@ mod tests {
             "{chart} {overlay} {menu}"
         );
         assert!(chart < slot && slot < menu, "{chart} {slot} {menu}");
+    }
+
+    /// The slot paints its words in the ink it is given, and the dots that pad
+    /// a walking step stay clear, so the dots still walk on the band.
+    #[test]
+    fn the_slot_keeps_its_padding_dots_clear_in_any_ink() {
+        const INK: egui::Color32 = egui::Color32::from_rgb(242, 244, 247);
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let slot = Slot {
+                    job: true,
+                    text: "loading.",
+                };
+                draw_slot(ui, screen.right(), screen, &slot, Some(INK));
+            });
+        });
+        let words = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.job.text.starts_with("loading") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .expect("the slot's words");
+        assert_eq!(words.override_text_color, None, "no blanket recolour");
+        let colours: Vec<_> = words
+            .galley
+            .job
+            .sections
+            .iter()
+            .map(|section| section.format.color)
+            .collect();
+        assert_eq!(colours, [INK, egui::Color32::TRANSPARENT], "{colours:?}");
+    }
+
+    /// The chip paints in grades of the ink it is given, the band's light ink,
+    /// never the loading palette tuned for a pale surface: the border and the
+    /// words in their shares, an ok dot whole and a waiting one faint.
+    #[test]
+    fn the_chip_grades_the_ink_it_is_given() {
+        const INK: egui::Color32 = egui::Color32::from_rgb(242, 244, 247);
+        let ctx = egui::Context::default();
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        crate::theme::sync(&ctx, &appearance);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let dot = |name, look| Dot {
+            name,
+            look,
+            hover: "",
+        };
+        let dots = [
+            dot("feed", DotLook::Solid),
+            dot("book", DotLook::Faint),
+            dot("tape", DotLook::Solid),
+        ];
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                draw_chip(ui, screen.right(), screen, &dots, true, INK);
+            });
+        });
+        let (mut fills, mut borders, mut words) = (Vec::new(), Vec::new(), Vec::new());
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Circle(circle) => fills.push(circle.fill),
+                egui::Shape::Rect(rect) if rect.stroke.width > 0.0 => {
+                    borders.push(rect.stroke.color);
+                }
+                egui::Shape::Text(text) => words.push(text.galley.job.sections[0].format.color),
+                _ => {}
+            }
+        }
+        let faint = INK.gamma_multiply(CHIP_FAINT_SHARE);
+        assert_eq!(fills, [INK, faint, INK]);
+        assert_eq!(borders, [INK.gamma_multiply(CHIP_BORDER_SHARE)]);
+        assert_eq!(words, [INK.gamma_multiply(CHIP_WORD_SHARE); 3]);
+        let palette = crate::theme::get(&ctx);
+        assert!(!fills.contains(&palette.loading_title()));
+        assert_ne!(borders[0], palette.loading_border());
     }
 
     /// A control that would leave the rect is not drawn, nor answers a press,
@@ -796,9 +881,15 @@ mod tests {
             for font in [palette.mono_font(META_PT), palette.body_font(SLOT_PT)] {
                 let width = |text: &str| {
                     ctx.fonts(|fonts| {
-                        steady(&palette, fonts, text, font.clone(), f32::INFINITY)
-                            .size()
-                            .x
+                        steady(
+                            palette.loading_meta(),
+                            fonts,
+                            text,
+                            font.clone(),
+                            f32::INFINITY,
+                        )
+                        .size()
+                        .x
                     })
                 };
                 let widest = width("Replay · attempting...");
