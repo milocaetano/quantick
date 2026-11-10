@@ -720,9 +720,7 @@ impl QuantickApp {
                     panel_folds,
                 };
                 tab.draw_canvas(tab_id, ui, area, &mut chrome);
-                if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
-                    self.indicator_wiring().open_indicator_picker_on(side);
-                }
+                super::canvas_wiring::settle_canvas(self, ui.ctx());
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.

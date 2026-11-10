@@ -43,6 +43,8 @@ pub struct TabCanvas {
     /// across edits so a removed chart never moves another; a picked layout
     /// seats them afresh.
     pub(crate) seats: Vec<(quantick_workspace::canvas::PaneSlot, usize)>,
+    /// The charts' ⋯ menus, their strips and the remove dialog.
+    pub(crate) menus: crate::pane_menu::PaneMenus,
     /// Every pane band the last drawn frame laid out, header to strip.
     pub(crate) drawn_bands:
         SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
@@ -83,6 +85,7 @@ impl Default for TabCanvas {
             drag: None,
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
+            menus: Default::default(),
             seats: Vec::new(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
@@ -266,15 +269,6 @@ impl TabCanvas {
             self.context_collapsed = false;
         }
         true
-    }
-}
-
-impl CanvasLayout {
-    /// Whether the column painter draws this layout; every other one is
-    /// drawn from the canvas's pane tree.
-    #[must_use]
-    pub const fn is_column(self) -> bool {
-        !matches!(self, CanvasLayout::Preset(_))
     }
 }
 

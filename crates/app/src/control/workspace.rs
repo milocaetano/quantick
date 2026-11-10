@@ -129,7 +129,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     feed_id: tab.feed_id.clone(),
                     symbol: tab.symbol.clone(),
                     active,
-                    layout: tab.canvas.layout.into(),
+                    layout: super::types::layout_dto(tab.canvas.layout),
                     focused_pane: crate::control::pane_side_dto(focused),
                     split_fraction: canonical_f32(
                         tab.canvas.split_fraction,

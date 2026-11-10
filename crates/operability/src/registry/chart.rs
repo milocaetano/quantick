@@ -187,6 +187,46 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         keys: &[(Source::ToolbarAction, "ToggleWindowMenu")],
         mapping: capability!("canvas.window_menu.open"),
     },
+    UiBehaviour {
+        id: "canvas.pane.minimize",
+        title: "Fold a chart to a strip at its edge",
+        reach: "a chart header's ⋯ menu, Minimize; the remove dialog's Minimize instead",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.minimize"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.maximize",
+        title: "Fill the canvas with one chart",
+        reach: "a chart header's ⋯ menu, Maximize",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.maximize"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.restore",
+        title: "Bring a folded or maximized chart back to its place",
+        reach: "a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.restore"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.remove",
+        title: "Remove a chart from the canvas, asking first when the save holds it",
+        reach: "a chart header's ⋯ menu, Remove chart, then the dialog's Remove",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.remove"),
+    },
 ];
 
 /// History.

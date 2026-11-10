@@ -258,7 +258,17 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
 
 /// The toolbar's list door, capsule and open layout popover, as drawn.
 fn push_toolbar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
-    for control in app.chrome_reads().toolbar {
+    let owner = (SceneOwnerKindDto::Toolbar, TOOLBAR_OWNER_ID.to_owned());
+    push_drawn(controls, app.chrome_reads().toolbar, owner);
+}
+
+/// Controls a surface published as it drew them, under `owner`.
+fn push_drawn(
+    controls: &mut Vec<SceneControlSnapshot>,
+    drawn: &[crate::toolbar::DrawnControl],
+    (kind, id): (SceneOwnerKindDto, String),
+) {
+    for control in drawn {
         let bounds = rect_bounds(control.rect);
         controls.push(SceneControlSnapshot {
             control_id: control.id.clone(),
@@ -266,8 +276,8 @@ fn push_toolbar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>
             description: None,
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
-                kind: SceneOwnerKindDto::Toolbar,
-                id: TOOLBAR_OWNER_ID.to_owned(),
+                kind,
+                id: id.clone(),
             },
             selected: control.selected,
             availability: available(),
@@ -491,6 +501,8 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let capabilities = tab.capabilities(app.tab_reads().config());
     let style = app.chrome_reads().style();
     let folds = app.tab_reads().tabs().panel_folds();
+    let owner = (SceneOwnerKindDto::Tab, tab_control_id(tab_id));
+    push_drawn(controls, &tab.canvas.menus.drawn, owner);
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
             // What a side shows, whatever its key reads, as its tooltip says.

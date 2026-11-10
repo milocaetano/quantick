@@ -7,7 +7,8 @@
 //! dividers do. Nothing here decides a layout.
 
 use eframe::egui;
-use quantick_workspace::canvas::{CanvasRect, tree_bands};
+use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_workspace::canvas::{CanvasRect, PaneKind, strip_label, tree_bands};
 use smallvec::SmallVec;
 
 use super::{CanvasChrome, CanvasFrame, PaneRects, Tab};
@@ -47,6 +48,7 @@ impl Tab {
                 band.seat.map_or(PaneSide::Flow, PaneSide::Time),
                 at,
                 band.minimized,
+                band.slot,
             )
         });
         let bands: SmallVec<[_; MAX_CANVAS_PANES]> = bands.collect();
@@ -69,17 +71,18 @@ impl Tab {
             flow_side_row: None,
         };
         let flow_band = (bands.iter())
-            .find(|(side, _, minimized)| *side == PaneSide::Flow && !minimized)
-            .map(|(_, rect, _)| *rect);
+            .find(|(side, _, minimized, _)| *side == PaneSide::Flow && !minimized)
+            .map(|(_, rect, ..)| *rect);
         let mut job_slot = flow_band
             .is_none()
             .then(|| self.connection.slot(self.session.history_note()))
             .flatten();
         let mut focus_bands: SmallVec<[egui::Rect; MAX_CANVAS_PANES]> =
             SmallVec::from_elem(egui::Rect::NOTHING, built);
-        for &(side, rect, minimized) in &bands {
+        for &(side, rect, minimized, slot) in &bands {
             if minimized {
-                super::paint_rail(ui.painter(), rect, rect.left(), false);
+                let name = self.strip_name(side);
+                crate::pane_menu::strip(ui, rect, &name, slot, &mut self.canvas.menus);
                 continue;
             }
             let PaneSide::Time(slot) = side else {
@@ -134,5 +137,22 @@ impl Tab {
             tree: true,
         };
         (frame, rects)
+    }
+
+    /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".
+    fn strip_name(&self, side: PaneSide) -> String {
+        let (kind, bars) = match side {
+            PaneSide::Time(seat) => (
+                PaneKind::Time,
+                self.time_panes
+                    .get(seat)
+                    .map(|pane| pane.spec.spec().parameter_summary()),
+            ),
+            PaneSide::Flow => (
+                PaneKind::Flow,
+                Some(PaneHeader::of(PaneIdentity::OrderFlow, self.flow_pane.spec.spec()).bars_text),
+            ),
+        };
+        strip_label(kind, &bars.unwrap_or_default(), &self.symbol)
     }
 }

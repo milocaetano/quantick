@@ -1,5 +1,6 @@
 //! Carves a tab's canvas into pixels. The model it carves from, pane identity,
-//! presets, widths and shares, is `quantick_workspace::canvas_layout`.
+//! presets, widths, shares and the split itself, is
+//! `quantick_workspace::canvas_layout`; this lays its spans out as rectangles.
 
 use eframe::egui;
 pub use quantick_workspace::canvas_layout::*;
@@ -19,125 +20,27 @@ pub struct RowAreas {
 }
 
 /// Carve `area` into one pane per entry in `widths`, with a draggable divider
-/// on every seam.
-///
-/// The divider sits **on** the split rather than beside it, so a pane spans
-/// from one divider's inner edge to the next and the row spends the canvas
-/// exactly once. Panes keep the full height: this splits one axis only.
-///
-/// Per-frame, and allocation-free — the areas live in `SmallVec`s sized for
-/// [`MAX_CANVAS_PANES`], because this runs inside `draw_canvas` on every tab
-/// on every frame.
+/// on every seam, as [`split`] spends the width. The column painter lays its
+/// row out through `column_frame`; this is the row its tests carve.
+#[cfg(test)]
 #[must_use]
 pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
-    split_axis(area, widths, Axis::Horizontal)
+    let band = |(from, to): Span| egui::Rect::from_x_y_ranges(from..=to, area.y_range());
+    carve(split(area.left(), area.width(), widths), band)
 }
 
-/// Carve `area` top to bottom instead of left to right.
-///
-/// Used by the canvas for stacked context panes. `shared_picks`,
-/// `apply_shared_interactions` and `paint_shared_drawings` are pairwise by
-/// construction — each asks "the other pane", singular — and a mark shared
-/// across three panes has two owners, not one. Generalising that decides
-/// which chart a trader's edit lands on, so it is a design change rather than
-/// a rename, and it lands with the commit that draws the stack.
-///
-/// The context column stacks its panes; the row beside the flow pane splits
-/// across. Same arithmetic, same floors, same collapse rule — one function,
-/// because two would drift and a trader would find a divider that behaved one
-/// way horizontally and another way vertically.
+/// Carve `area` top to bottom instead: the context column's stacked panes.
 #[must_use]
 pub fn split_column(area: egui::Rect, heights: &[PaneWidth]) -> RowAreas {
-    split_axis(area, heights, Axis::Vertical)
+    let band = |(from, to): Span| egui::Rect::from_x_y_ranges(area.x_range(), from..=to);
+    carve(split(area.top(), area.height(), heights), band)
 }
 
-/// Which way a split runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-impl Axis {
-    /// How long `area` is along this axis.
-    fn extent(self, area: egui::Rect) -> f32 {
-        match self {
-            Self::Horizontal => area.width(),
-            Self::Vertical => area.height(),
-        }
+fn carve(split: Split, band: impl Fn(Span) -> egui::Rect) -> RowAreas {
+    RowAreas {
+        panes: split.panes().iter().map(|span| band(*span)).collect(),
+        dividers: split.dividers().iter().map(|span| band(*span)).collect(),
     }
-
-    /// Where `area` starts along this axis.
-    fn start(self, area: egui::Rect) -> f32 {
-        match self {
-            Self::Horizontal => area.left(),
-            Self::Vertical => area.top(),
-        }
-    }
-
-    /// Where `area` ends along this axis.
-    fn end(self, area: egui::Rect) -> f32 {
-        match self {
-            Self::Horizontal => area.right(),
-            Self::Vertical => area.bottom(),
-        }
-    }
-
-    /// A band of `area` between `from` and `to` along this axis, keeping the
-    /// full extent of the other one.
-    fn band(self, area: egui::Rect, from: f32, to: f32) -> egui::Rect {
-        match self {
-            Self::Horizontal => egui::Rect::from_min_max(
-                egui::pos2(from, area.top()),
-                egui::pos2(to.max(from), area.bottom()),
-            ),
-            Self::Vertical => egui::Rect::from_min_max(
-                egui::pos2(area.left(), from),
-                egui::pos2(area.right(), to.max(from)),
-            ),
-        }
-    }
-}
-
-fn split_axis(area: egui::Rect, widths: &[PaneWidth], axis: Axis) -> RowAreas {
-    let mut areas = RowAreas::default();
-    if widths.is_empty() {
-        return areas;
-    }
-    if widths.len() == 1 {
-        areas.panes.push(area);
-        return areas;
-    }
-
-    let mut shares: SmallVec<[f32; MAX_CANVAS_PANES]> = SmallVec::from_elem(0.0, widths.len());
-    resolve_shares(widths, axis.extent(area), &mut shares);
-    let half = CANVAS_DIVIDER_PX / 2.0;
-
-    // Boundaries are cumulative shares of the *whole* width, so the divider
-    // centres land where the trader dragged them. Widths fall out of the
-    // boundaries rather than the other way round, which is what keeps the
-    // arithmetic from leaving a sliver of canvas unspent.
-    let mut boundaries: SmallVec<[f32; MAX_CANVAS_PANES]> = SmallVec::new();
-    let mut cumulative = 0.0_f32;
-    for share in shares.iter().take(widths.len() - 1) {
-        cumulative += share;
-        boundaries.push(axis.start(area) + axis.extent(area) * cumulative);
-    }
-
-    let mut head = axis.start(area);
-    for (index, boundary) in boundaries.iter().enumerate() {
-        let boundary = boundary.clamp(axis.start(area), axis.end(area));
-        areas.panes.push(axis.band(area, head, boundary - half));
-        areas
-            .dividers
-            .push(axis.band(area, boundary - half, boundary + half));
-        head = boundary + half;
-        debug_assert!(index < widths.len(), "one divider per seam, never more");
-    }
-    areas
-        .panes
-        .push(axis.band(area, head.min(axis.end(area)), axis.end(area)));
-    areas
 }
 
 #[cfg(test)]

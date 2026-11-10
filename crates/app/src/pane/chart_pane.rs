@@ -1203,7 +1203,9 @@ impl ChartPane {
         let capsule =
             Some(Capsule::of(CapsuleSide::Time, glyph, None)).filter(|c| !c.is_empty())?;
         let height = crate::theme::get(ui.ctx()).layout(crate::time_header::HEIGHT_PX);
-        let header = egui::Rect::from_x_y_ranges(area.x_range(), area.top() - height..=area.top());
+        let right = area.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX;
+        let header =
+            egui::Rect::from_x_y_ranges(area.left()..=right, area.top() - height..=area.top());
         let (mut intent, painted) = (None, &mut self.frame.header_controls);
         let at = (CapsuleSide::Time, self.id);
         self.frame.capsules[0] =

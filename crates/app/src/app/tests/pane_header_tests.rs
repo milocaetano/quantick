@@ -276,7 +276,9 @@ fn each_pane_paints_only_the_controls_it_accepts() {
         footprint.top() >= header && footprint.bottom() <= chart.top(),
         "the capsule docks in the header: {footprint:?} over {chart:?}"
     );
-    assert!(chart.right() - footprint.right() < 20.0, "at its right end");
+    let menu = quantick_workspace::canvas::PANE_MENU_BUTTON_PX;
+    let gap = chart.right() - footprint.right();
+    assert!(gap < 20.0 + menu, "at its right end, left of the ⋯");
 }
 
 /// Both lit is beside, one lit is that side alone, and a click on the last lit
