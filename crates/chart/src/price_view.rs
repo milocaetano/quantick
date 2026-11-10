@@ -11,6 +11,8 @@
 
 pub use crate::constants::{FLIP_REARM_FRACTION, FLIP_SPAN_FACTOR};
 use crate::geometry::PriceScale;
+use quantick_engine::Bar;
+use rust_decimal::prelude::ToPrimitive as _;
 
 /// The vertical price view: auto-fit or a manual price range, either way up.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,6 +53,27 @@ impl PriceView {
         }
         self.manual = Some((low, high));
         true
+    }
+
+    /// Frame `price` at mid-height: a manual range centred on it, its
+    /// half-span the farther of `auto`'s bounds from it, so every bar the
+    /// auto-fit holds stays on the axis. Orientation is kept: the middle is
+    /// the middle either way up. `false`, and nothing moves, when the price
+    /// or the fit is not finite or leaves no span to frame.
+    pub fn centre_on(&mut self, price: f64, auto: (f64, f64)) -> bool {
+        let finite = [price, auto.0, auto.1]
+            .iter()
+            .all(|value| value.is_finite());
+        let half = (price - auto.0).abs().max((auto.1 - price).abs());
+        finite && half > 0.0 && self.set_manual_range(price - half, price + half)
+    }
+
+    /// [`Self::centre_on`] the close of `newest`, the series' last price;
+    /// `false` without a bar.
+    pub fn centre_on_close(&mut self, newest: Option<&Bar>, auto: (f64, f64)) -> bool {
+        newest
+            .and_then(|bar| bar.close.to_f64())
+            .is_some_and(|price| self.centre_on(price, auto))
     }
 
     /// Whether the chart is upside down.
@@ -373,6 +396,50 @@ mod tests {
         // Inverted, the same downward drag shifts the window the other way.
         v.pan_screen(10.0, 1.0, AUTO);
         assert_eq!(v.resolve(AUTO), (90.0, 100.0));
+    }
+
+    /// The canvas double click: the last price at mid-height, every bar of
+    /// the auto-fit still on the axis — inside the view, above it or below.
+    #[test]
+    fn centre_on_puts_the_price_mid_axis_and_keeps_every_bar() {
+        for (price, expected) in [
+            (108.0, (100.0, 116.0)),
+            (101.0, (92.0, 110.0)),
+            (120.0, (100.0, 140.0)),
+            (90.0, (70.0, 110.0)),
+        ] {
+            let mut v = PriceView::new();
+            assert!(v.centre_on(price, AUTO), "{price}");
+            assert!(!v.is_auto(), "{price}: a manual frame");
+            let (lo, hi) = v.resolve(AUTO);
+            assert_eq!((lo, hi), expected, "{price}");
+            assert!((f64::midpoint(lo, hi) - price).abs() < 1e-9);
+            assert!(lo <= AUTO.0 && hi >= AUTO.1, "{price}: no bar clipped");
+        }
+    }
+
+    /// Upside down the price still lands mid-height, and stays upside down.
+    #[test]
+    fn centre_on_keeps_the_orientation() {
+        for inverted in [false, true] {
+            let mut v = PriceView::new();
+            v.set_inverted(inverted);
+            v.pan(30.0, AUTO);
+            assert!(v.centre_on(104.0, AUTO));
+            assert_eq!(v.is_inverted(), inverted);
+            let scale = v.scale(AUTO, 0.0, 600.0);
+            assert!((scale.y(104.0) - 300.0).abs() < 1e-3, "{inverted}");
+        }
+    }
+
+    #[test]
+    fn centre_on_refuses_what_it_cannot_frame() {
+        let mut v = PriceView::new();
+        assert!(!v.centre_on(f64::NAN, AUTO));
+        assert!(!v.centre_on(105.0, (f64::NAN, 110.0)));
+        assert!(!v.centre_on(105.0, (105.0, 105.0)), "no span to hold");
+        assert!(!v.centre_on_close(None, AUTO), "no bar, no last price");
+        assert!(v.is_auto(), "a refused centre leaves the frame alone");
     }
 
     #[test]

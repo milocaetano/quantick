@@ -117,6 +117,9 @@ pub(super) struct Series<'a> {
     pub(super) partial: Option<&'a Bar>,
 }
 
+/// [`FrameLayout::resolve`]'s frame, auto-fit range, flip span and newest bar.
+type Resolved<'a> = (DrawFrame<'a>, (f64, f64), f64, Option<&'a Bar>);
+
 impl FrameLayout {
     /// The width the live lane takes off the chart's right edge, `0` without
     /// one.
@@ -133,8 +136,8 @@ impl FrameLayout {
 
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
-    /// handler converts pixels with and the span its gutter drag flips
-    /// against. `None` when nothing yields a scale. The native tape fits its
+    /// handler converts pixels with, the span its gutter drag flips
+    /// against and the newest bar, the last price. `None` when nothing yields a scale. The native tape fits its
     /// prints with the `fit_slots` candles; ordinary charts fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
@@ -144,7 +147,7 @@ impl FrameLayout {
         last_auto_range: Option<(f64, f64)>,
         price_view: &PriceView,
         canvas_background: egui::Color32,
-    ) -> Option<(DrawFrame<'a>, (f64, f64), f64)> {
+    ) -> Option<Resolved<'a>> {
         let Series {
             prefix,
             closed,
@@ -203,7 +206,7 @@ impl FrameLayout {
             view: self.view,
             cw,
         };
-        Some((frame, auto_range, flip_span))
+        Some((frame, auto_range, flip_span, newest))
     }
 }
 

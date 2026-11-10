@@ -178,17 +178,23 @@
     "pane_id": {
       "$ref": "#/$defs/WireU64"
     },
+    "price_centre_pending": {
+      "description": "`true` after `live_centre` and `live_centre_zoom_in`: the pane frames\nthe last price at mid-height on its next drawn frame, since only that\nframe fits the live view; `snapshot.read` reads the centred range back.",
+      "type": "boolean"
+    },
     "tab_id": {
       "$ref": "#/$defs/WireU64"
     },
     "viewport": {
-      "$ref": "#/$defs/ViewportSnapshot"
+      "$ref": "#/$defs/ViewportSnapshot",
+      "description": "The pane's view as the call left it. After a live centre the price\nrange is still the one before it: see `price_centre_pending`."
     }
   },
   "required": [
     "tab_id",
     "pane_id",
-    "viewport"
+    "viewport",
+    "price_centre_pending"
   ],
   "title": "TimeAxisResetResult",
   "type": "object"

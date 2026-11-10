@@ -65,6 +65,8 @@ impl ChartPane {
             .as_ref()
             .map(|_| theme::bookmap_scope(painter.ctx()));
         let renderers = self.layer_renderers;
+        // A return to live asks this frame, laid out or not, and never a later one.
+        let centre_live = self.model.take_live_centre();
         let mut start = self.begin_frame(painter, area, chrome);
         let flow_execution = self
             .orderflow
@@ -108,7 +110,7 @@ impl ChartPane {
             closed: self.state.bars(),
             partial: self.state.partial(),
         };
-        let Some((frame, auto_range, flip_span)) = layout.resolve(
+        let Some((mut frame, auto_range, flip_span, newest)) = layout.resolve(
             painter,
             series,
             tape_range,
@@ -119,6 +121,12 @@ impl ChartPane {
             return;
         };
         let chart_rect = frame.chart_rect;
+        // A return to live centres the last price on the live view's fit.
+        if centre_live && self.price_view.centre_on_close(newest, auto_range) {
+            frame.scale = self
+                .price_view
+                .scale(auto_range, chart_rect.top(), chart_rect.bottom());
+        }
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.

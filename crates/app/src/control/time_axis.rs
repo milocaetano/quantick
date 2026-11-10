@@ -1,4 +1,4 @@
-//! `chart.time_axis.reset`: a time strip's, or open canvas's, double-click by name.
+//! `chart.time_axis.reset`: a time strip's, or open canvas's, double- and triple-click by name.
 use super::actions::ActionRegistry;
 use super::gateway::ControlAccess;
 use super::price_axis::{invalid, pane};
@@ -14,8 +14,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     registry.register(descriptor(), reset)
 }
 
-/// Through [`crate::pane::ChartPane::reset_time_axis`], the gesture's own
-/// path and eligibility, so the call and the strip cannot drift.
+/// The gestures' own paths and eligibility, so the call and the clicks cannot drift.
 fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     _access: &mut ControlAccess,
@@ -28,14 +27,15 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_axis(tape),
         TimeAxisTarget::LiveOverview => !tape && pane.model.live_overview(),
+        centre => !tape && pane.live_centre(centre == TimeAxisTarget::LiveCentreZoomIn),
     };
     input.to.outcome(applied).map_err(invalid)?;
     let viewport = super::chart::viewport_snapshot(pane);
-    let (tab_id, pane_id) = (input.tab_id, input.pane_id);
     serde_json::to_value(TimeAxisResetResult {
-        tab_id,
-        pane_id,
+        tab_id: input.tab_id,
+        pane_id: input.pane_id,
         viewport,
+        price_centre_pending: input.to.centres(),
     })
     .map_err(invalid)
 }

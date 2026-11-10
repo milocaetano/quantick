@@ -48,6 +48,9 @@ pub const DEFAULT_PX_PER_BAR: f32 = 8.0;
 /// entry nothing can select into view. At this width a 1900 px pane holds
 /// seven bars — the "read these few candles" zoom the cluster is for.
 pub const MAX_CANDLE_WIDTH: f32 = 256.0;
+/// How much wider the candles get when a triple click on the canvas adds a
+/// zoom to the double click's return to live; [`MAX_CANDLE_WIDTH`] still caps it.
+pub const TRIPLE_CLICK_ZOOM: f32 = 2.0;
 /// Most of the window the projection margin may take, as a fraction.
 ///
 /// Four fifths, so a fifth of the screen always still holds candles. Leaving
