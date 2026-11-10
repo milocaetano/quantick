@@ -1,7 +1,7 @@
 use quantick_appearance::Token;
 use quantick_civil::TzOffset;
 use quantick_engine::Side;
-use quantick_orderflow::widgets::big_trades::{BigTrade, BigTrades};
+use quantick_orderflow::widgets::big_trades::{BigTrade, BigTrades, MIN_NOTIONAL_PRESETS};
 use rust_decimal::Decimal;
 
 use super::WidgetCell;
@@ -36,7 +36,7 @@ fn trade(
 /// 2026-11-10 00:13:52 UTC.
 const T0: i64 = 1_794_269_632_000;
 
-fn model() -> BigTrades {
+pub(super) fn model() -> BigTrades {
     BigTrades {
         rows: vec![
             trade(T0, Side::Buy, "76200.00", "13.1234", "1000000", 1),
@@ -48,8 +48,9 @@ fn model() -> BigTrades {
     }
 }
 
-fn layout(min_notional: &str, merge_fills: bool, unit: NotionalUnit) -> BigTradesLayout {
+pub(super) fn layout(min_notional: &str, merge_fills: bool, unit: NotionalUnit) -> BigTradesLayout<'static> {
     BigTradesLayout {
+        presets: &MIN_NOTIONAL_PRESETS,
         min_notional: d(min_notional),
         merge_fills,
         tick: d("0.50"),

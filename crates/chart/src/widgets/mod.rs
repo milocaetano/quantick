@@ -13,6 +13,7 @@ pub mod big_trades;
 pub mod depth;
 pub mod liquidations;
 pub mod open_interest;
+pub mod scene;
 pub mod spot_perp_cvd;
 
 #[cfg(test)]
@@ -21,6 +22,8 @@ mod big_trades_tests;
 mod depth_tests;
 #[cfg(test)]
 mod derivatives_tests;
+#[cfg(test)]
+mod scene_tests;
 
 /// Pixels a line keeps clear of its plot's top and bottom edge.
 pub const LINE_PAD_PX: f32 = 4.0;

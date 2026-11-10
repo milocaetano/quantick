@@ -5,6 +5,7 @@ use quantick_appearance::Token;
 use quantick_indicators::spot_perp_cvd::{CvdPoint, SpotPerpCvd};
 use rust_decimal::Decimal;
 
+use super::scene::{Align, INSET_PX, ROW_PX, TextSize, WidgetScene};
 use super::{WidgetCell, line_px, value_range};
 use crate::footprint_projection::fmt_qty;
 
@@ -145,4 +146,39 @@ fn legend(leg: &str, points: &[CvdPoint], base_unit: &str, token: Token) -> Widg
         format!("— {leg} {value} {base_unit}").trim_end().to_owned(),
         token,
     )
+}
+
+/// The plot's size in a `width` by `height` body: all of it but the
+/// legend row.
+#[must_use]
+pub fn spot_perp_plot_px(width: f32, height: f32) -> (f32, f32) {
+    (width, (height - ROW_PX).max(0.0))
+}
+
+impl SpotPerpCvdView {
+    /// Lay the pane out in a `width` by `height` body: the opposite-sign
+    /// spans shaded, the zero line, both legs and the legend.
+    #[must_use]
+    pub fn paint(&self, width: f32, height: f32) -> WidgetScene {
+        if let Some(empty) = &self.empty {
+            return WidgetScene::empty(empty, Vec::new(), width, height);
+        }
+        let mut scene = WidgetScene::default();
+        let (_, plot_h) = spot_perp_plot_px(width, height);
+        for [left, right] in &self.shaded {
+            scene.rect([*left, 0.0, right - left, plot_h], self.spot_token, 0.15);
+        }
+        if let Some(zero) = self.zero_y_px {
+            scene.rect([0.0, zero, width, 1.0], Token::Border, 1.0);
+        }
+        scene.line(&self.spot_line, 0.0, self.spot_token);
+        scene.line(&self.perp_line, 0.0, self.perp_token);
+        scene.rows = self.perp_line.len() + self.spot_line.len();
+        let y = height - ROW_PX / 2.0;
+        scene.cell([INSET_PX, y], &self.perp_legend, Align::Left);
+        scene.cell([width * 0.3, y], &self.spot_legend, Align::Left);
+        let note_at = [width - INSET_PX, y];
+        scene.sized(note_at, self.note, Token::TextFaint, Align::Right, TextSize::Small);
+        scene
+    }
 }

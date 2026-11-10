@@ -18,7 +18,9 @@ use serde::Deserialize;
 mod asset_modes;
 mod contract_rolls;
 mod market_asset;
+mod widgets;
 pub use asset_modes::AssetMode;
+pub use widgets::{DEFAULT_BIG_TRADE_PRESETS, NotionalKind, WidgetSetup};
 
 use crate::symbols_file::AddedSymbols;
 use quantick_sources::history_reach;
@@ -108,6 +110,10 @@ pub struct FeedConfig {
     /// ([`AssetMode`]). Keys must match a symbol this feed offers.
     #[serde(default)]
     pub symbol_asset_modes: BTreeMap<String, AssetMode>,
+    /// Per-asset widget setup, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets)
+    /// ([`WidgetSetup`]): tick, notional unit and Big Trades thresholds.
+    #[serde(default)]
+    pub symbol_widgets: BTreeMap<String, WidgetSetup>,
     /// Which dated contract follows which: `contract_rolls = { "<symbol>" =
     /// "<next>" }`. Exact symbols, never a pattern. The one place a roll's
     /// target comes from ([`Self::next_contract`]).
@@ -730,6 +736,7 @@ impl AppConfig {
             feed.validate_asset_modes()?;
             feed.validate_asset_aliases()?;
             feed.validate_contract_rolls()?;
+            feed.validate_widgets()?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols
@@ -1372,6 +1379,10 @@ mod tests {
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: true,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

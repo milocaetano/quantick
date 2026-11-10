@@ -11,13 +11,15 @@ use quantick_orderflow::widgets::big_trades::{
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
+use super::scene::{Align, BAND_OPACITY, ROW_PX, ScenePrim, WidgetScene, row_y, rows_between};
 use super::{WidgetCell, amount, clock_text, price_text};
 use crate::footprint_projection::fmt_qty;
 
 /// What the pane says before any tape arrives.
 pub const BIG_TRADES_EMPTY: &str = "waiting for trades";
 
-/// A row at or above the largest preset is drawn emphasised.
+/// A row at or above the largest preset is drawn emphasised; this is the
+/// largest of the default presets, for a layout that offers none.
 pub const EMPHASIS_NOTIONAL: u32 = MIN_NOTIONAL_PRESETS[MIN_NOTIONAL_PRESETS.len() - 1];
 
 /// Bubble radius of a row with no notional.
@@ -91,7 +93,7 @@ impl BigTradesView {
     pub fn empty_state(min_notional: Decimal, merge_fills: bool, unit: NotionalUnit) -> Self {
         Self {
             columns: columns(unit),
-            presets: presets(min_notional),
+            presets: presets(&MIN_NOTIONAL_PRESETS, min_notional),
             merge_fills,
             rows: Vec::new(),
             footer: String::new(),
@@ -102,7 +104,10 @@ impl BigTradesView {
 
 /// How `model` is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BigTradesLayout {
+pub struct BigTradesLayout<'a> {
+    /// The threshold chips offered, in the unit's amounts; the feed's
+    /// config names them, so a points-quoted future offers its own.
+    pub presets: &'a [u32],
     /// The threshold in force, for the chips and the empty text.
     pub min_notional: Decimal,
     /// Whether the merge chip is on.
@@ -116,9 +121,12 @@ pub struct BigTradesLayout {
 
 /// Lay `model` out; the empty state when there is no tape.
 #[must_use]
-pub fn big_trades_view(model: Option<&BigTrades>, layout: &BigTradesLayout) -> BigTradesView {
+pub fn big_trades_view(model: Option<&BigTrades>, layout: &BigTradesLayout<'_>) -> BigTradesView {
     let Some(model) = model else {
-        return BigTradesView::empty_state(layout.min_notional, layout.merge_fills, layout.unit);
+        return BigTradesView {
+            presets: presets(layout.presets, layout.min_notional),
+            ..BigTradesView::empty_state(layout.min_notional, layout.merge_fills, layout.unit)
+        };
     };
     let largest = model
         .rows
@@ -139,7 +147,7 @@ pub fn big_trades_view(model: Option<&BigTrades>, layout: &BigTradesLayout) -> B
     });
     BigTradesView {
         columns: columns(layout.unit),
-        presets: presets(layout.min_notional),
+        presets: presets(layout.presets, layout.min_notional),
         merge_fills: layout.merge_fills,
         rows,
         footer: format!(
@@ -156,12 +164,13 @@ fn columns(unit: NotionalUnit) -> [&'static str; 6] {
     ["TIME", "", "PRICE", "SIZE", unit.header, ""]
 }
 
-fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout) -> BigTradeRowView {
+fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout<'_>) -> BigTradeRowView {
     let side_token = match row.side {
         Side::Buy => Token::Buy,
         Side::Sell => Token::Sell,
     };
-    let emphasised = row.notional >= Decimal::from(EMPHASIS_NOTIONAL);
+    let top = layout.presets.iter().max().copied().unwrap_or(EMPHASIS_NOTIONAL);
+    let emphasised = row.notional >= Decimal::from(top);
     let ink = if emphasised {
         Token::TextPrimary
     } else {
@@ -197,8 +206,8 @@ fn row_view(row: &BigTrade, largest: Decimal, layout: &BigTradesLayout) -> BigTr
     }
 }
 
-fn presets(min_notional: Decimal) -> Vec<(String, bool)> {
-    MIN_NOTIONAL_PRESETS
+fn presets(values: &[u32], min_notional: Decimal) -> Vec<(String, bool)> {
+    values
         .iter()
         .map(|value| (preset_label(*value), Decimal::from(*value) == min_notional))
         .collect()
@@ -210,5 +219,57 @@ fn preset_label(value: u32) -> String {
         v if v >= 1_000_000 && v % 1_000_000 == 0 => format!("{}M", v / 1_000_000),
         v if v >= 1_000 && v % 1_000 == 0 => format!("{}k", v / 1_000),
         v => v.to_string(),
+    }
+}
+
+/// Column anchors, as shares of the width: TIME, side, PRICE, SIZE,
+/// notional, and the bubble's centre.
+const BIG_TRADES_COLUMN_SHARES: [f32; 6] = [0.02, 0.19, 0.47, 0.66, 0.88, 0.95];
+
+impl BigTradesView {
+    /// Lay the list out in a `width` by `height` body: heads, rows newest
+    /// first, the emphasised ones banded, and the window totals at the
+    /// bottom. The chips carry the presets and the merge switch.
+    #[must_use]
+    pub fn paint(&self, width: f32, height: f32) -> WidgetScene {
+        let mut chips = self.presets.clone();
+        chips.push(("merge fills".to_owned(), self.merge_fills));
+        let x = BIG_TRADES_COLUMN_SHARES.map(|share| share * width);
+        let mut scene = WidgetScene {
+            chips,
+            ..WidgetScene::default()
+        };
+        let aligns = [Align::Left, Align::Left, Align::Right, Align::Right, Align::Right];
+        let heads: Vec<(&str, f32, Align)> =
+            (0..5).map(|index| (self.columns[index], x[index], aligns[index])).collect();
+        scene.heads(ROW_PX / 2.0, &heads);
+        if let Some(empty) = &self.empty {
+            scene.text([width / 2.0, height / 2.0], empty, Token::TextMuted, Align::Centre);
+            scene.empty = Some(empty.clone());
+        }
+        let fit = rows_between(ROW_PX, height - ROW_PX);
+        for (index, row) in self.rows.iter().take(fit).enumerate() {
+            let y = row_y(ROW_PX, index);
+            if row.emphasised {
+                let band = [0.0, y - ROW_PX / 2.0, width, ROW_PX];
+                scene.rect(band, Token::TextFaint, BAND_OPACITY);
+            }
+            scene.cell([x[0], y], &row.time, Align::Left);
+            scene.cell([x[1], y], &row.side, Align::Left);
+            scene.cell([x[2], y], &row.price, Align::Right);
+            scene.cell([x[3], y], &row.size, Align::Right);
+            if let Some(fills) = &row.fills {
+                scene.cell([x[3] + 2.0, y], fills, Align::Left);
+            }
+            scene.cell([x[4], y], &row.notional, Align::Right);
+            scene.prims.push(ScenePrim::Circle {
+                centre: [x[5], y],
+                radius: row.bubble_radius_px,
+                token: row.bubble_token,
+            });
+            scene.rows += 1;
+        }
+        scene.footer(height, &self.footer);
+        scene
     }
 }

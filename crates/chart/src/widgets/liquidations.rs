@@ -9,6 +9,9 @@ use quantick_orderflow::widgets::ports::{LiquidatedSide, LiquidationPrint};
 use rust_decimal::Decimal;
 
 use super::big_trades::NotionalUnit;
+use super::scene::{
+    Align, BAND_OPACITY, INSET_PX, ROW_PX, TextSize, WidgetScene, row_y, rows_between,
+};
 use super::{WidgetCell, amount, bar_px, clock_text, price_text};
 use crate::footprint_projection::fmt_qty;
 
@@ -192,5 +195,58 @@ fn row_view(row: &LiquidationPrint, layout: &LiquidationsLayout) -> LiquidationR
         size: WidgetCell::new(fmt_qty(row.quantity), side_token),
         notional: WidgetCell::new(amount(notional, layout.unit), ink),
         emphasised,
+    }
+}
+
+/// The histogram's height, in rows.
+pub const LIQUIDATION_HISTOGRAM_ROWS: f32 = 3.0;
+
+/// Column anchors, as shares of the width: TIME, LIQUIDATED, PRICE, SIZE
+/// and the notional.
+const LIQUIDATION_COLUMN_SHARES: [f32; 5] = [0.02, 0.30, 0.56, 0.74, 0.97];
+
+impl LiquidationsView {
+    /// Lay the pane out in a `width` by `height` body: the window totals,
+    /// the per-minute histogram around its baseline, then the list.
+    #[must_use]
+    pub fn paint(&self, width: f32, height: f32) -> WidgetScene {
+        if let Some(empty) = &self.empty {
+            return WidgetScene::empty(empty, Vec::new(), width, height);
+        }
+        let mut scene = WidgetScene::default();
+        let slot = width / self.totals.len().max(1) as f32;
+        for (index, totals) in self.totals.iter().enumerate() {
+            let left = INSET_PX + slot * index as f32;
+            let label_at = [left, ROW_PX / 2.0];
+            scene.sized(label_at, &totals.label, Token::TextFaint, Align::Left, TextSize::Small);
+            scene.cell([left, row_y(0.0, 1)], &totals.long, Align::Left);
+            scene.cell([left + slot / 2.0, row_y(0.0, 1)], &totals.short, Align::Left);
+        }
+        let base = 2.0 * ROW_PX + self.baseline_y_px;
+        scene.rect([0.0, base, width, 1.0], Token::Border, 1.0);
+        for bar in &self.bars {
+            let short = [bar.x_px, base - bar.short_px, bar.width_px, bar.short_px];
+            scene.rect(short, Token::Buy, 1.0);
+            scene.rect([bar.x_px, base, bar.width_px, bar.long_px], Token::Sell, 1.0);
+        }
+        let top = 2.0 * ROW_PX + 2.0 * self.baseline_y_px + ROW_PX / 2.0;
+        let x = LIQUIDATION_COLUMN_SHARES.map(|share| share * width);
+        let aligns = [Align::Left, Align::Right, Align::Right, Align::Right, Align::Right];
+        let heads: Vec<(&str, f32, Align)> =
+            (0..5).map(|index| (self.columns[index], x[index], aligns[index])).collect();
+        scene.heads(row_y(top, 0), &heads);
+        for (index, row) in self.rows.iter().take(rows_between(top + ROW_PX, height)).enumerate() {
+            let y = row_y(top + ROW_PX, index);
+            if row.emphasised {
+                let band = [0.0, y - ROW_PX / 2.0, width, ROW_PX];
+                scene.rect(band, Token::TextFaint, BAND_OPACITY);
+            }
+            let cells = [&row.time, &row.side, &row.price, &row.size, &row.notional];
+            for (column, cell) in cells.into_iter().enumerate() {
+                scene.cell([x[column], y], cell, aligns[column]);
+            }
+            scene.rows += 1;
+        }
+        scene
     }
 }

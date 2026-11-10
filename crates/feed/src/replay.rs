@@ -418,6 +418,10 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             ohlcv_daily_generation: 0,
             ohlcv_aggressor_split: false,
             native_candle_intervals: false,
+            liquidations: false,
+            open_interest: false,
+            funding: false,
+            spot_perp_pair: false,
         }),
         commands: cmd_tx,
         // A recording has no chain to attribute: its prints are as old as the
