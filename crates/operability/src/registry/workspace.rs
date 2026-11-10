@@ -17,6 +17,23 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "alerts.list",
+        title: "List local alerts and manage their definitions, monitoring and history",
+        reach: "window menu, Alerts\u{2026}",
+        keys: &[(Source::MenuEntry, "Alerts\u{2026}")],
+        mapping: Mapping::Capabilities(&[
+            "alerts.list",
+            "alerts.read",
+            "alerts.create",
+            "alerts.edit",
+            "alerts.delete",
+            "alerts.pause",
+            "alerts.resume",
+            "alerts.rearm",
+            "alerts.history",
+        ]),
+    },
+    UiBehaviour {
         id: "desk.export",
         title: "Write the whole cockpit to a file",
         reach: "window menu, Desk, Export desk to file…",

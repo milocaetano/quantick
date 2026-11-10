@@ -240,6 +240,19 @@ impl Default for AlertBook {
     }
 }
 impl AlertBook {
+    pub(crate) fn drawing_targets<'a>(
+        &'a self,
+        market: &'a MarketRef,
+    ) -> impl Iterator<Item = &'a crate::DurableDrawingRef> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.saved.spec.market == *market)
+            .flat_map(|entry| &entry.saved.spec.conditions)
+            .filter_map(|condition| match &condition.target {
+                crate::TargetRef::Drawing(target) => Some(target),
+                crate::TargetRef::Value(_) => None,
+            })
+    }
     pub fn evaluate(&mut self, input: &AlertInput<'_>, out: &mut impl AlertEventSink) {
         self.utc_ms = input.utc_ms;
         for entry in &mut self.entries {

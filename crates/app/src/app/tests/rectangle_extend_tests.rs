@@ -389,6 +389,10 @@ fn a_modifier_press_on_a_side_line_still_rests_the_order() {
         app.active_tab().paper.working_orders().is_empty(),
         "a corner keeps the press"
     );
+    assert!(
+        !app.surfaces.alerts.is_open(),
+        "the drawing alert action must stay clear of the corner handle"
+    );
     // The corner's press selected it, which may narrow the canvas.
     let (left, _) = drawn_sides(&app);
     click_chart_with(

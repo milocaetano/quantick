@@ -41,34 +41,53 @@ pub(crate) fn bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> e
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
 }
 
-/// Repair either automatic or parked placement around the measured legend.
-/// Four bounded candidates keep the lane constraint; no paint shapes are scanned.
-fn avoid_legend(
+/// Repair automatic or parked placement around measured panels.
+/// Bounded candidates keep the lane constraint; no paint shapes are scanned.
+fn avoid_panels(
     position: egui::Pos2,
     size: egui::Vec2,
     reachable: egui::Rect,
-    legend: Option<egui::Rect>,
+    panels: [Option<egui::Rect>; 2],
+    object: Option<egui::Rect>,
 ) -> egui::Pos2 {
     let position = clamp_into_chart(position, size, reachable);
-    let Some(legend) = legend else {
-        return position;
-    };
     let gap = drawings::context_bar::OBJECT_GAP_PX;
-    let excluded = legend.expand(gap);
-    if !egui::Rect::from_min_size(position, size).intersects(excluded) {
+    if !panels
+        .into_iter()
+        .flatten()
+        .any(|rect| egui::Rect::from_min_size(position, size).intersects(rect.expand(gap)))
+    {
         return position;
     }
-    [
-        egui::pos2(position.x, excluded.bottom()),
-        egui::pos2(excluded.right(), position.y),
-        egui::pos2(position.x, excluded.top() - size.y),
-        egui::pos2(excluded.left() - size.x, position.y),
-    ]
-    .into_iter()
-    .map(|candidate| clamp_into_chart(candidate, size, reachable))
-    .filter(|candidate| !egui::Rect::from_min_size(*candidate, size).intersects(legend))
-    .min_by(|a, b| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
-    .unwrap_or(position)
+    let around = |rect: egui::Rect| {
+        [
+            egui::pos2(position.x, rect.bottom()),
+            egui::pos2(rect.right(), position.y),
+            egui::pos2(position.x, rect.top() - size.y),
+            egui::pos2(rect.left() - size.x, position.y),
+        ]
+    };
+    panels
+        .into_iter()
+        .flatten()
+        .flat_map(|rect| around(rect.expand(gap)))
+        .chain(object.into_iter().flat_map(|rect| around(rect.expand(gap))))
+        .map(|candidate| clamp_into_chart(candidate, size, reachable))
+        .filter(|candidate| {
+            panels
+                .into_iter()
+                .flatten()
+                .all(|rect| !egui::Rect::from_min_size(*candidate, size).intersects(rect))
+        })
+        .min_by(|a, b| {
+            let covers_object = |point| {
+                object.is_some_and(|rect| egui::Rect::from_min_size(point, size).intersects(rect))
+            };
+            covers_object(*a)
+                .cmp(&covers_object(*b))
+                .then_with(|| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
+        })
+        .unwrap_or(position)
 }
 
 /// Draw this frame.
@@ -162,7 +181,10 @@ pub(crate) fn draw(
         // Keep the action clear of the chart's bottom annotation line.
         chart.max.y -= ctx.style().spacing.interact_size.y;
     }
-    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, occupied);
+    let inspector = (chrome.shared.open && !chrome.shared.pinned)
+        .then(|| ctx.memory(|memory| memory.area_rect(egui::Id::new(super::INSPECTOR_AREA_ID))))
+        .flatten();
+    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, occupied, inspector);
     let intent = drawings::context_bar::show(
         &mut chrome.bar.bar,
         ctx,
@@ -303,6 +325,7 @@ impl Placement {
         chart: egui::Rect,
         bbox: egui::Rect,
         size: egui::Vec2,
+        inspector: Option<egui::Rect>,
     ) -> Self {
         // The live lane is off limits to the bar however it got where it is:
         // that strip is where the price the trader is reading is being
@@ -336,7 +359,10 @@ impl Placement {
         // reachable with a full-height profile on a narrow split. It also
         // keeps the popover bound below honest, which is derived from where
         // the bar ends up.
-        let position = avoid_legend(position, size, reachable, env.legends);
+        // Automatic legend repair must keep the entire action footprint off
+        // the drawing too; a manually parked bar keeps the trader's choice.
+        let object = bar.manual_position().is_none().then_some(bbox);
+        let position = avoid_panels(position, size, reachable, [env.legends, inspector], object);
         // What the popovers are clamped into: the same rectangle *without*
         // the bar's width floor, but never narrower than the bar that was
         // actually drawn.
@@ -409,6 +435,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn full_action_footprint_keeps_the_inspector_title_reachable() {
+        let size = egui::vec2(364.0, 61.0);
+        let wanted = egui::pos2(47.0, 268.0);
+        for bottom in [400.0, 800.0] {
+            let chart = egui::Rect::from_min_max(egui::pos2(47.0, 88.0), egui::pos2(900.0, bottom));
+            let legend = egui::Rect::from_min_max(chart.min, egui::pos2(600.0, 150.0));
+            let inspector = egui::Rect::from_min_max(
+                egui::pos2(288.0, 294.0),
+                egui::pos2(620.0, bottom.min(535.0)),
+            );
+            let object =
+                egui::Rect::from_min_max(egui::pos2(47.0, 250.0), egui::pos2(900.0, 251.0));
+            let placed = egui::Rect::from_min_size(
+                avoid_panels(
+                    wanted,
+                    size,
+                    chart,
+                    [Some(legend), Some(inspector)],
+                    Some(object),
+                ),
+                size,
+            );
+            assert!(chart.contains_rect(placed));
+            assert!(!placed.intersects(legend));
+            assert!(!placed.intersects(inspector));
+            assert!(!placed.intersects(object));
+        }
+    }
+
+    #[test]
+    fn crowded_panel_fallback_keeps_the_action_footprint_in_the_viewport() {
+        let chart = egui::Rect::from_min_size(egui::pos2(47.0, 88.0), egui::vec2(400.0, 100.0));
+        let size = egui::vec2(364.0, 61.0);
+        let parked = egui::pos2(900.0, 900.0);
+        let placed = avoid_panels(parked, size, chart, [Some(chart), None], None);
+        assert!(chart.contains_rect(egui::Rect::from_min_size(placed, size)));
+        assert_eq!(placed, clamp_into_chart(parked, size, chart));
+    }
+
+    #[test]
     fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
         for width in [650.0, 1000.0, 1500.0] {
             let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(width, 700.0));
@@ -426,7 +492,7 @@ mod tests {
                 egui::pos2(4000.0, legend.top()),
             ] {
                 let placed = egui::Rect::from_min_size(
-                    avoid_legend(wanted, size, reachable, Some(legend)),
+                    avoid_panels(wanted, size, reachable, [Some(legend), None], None),
                     size,
                 );
                 assert!(!placed.intersects(legend), "{placed:?} / {legend:?}");

@@ -1,0 +1,3 @@
+# #860 approved measured native residual: Requested alert editor/manager egui painting and narrow native source, dispatch and delivery wiring; observer and geometry policy extracted to alerts/drawings.
+crates/app +1423
+!budget +1423

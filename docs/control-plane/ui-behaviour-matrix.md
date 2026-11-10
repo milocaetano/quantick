@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 115 |
+| Reachable by capability | 116 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **169** |
+| **Total** | **170** |
 
-97 of the 169 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+98 of the 170 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 72 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -201,6 +201,7 @@ The three exclusion classes are closed:
 | `drawing.scope.toggle` | Show one drawing on every timeframe of its market, or keep it to its chart | the object context bar's sharing button, beside Hide, and the inspector's Coordinates tab checkbox | `annotate.drawing_scope.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
+| `alerts.list` | List local alerts and manage their definitions, monitoring and history | window menu, Alerts… | `alerts.list`, `alerts.read`, `alerts.create`, `alerts.edit`, `alerts.delete`, `alerts.pause`, `alerts.resume`, `alerts.rearm`, `alerts.history` | — |
 | `desk.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | `desk.export` | — |
 | `desk.import` | Open a cockpit from a file | window menu, Desk, Import desk from file… | `desk.import` | — |
 | `workspace.recent.open` | Reopen a cockpit file opened before | window menu, Desk, Open recent | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
@@ -243,7 +244,7 @@ matrix fails the build.
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
 | `hotkey` | 25 |
-| `menu_entry` | 46 |
+| `menu_entry` | 47 |
 | `scripted_menu` | 0 |
 | `authored` | 72 |
 

@@ -1,0 +1,3 @@
+# #860 approved measured native residual: Existing alert control port forwarding and frame/menu dispatch only; no new root state or domain decisions.
+QuantickApp +21
+!budget +21

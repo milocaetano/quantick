@@ -18,6 +18,7 @@ pub(crate) struct PaneFacts<'a> {
     pub id: u64,
     pub series: &'a crate::state::ChartState,
     pub drawings: &'a crate::drawings::Drawings,
+    pub drawing_key: Option<&'a quantick_workspace::market_settings::DrawingKey>,
     pub prefix_slots: usize,
     pub hydrating: bool,
 }
@@ -28,6 +29,7 @@ impl<'a> From<&'a ChartPane> for PaneFacts<'a> {
             id: pane.id,
             series: &pane.state,
             drawings: &pane.drawings,
+            drawing_key: pane.layout.drawings_key.as_ref(),
             prefix_slots: pane.seam_slot(),
             hydrating: pane.history_pending(),
         }
@@ -55,34 +57,23 @@ impl Observer for () {
     fn pane(&mut self, _: PaneFacts<'_>, _: Option<Observation<'_>>) {}
 }
 
+mod cache;
+pub(crate) use cache::Cache;
+
 impl Observer for crate::app::alerts_runtime::Runtime {
-    fn reset(&mut self, _reason: quantick_alerts::ResetReason) {}
+    fn reset(&mut self, reason: quantick_alerts::ResetReason) {
+        self.cache.reset(&mut self.core, reason);
+    }
     fn source(&mut self, source: Source<'_>) {
-        let _ = (
-            source.feed,
-            source.symbol,
-            source.generation,
-            source.replay,
-            source.connection,
-            source.hydrating,
-            self.clock_origin,
-        );
+        self.cache.source(source);
     }
     fn pane(&mut self, facts: PaneFacts<'_>, observation: Option<Observation<'_>>) {
-        let _ = (
-            facts.id,
-            facts.series,
-            facts.drawings,
-            facts.prefix_slots,
-            facts.hydrating,
+        self.cache.pane(
+            &mut self.core,
+            facts,
+            observation,
+            self.clock_origin.elapsed().as_millis() as u64,
         );
-        if let Some(observation) = observation {
-            let _ = (
-                observation.trade,
-                observation.received_at_ms,
-                observation.close,
-            );
-        }
     }
 }
 

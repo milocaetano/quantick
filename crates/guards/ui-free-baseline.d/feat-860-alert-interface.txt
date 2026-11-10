@@ -1,0 +1,3 @@
+# #860 approved measured native residual: Native ChartState/ReplayLink/time projection, LayoutAdapter selection, surface context and popup/toast/audio delivery only; reusable observation/cache/geometry policy lives below app.
+crates/app +315
+!budget +315
