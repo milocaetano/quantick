@@ -319,6 +319,10 @@ fn session_capabilities(
         ohlcv_aggressor_split: false,
         // The bridge pushes one block; it cannot be asked for an interval.
         native_candle_intervals: false,
+        liquidations: false,
+        open_interest: false,
+        funding: false,
+        spot_perp_pair: false,
     }
 }
 

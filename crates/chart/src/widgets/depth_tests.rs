@@ -23,7 +23,7 @@ fn model_row(price: &str, sold: &str, bid: &str, ask: &str, bought: &str) -> Dep
     }
 }
 
-fn model() -> DepthModel {
+pub(super) fn model() -> DepthModel {
     let mut rows = vec![
         model_row("76201.00", "0", "0", "4", "0"),
         model_row("76200.50", "0", "0", "1.25", "3"),

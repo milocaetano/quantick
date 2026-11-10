@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 70 |
+| deduplicated per connection | 72 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **103** |
+| **Total** | **105** |
 
 ## Capabilities
 
@@ -218,6 +218,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.risk.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].risk_state` | the ticket's risk state follows the basis asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `widget.close` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `widget.changed` | `payload.open` | an event after the pre-call cursor names the pane with open false | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `widget.open` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `widget.changed` | `payload.open` | an event after the pre-call cursor names the pane with open true | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.autosave.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.autosave_set` | `payload.auto_save` | an event after the pre-call cursor carries the requested state | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.delete` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.deleted` | `payload.workspace` | an event after the pre-call cursor names the deleted workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.new` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.created` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -226,4 +228,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-103 mutable capabilities registered, 103 with a readback.
+105 mutable capabilities registered, 105 with a readback.

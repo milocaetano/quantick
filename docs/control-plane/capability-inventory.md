@@ -141,6 +141,9 @@ capability that cannot change application state.
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
+| `widget.close` | 1 | `widget` | no | `cockpit`, `cockpit.layout` |
+| `widget.open` | 1 | `widget` | no | `cockpit`, `cockpit.layout` |
+| `widget.read` | 1 | `widget` | yes | `observe`, `observe.orderflow` |
 | `workspace.autosave.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
@@ -150,4 +153,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-125 capabilities registered.
+128 capabilities registered.

@@ -7,6 +7,7 @@ use quantick_orderflow::widgets::depth::{
 };
 use rust_decimal::Decimal;
 
+use super::scene::{Align, BAND_OPACITY, ROW_PX, WidgetScene, row_y, rows_between};
 use super::{WidgetBar, WidgetCell, bar_px, price_text};
 use crate::footprint_projection::fmt_qty;
 
@@ -183,4 +184,87 @@ fn reduction_text(row: &DepthRow) -> Option<String> {
         .map(|(side, size)| format!("{side} {}", fmt_qty(size)))
         .collect();
     Some(format!("{label}: {}", sides.join(", ")))
+}
+
+/// Each resting bar's longest width, as a share of the pane's width.
+pub const DEPTH_RESTING_BAR_SHARE: f32 = 0.12;
+
+/// The VOLUME column's longest bar, as a share of the pane's width.
+pub const DEPTH_VOLUME_BAR_SHARE: f32 = 0.16;
+
+/// Column anchors, as shares of the width: SOLD, BID, PRICE, ASK, BOUGHT,
+/// and where the VOLUME bars start.
+const DEPTH_COLUMN_SHARES: [f32; 6] = [0.13, 0.30, 0.46, 0.60, 0.78, 0.82];
+
+/// Ladder rows on each side of the last price that fit a `height` body
+/// beside its column heads and two footer rows.
+#[must_use]
+pub fn depth_rows_per_side(height: f32) -> usize {
+    rows_between(0.0, height).saturating_sub(4) / 2
+}
+
+impl DepthView {
+    /// Lay the ladder out in a `width` by `height` body: heads, rows top
+    /// down, the last price's row banded, and the footer at the bottom.
+    #[must_use]
+    pub fn paint(&self, width: f32, height: f32) -> WidgetScene {
+        let chips = vec![(self.tick.clone(), true)];
+        if let Some(empty) = self.empty {
+            return WidgetScene::empty(empty, chips, width, height);
+        }
+        let x = DEPTH_COLUMN_SHARES.map(|share| share * width);
+        let mut scene = WidgetScene {
+            chips,
+            ..WidgetScene::default()
+        };
+        let aligns = [Align::Right, Align::Right, Align::Centre, Align::Left];
+        let mut heads: Vec<(&str, f32, Align)> = (0..4)
+            .map(|index| (DEPTH_COLUMNS[index], x[index], aligns[index]))
+            .collect();
+        heads.extend([
+            (DEPTH_COLUMNS[4], x[4], Align::Right),
+            (DEPTH_COLUMNS[5], x[5], Align::Left),
+        ]);
+        scene.heads(ROW_PX / 2.0, &heads);
+        let fit = rows_between(ROW_PX, height - 2.0 * ROW_PX);
+        let skip = self.rows.len().saturating_sub(fit) / 2;
+        for (index, row) in self.rows.iter().skip(skip).take(fit).enumerate() {
+            let y = row_y(ROW_PX, index);
+            let band = [0.0, y - ROW_PX / 2.0, width, ROW_PX];
+            if row.last {
+                scene.rect(band, Token::Accent, BAND_OPACITY);
+            }
+            if row.reduction.is_some() {
+                scene.rect([0.0, band[1], 3.0, ROW_PX], Token::Warn, 1.0);
+            }
+            let bar_h = ROW_PX - 4.0;
+            let top = y - bar_h / 2.0;
+            let bid_w = row.bid_bar.width_px;
+            scene.rect([x[1] - bid_w, top, bid_w, bar_h], row.bid_bar.token, 0.35);
+            scene.rect(
+                [x[3], top, row.ask_bar.width_px, bar_h],
+                row.ask_bar.token,
+                0.35,
+            );
+            let sold_w = row.sold_bar.width_px;
+            scene.rect([x[5], top, sold_w, bar_h], row.sold_bar.token, 0.8);
+            let bought = [x[5] + sold_w, top, row.bought_bar.width_px, bar_h];
+            scene.rect(bought, row.bought_bar.token, 0.8);
+            scene.cell([x[0], y], &row.sold, Align::Right);
+            scene.cell([x[1], y], &row.bid, Align::Right);
+            scene.cell([x[2], y], &row.price, Align::Centre);
+            scene.cell([x[3] + 2.0, y], &row.ask, Align::Left);
+            scene.cell([x[4], y], &row.bought, Align::Right);
+            scene.rows += 1;
+        }
+        let reduction = self.rows.iter().find_map(|row| {
+            let label = row.reduction.as_ref()?;
+            Some(format!("{label} at {}", row.price.text))
+        });
+        if let Some(reduction) = reduction {
+            scene.footer(height - ROW_PX, &reduction);
+        }
+        scene.footer(height, &self.footer.join("   "));
+        scene
+    }
 }

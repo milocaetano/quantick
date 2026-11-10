@@ -10,6 +10,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use super::big_trades::NotionalUnit;
+use super::scene::{Align, INSET_PX, ROW_PX, TextSize, WidgetScene, row_y};
 use super::{WidgetCell, amount, line_px, price_text, value_range};
 use crate::bar_progress::countdown_text;
 
@@ -256,4 +257,90 @@ fn percent(fraction: Decimal, places: u32) -> (String, Token) {
         format!("{sign}{figure:.prec$}%", prec = places as usize),
         token,
     )
+}
+
+/// Rows above the plot (the two cards) and below it (the reading and the
+/// provenance).
+const OI_PLOT_ROWS_ABOVE: f32 = 3.5;
+const OI_PLOT_ROWS_BELOW: f32 = 2.0;
+
+/// The plot's size in a `width` by `height` body.
+#[must_use]
+pub fn open_interest_plot_px(width: f32, height: f32) -> (f32, f32) {
+    let rows = OI_PLOT_ROWS_ABOVE + OI_PLOT_ROWS_BELOW;
+    (width, (height - rows * ROW_PX).max(0.0))
+}
+
+impl OpenInterestView {
+    /// Lay the pane out in a `width` by `height` body: the open interest
+    /// and funding cards, the two lines on their own scales, the reading
+    /// rule with [`READING_NOTE`] after it, and where the readings came
+    /// from.
+    #[must_use]
+    pub fn paint(&self, width: f32, height: f32) -> WidgetScene {
+        if let Some(empty) = self.empty.as_ref().filter(|text| !text.is_empty()) {
+            return WidgetScene::empty(empty, Vec::new(), width, height);
+        }
+        let mut scene = WidgetScene::default();
+        let (small, large) = (TextSize::Small, TextSize::Large);
+        let faint = Token::TextFaint;
+        let row = |index| row_y(0.0, index);
+        if !self.open_interest.text.is_empty() {
+            scene.sized(
+                [INSET_PX, row(0)],
+                "OPEN INTEREST",
+                faint,
+                Align::Left,
+                small,
+            );
+            let oi = &self.open_interest;
+            scene.sized([INSET_PX, row(1)], &oi.text, oi.token, Align::Left, large);
+            scene.cell([INSET_PX, row(2)], &self.oi_change, Align::Left);
+            scene.cell([width * 0.25, row(2)], &self.notional, Align::Left);
+        }
+        if let Some(funding) = &self.funding {
+            let left = width / 2.0;
+            scene.sized(
+                [left, row(0)],
+                "FUNDING · NEXT IN",
+                faint,
+                Align::Left,
+                small,
+            );
+            scene.cell(
+                [left + width * 0.22, row(0)],
+                &funding.countdown,
+                Align::Left,
+            );
+            let rate = &funding.rate;
+            scene.sized([left, row(1)], &rate.text, rate.token, Align::Left, large);
+            let mut x = left;
+            for cell in funding.predicted.iter().chain([&funding.annualised]) {
+                scene.cell([x, row(2)], cell, Align::Left);
+                x += width * 0.16;
+            }
+        }
+        let top = OI_PLOT_ROWS_ABOVE * ROW_PX;
+        scene.sized(
+            [INSET_PX, top],
+            &self.price_label,
+            faint,
+            Align::Left,
+            small,
+        );
+        let oi_at = [width - INSET_PX, top];
+        scene.sized(oi_at, &self.oi_label, Token::Accent, Align::Right, small);
+        scene.line(&self.price_line, top, Token::TextMuted);
+        scene.line(&self.oi_line, top, Token::Accent);
+        scene.rows = self.oi_line.len();
+        if let Some(reading) = &self.reading {
+            let at = [INSET_PX, height - 1.5 * ROW_PX];
+            let text = format!("{reading} {READING_NOTE}");
+            scene.sized(at, &text, Token::TextMuted, Align::Left, small);
+        }
+        let provenance = &self.provenance;
+        let at = [INSET_PX, height - ROW_PX / 2.0];
+        scene.sized(at, &provenance.text, provenance.token, Align::Left, small);
+        scene
+    }
 }

@@ -253,6 +253,34 @@ pub struct FeedCapabilitiesSnapshot {
     pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,
+    /// The derivative streams the widget panes 3-5 gate on; false on every
+    /// provider today. Optional, so additive to v1.
+    #[serde(default)]
+    pub liquidations: bool,
+    #[serde(default)]
+    pub open_interest: bool,
+    #[serde(default)]
+    pub funding: bool,
+    #[serde(default)]
+    pub spot_perp_pair: bool,
+}
+
+impl From<quantick_stores::config::FeedCapabilities> for FeedCapabilitiesSnapshot {
+    fn from(caps: quantick_stores::config::FeedCapabilities) -> Self {
+        Self {
+            book_capture: caps.book_capture,
+            history_paging: caps.history_paging,
+            history_boundary: caps.history_boundary.map(Into::into),
+            traded_volume: caps.traded_volume,
+            deal_counter: caps.deal_counter,
+            venue_ohlcv_history: caps.ohlcv_history,
+            venue_ohlcv_generation: WireU64::new(caps.ohlcv_generation),
+            liquidations: caps.liquidations,
+            open_interest: caps.open_interest,
+            funding: caps.funding,
+            spot_perp_pair: caps.spot_perp_pair,
+        }
+    }
 }
 
 /// Where a feed's pageable trade history ends.

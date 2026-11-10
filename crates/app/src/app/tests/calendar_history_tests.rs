@@ -87,6 +87,10 @@ fn push_feed_app_restoring(
         ohlcv_daily_generation: 1,
         ohlcv_aggressor_split: true,
         native_candle_intervals: false,
+        liquidations: false,
+        open_interest: false,
+        funding: false,
+        spot_perp_pair: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

@@ -40,6 +40,7 @@ use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
+use quantick_control_schema::widget::WidgetRead;
 
 use quantick_feed::history_reach;
 
@@ -125,6 +126,7 @@ pub(crate) trait ChromePort:
     + quantick_control_handlers::market_palette::MarketPaletteHost
     + quantick_control_handlers::desk::DeskHost
     + quantick_control_handlers::workspace_book::WorkspaceBookHost
+    + quantick_control_handlers::widgets::WidgetHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
@@ -699,37 +701,31 @@ impl<'a> HealthReads<'a> {
 /// The three lanes the assistant answers on: its popup, the window's
 /// acknowledgement toast, and the attention sound.
 pub(crate) struct Alerts<'a> {
-    agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
-    toast: &'a mut crate::surfaces::ToastSurface,
+    surfaces: &'a mut crate::surfaces::Surfaces,
     audio: &'a mut super::replay_and_history::AlertState,
 }
 
 impl<'a> Alerts<'a> {
     /// The view over the window's own roots, as [`TabReads::new`].
     pub(super) fn new(
-        agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
-        toast: &'a mut crate::surfaces::ToastSurface,
+        surfaces: &'a mut crate::surfaces::Surfaces,
         audio: &'a mut super::replay_and_history::AlertState,
     ) -> Self {
-        Self {
-            agent_popup,
-            toast,
-            audio,
-        }
+        Self { surfaces, audio }
     }
 
     /// Open the assistant's popup. One at a time: a second message replaces
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
     pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
-        self.agent_popup.show(popup);
+        self.surfaces.agent_popup.show(popup);
     }
 
     /// Post one line to the window's own acknowledgement lane — the same
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
     pub(crate) fn show_toast(self, message: String) {
-        self.toast.note(message, std::time::Instant::now());
+        self.surfaces.toast.note(message, std::time::Instant::now());
     }
 
     /// Ask for the platform's attention sound, through the same sink the
@@ -786,6 +782,35 @@ impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
         self.chrome.title_bar.surface.show_market();
         Ok(())
     }
+}
+
+impl quantick_control_handlers::widgets::WidgetHost for QuantickApp {
+    fn widget(&mut self, id: &str, open: Option<bool>) -> Result<WidgetRead, String> {
+        widget_answer(self, id, open)
+    }
+}
+
+/// A pane's close button closes it through `widget.close`, so the journal
+/// hears the trader's close as it hears an agent's; directly without a gateway.
+pub(super) fn close_widget(app: &mut QuantickApp, id: &str) {
+    let close = quantick_control_schema::widget::WIDGET_CLOSE_CAPABILITY_ID;
+    let input = serde_json::json!({ "id": id });
+    if app
+        .control_action(close, 1, crate::control::ActionOrigin::Human, input)
+        .is_err()
+    {
+        let _ = widget_answer(app, id, Some(false));
+    }
+}
+
+/// The widget panes' one door, outside the window's own impl.
+fn widget_answer(
+    app: &mut QuantickApp,
+    id: &str,
+    open: Option<bool>,
+) -> Result<WidgetRead, String> {
+    let parts = (&mut app.surfaces.widgets, &mut app.runtime.tabs);
+    crate::widget_surfaces::answer(parts, (&app.config, app.runtime.tz), (id, open))
 }
 
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
@@ -937,12 +962,7 @@ impl HealthPort for QuantickApp {
 
 impl AlertsPort for QuantickApp {
     fn alerts(&mut self) -> Alerts<'_> {
-        let surfaces = &mut self.surfaces;
-        Alerts::new(
-            &mut surfaces.agent_popup,
-            &mut surfaces.toast,
-            &mut self.audio,
-        )
+        Alerts::new(&mut self.surfaces, &mut self.audio)
     }
 }
 

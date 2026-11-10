@@ -33,7 +33,7 @@ fn cell(text: &str, token: Token) -> WidgetCell {
 /// 2026-11-10 00:13:52 UTC.
 const T0: i64 = 1_794_269_632_000;
 
-fn liquidations_model() -> Liquidations {
+pub(super) fn liquidations_model() -> Liquidations {
     let totals = |window_ms, long: &str, short: &str| LiquidationTotals {
         window_ms,
         long_notional: d(long),
@@ -68,7 +68,7 @@ fn liquidations_model() -> Liquidations {
     }
 }
 
-fn liquidations_layout() -> LiquidationsLayout {
+pub(super) fn liquidations_layout() -> LiquidationsLayout {
     LiquidationsLayout {
         tick: d("0.1"),
         tz: TzOffset::new(0),
@@ -78,7 +78,7 @@ fn liquidations_layout() -> LiquidationsLayout {
     }
 }
 
-fn oi_model() -> OpenInterest {
+pub(super) fn oi_model() -> OpenInterest {
     let sample = |timestamp_ms, oi: &str, price: &str| OpenInterestSample {
         timestamp_ms,
         open_interest: d(oi),
@@ -105,7 +105,7 @@ fn oi_model() -> OpenInterest {
     }
 }
 
-fn oi_layout() -> OpenInterestLayout<'static> {
+pub(super) fn oi_layout() -> OpenInterestLayout<'static> {
     OpenInterestLayout {
         tick: d("0.01"),
         base_unit: "BTC",
@@ -115,7 +115,7 @@ fn oi_layout() -> OpenInterestLayout<'static> {
     }
 }
 
-fn cvd_model() -> SpotPerpCvd {
+pub(super) fn cvd_model() -> SpotPerpCvd {
     let points = |values: &[(i64, f64)]| {
         values
             .iter()
@@ -145,7 +145,7 @@ fn cvd_model() -> SpotPerpCvd {
     }
 }
 
-fn cvd_layout() -> SpotPerpCvdLayout<'static> {
+pub(super) fn cvd_layout() -> SpotPerpCvdLayout<'static> {
     SpotPerpCvdLayout {
         base_unit: "BTC",
         plot_width_px: 210.0,
