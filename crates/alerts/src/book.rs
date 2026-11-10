@@ -187,7 +187,7 @@ struct Entry {
     epoch: Option<u64>,
     last_close: Option<BarIdentity>,
     reseed: bool,
-    session_clock_known: bool,
+    minute_anchor: Option<(u64, u64)>,
 }
 impl Entry {
     fn new(saved: SavedAlert) -> Self {
@@ -198,7 +198,7 @@ impl Entry {
             epoch: None,
             last_close: None,
             reseed: false,
-            session_clock_known: false,
+            minute_anchor: None,
         }
     }
     fn clear(&mut self) {
@@ -268,6 +268,32 @@ impl AlertBook {
                 entry.clear();
             }
             entry.epoch = Some(input.bar.epoch);
+            let mut geometry_changed = false;
+            let mut geometry_error = None;
+            for (condition, state) in entry.saved.spec.conditions.iter().zip(&entry.baselines) {
+                match predicate::preflight(condition, input, state) {
+                    Ok(changed) => geometry_changed |= changed,
+                    Err(reason) => geometry_error = Some(reason),
+                }
+            }
+            if let Some(reason) = geometry_error {
+                entry.clear();
+                entry.status = AlertStatus::Suspended(reason);
+                continue;
+            }
+            if geometry_changed {
+                entry.clear();
+            }
+            entry.status = AlertStatus::Monitoring;
+            // A restored/new epoch has no comparable monotonic timestamp. Wait
+            // a fresh interval, anchored once, rather than trusting UTC jumps.
+            if entry.saved.last_fired_utc_ms.is_some()
+                && entry
+                    .minute_anchor
+                    .is_none_or(|(epoch, _)| epoch != input.bar.epoch)
+            {
+                entry.minute_anchor = Some((input.bar.epoch, input.session_ms));
+            }
             if entry.saved.spec.frequency == Frequency::PerBarClose {
                 if input.kind != ObservationKind::CommittedClose {
                     continue;
@@ -311,30 +337,17 @@ impl AlertBook {
                     saved.last_bar_epoch != Some(input.bar.epoch)
                         || saved.last_bar_sequence != Some(input.bar.sequence)
                 }
-                Frequency::PerMinute => match (
-                    saved.last_bar_epoch,
-                    saved.last_fired_session_ms,
-                    saved.last_fired_utc_ms,
-                ) {
-                    (Some(epoch), Some(last), _)
-                        if epoch == input.bar.epoch && entry.session_clock_known =>
-                    {
-                        input
-                            .session_ms
-                            .checked_sub(last)
-                            .is_some_and(|delta| delta >= 60_000)
-                    }
-                    (_, _, Some(last)) => input
-                        .utc_ms
+                Frequency::PerMinute => entry.minute_anchor.is_none_or(|(_, last)| {
+                    input
+                        .session_ms
                         .checked_sub(last)
-                        .is_some_and(|delta| delta >= 60_000),
-                    _ => true,
-                },
+                        .is_some_and(|delta| delta >= 60_000)
+                }),
             };
             if !qualifies || !cadence {
                 continue;
             }
-            entry.session_clock_known = true;
+            entry.minute_anchor = Some((input.bar.epoch, input.session_ms));
             saved.last_bar_epoch = Some(input.bar.epoch);
             saved.last_bar_sequence = Some(input.bar.sequence);
             saved.last_fired_utc_ms = Some(input.utc_ms);

@@ -446,3 +446,102 @@ fn validation_and_atomic_restore() {
     assert!(book.restore(broken, 0).is_err());
     assert_eq!(before, book.document().unwrap());
 }
+#[test]
+fn geometry_edits_reseed_compound_and_close_only_status() {
+    let target = drawing();
+    let mut draft = spec(Operator::CrossingUp);
+    draft.conditions.push(Predicate {
+        operator: Operator::Inside,
+        target: TargetRef::Drawing(target.clone()),
+    });
+    let mut book = AlertBook::default();
+    book.command(AlertCommand::Create(draft.clone()), 0)
+        .unwrap();
+    let mut out = BoundedEvents::new(10);
+    for (sequence, price, revision) in [(0, 9., 1), (1, 11., 2)] {
+        let facts = [DrawingFact {
+            target: &target,
+            revision,
+            geometry: Ok(Geometry::Rectangle {
+                first: Point {
+                    coordinate: 0.,
+                    price: 0.,
+                },
+                second: Point {
+                    coordinate: 10.,
+                    price: 20.,
+                },
+            }),
+        }];
+        let mut input = snapshot(&draft, sequence, price);
+        input.drawings = &facts;
+        book.evaluate(&input, &mut out);
+    }
+    assert!(
+        out.is_empty(),
+        "editing any condition reseeds all crossings"
+    );
+    draft.frequency = Frequency::PerBarClose;
+    let mut book = AlertBook::default();
+    book.command(AlertCommand::Create(draft.clone()), 0)
+        .unwrap();
+    let facts = [DrawingFact {
+        target: &target,
+        revision: 1,
+        geometry: Ok(Geometry::Rectangle {
+            first: Point {
+                coordinate: 0.,
+                price: 0.,
+            },
+            second: Point {
+                coordinate: 10.,
+                price: 20.,
+            },
+        }),
+    }];
+    let mut input = snapshot(&draft, 0, 9.);
+    input.drawings = &facts;
+    input.kind = ObservationKind::CommittedClose;
+    book.evaluate(&input, &mut out);
+    assert_eq!(book.views().unwrap()[0].status, AlertStatus::Monitoring);
+    book.evaluate(&snapshot(&draft, 1, 9.), &mut out);
+    assert_eq!(
+        book.views().unwrap()[0].status,
+        AlertStatus::Suspended(Unavailable::MissingDrawing)
+    );
+}
+#[test]
+fn restart_and_reconnect_minute_cooldown_uses_only_session_time() {
+    let mut draft = spec(Operator::GreaterThan);
+    draft.frequency = Frequency::PerMinute;
+    let mut book = AlertBook::default();
+    book.command(AlertCommand::Create(draft.clone()), 0)
+        .unwrap();
+    let mut out = BoundedEvents::new(10);
+    let mut input = snapshot(&draft, 0, 11.);
+    input.utc_ms = 1_000_000;
+    input.session_ms = 99_000;
+    book.evaluate(&input, &mut out);
+    assert_eq!(out.len(), 1);
+    book.restore(book.document().unwrap(), 1_000_010).unwrap();
+    input.session_ms = 0;
+    input.utc_ms = 1_000_010;
+    book.evaluate(&input, &mut out);
+    input.session_ms = 1;
+    input.utc_ms = 9_000_000;
+    book.evaluate(&input, &mut out);
+    assert_eq!(out.len(), 1);
+    input.session_ms = 60_000;
+    book.evaluate(&input, &mut out);
+    assert_eq!(out.len(), 2);
+    input.bar.epoch = 2;
+    input.session_ms = 0;
+    book.evaluate(&input, &mut out);
+    input.session_ms = 1;
+    input.utc_ms = 99_000_000;
+    book.evaluate(&input, &mut out);
+    assert_eq!(out.len(), 2);
+    input.session_ms = 60_000;
+    book.evaluate(&input, &mut out);
+    assert_eq!(out.len(), 3);
+}

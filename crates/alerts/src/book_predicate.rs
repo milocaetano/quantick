@@ -128,3 +128,19 @@ pub(super) fn judge(
     state.inside = Some(inside);
     Ok(result)
 }
+
+/// Geometry availability and edits are lifecycle facts even between closes.
+pub(super) fn preflight(
+    predicate: &Predicate,
+    input: &AlertInput<'_>,
+    state: &Baseline,
+) -> Result<bool, Unavailable> {
+    let (_, _, kind, revision) = bounds(&predicate.target, input)?;
+    if !crate::operators::OPERATORS
+        .iter()
+        .any(|op| op.operator == predicate.operator && op.targets.contains(&kind))
+    {
+        return Err(Unavailable::UnsupportedDrawing);
+    }
+    Ok(state.revision.is_some_and(|before| before != revision))
+}

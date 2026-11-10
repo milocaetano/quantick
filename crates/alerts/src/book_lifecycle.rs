@@ -100,6 +100,7 @@ impl AlertBook {
                             AlertCommand::Pause { .. } => entry.saved.enabled = false,
                             AlertCommand::Resume { .. } => entry.saved.enabled = true,
                             AlertCommand::Rearm { .. } => {
+                                entry.minute_anchor = None;
                                 entry.saved.completed = false;
                                 entry.saved.enabled = true;
                                 entry.saved.last_bar_epoch = None;
