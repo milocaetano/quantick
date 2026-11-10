@@ -108,7 +108,7 @@ impl ChartPane {
             closed: self.state.bars(),
             partial: self.state.partial(),
         };
-        let Some((frame, auto_range, flip_span)) = layout.resolve(
+        let Some((mut frame, auto_range, flip_span)) = layout.resolve(
             painter,
             series,
             tape_range,
@@ -119,6 +119,16 @@ impl ChartPane {
             return;
         };
         let chart_rect = frame.chart_rect;
+        // A return to live centres the last price on the live view's fit.
+        let newest = frame
+            .partial
+            .or(frame.closed.last())
+            .or(frame.prefix.last());
+        if self.model.take_live_centre() && self.price_view.centre_on_close(newest, auto_range) {
+            frame.scale = self
+                .price_view
+                .scale(auto_range, chart_rect.top(), chart_rect.bottom());
+        }
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.

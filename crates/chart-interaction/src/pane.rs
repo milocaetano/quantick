@@ -97,12 +97,34 @@ pub struct Model {
     /// left edge to the lane divider: what the live overview fits its bars
     /// across. Zero before the first frame.
     pub candles_px: f32,
+    /// A return to live asked for the last price at mid-height. Only the
+    /// frame knows the live view's auto-fit, so the frame takes it
+    /// ([`Self::take_live_centre`]) and frames the price there.
+    pub live_centre: bool,
 }
 
 impl Model {
-    /// Back to live at the overview spacing across [`Self::candles_px`]: the
-    /// open-canvas double click, and `chart.time_axis.reset`'s live overview.
-    /// `false`, and nothing moves, before a frame laid the candles out.
+    /// Back to live at the spacing the candles have — twice it, up to
+    /// [`crate::viewport::MAX_CANDLE_WIDTH`], when `zoom_in` — with the last
+    /// price centred by the next frame: the canvas's double click, its triple
+    /// click with `zoom_in`, and `chart.time_axis.reset`'s live centre.
+    pub fn live_centre(&mut self, zoom_in: bool) {
+        self.viewport.snap_to_live();
+        if zoom_in {
+            self.viewport.zoom(crate::viewport::TRIPLE_CLICK_ZOOM);
+        }
+        self.live_centre = true;
+    }
+
+    /// Whether a return to live is waiting for the frame to centre the last
+    /// price; asking answers it once.
+    pub fn take_live_centre(&mut self) -> bool {
+        std::mem::take(&mut self.live_centre)
+    }
+
+    /// Back to live at the overview spacing across [`Self::candles_px`]:
+    /// `chart.time_axis.reset`'s live overview. `false`, and nothing moves,
+    /// before a frame laid the candles out.
     pub fn live_overview(&mut self) -> bool {
         let laid_out = self.candles_px > 0.0;
         if laid_out {
@@ -134,7 +156,7 @@ pub enum CanvasHit {
     /// On a candle's body or wick: the chart settings open, the view stays.
     Candle,
     /// Open canvas: nothing opens, and the view returns to live at the
-    /// overview spacing.
+    /// spacing it had, the last price centred ([`Model::live_centre`]).
     Empty,
 }
 
@@ -146,16 +168,49 @@ impl CanvasHit {
     }
 }
 
-/// Whether a double click is two clicks on the canvas itself.
+/// Which repeat of a click on the canvas a frame completed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasRepeat {
+    /// The second click: what each target's double click always did.
+    Double,
+    /// The third: on open canvas, a divider or a drawing, the double click's
+    /// return to live plus [`crate::viewport::TRIPLE_CLICK_ZOOM`]; nothing
+    /// anywhere else.
+    Triple,
+}
+
+impl CanvasRepeat {
+    /// From the toolkit's `double` and `triple` click flags; `None` for a
+    /// single click.
+    #[must_use]
+    pub fn of(double: bool, triple: bool) -> Option<Self> {
+        match (double, triple) {
+            (_, true) => Some(Self::Triple),
+            (true, false) => Some(Self::Double),
+            (false, false) => None,
+        }
+    }
+
+    /// Whether this repeat on `hit` asks the window for the chart settings:
+    /// only the double click on a candle — the third click asks nothing more.
+    #[must_use]
+    pub fn opens_chart_settings(self, hit: Option<CanvasHit>) -> bool {
+        self == Self::Double && hit.is_some_and(CanvasHit::opens_chart_settings)
+    }
+}
+
+/// Whether a double or triple click is all clicks on the canvas itself.
 ///
 /// The toolkit pairs any two clicks inside its delay, wherever they land: a
 /// click on the drawing rail and the placement click that follows it, or the
 /// two anchors of a quickly placed line, would otherwise read as a double
 /// click on the chart once the tool disarms — and open the settings or move
-/// the view the trader just drew on.
+/// the view the trader just drew on. A triple counts only after the canvas's
+/// own double click did.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DoubleClickGate {
     previous_on_canvas: bool,
+    double_counted: bool,
     last_pass: Option<u64>,
 }
 
@@ -167,43 +222,54 @@ pub enum WindowClick {
     None,
     /// A click landed anywhere but this canvas with the primary button free.
     Elsewhere,
-    /// This canvas took the click with the primary button free; `double`
-    /// when the toolkit paired it with the click before.
-    Canvas { double: bool },
+    /// This canvas took the click with the primary button free; `repeat`
+    /// when the toolkit counted it as the second or third of a run.
+    Canvas { repeat: Option<CanvasRepeat> },
 }
 
 impl WindowClick {
     /// From the toolkit's frame: whether `any` click completed, whether this
-    /// canvas took it `on_canvas` with the primary button free, and whether
-    /// it was a `double` click.
+    /// canvas took it `on_canvas` with the primary button free, and which
+    /// `repeat` it was ([`CanvasRepeat::of`]).
     #[must_use]
-    pub fn of(any: bool, on_canvas: bool, double: bool) -> Self {
+    pub fn of(any: bool, on_canvas: bool, repeat: Option<CanvasRepeat>) -> Self {
         match (any, on_canvas) {
             (false, _) => Self::None,
             (true, false) => Self::Elsewhere,
-            (true, true) => Self::Canvas { double },
+            (true, true) => Self::Canvas { repeat },
         }
     }
 }
 
 impl DoubleClickGate {
     /// Feed every frame the canvas runs: `pass` is the toolkit's frame
-    /// counter, `click` this frame's click. Answers whether the frame holds
-    /// the canvas's own double click — both of its clicks on the canvas. A
-    /// frame the canvas missed (another tab, a hidden pane) forgets the
-    /// earlier click: whatever the window was clicked on meanwhile went unseen.
-    pub fn observe(&mut self, pass: u64, click: WindowClick) -> bool {
+    /// counter, `click` this frame's click. Answers the canvas's own repeat
+    /// the frame holds: a double click whose two clicks were the canvas's, a
+    /// triple whose double was. A frame the canvas missed (another tab, a
+    /// hidden pane) forgets the earlier clicks: whatever the window was
+    /// clicked on meanwhile went unseen.
+    pub fn observe(&mut self, pass: u64, click: WindowClick) -> Option<CanvasRepeat> {
         let unbroken = self
             .last_pass
             .is_some_and(|last| pass == last || pass == last + 1);
         self.last_pass = Some(pass);
         let previous = self.previous_on_canvas && unbroken;
-        self.previous_on_canvas = match click {
-            WindowClick::None => previous,
-            WindowClick::Elsewhere => false,
-            WindowClick::Canvas { .. } => true,
+        let double_counted = self.double_counted && unbroken;
+        let repeat = match click {
+            WindowClick::Canvas {
+                repeat: Some(CanvasRepeat::Double),
+            } if previous => Some(CanvasRepeat::Double),
+            WindowClick::Canvas {
+                repeat: Some(CanvasRepeat::Triple),
+            } if double_counted => Some(CanvasRepeat::Triple),
+            _ => None,
         };
-        click == WindowClick::Canvas { double: true } && previous
+        (self.previous_on_canvas, self.double_counted) = match click {
+            WindowClick::None => (previous, double_counted),
+            WindowClick::Elsewhere => (false, false),
+            WindowClick::Canvas { .. } => (true, repeat == Some(CanvasRepeat::Double)),
+        };
+        repeat
     }
 }
 
@@ -233,6 +299,8 @@ pub enum Intent {
         /// What a double click in the candles' price band landed on; `None`
         /// for every other target and for the live chip.
         canvas: Option<CanvasHit>,
+        /// The canvas's double or triple click; `None` for the live chip.
+        repeat: Option<CanvasRepeat>,
     },
     OpenMenu(ContextPress),
     CloseMenu {
@@ -383,20 +451,30 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
             tape,
             overlay,
             canvas,
+            repeat,
         } => {
+            // The tape and an overlay answered the double click; the third
+            // click asks nothing more of them.
+            let triple = repeat == Some(CanvasRepeat::Triple);
             if tape {
-                effects.push(Effect::TapeLive);
+                if !triple {
+                    effects.push(Effect::TapeLive);
+                }
             } else if let Some(slot) = overlay {
-                model.pending_settings = Some(slot);
+                if !triple {
+                    model.pending_settings = Some(slot);
+                }
             } else {
-                match canvas {
+                match (canvas, repeat) {
                     // The candle is what the trader means to change: the
                     // settings open over a view left where it was put.
-                    Some(CanvasHit::Candle) => {}
-                    Some(CanvasHit::Empty) => {
-                        model.live_overview();
-                    }
-                    None => model.viewport.snap_to_live(),
+                    (Some(CanvasHit::Candle), _) => {}
+                    // Open canvas, a divider or a drawing: live at the
+                    // trader's own spacing, the price centred; the triple
+                    // zooms in too.
+                    (_, Some(repeat)) => model.live_centre(repeat == CanvasRepeat::Triple),
+                    // The live chip.
+                    (_, None) => model.viewport.snap_to_live(),
                 }
             }
         }
@@ -597,7 +675,11 @@ mod tests {
             let effects = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Double));
             assert!(effects.is_empty(), "{canvas:?}");
             assert!(model.viewport.follows_live(), "{canvas:?}: back to live");
-            assert_eq!(model.viewport.px_per_bar(), 40.0, "{canvas:?}: spacing kept");
+            assert_eq!(
+                model.viewport.px_per_bar(),
+                40.0,
+                "{canvas:?}: spacing kept"
+            );
             assert!(model.take_live_centre(), "{canvas:?}: the price centres");
             assert!(!model.take_live_centre(), "once");
         }
@@ -738,7 +820,11 @@ mod tests {
         assert_eq!(WindowClick::of(true, true, double), DOUBLE);
         let mut gate = DoubleClickGate::default();
         assert_eq!(gate.observe(1, WindowClick::Elsewhere), None, "the rail");
-        assert_eq!(gate.observe(2, DOUBLE), None, "the placement click after it");
+        assert_eq!(
+            gate.observe(2, DOUBLE),
+            None,
+            "the placement click after it"
+        );
         let mut anchors = DoubleClickGate::default();
         assert_eq!(anchors.observe(1, WindowClick::Elsewhere), None, "armed");
         assert_eq!(anchors.observe(2, DOUBLE), None, "the second, disarmed");

@@ -11,6 +11,8 @@
 
 pub use crate::constants::{FLIP_REARM_FRACTION, FLIP_SPAN_FACTOR};
 use crate::geometry::PriceScale;
+use quantick_engine::Bar;
+use rust_decimal::prelude::ToPrimitive as _;
 
 /// The vertical price view: auto-fit or a manual price range, either way up.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,6 +53,27 @@ impl PriceView {
         }
         self.manual = Some((low, high));
         true
+    }
+
+    /// Frame `price` at mid-height: a manual range centred on it, its
+    /// half-span the farther of `auto`'s bounds from it, so every bar the
+    /// auto-fit holds stays on the axis. Orientation is kept: the middle is
+    /// the middle either way up. `false`, and nothing moves, when the price
+    /// or the fit is not finite or leaves no span to frame.
+    pub fn centre_on(&mut self, price: f64, auto: (f64, f64)) -> bool {
+        let finite = [price, auto.0, auto.1]
+            .iter()
+            .all(|value| value.is_finite());
+        let half = (price - auto.0).abs().max((auto.1 - price).abs());
+        finite && half > 0.0 && self.set_manual_range(price - half, price + half)
+    }
+
+    /// [`Self::centre_on`] the close of `newest`, the series' last price;
+    /// `false` without a bar.
+    pub fn centre_on_close(&mut self, newest: Option<&Bar>, auto: (f64, f64)) -> bool {
+        newest
+            .and_then(|bar| bar.close.to_f64())
+            .is_some_and(|price| self.centre_on(price, auto))
     }
 
     /// Whether the chart is upside down.
@@ -415,6 +438,7 @@ mod tests {
         assert!(!v.centre_on(f64::NAN, AUTO));
         assert!(!v.centre_on(105.0, (f64::NAN, 110.0)));
         assert!(!v.centre_on(105.0, (105.0, 105.0)), "no span to hold");
+        assert!(!v.centre_on_close(None, AUTO), "no bar, no last price");
         assert!(v.is_auto(), "a refused centre leaves the frame alone");
     }
 

@@ -1,4 +1,4 @@
-//! `chart.time_axis.reset`: a time strip's, or open canvas's, double-click by name.
+//! `chart.time_axis.reset`: a time strip's, or open canvas's, double- and triple-click by name.
 use super::actions::ActionRegistry;
 use super::gateway::ControlAccess;
 use super::price_axis::{invalid, pane};
@@ -28,6 +28,13 @@ fn reset<P: TabsPort + TabsMutPort + ?Sized>(
     let applied = match input.to {
         TimeAxisTarget::Opening => pane.reset_time_axis(tape),
         TimeAxisTarget::LiveOverview => !tape && pane.model.live_overview(),
+        to @ (TimeAxisTarget::LiveCentre | TimeAxisTarget::LiveCentreZoomIn) => {
+            if !tape {
+                pane.model
+                    .live_centre(to == TimeAxisTarget::LiveCentreZoomIn);
+            }
+            !tape
+        }
     };
     input.to.outcome(applied).map_err(invalid)?;
     let viewport = super::chart::viewport_snapshot(pane);

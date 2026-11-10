@@ -210,18 +210,20 @@ fn a_triple_click_on_empty_canvas_also_zooms_the_candles_in() {
     let open_canvas = open_canvas(&pane, &areas);
     let mut asked = false;
     for (click, pressed) in [(1, true), (1, false), (2, true), (2, false)] {
-        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
-            .1
-            .open_chart_settings;
+        asked |=
+            drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
+                .1
+                .open_chart_settings;
         if click == 2 && !pressed {
             assert_eq!(pane.model.viewport.px_per_bar(), 20.0, "the double");
             assert!(pane.model.take_live_centre());
         }
     }
     for pressed in [true, false] {
-        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
-            .1
-            .open_chart_settings;
+        asked |=
+            drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(open_canvas, pressed))
+                .1
+                .open_chart_settings;
     }
     assert!(!asked, "no dialog");
     assert!(pane.model.viewport.follows_live());
