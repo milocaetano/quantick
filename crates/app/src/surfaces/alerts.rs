@@ -115,6 +115,11 @@ impl AlertSurface {
                         .find(|choice| choice.selector == selector)
                     {
                         choice.target = Some(target.clone());
+                        draft.spec.conditions[index].operator =
+                            quantick_alerts::operators::for_target(
+                                draft.spec.conditions[index].operator,
+                                choice.kind,
+                            );
                     }
                     draft.spec.conditions[index].target = TargetRef::Drawing(target);
                     self.error = None;
@@ -133,10 +138,7 @@ impl AlertSurface {
                     .find(|choice| choice.target.as_ref() == Some(target))
             })
             .map_or(TargetKind::Value, |choice| choice.kind);
-        let operator = quantick_alerts::operators::OPERATORS
-            .iter()
-            .find(|item| item.targets.contains(&kind))
-            .map_or(Operator::Crossing, |item| item.operator);
+        let operator = quantick_alerts::operators::for_target(Operator::Crossing, kind);
         self.draft = Some(Draft {
             spec: AlertSpec {
                 version: FORMAT_VERSION,
@@ -235,7 +237,12 @@ impl Surface for AlertSurface {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.set_width(width);
-                if self.draft.is_some() {
+                if let Some(storage_error) = env.alert_error {
+                    ui.heading("Alert storage is unavailable");
+                    error(ui, &error_text(storage_error));
+                    ui.label("Definitions and history cannot be confirmed. Failed saves do not replace the last saved definitions.");
+                    ui.label("Correct the alert storage file or its permissions, then restart Quantick to reload it. Your open draft is retained until you close this window or restart.");
+                } else if self.draft.is_some() {
                     self.draw_editor(ui, book, env, &mut response);
                 } else {
                     self.draw_manager(ui, book, env, &mut response);

@@ -60,6 +60,24 @@ pub struct AlertRuntime {
 }
 
 impl AlertRuntime {
+    /// Reads remain unavailable after storage failure until reload or a
+    /// successful write clears the error; never present unconfirmed empty state.
+    pub fn views(&self) -> Result<Vec<quantick_alerts::AlertView>, AlertError> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        self.book.views()
+    }
+    pub fn history(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<quantick_alerts::AlertEvent>, AlertError> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        self.book.history(after, limit)
+    }
     #[must_use]
     pub fn open(path: PathBuf, utc_ms: i64) -> Self {
         let mut runtime = Self {

@@ -27,9 +27,9 @@ Native captures, actual mouse/keyboard operations, socket calls, unit pointer in
 
 ## Native residual and acceptance limits
 
-The final source snapshot adds 1,423 production app lines over 93,463 (94,886
-measured), 315 UI-free app lines over 18,396 (18,711), and 21 lines at the
-QuantickApp extension root over 1,873 (1,894; extension total 2,517). The
+The final source snapshot adds 1,494 production app lines over 93,463 (94,957
+measured), 325 UI-free app lines over 18,396 (18,721), and 31 lines at the
+QuantickApp extension root over 1,873 (1,904; extension total 2,527). The
 branch-only sidecars exactly match these measurements. The native adapters
 translate ChartState/ReplayLink/drawing selection, own Instant conversion,
 route persistent commands and shared audio, and paint/input through egui;

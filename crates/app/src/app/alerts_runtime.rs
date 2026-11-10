@@ -128,6 +128,16 @@ impl quantick_control_handlers::alerts::AlertDefinitionsPort for super::Quantick
     fn alert_book(&self) -> &quantick_alerts::AlertBook {
         &self.runtime.alerts.core.book
     }
+    fn alert_views(&self) -> Result<Vec<quantick_alerts::AlertView>, quantick_alerts::AlertError> {
+        self.runtime.alerts.core.views()
+    }
+    fn alert_history(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<quantick_alerts::AlertEvent>, quantick_alerts::AlertError> {
+        self.runtime.alerts.core.history(after, limit)
+    }
     fn alert_book_at(&mut self) -> (&mut quantick_alerts::AlertBook, i64) {
         (
             &mut self.runtime.alerts.core.book,

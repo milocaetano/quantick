@@ -175,6 +175,7 @@ pub(super) fn draw_surfaces(
         ctx,
         &SurfaceEnv {
             alerts: Some(&alerts.core.book),
+            alert_error: alerts.core.error.as_ref(),
             alert_context: alert_context.as_ref(),
             picker_pane_id: focused_pane.id,
             picker_indicators: &picker_indicators,

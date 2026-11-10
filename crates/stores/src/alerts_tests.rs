@@ -103,4 +103,12 @@ fn failed_alert_save_does_not_publish_a_definition() {
     );
     assert!(runtime.book.views().unwrap().is_empty());
     assert!(runtime.error.is_some());
+    assert_eq!(runtime.views().unwrap_err(), runtime.error.clone().unwrap());
+    assert_eq!(
+        runtime.history(0, 10).unwrap_err(),
+        runtime.error.clone().unwrap()
+    );
+    runtime.reload(2).unwrap();
+    assert!(runtime.views().unwrap().is_empty());
+    assert!(runtime.history(0, 10).unwrap().is_empty());
 }

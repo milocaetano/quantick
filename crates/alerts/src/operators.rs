@@ -5,6 +5,23 @@ const LINE: &[TargetKind] = &[TargetKind::Value, TargetKind::Line];
 const COMPARE: &[TargetKind] = &[TargetKind::Value, TargetKind::Line, TargetKind::Rectangle];
 const REGION: &[TargetKind] = &[TargetKind::Channel, TargetKind::Rectangle];
 
+/// Preserve a compatible choice when editing a target, otherwise use its first
+/// catalog choice. Every supported target kind has at least one operator.
+pub fn for_target(current: Operator, target: TargetKind) -> Operator {
+    if OPERATORS
+        .iter()
+        .any(|item| item.operator == current && item.targets.contains(&target))
+    {
+        current
+    } else {
+        OPERATORS
+            .iter()
+            .find(|item| item.targets.contains(&target))
+            .expect("every target kind has an operator")
+            .operator
+    }
+}
+
 pub const OPERATORS: &[OperatorDescriptor] = &[
     OperatorDescriptor {
         operator: Operator::Crossing,
@@ -52,3 +69,43 @@ pub const OPERATORS: &[OperatorDescriptor] = &[
         targets: REGION,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_changes_preserve_only_compatible_operators() {
+        assert_eq!(
+            for_target(Operator::Crossing, TargetKind::Channel),
+            Operator::Entering
+        );
+        assert_eq!(
+            for_target(Operator::Crossing, TargetKind::Rectangle),
+            Operator::GreaterThan
+        );
+        assert_eq!(
+            for_target(Operator::Inside, TargetKind::Value),
+            Operator::Crossing
+        );
+        assert_eq!(
+            for_target(Operator::LessThan, TargetKind::Rectangle),
+            Operator::LessThan
+        );
+        for kind in [
+            TargetKind::Value,
+            TargetKind::Line,
+            TargetKind::Channel,
+            TargetKind::Rectangle,
+        ] {
+            for item in OPERATORS {
+                let selected = for_target(item.operator, kind);
+                assert!(
+                    OPERATORS
+                        .iter()
+                        .any(|entry| entry.operator == selected && entry.targets.contains(&kind))
+                );
+            }
+        }
+    }
+}

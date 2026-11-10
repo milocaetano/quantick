@@ -17,6 +17,70 @@ fn connect_alerts(directory: &std::path::Path, cockpit: bool) -> LocalClient {
         .unwrap()
 }
 
+#[cfg(test)]
+#[test]
+fn alert_socket_reads_report_storage_failure_and_recovery() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    let directory = gateway_test_directory("alerts-storage-errors");
+    let path = directory.join("alert-readback.toml");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect_alerts(&directory, false);
+    for (document, expected) in [
+        ("broken", codes::INVALID_REQUEST),
+        (
+            "version = 0\nnext_id = 1\nnext_event_sequence = 1\ndefinitions = []\nhistory = []\n",
+            codes::VERSION_UNSUPPORTED,
+        ),
+    ] {
+        std::fs::write(&path, document).unwrap();
+        app.runtime.alerts.core = quantick_stores::alerts::AlertRuntime::open(path.clone(), 0);
+        for (operation, input) in [
+            (schema::LIST, json!({})),
+            (schema::READ, json!({"id":1})),
+            (schema::HISTORY, json!({"after":0,"limit":10})),
+        ] {
+            let response = remote_call(&mut app, &ctx, &mut observer, operation, input);
+            assert_eq!(response_error(&response).code.as_str(), expected);
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), document);
+    }
+    let valid = quantick_alerts::AlertBook::default().document().unwrap();
+    app.runtime.alerts.core.store.save(&valid).unwrap();
+    app.runtime.alerts.core.reload(1).unwrap();
+    let response = remote_call(&mut app, &ctx, &mut observer, schema::LIST, json!({}));
+    assert!(
+        success_result(&response)["alerts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let response = remote_call(
+        &mut app,
+        &ctx,
+        &mut observer,
+        schema::HISTORY,
+        json!({"after":0,"limit":10}),
+    );
+    assert!(
+        success_result(&response)["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::remove_file(&path).unwrap();
+    app.runtime.alerts.core = quantick_stores::alerts::AlertRuntime::open(path, 2);
+    let response = remote_call(&mut app, &ctx, &mut observer, schema::LIST, json!({}));
+    assert!(
+        success_result(&response)["alerts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    disable_test_gateway(&mut app, &ctx);
+}
+
 fn draft(app: &QuantickApp) -> Value {
     let context = super::super::alerts_runtime::context(
         app.active_tab(),

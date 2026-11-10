@@ -3,7 +3,7 @@ use super::*;
 mod confirmation {
     use super::*;
 
-    fn frame(
+    pub(super) fn frame(
         surface: &mut AlertSurface,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
@@ -32,7 +32,11 @@ mod confirmation {
         (output, response)
     }
 
-    fn click(surface: &mut AlertSurface, ctx: &egui::Context, label: &str) -> SurfaceResponse {
+    pub(super) fn click(
+        surface: &mut AlertSurface,
+        ctx: &egui::Context,
+        label: &str,
+    ) -> SurfaceResponse {
         let _ = frame(surface, ctx, vec![]);
         let (output, _) = frame(surface, ctx, vec![]);
         let pos = output
@@ -120,6 +124,143 @@ fn context() -> Context {
         display_offset_minutes: 0,
         drawings: vec![],
     }
+}
+
+#[cfg(test)]
+#[test]
+fn alert_target_controls_keep_operators_compatible() {
+    for (kind, initial, expected) in [
+        (TargetKind::Channel, Operator::Crossing, Operator::Entering),
+        (
+            TargetKind::Rectangle,
+            Operator::Crossing,
+            Operator::GreaterThan,
+        ),
+        (
+            TargetKind::Rectangle,
+            Operator::LessThan,
+            Operator::LessThan,
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let selector = DrawingSelector {
+            tab_id: 1,
+            pane_id: 2,
+            drawing_id: 3,
+        };
+        let target = DurableDrawingRef {
+            workspace: "w".into(),
+            origin: "o".into(),
+            pane: "p".into(),
+            drawing: 3,
+            incarnation: "i".into(),
+        };
+        let mut context = context();
+        context.drawings.push(DrawingChoice {
+            selector,
+            target: None,
+            kind,
+            name: "Region fixture".into(),
+        });
+        let mut surface = AlertSurface {
+            open: true,
+            ..Default::default()
+        };
+        surface.create(&context, None);
+        surface.draft.as_mut().unwrap().spec.conditions[0].operator = initial;
+        assert!(
+            confirmation::click(&mut surface, &ctx, "Value")
+                .alerts
+                .is_none()
+        );
+        let request = confirmation::click(&mut surface, &ctx, "Region fixture")
+            .alerts
+            .unwrap();
+        assert_eq!(request.resolve, Some(selector));
+        surface.settle_target(Ok(target.clone()));
+        let condition = &surface.draft.as_ref().unwrap().spec.conditions[0];
+        assert_eq!(condition.target, TargetRef::Drawing(target));
+        assert_eq!(condition.operator, expected);
+        assert!(
+            confirmation::click(&mut surface, &ctx, "Region fixture")
+                .alerts
+                .is_none()
+        );
+        assert!(
+            confirmation::click(&mut surface, &ctx, "Value")
+                .alerts
+                .is_none()
+        );
+        let condition = &surface.draft.as_ref().unwrap().spec.conditions[0];
+        assert!(matches!(condition.target, TargetRef::Value(_)));
+        assert_eq!(
+            condition.operator,
+            if expected == Operator::Entering {
+                Operator::Crossing
+            } else {
+                expected
+            }
+        );
+        assert!(
+            AlertBook::default()
+                .validate(&surface.draft.as_ref().unwrap().spec)
+                .is_ok()
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn alert_storage_error_never_renders_an_empty_manager() {
+    let ctx = egui::Context::default();
+    let book = AlertBook::default();
+    let mut surface = AlertSurface {
+        open: true,
+        ..Default::default()
+    };
+    for problem in [
+        AlertError::UnsupportedVersion(0),
+        AlertError::Invalid {
+            field: "document".into(),
+            reason: "malformed".into(),
+        },
+    ] {
+        let env = SurfaceEnv {
+            alerts: Some(&book),
+            alert_error: Some(&problem),
+            ..SurfaceEnv::quiet(std::time::Instant::now())
+        };
+        for _ in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                surface.draw(ctx, &env);
+            });
+        }
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(surface.draw(ctx, &env).alerts.is_none());
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.contains(&"Alert storage is unavailable"),
+            "{labels:?}"
+        );
+        assert!(!labels.iter().any(|text| text.starts_with("No alerts.")));
+        assert!(labels.iter().any(|text| text.contains("restart Quantick")));
+    }
+    let env = SurfaceEnv {
+        alerts: Some(&book),
+        ..SurfaceEnv::quiet(std::time::Instant::now())
+    };
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        surface.draw(ctx, &env);
+    });
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().starts_with("No alerts."))));
 }
 #[test]
 fn alert_editor_workflows() {

@@ -215,6 +215,10 @@ fn conditions(
                             .clicked()
                         {
                             predicate.target = TargetRef::Value(draft.context.price.unwrap_or(0.0));
+                            predicate.operator = quantick_alerts::operators::for_target(
+                                predicate.operator,
+                                TargetKind::Value,
+                            );
                         }
                         for choice in &draft.context.drawings {
                             if ui

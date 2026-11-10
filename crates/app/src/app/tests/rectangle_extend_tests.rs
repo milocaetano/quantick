@@ -14,6 +14,57 @@ const MID_Y: f32 = (TOP + BOTTOM) / 2.0;
 /// rectangle too.
 const BAND_INSET: f32 = 12.0;
 
+#[cfg(test)]
+#[test]
+fn short_inspector_keeps_compact_alert_action_clear_of_its_body() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    let size = egui::vec2(1000.0, 360.0);
+    let parked = egui::pos2(100.0, 150.0);
+    app.drawings.chrome.context_bar_mut().set_manual(parked);
+    app.drawings.chrome.set_inspector_open(true);
+    app.drawings
+        .chrome
+        .place_inspector_by_hand(egui::pos2(288.0, 96.0));
+    for _ in 0..30 {
+        run_frame_at(&mut app, &ctx, size);
+    }
+    app.drawings.chrome.forget_context_bar_rect();
+    let output = run_frame_sized(&mut app, &ctx, size, vec![], egui::Modifiers::NONE);
+    let inspector = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+        .unwrap();
+    let pane_id = app.active_tab().flow_pane.id;
+    let action = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new(("drawing_alert", pane_id))))
+        .unwrap();
+    assert!(painted_text_center(&output, "Create alert").is_some());
+    assert!(
+        !action.intersects(inspector),
+        "action {action:?}, inspector body {inspector:?}"
+    );
+    assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(action));
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_none(),
+        "redundant full bar must yield to the inspector"
+    );
+    assert_eq!(
+        app.drawings.chrome.context_bar_mut().manual_position(),
+        Some(parked)
+    );
+    app.drawings.chrome.set_inspector_open(false);
+    for _ in 0..3 {
+        run_frame_at(&mut app, &ctx, size);
+    }
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_some(),
+        "full bar returns after closing inspector"
+    );
+    assert_eq!(
+        app.drawings.chrome.context_bar_mut().manual_position(),
+        Some(parked)
+    );
+}
+
 /// A filled rectangle drawn by hand, with egui's click sequence quiet so
 /// the next two clicks read as a double, not a triple.
 fn drawn_rectangle() -> (QuantickApp, egui::Context, mpsc::Receiver<FeedCommand>) {

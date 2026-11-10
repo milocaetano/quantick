@@ -185,6 +185,36 @@ pub(crate) fn draw(
         .then(|| ctx.memory(|memory| memory.area_rect(egui::Id::new(super::INSPECTOR_AREA_ID))))
         .flatten();
     let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, occupied, inspector);
+    if inspector.is_some_and(|rect| {
+        rect.intersects(egui::Rect::from_min_size(placement.position, occupied))
+    }) {
+        // The open inspector already owns the drawing controls. In a cramped
+        // pane keep only the distinct alert action, without moving the parked bar.
+        if drawing.supports_alert_target() {
+            let style = ctx.style();
+            let compact_size = ctx.fonts(|fonts| {
+                fonts
+                    .layout_no_wrap(
+                        "Create alert".into(),
+                        egui::TextStyle::Body.resolve(&style),
+                        style.visuals.text_color(),
+                    )
+                    .size()
+            }) + egui::vec2(2.0 * style.spacing.button_padding.x, 0.0);
+            let compact =
+                Placement::resolve(&chrome.bar.bar, env, chart, bbox, compact_size, inspector);
+            let compact_rect = egui::Rect::from_min_size(compact.position, compact_size);
+            if chart.contains_rect(compact_rect)
+                && inspector.is_none_or(|rect| !rect.intersects(compact_rect))
+                && env
+                    .legends
+                    .is_none_or(|rect| !rect.intersects(compact_rect))
+            {
+                alert_action(ctx, env, compact.position, drawing.id.0, &mut ask);
+            }
+        }
+        return ask;
+    }
     let intent = drawings::context_bar::show(
         &mut chrome.bar.bar,
         ctx,
@@ -193,17 +223,13 @@ pub(crate) fn draw(
         &mut object,
     );
     if drawing.supports_alert_target() {
-        egui::Area::new(egui::Id::new(("drawing_alert", env.pane_id)))
-            .fixed_pos(placement.position + egui::vec2(0.0, size.y))
-            .show(ctx, |ui| {
-                if ui.small_button("Create alert").clicked() {
-                    ask.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
-                        tab_id: env.tab,
-                        pane_id: env.pane_id,
-                        drawing_id: drawing.id.0,
-                    });
-                }
-            });
+        alert_action(
+            ctx,
+            env,
+            placement.position + egui::vec2(0.0, size.y),
+            drawing.id.0,
+            &mut ask,
+        );
     }
     let glyph_after = object.glyph_size;
     #[cfg(test)]
@@ -243,6 +269,26 @@ pub(crate) fn draw(
     }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
+}
+
+fn alert_action(
+    ctx: &egui::Context,
+    env: &DrawingEnv<'_>,
+    position: egui::Pos2,
+    drawing_id: u64,
+    ask: &mut DrawingChromeAsk,
+) {
+    egui::Area::new(egui::Id::new(("drawing_alert", env.pane_id)))
+        .fixed_pos(position)
+        .show(ctx, |ui| {
+            if ui.small_button("Create alert").clicked() {
+                ask.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
+                    tab_id: env.tab,
+                    pane_id: env.pane_id,
+                    drawing_id,
+                });
+            }
+        });
 }
 
 /// The raw input that decides whether the bar stands down this frame.
