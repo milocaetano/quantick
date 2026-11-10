@@ -292,10 +292,13 @@ impl DrawingController {
                 if drawing.magnet != edited.magnet {
                     effects.own_magnet = Some((edited.id, edited.magnet));
                 }
+                self.presets
+                    .note_edited_style(edited.tool, drawing.style, edited.style);
                 *drawing = *edited;
             }
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {
+            self.presets.finish_edited_style();
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
         if ask.toggle_selected_hidden {

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DrawingStyle, PresetHost};
+use crate::{DrawingStyle, LastStyle, PresetHost, ToolCatalog};
 
 /// The file's name inside the durable cockpit home; the window resolves where
 /// that is and hands the path in.
@@ -125,6 +125,8 @@ pub struct PresetStore {
     theme: Option<(u64, quantick_appearance::ResolvedTheme)>,
     path: PathBuf,
     tools: BTreeMap<String, ToolPresets>,
+    /// A pencil look waiting for its edit gesture to end; never on disk.
+    last_style: LastStyle,
 }
 
 impl PresetStore {
@@ -166,7 +168,24 @@ impl PresetStore {
             path,
             tools,
             theme: None,
+            last_style: LastStyle::default(),
         }
+    }
+
+    /// One applied edit of a drawing's look; see [`LastStyle::note`].
+    pub fn note_edited_style<T: ToolCatalog>(
+        &mut self,
+        tool: T,
+        before: DrawingStyle,
+        after: DrawingStyle,
+    ) {
+        self.last_style.note(tool, before, after);
+    }
+
+    /// The edit gesture ended; see [`LastStyle::flush`].
+    pub fn finish_edited_style(&mut self) -> bool {
+        let mut last_style = std::mem::take(&mut self.last_style);
+        last_style.flush(self)
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -4277,6 +4277,70 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     );
 }
 
+/// The pencil keeps the colour the trader last gave a stroke: recolour one,
+/// pick the pencil again, and the next stroke is already that colour.
+#[test]
+fn a_recoloured_stroke_sets_the_next_pencil_stroke() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    let presets = crate::scratch::ScratchFile::new("pencil-last-style", "presets.toml");
+    app.drawings.presets = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
+    run_frame(&mut app, &ctx);
+    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(620.0, 300.0),
+        egui::pos2(760.0, 380.0),
+    );
+    run_frame(&mut app, &ctx);
+
+    let slot = app
+        .drawings
+        .chrome
+        .context_bar()
+        .color_rect()
+        .expect("the stroke's bar renders its colour slot");
+    // A hand reaches the bar before it presses it.
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(slot.center())],
+    );
+    click_chart(&mut app, &ctx, slot.center());
+    run_frame(&mut app, &ctx);
+    let buy = app
+        .drawings
+        .chrome
+        .context_bar()
+        .swatch_rect(3)
+        .expect("the palette opened under the slot");
+    click_chart(&mut app, &ctx, buy.center());
+    run_frame(&mut app, &ctx);
+    let recoloured = app.active_tab().flow_pane.drawings.items()[0].style;
+    assert_eq!(recoloured.color32(), theme::BUY);
+
+    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+    drag_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(640.0, 420.0),
+        egui::pos2(780.0, 460.0),
+    );
+    let items = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items[1].style, recoloured,
+        "the next stroke opens with the last look"
+    );
+    // Remembered on disk too, so a restart keeps it.
+    let reloaded = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
+    assert_eq!(
+        drawings::PresetHost::default_style(&reloaded, "brush"),
+        Some(recoloured)
+    );
+}
+
 /// …and the gear is the one door to the panel, which is what makes the
 /// `open_inspector` shortcut the rest of these tests use legitimate.
 #[test]
