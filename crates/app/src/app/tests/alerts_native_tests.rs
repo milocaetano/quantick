@@ -443,3 +443,45 @@ fn alert_native_lifecycle_reset_and_hydration_are_silent() {
         1
     );
 }
+
+/// Native C11 found the selected drawing's context bar painted over the open
+/// alert editor: hovering the Trigger combo offered "Delete rectangle". The
+/// bar stands down while the alert surface owns the pointer, as it already
+/// does for the drawing manager, and returns when the surface closes.
+#[test]
+fn the_context_bar_yields_to_the_open_alert_surface() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame(&mut app, &ctx);
+    let rectangle = place_drawing(
+        &mut app,
+        &ctx,
+        "rectangle",
+        &[egui::pos2(500.0, 300.0), egui::pos2(700.0, 420.0)],
+    );
+    app.toolrail.arm(Tool::Pointer);
+    app.drawing_pane_mut().drawings.select(Some(rectangle));
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_some(),
+        "the selection raised the bar"
+    );
+
+    app.surfaces.alerts.open_drawing(None);
+    app.drawings.chrome.forget_context_bar_rect();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_none(),
+        "the bar stands down while the alert surface is open"
+    );
+
+    app.surfaces.alerts = Default::default();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_some(),
+        "the bar returns once the alert surface closes"
+    );
+}

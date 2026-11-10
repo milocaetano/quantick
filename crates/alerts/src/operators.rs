@@ -22,6 +22,22 @@ pub fn for_target(current: Operator, target: TargetKind) -> Operator {
     }
 }
 
+/// The trader-facing name of `operator` on a `kind` target. A rectangle's
+/// comparisons name the boundary they compare against.
+pub fn label(kind: Option<TargetKind>, operator: Operator) -> &'static str {
+    match (kind, operator) {
+        (Some(TargetKind::Rectangle), Operator::GreaterThan) => "Above upper boundary",
+        (Some(TargetKind::Rectangle), Operator::LessThan) => "Below lower boundary",
+        _ => {
+            OPERATORS
+                .iter()
+                .find(|item| item.operator == operator)
+                .expect("every operator has a catalog entry")
+                .label
+        }
+    }
+}
+
 pub const OPERATORS: &[OperatorDescriptor] = &[
     OperatorDescriptor {
         operator: Operator::Crossing,

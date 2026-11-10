@@ -75,6 +75,18 @@ pub enum Frequency {
     PerMinute,
 }
 
+impl Frequency {
+    /// The trader-facing name the editor and the summary both show.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Once => "Only once",
+            Self::PerBar => "Once per bar",
+            Self::PerBarClose => "Once per bar close",
+            Self::PerMinute => "Once per minute",
+        }
+    }
+}
+
 /// Absolute cutoff resolved at definition time using the supplied display
 /// offset. Persisting the cutoff prevents a restart from extending expiration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

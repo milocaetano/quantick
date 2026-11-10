@@ -119,8 +119,9 @@ pub(crate) fn draw(
     // places the next object — the selection it belongs to is the one they
     // just finished, not the one they are starting.
     // The manager already exposes these actions. Keep the parked position,
-    // but give its footer the pointer until it closes.
-    if env.drawing_tool_armed || chrome.manager_open() {
+    // but give its footer the pointer until it closes. An open floating
+    // surface such as Alerts owns the pointer the same way.
+    if env.drawing_tool_armed || chrome.manager_open() || chrome.surface_over {
         return ask;
     }
     // Suppressed means suppressed: nothing below this line runs, so the bar

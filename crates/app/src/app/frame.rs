@@ -762,9 +762,8 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        if scratch.canvas.begin_text_edit {
-            self.drawings.chrome.request_text_edit();
-        }
+        let alerts_open = self.surfaces.alerts.is_open();
+        self.drawings.chrome.frame_facts(scratch.canvas.begin_text_edit, alerts_open);
         let ask = self.drawings.draw_drawing_chrome(
             ctx,
             &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),

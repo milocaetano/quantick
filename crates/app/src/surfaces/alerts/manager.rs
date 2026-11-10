@@ -78,7 +78,7 @@ impl AlertSurface {
                 ui.group(|ui| {
                     ui.strong(&view.spec.name);
                     super::editor::market_label(ui, &view.spec.market);
-                    ui.label(&view.summary);
+                    ui.label(super::editor::summary(&view.spec, env.alert_context));
                     ui.label(status_label(view.status));
                     ui.horizontal_wrapped(|ui| {
                         if let Some(command) =

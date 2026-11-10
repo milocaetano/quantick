@@ -172,6 +172,7 @@ pub struct EditorView {
 
 #[path = "book_editor.rs"]
 mod editor;
+pub use editor::summary_with;
 #[path = "book_lifecycle.rs"]
 mod lifecycle;
 #[path = "book_predicate.rs"]

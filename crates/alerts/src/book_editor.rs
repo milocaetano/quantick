@@ -94,24 +94,89 @@ pub(super) fn offset(value: i32) -> Result<(), AlertError> {
     }
 }
 pub(super) fn summary(spec: &AlertSpec) -> String {
-    let conditions: Vec<_> = spec
-        .conditions
+    summary_with(&spec.conditions, spec.frequency, |_| None)
+}
+/// The conditions and cadence in the editor's own words. `name` resolves a
+/// drawing target to its display name and kind when the caller can; an
+/// unresolved drawing is named by its id alone, never by its identity keys.
+pub fn summary_with(
+    conditions: &[Predicate],
+    frequency: Frequency,
+    name: impl Fn(&DurableDrawingRef) -> Option<(String, TargetKind)>,
+) -> String {
+    let conditions: Vec<_> = conditions
         .iter()
         .map(|p| {
+            let (target, kind) = match &p.target {
+                TargetRef::Value(v) => (v.to_string(), Some(TargetKind::Value)),
+                TargetRef::Drawing(d) => match name(d) {
+                    Some((name, kind)) => (name, Some(kind)),
+                    None => (format!("drawing {}", d.drawing), None),
+                },
+            };
             format!(
-                "Price {:?} {}",
-                p.operator,
-                match &p.target {
-                    TargetRef::Value(v) => v.to_string(),
-                    TargetRef::Drawing(d) =>
-                        format!("drawing {} ({}/{})", d.drawing, d.pane, d.incarnation),
-                }
+                "Price {} {target}",
+                crate::operators::label(kind, p.operator)
             )
         })
         .collect();
     format!(
-        "All conditions: {}; {:?}",
+        "All conditions: {}; {}",
         conditions.join(" AND "),
-        spec.frequency
+        frequency.label()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quantick_workspace::drawing_identity::DurableDrawingRef;
+
+    fn drawing(id: u64) -> DurableDrawingRef {
+        DurableDrawingRef {
+            workspace: "6".into(),
+            origin: "replay9:ALERTTEST14:all-timeframes".into(),
+            pane: "4d6426481f043c9827acd9397e8d0945".into(),
+            drawing: id,
+            incarnation: "1".into(),
+        }
+    }
+
+    /// Native C11 read `Price Entering drawing 8 (6:replay9:…/4d64…); PerBar`
+    /// under Summary: enum debug names and identity keys, not the words the
+    /// editor's own combos show.
+    #[test]
+    fn the_summary_speaks_the_editors_words() {
+        let conditions = [
+            Predicate {
+                operator: Operator::CrossingUp,
+                target: TargetRef::Value(99.5),
+            },
+            Predicate {
+                operator: Operator::GreaterThan,
+                target: TargetRef::Drawing(drawing(12)),
+            },
+            Predicate {
+                operator: Operator::Entering,
+                target: TargetRef::Drawing(drawing(8)),
+            },
+        ];
+        let named = |target: &DurableDrawingRef| match target.drawing {
+            12 => Some(("Rectangle 12".to_owned(), TargetKind::Rectangle)),
+            _ => None,
+        };
+        assert_eq!(
+            summary_with(&conditions, Frequency::PerBar, named),
+            "All conditions: Price Crossing Up 99.5 AND Price Above upper boundary \
+             Rectangle 12 AND Price Entering drawing 8; Once per bar"
+        );
+        for (frequency, label) in [
+            (Frequency::Once, "Only once"),
+            (Frequency::PerBar, "Once per bar"),
+            (Frequency::PerBarClose, "Once per bar close"),
+            (Frequency::PerMinute, "Once per minute"),
+        ] {
+            assert_eq!(frequency.label(), label);
+        }
+    }
 }

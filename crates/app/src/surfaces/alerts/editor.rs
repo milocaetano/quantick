@@ -46,7 +46,7 @@ impl AlertSurface {
                 if let Ok(view) = book.editor(draft.spec.clone()) {
                     ui.separator();
                     ui.label("Summary");
-                    ui.label(view.summary);
+                    ui.label(summary(&draft.spec, Some(&draft.context)));
                     for issue in &view.errors {
                         error(ui, &error_text(issue));
                     }
@@ -142,13 +142,6 @@ pub(super) fn market_label(ui: &mut egui::Ui, market: &MarketRef) {
     ))
     .on_hover_text(identity);
 }
-fn operator_label(kind: Option<TargetKind>, item: &OperatorDescriptor) -> &'static str {
-    match (kind, item.operator) {
-        (Some(TargetKind::Rectangle), Operator::GreaterThan) => "Above upper boundary",
-        (Some(TargetKind::Rectangle), Operator::LessThan) => "Below lower boundary",
-        _ => item.label,
-    }
-}
 fn conditions(
     ui: &mut egui::Ui,
     draft: &mut Draft,
@@ -175,8 +168,10 @@ fn conditions(
                     let label = quantick_alerts::operators::OPERATORS
                         .iter()
                         .find(|item| item.operator == predicate.operator)
-                        .map_or("Select operator", |item| operator_label(kind, item));
-                    egui::ComboBox::from_id_salt("operator")
+                        .map_or("Select operator", |item| {
+                            quantick_alerts::operators::label(kind, item.operator)
+                        });
+                    egui::ComboBox::from_id_salt(("operator", kind.map(|kind| kind as u8)))
                         .selected_text(label)
                         .show_ui(ui, |ui| {
                             for item in
@@ -184,7 +179,7 @@ fn conditions(
                                     kind.is_some_and(|kind| item.targets.contains(&kind))
                                 })
                             {
-                                let label = operator_label(kind, item);
+                                let label = quantick_alerts::operators::label(kind, item.operator);
                                 ui.selectable_value(&mut predicate.operator, item.operator, label);
                             }
                         });
@@ -277,7 +272,7 @@ fn conditions(
     ui.separator();
     ui.label("Trigger");
     egui::ComboBox::from_id_salt("frequency")
-        .selected_text(frequency_label(draft.spec.frequency))
+        .selected_text(draft.spec.frequency.label())
         .show_ui(ui, |ui| {
             for frequency in [
                 Frequency::Once,
@@ -285,11 +280,7 @@ fn conditions(
                 Frequency::PerBarClose,
                 Frequency::PerMinute,
             ] {
-                ui.selectable_value(
-                    &mut draft.spec.frequency,
-                    frequency,
-                    frequency_label(frequency),
-                );
+                ui.selectable_value(&mut draft.spec.frequency, frequency, frequency.label());
             }
         });
     ui.label(match draft.spec.frequency {
@@ -299,14 +290,6 @@ fn conditions(
         Frequency::PerMinute => "At least one minute between triggers.",
     });
     expiration(ui, draft, book);
-}
-fn frequency_label(value: Frequency) -> &'static str {
-    match value {
-        Frequency::Once => "Only once",
-        Frequency::PerBar => "Once per bar",
-        Frequency::PerBarClose => "Once per bar close",
-        Frequency::PerMinute => "Once per minute",
-    }
 }
 fn expiration(ui: &mut egui::Ui, draft: &mut Draft, book: &AlertBook) {
     ui.label("Expiration");
@@ -383,8 +366,7 @@ fn expiration(ui: &mut egui::Ui, draft: &mut Draft, book: &AlertBook) {
     }
     if let Some(issue) = &draft.expiration_error {
         error(ui, issue);
-    }
-    if let Expiration::At {
+    } else if let Expiration::At {
         utc_ms,
         display_offset_minutes,
     } = draft.spec.expiration
@@ -452,4 +434,14 @@ fn notifications(
         error(ui, failure);
     }
     ui.label("Alerts are monitored while this workspace is open.");
+}
+/// The book's summary, naming drawing targets as the target combo does.
+pub(super) fn summary(spec: &AlertSpec, context: Option<&Context>) -> String {
+    let drawings = context.map_or(&[][..], |context| &context.drawings);
+    quantick_alerts::summary_with(&spec.conditions, spec.frequency, |target| {
+        let choice = drawings
+            .iter()
+            .find(|c| c.target.as_ref() == Some(target))?;
+        Some((choice.name.clone(), choice.kind))
+    })
 }
