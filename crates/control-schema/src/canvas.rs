@@ -9,6 +9,7 @@
 
 use quantick_control::registry::CapabilityDescriptor;
 use quantick_control::schema::generated_schema;
+use quantick_control_host::authority::CANVAS_MODULE_ID;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -201,6 +202,8 @@ fn canvas_descriptor<Input: JsonSchema, Output: JsonSchema>(
 ) -> CapabilityDescriptor {
     let mut descriptor =
         crate::layout::descriptor(id, title, description, generated_schema::<Input>());
+    descriptor.module =
+        quantick_control::id::ModuleId::new(CANVAS_MODULE_ID).expect("static module ID is valid");
     descriptor.output_schema = generated_schema::<Output>();
     descriptor.expected_cost.max_response_bytes = Some(RESULT_MAX_BYTES);
     descriptor
@@ -216,7 +219,7 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
                 WindowMenuResult,
             >(
                 id,
-                crate::layout::LAYOUT_MODULE_ID,
+                CANVAS_MODULE_ID,
                 "Open the window menu",
                 "Opens the window menu below the toolbar's list door, as a click on it does: the same rows as the title bar's menu, its submenus opening rightwards.",
                 "Opening an open menu leaves it open.",

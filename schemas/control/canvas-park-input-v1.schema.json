@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "CanvasCorner": {
+      "description": "A canvas corner a floating chart parks in.",
+      "enum": [
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "corner": {
+      "$ref": "#/$defs/CanvasCorner"
+    },
+    "slot": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slot",
+    "corner"
+  ],
+  "title": "ParkPaneInput",
+  "type": "object"
+}

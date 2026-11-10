@@ -385,7 +385,11 @@ mod shortcut_tests {
             .take(SHORTCUT_KEYS)
             .map(|preset| preset.id)
             .collect();
-        assert_eq!(keyed[0], "flow", "Ctrl+Shift+1 stays the flow pane alone");
+        assert_eq!(
+            LAYOUT_PRESETS[0].kinds,
+            [PaneKind::Flow],
+            "Ctrl+Shift+1 stays the flow pane alone"
+        );
         assert_eq!(keyed.len(), SHORTCUT_KEYS);
     }
 
