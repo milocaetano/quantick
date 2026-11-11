@@ -57,7 +57,8 @@ fn every_kind_of_config_change_moves_the_engine_revision_key() {
         ("tick spheres", |c| {
             c.volume_dots.tick_bubbles = Some(TickBubbleStyle {
                 zoom_regions: false,
-                peak_spheres: false,
+                peak_spheres: None,
+                peak_max_radius: None,
                 reference_quantity: 1.0,
                 max_radius: 32.0,
                 label_min_radius: 12.0,

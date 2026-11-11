@@ -132,7 +132,8 @@ fn rect_move_and_resize_change_the_key_while_invalid_price_ranges_are_rejected()
 fn viewport_style() -> quantick_orderflow::TickBubbleStyle {
     quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
-        peak_spheres: false,
+        peak_spheres: None,
+        peak_max_radius: None,
         reference_quantity: 900.0,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
@@ -243,7 +244,8 @@ fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regroupi
     ] {
         let legacy = quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
-            peak_spheres: false,
+            peak_spheres: None,
+            peak_max_radius: None,
             viewport_scale: None,
             reference_mode,
             ..style

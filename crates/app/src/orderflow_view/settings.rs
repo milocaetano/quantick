@@ -332,7 +332,8 @@ impl OrderflowView {
         name: Option<&str>,
         tuning: quantick_orderflow::TickTuning,
     ) -> Result<bool, String> {
-        let style = self.look.tick_style(name)?.map(|style| tuning.apply(style));
+        let worn = self.config.volume_dots.tick_bubbles;
+        let style = self.look.tick_style_tuned(name, tuning, worn)?;
         Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
     }
 
@@ -367,9 +368,16 @@ impl OrderflowView {
                 }
             });
         if let Some(style) = &mut self.config.volume_dots.tick_bubbles {
-            ui.checkbox(&mut style.peak_spheres, "Peak spheres").on_hover_text(
-                "one sphere per peak of each zoom region's volume by price,                  sized by rank among the spheres on screen; vivid when one-sided",
-            );
+            let mut peaks = style.peaks();
+            let hint = "one sphere per peak of each zoom region's volume by price; \
+                        area is volume, vivid when one-sided";
+            if ui
+                .checkbox(&mut peaks, "Peak spheres")
+                .on_hover_text(hint)
+                .changed()
+            {
+                style.peak_spheres = Some(peaks);
+            }
             let range = quantick_orderflow::config::controls::OPACITY_RANGE;
             ui.add(egui::Slider::new(&mut style.opacity, range).text("sphere opacity"));
         }

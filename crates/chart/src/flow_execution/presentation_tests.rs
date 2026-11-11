@@ -573,7 +573,8 @@ fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         viewport_scale: None,
         zoom_regions: true,
-        peak_spheres: true,
+        peak_spheres: Some(true),
+        peak_max_radius: None,
         max_radius: 32.0,
         label_min_radius: 8.0,
         opacity: 0.9,
@@ -596,6 +597,49 @@ fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
         .count();
     assert_eq!(fits, 2, "the middle mass would fit its label");
     let labels = plan.quantity_labels(&frame, Some(style));
-    assert_eq!(labels.len(), 1, "only the top fifth carries one");
+    assert_eq!(
+        labels.len(),
+        1,
+        "only masses of half the reference carry one"
+    );
     assert_eq!(labels[0].center, centers[0]);
+    // The fill strength is part of each region's key, so a drawing kept
+    // from before the mode flipped is never reused at the wrong strength.
+    let mut off = frame.clone();
+    off.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Candles(1);
+    assert_ne!(plan.region_keys(&frame, true), plan.region_keys(&off, true));
+}
+
+/// Under peak spheres a label that does not fit or would cover another ends
+/// the placement, so no larger sphere goes unlabelled beside a smaller
+/// labelled one; a label off screen does not.
+#[test]
+fn peak_labels_never_skip_a_larger_sphere() {
+    let label = |center: [f32; 2], radius: f32, text: &str| super::super::FlowQuantityLabel {
+        center,
+        radius,
+        text: text.to_owned(),
+    };
+    let labels = vec![
+        label([-30.0, 100.0], 30.0, "50K"),
+        label([100.0, 100.0], 30.0, "45K"),
+        label([104.0, 100.0], 20.0, "30K"),
+        label([300.0, 100.0], 15.0, "10K"),
+    ];
+    let measure = |_: &super::super::FlowQuantityLabel| [20.0, 10.0];
+    let texts = |placed: Vec<([f32; 2], super::super::FlowQuantityLabel)>| {
+        placed
+            .into_iter()
+            .map(|(_, label)| label.text)
+            .collect::<Vec<_>>()
+    };
+    let fit = [2.0, 1.0];
+    let all = super::super::place_quantity_labels(labels.clone(), HISTORY, fit, measure);
+    assert_eq!(
+        texts(all),
+        ["45K", "10K"],
+        "the shared rule skips and goes on"
+    );
+    let peaks = super::super::place_quantity_labels_until_miss(labels, HISTORY, fit, measure, true);
+    assert_eq!(texts(peaks), ["45K"], "a covered 30K stops the 10K");
 }

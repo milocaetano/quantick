@@ -578,14 +578,16 @@ mod tests {
                 assert_eq!(tick.label_min_radius, 8.0);
                 assert_eq!(tick.opacity, 0.9);
                 assert!(!tick.zoom_regions, "{}", preset.name);
-                assert!(!tick.peak_spheres, "{}", preset.name);
+                assert!(!tick.peaks(), "{}", preset.name);
             } else if let Some(tick) = preset.tick_bubbles {
                 // The mini index: the one look whose spheres pool by the
                 // zoom, one sphere per peak of each region's volume profile,
                 // sized against what is on screen.
                 assert_eq!(preset.name, "mini index regions");
                 assert!(tick.zoom_regions);
-                assert!(tick.peak_spheres);
+                assert!(tick.peaks());
+                assert_eq!(tick.peak_max_radius, Some(24.0));
+                assert_eq!(tick.bubbles().max_radius, 24.0);
                 assert!(tick.viewport_scale.is_some());
                 assert_eq!(
                     tick.reference_mode,

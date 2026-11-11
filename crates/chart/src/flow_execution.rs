@@ -22,7 +22,7 @@ use constants::{
 mod geometry;
 mod labels;
 pub use geometry::FlowExecutionGeometry;
-pub use labels::{FlowQuantityLabel, place_quantity_labels};
+pub use labels::{FlowQuantityLabel, place_quantity_labels, place_quantity_labels_until_miss};
 mod disc;
 pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
@@ -102,10 +102,10 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
     carry_recut(state, session, epoch);
     let region = session
         .region_span(
-            tick_bubbles.is_some_and(|style| style.zoom_regions || style.peak_spheres),
+            tick_bubbles.is_some_and(|style| style.zoom_regions || style.peaks()),
             f64::from(pixels.0) / slots.len() as f64,
         )
-        .with_peaks(tick_bubbles.is_some_and(|style| style.peak_spheres));
+        .with_peaks(tick_bubbles.is_some_and(|style| style.peaks()));
     let total = state.bars().len() + usize::from(state.partial().is_some());
     // A peak region's profile reads all of its candles, so the request
     // admits whole regions: the view's edge never cuts one, and a pan
