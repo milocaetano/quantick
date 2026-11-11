@@ -17,7 +17,3 @@ pub(super) const CANDLE_AGGRESSION_DOT_OPACITY: f32 = 0.35;
 pub(super) const SIDEBAR_BODY_FRAC: f32 = 0.35;
 /// How soon a frame with FLOW work still pending asks to be painted again.
 pub(super) const FLOW_PENDING_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
-/// FLOW caption distance below the history pane's top (plus the legend inset), in pixels.
-pub(super) const FLOW_CAPTION_TOP_PX: f32 = 6.0;
-/// Gap between the native legend and the FLOW caption under it, in pixels.
-pub(super) const FLOW_CAPTION_GAP_PX: f32 = 3.0;

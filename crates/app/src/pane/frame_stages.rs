@@ -10,7 +10,7 @@
 //! method could not, and a free function handed every input separately would
 //! take a dozen of them.
 
-use crate::pane::constants::{FLOW_CAPTION_GAP_PX, FLOW_CAPTION_TOP_PX, FLOW_PENDING_REPAINT};
+use crate::pane::constants::FLOW_PENDING_REPAINT;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -310,24 +310,6 @@ impl<'a> FlowFrame<'a> {
                 tick_regions,
                 bounds: &mut bounds,
             });
-        }
-        if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
-            let history = self.history;
-            let top = bounds.map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
-                rect.bottom() + FLOW_CAPTION_GAP_PX
-            });
-            if let Some(caption) = crate::orderflow_render::flow_caption(
-                self.painter,
-                history,
-                top,
-                self.regional
-                    .as_ref()
-                    .map(|(frame, _)| frame.as_ref())
-                    .or_else(|| owner.flow_execution_frame()),
-                owner.flow_execution_progress(),
-            ) {
-                bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
-            }
         }
         bounds
     }

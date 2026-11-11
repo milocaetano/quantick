@@ -285,42 +285,6 @@ fn common_offset_preserves_vectors_and_radii() {
 }
 
 #[test]
-fn the_caption_keeps_its_exception_facts_and_no_key_or_placement() {
-    let (mut frame, _) = painted_region(100, 0);
-    // Regional FLOW (WIN) draws the first daily region uncapped; over a typed
-    // reference its note says the area is capped at the radius limit.
-    frame.view.reference = FlowReference::VisibleRegions;
-    frame.dots[0].opening_anchor = true;
-    frame.dots[0].opening_oversized = true;
-    frame.dots[0].opening_quantity = 90.into();
-    let ctx = egui::Context::default();
-    let output = ctx.run(egui::RawInput::default(), |ctx| {
-        flow_caption(
-            &ctx.layer_painter(egui::LayerId::background()),
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 100.0)),
-            0.0,
-            Some(&frame),
-            FlowProgress::default(),
-        );
-    });
-    let texts = output
-        .shapes
-        .iter()
-        .filter_map(|shape| {
-            let egui::Shape::Text(text) = &shape.shape else {
-                return None;
-            };
-            Some(text.galley.job.text.as_str())
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    assert!(!texts.contains("offset") && texts.starts_with("FLOW | "));
-    assert!(texts.contains("100") && texts.contains("90"));
-    assert!(!texts.contains("capped"));
-    assert!(!texts.contains("Buy") && !texts.contains("Sell"));
-}
-
-#[test]
 fn oversized_opening_value_stays_inside_the_pane_even_when_its_perimeter_is_clipped() {
     let (mut frame, _) = painted_region(74365, 0);
     frame.dots[0].opening_anchor = true;
