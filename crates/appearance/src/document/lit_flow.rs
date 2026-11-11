@@ -52,13 +52,6 @@ impl ChartSurface {
     }
 }
 
-/// The surfaces as the flag older callers pass: `true` is the flow pane's island.
-impl From<bool> for ChartSurface {
-    fn from(flow: bool) -> Self {
-        if flow { Self::Flow } else { Self::Paper }
-    }
-}
-
 impl LitFlowOverride {
     pub(crate) fn resolve(&self, parent: &ResolvedTheme) -> Result<ResolvedTheme, ThemeError> {
         if let Some(width) = self.candle_casing_px

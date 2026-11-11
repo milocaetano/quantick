@@ -15,7 +15,12 @@
         },
         "lights_on": {
           "default": false,
-          "description": "The flow pane's lights, kept with the tab whatever the theme; only a\ntheme that authors a lit surface (Light) paints them.",
+          "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+          "type": "boolean"
+        },
+        "lights_saved": {
+          "default": false,
+          "description": "The lights as saved with the tab, whatever the theme paints.",
           "type": "boolean"
         },
         "open": {

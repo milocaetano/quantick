@@ -73,6 +73,10 @@ pub fn lit_halo_width(radius: f32) -> f32 {
     (radius * LIT_HALO_SCALE).clamp(LIT_HALO_MIN_PX, LIT_HALO_MAX_PX)
 }
 
+/// The darker rim a rimmed (lit) bubble wears at its edge, whatever the
+/// look's outline width: flat bubbles on white have no shading to edge them.
+pub const FLAT_RIM_PX: f32 = 1.25;
+
 /// Pixels added beyond `front_length_scale × radius`, so the consumption mark
 /// on even the smallest bubble is long enough to read as a mark.
 pub const FRONT_END_PADDING_PX: f32 = 6.0;

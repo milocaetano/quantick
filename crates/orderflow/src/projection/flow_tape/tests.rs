@@ -776,6 +776,19 @@ fn side_radii_keep_a_positive_decimal_minority_when_the_cached_share_is_zero() {
     assert_eq!(sell, dot.radius);
 }
 
+/// A pie's dominant side is the larger share, buy on a tie.
+#[test]
+fn the_dominant_side_is_the_larger_share_and_buy_on_a_tie() {
+    let mut projected = frame(&[trade(1000, 100, 100, Side::Buy)], 200.0);
+    let dot = &mut projected.dots[0];
+    assert_eq!(dot.dominant_side(), Side::Buy);
+    dot.mark.quantity = Decimal::from(10);
+    for (buy, side) in [(4, Side::Sell), (5, Side::Buy), (6, Side::Buy)] {
+        dot.mark.buy_quantity = Decimal::from(buy);
+        assert_eq!(dot.dominant_side(), side, "{buy} of 10 bought");
+    }
+}
+
 /// A print at the live edge of a zoomed-out view merges its own region
 /// window again and walks only the cells from that window's first slot, not
 /// every cell on screen, while the frame stays the one `project` builds.

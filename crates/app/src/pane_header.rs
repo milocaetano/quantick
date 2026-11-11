@@ -291,36 +291,14 @@ fn lights_bulb(
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let palette = theme::get(ui.ctx());
     let id = ui.id().with(("pane_lights_bulb", salt));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let glyph = [icons::LIGHTBULB, icons::LIGHTBULB_FILAMENT][usize::from(on)];
+    let lit = on.then(|| theme::get(ui.ctx()).flow_bulb_lit());
+    let control = HeaderControl::Settings(PanelControl::Lights);
+    let response = bare_key(ui, (rect, id), (glyph, false, lit), control, painted);
     if response.clicked() {
         *intent = Some(HeaderIntent::SetLights(!on));
     }
-    let ink = match (on, response.hovered()) {
-        (true, _) => palette.flow_bulb_lit(),
-        (false, true) => palette.flow_key_up_ink(),
-        (false, false) => palette.flow_gear_ink(),
-    };
-    for (past, strength) in DOT_GLOW.iter().filter(|_| on) {
-        let radius = SEGMENT_GLYPH_PX / 2.0 + past;
-        ui.painter()
-            .circle_filled(rect.center(), radius, ink.gamma_multiply(*strength));
-    }
-    let glyph = if on {
-        icons::LIGHTBULB_FILAMENT
-    } else {
-        icons::LIGHTBULB
-    };
-    let font = egui::FontId::new(SEGMENT_GLYPH_PX, palette.body_font(SEGMENT_GLYPH_PX).family);
-    let at = egui::Align2::CENTER_CENTER;
-    ui.painter().text(rect.center(), at, glyph, font, ink);
-    record(
-        ui,
-        HeaderControl::Settings(PanelControl::Lights),
-        rect,
-        painted,
-    );
     response.on_hover_ui(|ui| {
         ui.set_max_width(TIP_WIDTH_PX);
         ui.strong(LIGHTS_NAME);
@@ -572,31 +550,12 @@ fn settings_gear(
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let palette = theme::get(ui.ctx());
     let id = ui.id().with(("pane_settings_gear", salt));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let control = HeaderControl::Settings(PanelControl::Gear);
+    let response = bare_key(ui, (rect, id), (icons::GEAR, open, None), control, painted);
     if response.clicked() {
         *intent = Some(HeaderIntent::ToggleSettings);
     }
-    let pressed = open || response.is_pointer_button_down_on();
-    let ink = if pressed || response.hovered() {
-        palette.flow_key_up_ink()
-    } else {
-        palette.flow_gear_ink()
-    };
-    if pressed {
-        let rounding = egui::Rounding::same(SEGMENT_ROUNDING);
-        ui.painter()
-            .rect_filled(rect, rounding, palette.flow_key_down());
-        let shade = (1.0, palette.flow_key_down_shade());
-        let lip = rect.x_range().shrink(SEGMENT_ROUNDING);
-        ui.painter().hline(lip, rect.top() + 1.5, shade);
-    }
-    let font = egui::FontId::new(SEGMENT_GLYPH_PX, palette.body_font(SEGMENT_GLYPH_PX).family);
-    let at = egui::Align2::CENTER_CENTER;
-    ui.painter().text(rect.center(), at, icons::GEAR, font, ink);
-    let control = HeaderControl::Settings(PanelControl::Gear);
-    record(ui, control, rect, painted);
     let key = Some(shortcuts::ORDERFLOW_SETTINGS_SHORTCUT);
     let response = response.on_hover_ui(|ui| {
         ui.label(with_key(ui.ctx(), "Order flow settings", key));
@@ -609,6 +568,44 @@ fn settings_gear(
             }
         }
     });
+}
+
+/// A bare key on the flow band, recorded as `control`: `glyph` in the gear's
+/// ink, the key-up ink while hovered or pressed, the pressed plate while
+/// `open` or held down; a `lit` key wears that colour over a glow instead.
+fn bare_key(
+    ui: &egui::Ui,
+    (rect, id): (egui::Rect, egui::Id),
+    (glyph, open, lit): (&str, bool, Option<egui::Color32>),
+    control: HeaderControl,
+    painted: &mut PaintedControls,
+) -> egui::Response {
+    let palette = theme::get(ui.ctx());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    let pressed = open || response.is_pointer_button_down_on();
+    let ink = lit.unwrap_or(if pressed || response.hovered() {
+        palette.flow_key_up_ink()
+    } else {
+        palette.flow_gear_ink()
+    });
+    if pressed {
+        let rounding = egui::Rounding::same(SEGMENT_ROUNDING);
+        ui.painter()
+            .rect_filled(rect, rounding, palette.flow_key_down());
+        let shade = (1.0, palette.flow_key_down_shade());
+        let lip = rect.x_range().shrink(SEGMENT_ROUNDING);
+        ui.painter().hline(lip, rect.top() + 1.5, shade);
+    }
+    for (past, strength) in DOT_GLOW.iter().filter(|_| lit.is_some()) {
+        let radius = SEGMENT_GLYPH_PX / 2.0 + past;
+        ui.painter()
+            .circle_filled(rect.center(), radius, ink.gamma_multiply(*strength));
+    }
+    let font = egui::FontId::new(SEGMENT_GLYPH_PX, palette.body_font(SEGMENT_GLYPH_PX).family);
+    let at = egui::Align2::CENTER_CENTER;
+    ui.painter().text(rect.center(), at, glyph, font, ink);
+    record(ui, control, rect, painted);
+    response
 }
 
 /// A child ui over `rect` whose paint stays inside `clip`, so what it draws is

@@ -185,25 +185,34 @@ impl OrderflowOverride {
 
 /// Authored positions in thousandths: 0 first, 1 last, each past the one before.
 fn ramp_stops(stops: &[f32; 9]) -> Result<[u16; 9], ThemeError> {
-    let invalid = || {
-        ThemeError::new(
-            "orderflow.ramp_stops",
-            "must run from 0 to 1, each stop past the one before",
-        )
-    };
     let mut thousandths = [0_u16; 9];
     for (slot, stop) in thousandths.iter_mut().zip(stops) {
         if !stop.is_finite() || !(0.0..=1.0).contains(stop) {
-            return Err(invalid());
+            return Err(ramp_stops_error());
         }
         // In range, so the rounded value fits.
         *slot = (stop * RAMP_STOP_UNIT).round() as u16;
     }
+    rising_ramp_stops(&thousandths)?;
+    Ok(thousandths)
+}
+
+/// Stops in thousandths run from 0 to 1000, each past the one before: a
+/// theme's authored ones and a saved snapshot's alike, or the ramp divides
+/// by a zero-wide step.
+fn rising_ramp_stops(thousandths: &[u16; 9]) -> Result<(), ThemeError> {
     let rising = thousandths.windows(2).all(|pair| pair[0] < pair[1]);
     if thousandths[0] != 0 || thousandths[8] != 1000 || !rising {
-        return Err(invalid());
+        return Err(ramp_stops_error());
     }
-    Ok(thousandths)
+    Ok(())
+}
+
+fn ramp_stops_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.ramp_stops",
+        "must run from 0 to 1, each stop past the one before",
+    )
 }
 
 impl OrderflowAppearance {
@@ -229,7 +238,7 @@ impl OrderflowAppearance {
                 ));
             }
         }
-        Ok(())
+        rising_ramp_stops(&self.ramp_stops)
     }
 }
 
@@ -288,5 +297,28 @@ mod tests {
                 .to_string()
                 .contains("orderflow.colors.typo")
         );
+    }
+
+    /// A saved snapshot's stops pass the theme's own rule: one that does not
+    /// start at 0, end at 1 or rise at every step is refused, where it would
+    /// otherwise divide the ramp by a zero-wide step.
+    #[test]
+    fn a_snapshot_with_stops_that_do_not_rise_is_refused() {
+        let mut palette = ResolvedTheme::default().orderflow;
+        assert!(palette.validate().is_ok());
+        let legacy = crate::orderflow::LEGACY_RAMP_STOPS;
+        let mut duplicate = legacy;
+        duplicate[3] = duplicate[2];
+        let mut late_start = legacy;
+        late_start[0] = 10;
+        let mut short_end = legacy;
+        short_end[8] = 990;
+        let mut falling = legacy;
+        falling.swap(4, 5);
+        for stops in [duplicate, late_start, short_end, falling] {
+            palette.ramp_stops = stops;
+            let error = palette.validate().unwrap_err();
+            assert_eq!(error.field, "orderflow.ramp_stops", "{stops:?}");
+        }
     }
 }

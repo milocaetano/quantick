@@ -7,9 +7,8 @@ use crate::{
     viewport::Viewport,
 };
 use eframe::egui;
-use quantick_chart::candle_casing::candle_casing;
+use quantick_chart::candle_casing::bar_casing;
 use quantick_chart::candle_pixels::{CandleRun, PixelBodies};
-use quantick_chart::geometry::candle_geometry;
 use quantick_stores::footprint_presentation::CandleStyles;
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
@@ -51,16 +50,6 @@ impl CandlePass<'_, '_> {
                 xc,
                 half_width: self.half,
             }
-        }
-    }
-    /// The plates the surface lays under a candle (`candle_casing`).
-    fn case(&self, index: usize, bar: &quantick_engine::Bar, width: f32, ink: egui::Color32) {
-        let BarSlot { xc, half_width } = self.slot(index);
-        let geometry = candle_geometry(&self.frame.scale, bar, xc, half_width, 1.0);
-        for plate in candle_casing(&geometry, xc, width) {
-            let min = egui::pos2(plate.left, plate.top);
-            let rect = egui::Rect::from_min_max(min, egui::pos2(plate.right, plate.bottom));
-            self.painter.rect_filled(rect, egui::Rounding::ZERO, ink);
         }
     }
     /// The run this frame's whole-pixel candles are laid out in, if any.
@@ -110,23 +99,37 @@ fn clear(pass: &mut CandlePass<'_, '_>) {
 fn paint(pass: &mut CandlePass<'_, '_>) {
     let painted = pass.indicators.paints_any();
     let mut run = pass.pixel_run();
-    let palette = crate::theme::get(pass.painter.ctx());
-    let casing = palette
-        .resolved
-        .candle_casing_px
-        .map(|px| (px, palette.casing()));
-    pass.bars(|index, bar, forming| {
-        if let Some((width, ink)) = casing {
-            pass.case(index, bar, width, ink);
-        }
-        let color = painted
+    let color = |index: usize, forming| {
+        painted
             .then(|| pass.indicators.slot_paint(index..index + 1, forming))
-            .flatten();
+            .flatten()
+    };
+    let resolved = |index, bar: &quantick_engine::Bar, forming| {
+        let rgba = color(index, forming).map(|c| [c.r, c.g, c.b, c.a]);
+        let style = pass.styles.of(index);
+        style.resolved_painted(is_bullish(bar), forming, rgba)
+    };
+    let palette = crate::theme::get(pass.painter.ctx());
+    if let Some(width) = palette.resolved.candle_casing_px {
+        // Every plate before any candle: a plate never covers its neighbour.
+        let (mut plates, ink, ppp) = (run, palette.casing(), pass.painter.ctx().pixels_per_point());
+        pass.bars(|index, bar, forming| {
+            let BarSlot { xc, half_width } = pass.slot(index);
+            let paint = resolved(index, bar, forming);
+            let bar = (&pass.frame.scale, bar);
+            for plate in bar_casing(plates.as_mut(), bar, (xc, half_width), &paint, (ppp, width)) {
+                let min = egui::pos2(plate.left, plate.top);
+                let rect = egui::Rect::from_min_max(min, egui::pos2(plate.right, plate.bottom));
+                pass.painter.rect_filled(rect, egui::Rounding::ZERO, ink);
+            }
+        });
+    }
+    pass.bars(|index, bar, forming| {
+        let color = color(index, forming);
         let style = pass.styles.of(index);
         if let Some(run) = run.as_mut() {
             let xc = pass.slot(index).xc;
-            let rgba = color.map(|c| [c.r, c.g, c.b, c.a]);
-            let paint = style.resolved_painted(is_bullish(bar), forming, rgba);
+            let paint = resolved(index, bar, forming);
             draw_pixel_candle(pass.painter, run, xc, &pass.frame.scale, bar, &paint);
             return;
         }

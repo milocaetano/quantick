@@ -80,19 +80,24 @@ pub struct SettingsResult {
     pub open: bool,
     pub l2_open: bool,
     pub bubbles_open: bool,
-    /// The flow pane's lights: the bulb beside the gear.
+    /// The flow pane paints lit now: the lights are saved on and the theme
+    /// authors a lit surface (Light).
     #[serde(default)]
     pub lights_on: bool,
+    /// The lights as saved with the tab, whatever the theme paints.
+    #[serde(default)]
+    pub lights_saved: bool,
     pub changed: bool,
 }
 
 impl SettingsResult {
-    /// What `panel` and `folds` say now about `asset`.
+    /// What `panel` and `folds` say now about `asset`, under a theme that
+    /// does or does not offer the lights.
     #[must_use]
     pub fn read(
         tab_id: WireU64,
         asset: &str,
-        panel: &OrderFlowPanel,
+        (panel, lights_offered): (&OrderFlowPanel, bool),
         folds: &AssetFolds,
         changed: bool,
     ) -> Self {
@@ -102,7 +107,8 @@ impl SettingsResult {
             open: panel.is_open(),
             l2_open: folds.section_open(asset, PanelSection::L2),
             bubbles_open: folds.section_open(asset, PanelSection::Bubbles),
-            lights_on: panel.lights_on(),
+            lights_on: panel.lights_on() && lights_offered,
+            lights_saved: panel.lights_on(),
             changed,
         }
     }
@@ -123,42 +129,58 @@ pub struct TabSettingsSnapshot {
     pub open: bool,
     pub l2_open: bool,
     pub bubbles_open: bool,
-    /// The flow pane's lights, kept with the tab whatever the theme; only a
-    /// theme that authors a lit surface (Light) paints them.
+    /// The flow pane paints lit now: the lights are saved on and the theme
+    /// authors a lit surface (Light).
     #[serde(default)]
     pub lights_on: bool,
+    /// The lights as saved with the tab, whatever the theme paints.
+    #[serde(default)]
+    pub lights_saved: bool,
 }
 
 impl TabSettingsSnapshot {
-    /// What `panel` and `folds` say now about `asset`.
+    /// What `panel` and `folds` say now about `asset`, under a theme that
+    /// does or does not offer the lights.
     #[must_use]
-    pub fn read(tab_id: WireU64, asset: &str, panel: &OrderFlowPanel, folds: &AssetFolds) -> Self {
+    pub fn read(
+        tab_id: WireU64,
+        asset: &str,
+        (panel, lights_offered): (&OrderFlowPanel, bool),
+        folds: &AssetFolds,
+    ) -> Self {
+        let read = SettingsResult::read(tab_id, asset, (panel, lights_offered), folds, false);
         Self {
-            tab_id,
-            asset: asset.to_owned(),
-            open: panel.is_open(),
-            l2_open: folds.section_open(asset, PanelSection::L2),
-            bubbles_open: folds.section_open(asset, PanelSection::Bubbles),
-            lights_on: panel.lights_on(),
+            tab_id: read.tab_id,
+            asset: read.asset,
+            open: read.open,
+            l2_open: read.l2_open,
+            bubbles_open: read.bubbles_open,
+            lights_on: read.lights_on,
+            lights_saved: read.lights_saved,
         }
     }
 }
 
-/// One panel control in the scene: its label, role, whether it is selected, why it
-/// cannot be operated, and the call that operates it.
+/// One control's row in the scene: its label, role, whether it is selected,
+/// why it cannot be operated, the call that operates it, and what its tooltip
+/// says where it says more than its label.
+pub type SceneRow = (
+    &'static str,
+    SceneRoleDto,
+    bool,
+    Option<&'static str>,
+    &'static str,
+    Option<&'static str>,
+);
+
+/// One panel control in the scene, as a [`SceneRow`].
 #[must_use]
 pub fn scene_row(
     control: PanelControl,
     panel: &OrderFlowPanel,
     folds: &AssetFolds,
     asset: &str,
-) -> (
-    &'static str,
-    SceneRoleDto,
-    bool,
-    Option<&'static str>,
-    &'static str,
-) {
+) -> SceneRow {
     match control {
         PanelControl::Gear => (
             "Order flow settings",
@@ -166,6 +188,7 @@ pub fn scene_row(
             panel.is_open(),
             None,
             OPEN_CAPABILITY_ID,
+            None,
         ),
         PanelControl::Section(section) => (
             section.title(),
@@ -173,6 +196,7 @@ pub fn scene_row(
             folds.section_open(asset, section),
             None,
             SECTION_CAPABILITY_ID,
+            None,
         ),
         PanelControl::Close => (
             "Close order flow settings",
@@ -180,6 +204,7 @@ pub fn scene_row(
             false,
             None,
             CLOSE_CAPABILITY_ID,
+            None,
         ),
         PanelControl::Lights => (
             LIGHTS_NAME,
@@ -187,6 +212,7 @@ pub fn scene_row(
             panel.lights_on(),
             None,
             LIGHTS_CAPABILITY_ID,
+            Some(LIGHTS_DESCRIPTION),
         ),
     }
 }
@@ -240,7 +266,7 @@ pub fn lights_descriptor() -> CapabilityDescriptor {
     durable_descriptor::<SettingsLightsInput>(
         LIGHTS_CAPABILITY_ID,
         "Switch the order-flow pane's lights",
-        "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Refused while the theme authors no lit surface (Dark). Kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
+        "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Switching on is refused while the theme authors no lit surface (Dark); off is always taken and clears a choice saved under another theme. lights_on reports what paints now, lights_saved what is kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
         "A stable tab ID selects the tab; repeating a value has no further effect, and the result and the orderflow.settings scope report it.",
     )
 }
@@ -343,12 +369,16 @@ mod tests {
         let mut panel = OrderFlowPanel::default();
         panel.set_lights(true);
         let folds = AssetFolds::default();
-        let row = TabSettingsSnapshot::read(WireU64::new(1), "BTCUSDT", &panel, &folds);
-        assert!(row.lights_on);
+        let row = TabSettingsSnapshot::read(WireU64::new(1), "BTCUSDT", (&panel, true), &folds);
+        assert!(row.lights_on && row.lights_saved);
+        // Saved on under a theme without a lit surface: kept, not painted.
+        let dark = TabSettingsSnapshot::read(WireU64::new(1), "BTCUSDT", (&panel, false), &folds);
+        assert!(!dark.lights_on && dark.lights_saved);
         let scene = scene_row(PanelControl::Lights, &panel, &folds, "BTCUSDT");
         assert_eq!(scene.0, LIGHTS_NAME);
         assert!(scene.2);
         assert_eq!(scene.4, LIGHTS_CAPABILITY_ID);
+        assert_eq!(scene.5, Some(LIGHTS_DESCRIPTION));
     }
 
     #[test]
@@ -358,9 +388,9 @@ mod tests {
         let mut panel = OrderFlowPanel::default();
         panel.open_on(None);
         let tab = WireU64::new(1);
-        let read = SettingsResult::read(tab, "BTCUSDT", &panel, &folds, true);
+        let read = SettingsResult::read(tab, "BTCUSDT", (&panel, true), &folds, true);
         assert!(read.open && !read.l2_open && read.bubbles_open && read.changed);
-        let other = SettingsResult::read(tab, "ETHUSDT", &panel, &folds, false);
+        let other = SettingsResult::read(tab, "ETHUSDT", (&panel, true), &folds, false);
         assert!(other.l2_open, "a fold belongs to its asset");
     }
 }

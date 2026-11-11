@@ -3,7 +3,7 @@
 use super::tape::{Full, MergeDisc, TapeMoment, collide};
 use super::{AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry};
 use crate::{BubbleStyle, LiveLaneStyle};
-use quantick_engine::Trade;
+use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 mod carry;
@@ -159,6 +159,17 @@ impl FlowTapeDot {
             share(self.mark.buy_quantity),
             share(self.mark.quantity - self.mark.buy_quantity),
         )
+    }
+
+    /// The side with the larger share, buy on a tie: the side whose rim a
+    /// pie wears.
+    pub fn dominant_side(&self) -> Side {
+        let sell = self.mark.quantity - self.mark.buy_quantity;
+        if self.mark.buy_quantity >= sell {
+            Side::Buy
+        } else {
+            Side::Sell
+        }
     }
 
     /// Equivalent radii of the buy/sell sector areas; both sectors share the gross circle.

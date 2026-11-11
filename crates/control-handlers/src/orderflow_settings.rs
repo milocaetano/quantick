@@ -89,9 +89,10 @@ fn set_lights<H: OrderflowSettingsPort + ?Sized, A>(
 ) -> Result<Value, ControlError> {
     let input: SettingsLightsInput = parse(input)?;
     let seat = host.panel_seat(input.tab_id.get())?;
-    if !seat.lights_offered {
+    // Off is always taken: it clears a choice saved under another theme.
+    if input.on && !seat.lights_offered {
         return Err(ControlError::invalid_request(
-            "the theme authors no lit order-flow surface, so the flow pane has no lights to switch",
+            "the theme authors no lit order-flow surface, so the flow pane has no lights to switch on",
         ));
     }
     let changed = seat.panel.set_lights(input.on);
@@ -103,7 +104,8 @@ fn answer(
     seat: &PanelSeat<'_>,
     changed: bool,
 ) -> Result<Value, ControlError> {
-    let result = SettingsResult::read(tab, seat.asset, seat.panel, seat.folds, changed);
+    let panel = (&*seat.panel, seat.lights_offered);
+    let result = SettingsResult::read(tab, seat.asset, panel, seat.folds, changed);
     to_value(&result)
 }
 
@@ -235,5 +237,27 @@ mod tests {
         let refused = set_lights(&mut dark_theme, &mut (), &actor(), &on).expect_err("refused");
         assert!(refused.message.contains("lit order-flow surface"));
         assert!(!dark_theme.panel.lights_on());
+    }
+
+    /// Under a theme without a lit surface the lights saved under Light read
+    /// as saved but not on, and off is still taken: it clears the choice.
+    #[test]
+    fn off_clears_lights_saved_under_another_theme() {
+        let mut tab = Tab::showing_flow(true);
+        tab.panel.set_lights(true);
+        tab.lights_offered = false;
+        let off = json!({"tab_id": "1", "on": false});
+        let cleared = set_lights(&mut tab, &mut (), &actor(), &off).expect("off is taken");
+        let read = |value: &Value| {
+            let field = |key: &str| value[key].as_bool().unwrap();
+            [field("lights_on"), field("lights_saved"), field("changed")]
+        };
+        assert_eq!(read(&cleared), [false, false, true]);
+        assert!(!tab.panel.lights_on());
+        let again = set_lights(&mut tab, &mut (), &actor(), &off).expect("off again");
+        assert_eq!(read(&again), [false, false, false]);
+        tab.panel.set_lights(true);
+        let opened = open(&mut tab, &mut (), &actor(), &json!({"tab_id": "1"})).expect("opened");
+        assert_eq!(read(&opened)[..2], [false, true], "saved, but not painted");
     }
 }

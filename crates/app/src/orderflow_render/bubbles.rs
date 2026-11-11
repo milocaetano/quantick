@@ -18,9 +18,8 @@ use quantick_orderflow::config::crown::{
     crown_geometry,
 };
 pub(super) use quantick_orderflow::config::dressing::{
-    HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
-    hollow_ring_width, impact_ring_alpha, lit_halo_width, separator_ring_width, sphere_segments,
-    trail_half_height,
+    FLAT_RIM_PX, HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
+    hollow_ring_width, impact_ring_alpha, sphere_segments, trail_half_height,
 };
 use quantick_orderflow::projection::{TapeDotFrame, TapeHorizontalGeometry};
 use quantick_orderflow::{
@@ -312,9 +311,9 @@ fn draw_bubble_with_light_offset(
         && matches!(side, Side::Buy)
         && radius < bubbles.readable_min_radius;
     // A palette that rims its bubbles (the lit flow pane's) draws them flat.
-    let flat_rim = colors.flat_rim(side);
-    let sphere =
-        !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere && flat_rim.is_none();
+    let edge = colors.edge(side, radius);
+    let sphere = !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
+    let sphere = sphere && edge.flat_rim.is_none();
     // The halo says "this one is big", so it is gated on size rather than
     // merely scaled with it: the top rung of the φ ladder, `max / φ`. Under a
     // gate it is a handful of prints a minute; under none it was a fog beneath
@@ -330,8 +329,7 @@ fn draw_bubble_with_light_offset(
     // The dark hair between the mark and the heat behind it. Skipped on the
     // cheap-dot path, which stays a single circle per print.
     if dressed || hollow {
-        let lit = |_| lit_halo_width(radius);
-        let hair = flat_rim.map_or_else(|| separator_ring_width(radius), lit);
+        let hair = edge.separator;
         painter.circle_stroke(
             center,
             radius + hair / 2.0,
@@ -395,19 +393,18 @@ fn draw_bubble_with_light_offset(
     } else {
         painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
     }
-    if !hollow && dressed && bubbles.outline_width > 0.0 {
-        // A sphere's rim adopts the darkened edge colour: the dark separator
-        // is what keeps two overlapping same-side bubbles readable as two.
-        let rim = if sphere {
-            sphere_edge_color(color, bubbles.sphere_shading)
-        } else {
-            flat_rim.unwrap_or(color)
-        };
-        painter.circle_stroke(
-            center,
-            radius,
-            egui::Stroke::new(bubbles.outline_width, rim.gamma_multiply(RIM_ALPHA)),
-        );
+    // A sphere's rim adopts the darkened edge colour: the dark separator is
+    // what keeps two overlapping same-side bubbles readable as two. A rimmed
+    // palette's flat bubble always wears its darker rim, outline or none.
+    let (rim, least) = match edge.flat_rim {
+        Some(rim) => (rim, FLAT_RIM_PX),
+        None if sphere => (sphere_edge_color(color, bubbles.sphere_shading), 0.0),
+        None => (color, 0.0),
+    };
+    let width = bubbles.outline_width.max(least);
+    if !hollow && dressed && width > 0.0 {
+        let stroke = egui::Stroke::new(width, rim.gamma_multiply(RIM_ALPHA));
+        painter.circle_stroke(center, radius, stroke);
     }
 
     // A fold is not a print, and must not read as one. The budget merges marks

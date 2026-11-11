@@ -36,8 +36,6 @@ fn only_light_offers_the_lights_and_a_surface_falls_back_to_the_island_without_t
     assert_eq!(ChartSurface::pane(None), ChartSurface::Paper);
     assert_eq!(ChartSurface::pane(Some(false)), ChartSurface::Flow);
     assert_eq!(ChartSurface::pane(Some(true)), ChartSurface::LitFlow);
-    assert_eq!(ChartSurface::from(true), ChartSurface::Flow);
-    assert_eq!(ChartSurface::from(false), ChartSurface::Paper);
 }
 
 #[test]

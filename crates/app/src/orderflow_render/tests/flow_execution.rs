@@ -883,7 +883,8 @@ fn the_cached_drawing_paints_what_the_per_frame_path_painted() {
             for region in &drawing.plan.regions {
                 let disc = region.disc;
                 if (region.role == FlowRegionRole::Peak) == pass && disc.radius >= detail {
-                    let hair = super::super::bubbles::separator_ring_width(disc.radius);
+                    let hair =
+                        quantick_orderflow::config::dressing::separator_ring_width(disc.radius);
                     let alpha = quantick_orderflow::config::dressing::SEPARATOR_RING_ALPHA;
                     old.push(clipped(egui::Shape::circle_stroke(
                         disc.center.into(),

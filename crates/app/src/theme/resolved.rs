@@ -106,7 +106,7 @@ pub(super) fn rendered(color: PremultipliedRgba) -> egui::Color32 {
 struct Palettes {
     ui: Arc<Palette>,
     bookmap: Arc<Palette>,
-    lit_flow: Arc<Palette>,
+    lit_flow: Option<Arc<Palette>>,
     title_strip: Arc<Palette>,
 }
 impl Palettes {
@@ -119,9 +119,10 @@ impl Palettes {
                 Arc::new(Palette::new(resolved))
             }
         };
+        let lit = theme.surface(ChartSurface::LitFlow);
         Self {
             bookmap: surface(theme.bookmap()),
-            lit_flow: surface(theme.surface(ChartSurface::LitFlow)),
+            lit_flow: theme.has_lit_flow().then(|| surface(lit)),
             title_strip: surface(theme.title_strip()),
             ui: ui.clone(),
         }
@@ -190,10 +191,11 @@ pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
 pub fn surface(ctx: &egui::Context, surface: ChartSurface) -> Arc<Palette> {
     ctx.data_mut(|data| {
         let palettes = &cached(data).value;
+        let lit = palettes.lit_flow.as_ref();
         match surface {
             ChartSurface::Paper => palettes.ui.clone(),
             ChartSurface::Flow => palettes.bookmap.clone(),
-            ChartSurface::LitFlow => palettes.lit_flow.clone(),
+            ChartSurface::LitFlow => lit.unwrap_or(&palettes.bookmap).clone(),
         }
     })
 }

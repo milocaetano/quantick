@@ -18460,7 +18460,12 @@
           },
           "lights_on": {
             "default": false,
-            "description": "The flow pane's lights: the bulb beside the gear.",
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -18501,7 +18506,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Refused while the theme authors no lit surface (Dark). Kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
+      "description": "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Switching on is refused while the theme authors no lit surface (Dark); off is always taken and clears a choice saved under another theme. lights_on reports what paints now, lights_saved what is kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -18563,7 +18568,12 @@
           },
           "lights_on": {
             "default": false,
-            "description": "The flow pane's lights: the bulb beside the gear.",
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -18680,7 +18690,12 @@
           },
           "lights_on": {
             "default": false,
-            "description": "The flow pane's lights: the bulb beside the gear.",
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -18794,7 +18809,12 @@
           },
           "lights_on": {
             "default": false,
-            "description": "The flow pane's lights: the bulb beside the gear.",
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -28190,7 +28210,12 @@
               },
               "lights_on": {
                 "default": false,
-                "description": "The flow pane's lights, kept with the tab whatever the theme; only a\ntheme that authors a lit surface (Light) paints them.",
+                "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+                "type": "boolean"
+              },
+              "lights_saved": {
+                "default": false,
+                "description": "The lights as saved with the tab, whatever the theme paints.",
                 "type": "boolean"
               },
               "open": {
