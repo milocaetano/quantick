@@ -129,7 +129,10 @@ impl ChartPane {
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
             // Scroll up (positive) zooms in.
             let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
-            let tape = tape_only || chart.hover_pos().is_some_and(over_tape);
+            // Any lane past the divider takes the wheel: the ordinary lane the
+            // native tape leaves when switched off zooms its window too.
+            let over_lane = |at: egui::Pos2| divider.is_some_and(|x| at.x > x);
+            let tape = tape_only || chart.hover_pos().is_some_and(over_lane);
             navigate(
                 self,
                 quantick_chart_interaction::pane::Intent::Zoom {
