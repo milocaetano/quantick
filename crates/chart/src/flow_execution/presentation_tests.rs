@@ -614,22 +614,18 @@ fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
     assert_ne!(plan.region_keys(&frame, true), plan.region_keys(&off, true));
 }
 
-/// Under peak spheres a label that does not fit or would cover another ends
-/// the placement, so no larger sphere goes unlabelled beside a smaller
-/// labelled one; a label off screen does not.
+/// Under peak spheres the labels are placed from the largest sphere down:
+/// a sphere too small for its text ends the placement, so no larger sphere
+/// goes unlabelled for want of room beside a smaller labelled one. A label
+/// off screen, or one that would cover a label already placed, is skipped
+/// alone: that is the one documented exception to the order.
 #[test]
-fn peak_labels_never_skip_a_larger_sphere() {
+fn peak_labels_stop_only_at_a_sphere_too_small_for_its_text() {
     let label = |center: [f32; 2], radius: f32, text: &str| super::super::FlowQuantityLabel {
         center,
         radius,
         text: text.to_owned(),
     };
-    let labels = vec![
-        label([-30.0, 100.0], 30.0, "50K"),
-        label([100.0, 100.0], 30.0, "45K"),
-        label([104.0, 100.0], 20.0, "30K"),
-        label([300.0, 100.0], 15.0, "10K"),
-    ];
     let measure = |_: &super::super::FlowQuantityLabel| [20.0, 10.0];
     let texts = |placed: Vec<([f32; 2], super::super::FlowQuantityLabel)>| {
         placed
@@ -638,12 +634,31 @@ fn peak_labels_never_skip_a_larger_sphere() {
             .collect::<Vec<_>>()
     };
     let fit = [2.0, 1.0];
-    let all = super::super::place_quantity_labels(labels.clone(), HISTORY, fit, measure);
-    assert_eq!(
-        texts(all),
-        ["45K", "10K"],
-        "the shared rule skips and goes on"
-    );
-    let peaks = super::super::place_quantity_labels_until_miss(labels, HISTORY, fit, measure, true);
-    assert_eq!(texts(peaks), ["45K"], "a covered 30K stops the 10K");
+    let place = |labels: Vec<super::super::FlowQuantityLabel>| {
+        texts(super::super::place_quantity_labels_until_miss(
+            labels, HISTORY, fit, measure, true,
+        ))
+    };
+    // Off screen and covered labels are skipped alone.
+    let skipped = vec![
+        label([-30.0, 100.0], 30.0, "50K"),
+        label([100.0, 100.0], 30.0, "45K"),
+        label([104.0, 100.0], 20.0, "30K"),
+        label([300.0, 100.0], 15.0, "10K"),
+    ];
+    assert_eq!(place(skipped), ["45K", "10K"]);
+    // A sphere too small for its text stops every smaller one.
+    let small = vec![
+        label([100.0, 100.0], 30.0, "45K"),
+        label([200.0, 100.0], 8.0, "30K"),
+        label([300.0, 100.0], 15.0, "10K"),
+    ];
+    assert_eq!(place(small), ["45K"]);
+    // Counts at several radii: every sphere wide enough for its text.
+    for (radius, placed) in [(30.0, 3), (12.0, 3), (10.0, 3), (9.0, 0)] {
+        let labels = (0..3)
+            .map(|n| label([50.0 + n as f32 * 100.0, 100.0], radius, "86K"))
+            .collect();
+        assert_eq!(place(labels).len(), placed, "radius {radius}");
+    }
 }
