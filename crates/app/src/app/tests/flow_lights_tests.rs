@@ -142,3 +142,24 @@ fn the_lights_survive_a_save_and_a_restart() {
         ));
     assert!(lit(&fresh));
 }
+
+/// Lit, every trail candle sits on a plate in the lit casing ink; off, no
+/// plate is painted at all.
+#[test]
+fn lit_candles_sit_on_plates_and_unlit_ones_on_none() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = in_theme(&ctx, quantick_appearance::LIGHT);
+    let ink = crate::theme::surface(&ctx, ChartSurface::LitFlow).casing();
+    let plates = |output: &egui::FullOutput| {
+        flat_shapes(output)
+            .iter()
+            .filter(|shape| matches!(shape, egui::Shape::Rect(rect) if rect.fill == ink))
+            .count()
+    };
+    let off = run_frame(&mut app, &ctx);
+    assert_eq!(plates(&off), 0);
+    settings_call(&mut app, LIGHTS_CAPABILITY_ID, json!({ "on": true })).unwrap();
+    run_frame(&mut app, &ctx);
+    let on = run_frame(&mut app, &ctx);
+    assert!(plates(&on) >= 2, "a body plate and a wick plate per candle");
+}

@@ -19,7 +19,8 @@ use quantick_orderflow::config::crown::{
 };
 pub(super) use quantick_orderflow::config::dressing::{
     HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
-    hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments, trail_half_height,
+    hollow_ring_width, impact_ring_alpha, lit_halo_width, separator_ring_width, sphere_segments,
+    trail_half_height,
 };
 use quantick_orderflow::projection::{TapeDotFrame, TapeHorizontalGeometry};
 use quantick_orderflow::{
@@ -329,7 +330,8 @@ fn draw_bubble_with_light_offset(
     // The dark hair between the mark and the heat behind it. Skipped on the
     // cheap-dot path, which stays a single circle per print.
     if dressed || hollow {
-        let hair = separator_ring_width(radius);
+        let lit = |_| lit_halo_width(radius);
+        let hair = flat_rim.map_or_else(|| separator_ring_width(radius), lit);
         painter.circle_stroke(
             center,
             radius + hair / 2.0,

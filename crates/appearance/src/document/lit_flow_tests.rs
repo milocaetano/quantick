@@ -69,6 +69,15 @@ fn the_lit_pane_is_paper_where_it_says_nothing_never_the_island() {
     assert_eq!(lit.footprint_heat, light.footprint_heat);
     assert_eq!(lit.color(Token::FlowSurface).to_array(), [255; 4]);
     assert!(lit.orderflow.surface_bound);
+    assert_eq!(lit.candle_casing_px, Some(1.5));
+    assert_eq!(lit.color(Token::Casing).to_array()[3], 0xE6);
+    let dark = ResolvedTheme::parse(DARK).unwrap();
+    for plain in [&light, island, &dark, dark.bookmap(), light.title_strip()] {
+        assert_eq!(
+            plain.candle_casing_px, None,
+            "only the lit pane cases candles"
+        );
+    }
     assert!(!light.orderflow.surface_bound && !island.orderflow.surface_bound);
 }
 
@@ -185,6 +194,14 @@ fn an_invalid_lit_surface_rejects_the_whole_theme() {
             "lit_flow.orderflow.ramp_stops",
         ),
         ("[lit_flow]\nwidth=3", "document"),
+        (
+            "[lit_flow]\ncandle_casing_px=9.0",
+            "lit_flow.candle_casing_px",
+        ),
+        (
+            "[lit_flow]\ncandle_casing_px=nan",
+            "lit_flow.candle_casing_px",
+        ),
     ] {
         let error = state
             .apply(&format!("version=1\nname='Invalid lights'\n{invalid}"))

@@ -7,7 +7,9 @@ use crate::{
     viewport::Viewport,
 };
 use eframe::egui;
+use quantick_chart::candle_casing::candle_casing;
 use quantick_chart::candle_pixels::{CandleRun, PixelBodies};
+use quantick_chart::geometry::candle_geometry;
 use quantick_stores::footprint_presentation::CandleStyles;
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
@@ -49,6 +51,16 @@ impl CandlePass<'_, '_> {
                 xc,
                 half_width: self.half,
             }
+        }
+    }
+    /// The plates the surface lays under a candle (`candle_casing`).
+    fn case(&self, index: usize, bar: &quantick_engine::Bar, width: f32, ink: egui::Color32) {
+        let BarSlot { xc, half_width } = self.slot(index);
+        let geometry = candle_geometry(&self.frame.scale, bar, xc, half_width, 1.0);
+        for plate in candle_casing(&geometry, xc, width) {
+            let min = egui::pos2(plate.left, plate.top);
+            let rect = egui::Rect::from_min_max(min, egui::pos2(plate.right, plate.bottom));
+            self.painter.rect_filled(rect, egui::Rounding::ZERO, ink);
         }
     }
     /// The run this frame's whole-pixel candles are laid out in, if any.
@@ -98,7 +110,15 @@ fn clear(pass: &mut CandlePass<'_, '_>) {
 fn paint(pass: &mut CandlePass<'_, '_>) {
     let painted = pass.indicators.paints_any();
     let mut run = pass.pixel_run();
+    let palette = crate::theme::get(pass.painter.ctx());
+    let casing = palette
+        .resolved
+        .candle_casing_px
+        .map(|px| (px, palette.casing()));
     pass.bars(|index, bar, forming| {
+        if let Some((width, ink)) = casing {
+            pass.case(index, bar, width, ink);
+        }
         let color = painted
             .then(|| pass.indicators.slot_paint(index..index + 1, forming))
             .flatten();

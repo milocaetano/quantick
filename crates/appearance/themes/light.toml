@@ -357,6 +357,11 @@ ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]
 # plot with liquidity in grey and only the wall in plum (docs/thema/white/
 # orderflow, round 4, "Ameixa"). Whatever it leaves out is this theme's paper,
 # never the island's [bookmap] overrides: drawings, VWAP and plot inks included.
+[lit_flow]
+# Each trail candle sits on a white plate this wide, so the heat never touches
+# its body or wick.
+candle_casing_px = 1.5
+
 [lit_flow.colors]
 flow_surface = "#FFFFFF"
 flow_divider = "#9AA1AC"

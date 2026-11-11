@@ -247,6 +247,7 @@ impl ThemeDocument {
             )?,
             chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
             chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
+            candle_casing_px: None,
             colors,
             plot_ink: plot_ink::resolve(&self.plot_ink)?,
             typography: Typography::resolve(
@@ -346,6 +347,9 @@ pub struct ResolvedTheme {
     pub candle_wick_opacity: f32,
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
+    /// The plate under each candle, in logical pixels, painted in `casing`;
+    /// only the lit flow pane authors one.
+    pub candle_casing_px: Option<f32>,
     colors: [PremultipliedRgba; Token::ALL.len()],
     /// A derived surface's root colours, which new drawings are born in.
     root_colors: Option<Box<[PremultipliedRgba; Token::ALL.len()]>>,

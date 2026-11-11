@@ -201,7 +201,8 @@ by the bulb beside the band's gear (`orderflow.settings.lights.set`). Its
 `[lit_flow.colors]` and `[lit_flow.orderflow]` derive from the root theme, not
 from `[bookmap]`, so drawings, VWAP and plot inks are the root's paper colors.
 Its order-flow palette outranks a palette the pane picked for the island. A theme
-without the table offers no bulb; the bundled Light authors it, Dark does not. Heat cells, preview and legend sample the same resolved
+without the table offers no bulb; the bundled Light authors it, Dark does not. `candle_casing_px` lays each candle on a plate that wide in `casing`; rimmed
+bubbles wear a white halo about three pixels wide in `separator`. Heat cells, preview and legend sample the same resolved
 ramp; the live strip and bubble controls read the same selected palette.
 
 Fresh order-flow settings, the shipped `default` preset, and the four shipped
