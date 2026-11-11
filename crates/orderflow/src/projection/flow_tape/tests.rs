@@ -10,6 +10,8 @@ mod reading;
 mod reference_modes;
 #[path = "tests/time_regions.rs"]
 mod time_regions;
+#[path = "tests/zoom_regions.rs"]
+mod zoom_regions;
 
 /// A worker's cached projection is the projection: through packets in any
 /// order, live prints into one region window, oversized cells, an opening
@@ -21,11 +23,17 @@ fn the_cached_projection_is_the_projection() {
         FlowReference::Typed(900.into()),
         FlowReference::VisibleRegionsAtLeast(900.into()),
     ] {
-        check_cached_projection(reference);
+        for region in [
+            FlowRegionSpan::Time,
+            FlowRegionSpan::Candles(1),
+            FlowRegionSpan::Candles(8),
+        ] {
+            check_cached_projection(reference, region);
+        }
     }
 }
 
-fn check_cached_projection(reference: FlowReference) {
+fn check_cached_projection(reference: FlowReference, region: FlowRegionSpan) {
     let trades: Vec<Trade> = (0..400_i64)
         .map(|n| {
             let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
@@ -53,6 +61,7 @@ fn check_cached_projection(reference: FlowReference) {
         clip_right: 100.into(),
         width_px: 20_000.0,
         reference,
+        region,
         ..view(20_000.0)
     };
     let mut source = FlowTapeSource::default();
@@ -104,6 +113,7 @@ fn view(width: f32) -> FlowTapeView {
         reference: FlowReference::Typed(900.into()),
         radius_limit: 7.0,
         merge_support_radius: 6.0,
+        region: Default::default(),
         exclude_opening: true,
     }
 }

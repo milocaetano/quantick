@@ -28,6 +28,7 @@ fn project(trades: &[Trade], width: f32, opening: bool, exclude: bool) -> FlowTa
             reference: FlowReference::VisibleRegions,
             radius_limit: 12.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: exclude,
         },
     )

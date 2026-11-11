@@ -101,6 +101,7 @@ const HISTORY: [f32; 4] = [40.0, 120.0, 970.0, 1300.0];
 const CAPTION: [[f32; 2]; 2] = [[48.0, 148.0], [368.0, 192.0]];
 /// The "Binance BTC Spot spheres" look.
 const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
+    zoom_regions: false,
     reference_quantity: 1.0,
     max_radius: 32.0,
     label_min_radius: 8.0,

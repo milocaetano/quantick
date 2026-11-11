@@ -74,6 +74,7 @@ fn viewport_readback_uses_last_painted_frame_and_rejects_a_changed_look_or_sourc
     owner.config.volume_dots.enabled = true;
     owner.config.show_aggressions = true;
     owner.config.volume_dots.tick_bubbles = Some(quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
             x_units_per_pixel: 1.0 / 22.0,
             price_units_per_pixel: 1.0,

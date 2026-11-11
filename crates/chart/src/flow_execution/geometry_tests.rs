@@ -36,6 +36,7 @@ fn dot() -> FlowTapeDot {
             reference: FlowReference::VisibleRegions,
             radius_limit: 12.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     );
@@ -130,6 +131,7 @@ fn rect_move_and_resize_change_the_key_while_invalid_price_ranges_are_rejected()
 
 fn viewport_style() -> quantick_orderflow::TickBubbleStyle {
     quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         reference_quantity: 900.0,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
@@ -176,6 +178,7 @@ fn viewport_source() -> FlowTapeFrame {
             reference: FlowReference::VisibleRegionsAtLeast(900.into()),
             radius_limit: 32.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     )
@@ -238,6 +241,7 @@ fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regroupi
         quantick_orderflow::TickReferenceMode::VisibleMax,
     ] {
         let legacy = quantick_orderflow::TickBubbleStyle {
+            zoom_regions: false,
             viewport_scale: None,
             reference_mode,
             ..style
@@ -406,6 +410,7 @@ fn a_sub_cent_btc_region_drawn_at_the_current_camera_never_reads_zero() {
             reference: FlowReference::VisibleRegionsAtLeast(900.into()),
             radius_limit: 32.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     );

@@ -577,12 +577,18 @@ mod tests {
                 );
                 assert_eq!(tick.label_min_radius, 8.0);
                 assert_eq!(tick.opacity, 0.9);
+                assert!(!tick.zoom_regions, "{}", preset.name);
             } else if let Some(tick) = preset.tick_bubbles {
-                assert!(tick.viewport_scale.is_none());
+                // The mini index: the one look whose spheres pool by the
+                // zoom, sized against what is on screen.
+                assert_eq!(preset.name, "mini index regions");
+                assert!(tick.zoom_regions);
+                assert!(tick.viewport_scale.is_some());
                 assert_eq!(
                     tick.reference_mode,
-                    quantick_orderflow::TickReferenceMode::Fixed
+                    quantick_orderflow::TickReferenceMode::VisibleMax
                 );
+                assert_eq!(tick.max_radius, 18.0);
             }
         }
         assert_eq!(parse(&render(&shipped).unwrap()).unwrap(), shipped);

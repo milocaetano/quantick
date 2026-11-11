@@ -63,6 +63,7 @@ fn request(epoch: u64, slots: Range<usize>) -> FlowRequest {
             reference: FlowReference::VisibleRegions,
             radius_limit: 7.0,
             merge_support_radius: 12.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     }
@@ -594,6 +595,7 @@ fn tick_spheres_keep_closed_and_forming_slot_facts_inside_a_long_tape_window() {
         ..HeatmapConfig::default()
     };
     config.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: crate::TickReferenceMode::Fixed,
         reference_quantity: 10.0,

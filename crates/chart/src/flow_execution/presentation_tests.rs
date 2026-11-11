@@ -50,6 +50,7 @@ fn frame(quantities: &[i64]) -> FlowTapeFrame {
             reference: FlowReference::VisibleRegions,
             radius_limit: 12.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     )

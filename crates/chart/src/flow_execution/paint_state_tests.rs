@@ -22,6 +22,7 @@ fn source() -> Arc<FlowTapeFrame> {
             reference: FlowReference::Typed(1.into()),
             radius_limit: 32.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     ))
@@ -32,6 +33,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
     let source = source();
     let display = Arc::new(source.viewport_relative(5.0, |_| true));
     let tick = TickBubbleStyle {
+        zoom_regions: false,
         reference_quantity: 1.0,
         reference_mode: TickReferenceMode::VisibleMax,
         viewport_scale: Some(ViewportBubbleScale {
@@ -60,6 +62,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
     );
     let changed = Some((
         TickBubbleStyle {
+            zoom_regions: false,
             max_radius: 48.0,
             ..tick
         },
@@ -68,6 +71,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
     assert!(state.frame_for(&source, changed, 1.0).is_none());
     let legacy = Some((
         TickBubbleStyle {
+            zoom_regions: false,
             viewport_scale: None,
             ..tick
         },

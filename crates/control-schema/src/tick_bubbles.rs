@@ -45,6 +45,10 @@ pub struct TickBubblesSnapshot {
     /// Present when final visible quantities and the current camera size the spheres.
     #[serde(default)]
     pub viewport_scale: Option<ViewportBubbleScaleSnapshot>,
+    /// Spheres merge inside whole candles chosen by the zoom, not one second
+    /// of market time; the frame's `region_candles` says how many.
+    #[serde(default)]
+    pub zoom_regions: bool,
     pub max_radius: String,
     pub label_min_radius: String,
     pub opacity: String,
@@ -69,6 +73,7 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
                 }
             },
             viewport_scale: style.viewport_scale.map(Into::into),
+            zoom_regions: style.zoom_regions,
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
             opacity: style.opacity.to_string(),

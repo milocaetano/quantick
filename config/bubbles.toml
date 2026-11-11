@@ -212,11 +212,22 @@ show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 12.6
 
-# The tick-chart spheres the trader approved on the mini index (2026-10-14):
-# a fixed reference, so no pan or zoom resizes a sphere. Worn only where the
-# feed switches the asset mode on (`symbol_asset_modes` in feeds.toml).
+# The tick-chart spheres of the mini index. Worn only where the feed switches
+# the asset mode on (`symbol_asset_modes` in feeds.toml).
+#
+# On a 2 000-tick chart a candle is a few pixels wide and tens of seconds
+# long, so spheres bounded by one second of market time piled on one another
+# and never pooled (the clutter the trader reported on 2026-11-10).
+# `zoom_regions` bounds a sphere by whole candles chosen by the zoom instead:
+# zooming out pools neighbouring candles into one larger sphere, zooming in
+# splits them again. Area is relative to the largest sphere on screen
+# (`visible_max`, with `viewport_scale` as on the BTC spheres), so a quiet
+# stretch still shows which of its regions was the heavy one.
 [presets.tick_bubbles]
-reference_quantity = 20000.0
+zoom_regions = true
+viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
+reference_mode = "visible_max"
+reference_quantity = 1.0
 max_radius = 18.0
 label_min_radius = 8.0
 opacity = 0.9

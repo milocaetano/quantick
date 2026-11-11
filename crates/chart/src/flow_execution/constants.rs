@@ -13,6 +13,12 @@ pub(crate) const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;
 /// determine which executions belong together.
 pub(crate) const FLOW_MERGE_SUPPORT_RADIUS_PX: f32 = 6.0;
 
+/// Spatial support of a zoom region's merge, as a share of the look's
+/// full-size radius. A zoom region pools until its spheres stop crowding one
+/// another, so its support follows the size they are drawn at rather than
+/// the compact [`FLOW_MERGE_SUPPORT_RADIUS_PX`] of one-second regions.
+pub(crate) const FLOW_ZOOM_SUPPORT_RADIUS_SHARE: f32 = 0.6;
+
 // Earned circles (`disc.rs`).
 
 /// Uniform `[x, y]` translation of every FLOW circle, in logical pixels. One

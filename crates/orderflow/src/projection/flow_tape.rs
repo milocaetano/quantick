@@ -11,8 +11,11 @@ pub use carry::FlowTail;
 mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
 pub use constants::{
-    FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS,
+    FLOW_REGION_HOLD_BAND, FLOW_REGION_MIN_WIDTH_PX, FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD,
+    LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS,
 };
+mod region;
+pub use region::FlowRegionSpan;
 mod reading;
 pub use reading::{caption_qualifications, notes_caption};
 mod source;
@@ -89,6 +92,8 @@ pub struct FlowTapeView {
     pub radius_limit: f32,
     /// Fixed spatial aggregation support in logical pixels, independent of painted area.
     pub merge_support_radius: f32,
+    /// The bounds no merge crosses: market time, or candles chosen by the zoom.
+    pub region: FlowRegionSpan,
     pub exclude_opening: bool,
 }
 
@@ -376,8 +381,7 @@ fn admit(group: &Group, view: FlowTapeView) -> Admission {
     if !(0.0..=1.0).contains(&group.y()) {
         return Admission::OffAxis(group.members.len());
     }
-    let position = group.position_quantity / group.quantity();
-    if position < view.clip_left || position > view.clip_right {
+    if !view.region.merges_before_clip() && offscreen(group, view) {
         Admission::Offscreen(group.members.len())
     } else if group.hull.within_merge_limits() {
         Admission::Mergeable
@@ -386,9 +390,34 @@ fn admit(group: &Group, view: FlowTapeView) -> Admission {
     }
 }
 
-/// The region window a group merges in.
-fn region_window(group: &Group) -> i64 {
-    group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS)
+/// Whether a group's centre is outside the painted clip.
+fn offscreen(group: &Group, view: FlowTapeView) -> bool {
+    let position = group.position_quantity / group.quantity();
+    position < view.clip_left || position > view.clip_right
+}
+
+/// Drop the merged groups of a zoom region that left the painted clip,
+/// answering their executions. A zoom region merges whole before the clip
+/// reads it, so a pan never regroups the region at the view's edge.
+fn clip_merged<T>(groups: &mut Vec<T>, view: FlowTapeView, group: impl Fn(&T) -> &Group) -> usize {
+    if !view.region.merges_before_clip() {
+        return 0;
+    }
+    let mut executions = 0;
+    groups.retain(|held| {
+        let inside = !offscreen(group(held), view);
+        if !inside {
+            executions += group(held).members.len();
+        }
+        inside
+    });
+    executions
+}
+
+/// The region a native cell's group merges in.
+fn region_window(group: &Group, view: FlowTapeView) -> i64 {
+    view.region
+        .key(group.first_slot, group.first_timestamp_ms())
 }
 
 /// One region window's mergeable groups, merged.
@@ -583,7 +612,7 @@ fn finish_groups(
             Admission::OffAxis(executions) => off_axis_executions += executions,
             Admission::Offscreen(executions) => offscreen_executions += executions,
             Admission::Mergeable => windows
-                .entry(region_window(&group))
+                .entry(region_window(&group, view))
                 .or_default()
                 .push(group),
             Admission::Standalone => standalone.push(group),
@@ -594,6 +623,7 @@ fn finish_groups(
         groups.extend(merge_window(window, view));
     }
     groups.append(&mut standalone);
+    offscreen_executions += clip_merged(&mut groups, view, |group| group);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (
             Vec::new(),

@@ -157,6 +157,7 @@ fn a_tick_caption_keeps_its_honesty_notes() {
             reference: FlowReference::Typed(3.into()),
             radius_limit: 12.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     );

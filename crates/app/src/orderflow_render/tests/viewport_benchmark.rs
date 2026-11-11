@@ -82,6 +82,7 @@ fn recorded_viewport_sphere_renderer_benchmark() {
                 reference: FlowReference::from(tick),
                 radius_limit: tick.max_radius,
                 merge_support_radius: 6.0,
+                region: Default::default(),
                 exclude_opening: false,
             },
         ));
