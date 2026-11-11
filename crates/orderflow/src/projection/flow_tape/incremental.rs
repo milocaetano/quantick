@@ -11,7 +11,7 @@
 //! [`FlowTapeSource::project`] builds.
 use super::super::{
     Admission, FlowRegionSpan, FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView, Group,
-    admit, clip_merged, finish_group, merge_window,
+    admit, clip_merged, finish_group, merge_window, peaks,
 };
 use super::{FlowOpeningSelection, FlowTapeSource, cell_group, valid};
 use rust_decimal::Decimal;
@@ -75,6 +75,7 @@ fn finish_window(
     } else {
         merge_window(mergeable, view)
     };
+    spheres.off_axis += peaks::drop_off_axis(&mut merged, view);
     spheres.offscreen += clip_merged(&mut merged, view, |group| group);
     spheres.offscreen += clip_merged(&mut standalone, view, |(_, group)| group);
     spheres.opening = merged

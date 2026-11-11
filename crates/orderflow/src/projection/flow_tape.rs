@@ -227,6 +227,9 @@ impl FlowTapeFrame {
     }
 
     fn order_for_paint(&mut self) {
+        // Peak spheres are sized by rank among the frame's own masses, so
+        // every finished frame ranks them once, here, before it is ordered.
+        self.size_peaks_by_rank();
         self.paint_order = (0..self.dots.len()).collect();
         self.paint_order.sort_by_key(|&index| {
             let dot = &self.dots[index];
@@ -392,6 +395,10 @@ enum Admission {
 }
 
 fn admit(group: &Group, view: FlowTapeView) -> Admission {
+    if view.region.divides_at_peaks() {
+        // A region's profile reads every cell; the axis drops whole masses.
+        return Admission::Mergeable;
+    }
     if !(0.0..=1.0).contains(&group.y()) {
         return Admission::OffAxis(group.members.len());
     }
@@ -434,8 +441,12 @@ fn region_window(group: &Group, view: FlowTapeView) -> i64 {
         .key(group.first_slot, group.first_timestamp_ms())
 }
 
-/// One region window's mergeable groups, merged.
+/// One region window's mergeable groups, merged: divided at the peaks of
+/// their volume profile, or pooled by proximity.
 fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+    if view.region.divides_at_peaks() {
+        return peaks::divide_at_peaks(window);
+    }
     let (bubbles, sizing, geometry) = merge_frame(view);
     collide(
         window,
@@ -637,6 +648,7 @@ fn finish_groups(
         groups.extend(merge_window(window, view));
     }
     groups.append(&mut standalone);
+    off_axis_executions += peaks::drop_off_axis(&mut groups, view);
     offscreen_executions += clip_merged(&mut groups, view, |group| group);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (

@@ -141,7 +141,7 @@ fn peak_spheres_are_deterministic() {
     rows.extend(
         plateaus(60, 5)
             .into_iter()
-            .map(|(price, quantity)| (price + 20, quantity)),
+            .map(|(price, quantity)| (price + 200, quantity)),
     );
     let trades: Vec<Trade> = prints(&rows, Side::Buy)
         .into_iter()
@@ -153,10 +153,10 @@ fn peak_spheres_are_deterministic() {
             trade
         })
         .collect();
-    let first = peaks(&trades, (900, 1_200));
-    let second = peaks(&trades, (900, 1_200));
+    let first = peaks(&trades, (900, 1_300));
+    let second = peaks(&trades, (900, 1_300));
     assert_eq!(first, second);
-    assert!(first.dots.len() > 1);
+    assert_eq!(first.dots.len(), 4, "four hills apart");
     let execution = |ordinal: usize| FlowExecution {
         ordinal,
         slot: ordinal / 11,
@@ -168,7 +168,7 @@ fn peak_spheres_are_deterministic() {
     let view = FlowTapeView {
         end_slot: 2,
         clip_right: 2.into(),
-        prices: PriceWindow::new(900.into(), 1_200.into()).unwrap(),
+        prices: PriceWindow::new(900.into(), 1_300.into()).unwrap(),
         region: FlowRegionSpan::Peaks(2),
         reference: FlowReference::VisibleRegionsAtLeast(1.into()),
         ..view(20.0)

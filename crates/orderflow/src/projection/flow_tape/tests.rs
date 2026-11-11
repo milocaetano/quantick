@@ -29,6 +29,8 @@ fn the_cached_projection_is_the_projection() {
             FlowRegionSpan::Time,
             FlowRegionSpan::Candles(1),
             FlowRegionSpan::Candles(8),
+            FlowRegionSpan::Peaks(1),
+            FlowRegionSpan::Peaks(8),
         ] {
             check_cached_projection(reference, region);
         }
