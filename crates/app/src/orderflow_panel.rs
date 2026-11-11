@@ -4,6 +4,7 @@
 //! pointer and the port its named calls come in by.
 
 use eframe::egui;
+use quantick_appearance::panel_chrome::BLOCK_GAP_PX;
 use quantick_chart::pane_header::HeaderControl;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::orderflow_settings::{OrderflowSettingsPort, PanelSeat};
@@ -11,15 +12,12 @@ use quantick_workspace::orderflow_panel::{PANEL_MAX_WIDTH_PX, PANEL_MIN_WIDTH_PX
 
 use crate::app::control_host::ControlPort;
 use crate::pane_header::{PaintedControls, record};
+use crate::panel_chrome;
 use crate::tab::Tab;
-use crate::theme;
 use crate::ui_state::{AssetFolds, OrderFlowPanel, PanelSection};
 
-/// The title line's words, and a header's state on its right.
+/// The title line's words.
 const TITLE_SIZE: f32 = 15.0;
-const STATE_SIZE: f32 = 11.0;
-/// What a state leaves between itself and its title; a long preset name is cut.
-const STATE_GAP_PX: f32 = 8.0;
 
 /// Whether the tab has the pane its panel attaches to: no flow pane, no gear.
 pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
@@ -55,7 +53,6 @@ pub(crate) fn draw(
     chart: egui::Rect,
     folds: &mut AssetFolds,
 ) -> egui::Rect {
-    let palette = theme::get(ui.ctx());
     let symbol = tab.symbol.as_str();
     let pane = &mut tab.flow_pane;
     let id = pane.id;
@@ -81,13 +78,10 @@ pub(crate) fn draw(
     let shown = egui::SidePanel::right(egui::Id::new(("orderflow_panel", id)))
         .default_width(view.settings_panel.width())
         .width_range(PANEL_MIN_WIDTH_PX..=PANEL_MAX_WIDTH_PX)
-        .frame(
-            egui::Frame::none()
-                .fill(palette.chrome())
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
-        )
+        .frame(panel_chrome::ground(ui.ctx()))
         .show_inside(&mut seat, |ui| {
             close = title_line(ui, symbol, painted);
+            ui.add_space(BLOCK_GAP_PX);
             let (top, gap) = (ui.cursor().top(), ui.spacing().item_spacing.y);
             egui::ScrollArea::vertical()
                 .id_salt("orderflow_panel_scroll")
@@ -96,18 +90,21 @@ pub(crate) fn draw(
                     for section in PanelSection::ALL {
                         let open = folds.section_open(symbol, section);
                         let state = view.panel_section_state(section);
-                        let (toggled, restart) = section_block(
-                            ui,
-                            section,
-                            open,
-                            &state,
-                            |ui| match section {
-                                PanelSection::L2 => view.draw_l2_tab(ui),
-                                PanelSection::Bubbles => view.draw_bubbles_tab(ui, tick_chart),
-                            },
-                            landing.map(|asked| (asked, top, gap)),
-                            painted,
-                        );
+                        let (toggled, restart) = panel_chrome::block(ui, |ui| {
+                            section_block(
+                                ui,
+                                section,
+                                open,
+                                &state,
+                                |ui| match section {
+                                    PanelSection::L2 => view.draw_l2_tab(ui),
+                                    PanelSection::Bubbles => view.draw_bubbles_tab(ui, tick_chart),
+                                },
+                                landing.map(|asked| (asked, top, gap)),
+                                painted,
+                            )
+                        });
+                        ui.add_space(BLOCK_GAP_PX);
                         restart_capture |= restart;
                         if toggled {
                             folds.set(symbol, section, !open);
@@ -132,25 +129,24 @@ pub(crate) fn draw(
 
 /// "ORDER FLOW · <symbol>" and ×; answers whether × was clicked.
 fn title_line(ui: &mut egui::Ui, symbol: &str, painted: &mut PaintedControls) -> bool {
-    let palette = theme::get(ui.ctx());
-    ui.horizontal(|ui| {
-        let words = egui::RichText::new(format!("ORDER FLOW · {symbol}"))
-            .size(TITLE_SIZE)
-            .color(palette.text_primary());
-        ui.add(egui::Label::new(words).truncate().selectable(false));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close = ui.small_button("×").on_hover_text("close the panel");
-            let control = HeaderControl::Settings(PanelControl::Close);
-            record(ui, control, close.rect, painted);
-            close.clicked()
+    panel_chrome::title_plate(ui, |ui| {
+        ui.horizontal(|ui| {
+            let words = egui::RichText::new(format!("ORDER FLOW · {symbol}")).size(TITLE_SIZE);
+            ui.add(egui::Label::new(words).truncate().selectable(false));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let close = ui.small_button("×").on_hover_text("close the panel");
+                let control = HeaderControl::Settings(PanelControl::Close);
+                record(ui, control, close.rect, painted);
+                close.clicked()
+            })
+            .inner
         })
         .inner
     })
-    .inner
 }
 
-/// One section under its header, its state in faint mono on the header's right.
-/// Answers whether the header was clicked, and what its body answered.
+/// One section under its band, its state on the band's right. Answers
+/// whether the band was clicked, and what its body answered.
 fn section_block(
     ui: &mut egui::Ui,
     section: PanelSection,
@@ -160,13 +156,9 @@ fn section_block(
     landing: Option<(PanelSection, f32, f32)>,
     painted: &mut PaintedControls,
 ) -> (bool, bool) {
-    let palette = theme::get(ui.ctx());
-    let words = egui::RichText::new(section.title().to_uppercase()).color(palette.text_primary());
-    let block = egui::CollapsingHeader::new(words)
-        .id_salt(("orderflow_panel_section", section.id()))
-        .open(Some(open))
-        .show_unindented(ui, body);
-    let header = &block.header_response;
+    let id = egui::Id::new(("orderflow_panel_section", section.id()));
+    let title = section.title().to_uppercase();
+    let (header, body) = panel_chrome::band(ui, id, (&title, state), open, body);
     if quantick_workspace::orderflow_panel::still_landing(landing, section, header.rect.top()) {
         header.scroll_to_me(Some(egui::Align::TOP));
         ui.ctx().request_repaint();
@@ -176,19 +168,7 @@ fn section_block(
         HeaderControl::section(section),
         seen.unwrap_or(egui::Rect::NOTHING),
     ));
-    let right = ui.max_rect().right();
-    let room = right - header.rect.right() - STATE_GAP_PX;
-    if room > 0.0 {
-        let font = palette.mono_font(STATE_SIZE);
-        let mut job =
-            egui::text::LayoutJob::simple_singleline(state.to_owned(), font, palette.text_faint());
-        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
-        let galley = ui.fonts(|fonts| fonts.layout_job(job));
-        let y = header.rect.center().y - galley.size().y / 2.0;
-        let at = egui::pos2(right - galley.size().x, y);
-        ui.painter().galley(at, galley, palette.text_faint());
-    }
-    (header.clicked(), block.body_returned.unwrap_or(false))
+    (header.clicked(), body.unwrap_or(false))
 }
 
 impl OrderflowSettingsPort for dyn ControlPort {

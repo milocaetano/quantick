@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_appearance::panel_chrome::SESSION_CAPTION;
 use quantick_appearance::paper::{
     CARET_PX, DAY_PAD, DETAIL_PX, LINE_GAP_PX, Margin, RowFrame, RowKind, RowLook, SIDE_GAP_PX,
     TITLE_PX, TRADE_EDGE_PX, TRADE_GAP_PX, TRADE_PAD, ledger_row,
 };
-use quantick_engine::Side;
 use quantick_paper::pnl::SymbolPnl;
 use quantick_paper::report::fit::{FittedPieces, fit_pieces, fit_trade_row};
 use quantick_sim::ClosedTrade;
@@ -104,7 +104,8 @@ fn inset(rect: egui::Rect, margin: Margin) -> egui::Rect {
     )
 }
 
-/// A group caption inside the ledger, before its measured trade rows.
+/// A group caption inside the ledger, before its measured trade rows:
+/// THIS SESSION or EARLIER SESSIONS, bold on the panel's ground.
 pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
@@ -115,13 +116,17 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    ui.painter().text(
-        egui::pos2(rect.left() + 2.0, rect.bottom() - 4.0),
-        egui::Align2::LEFT_BOTTOM,
-        format!("{label} · {count}"),
-        palette.mono_font(10.0),
-        palette.text_faint(),
-    );
+    // Bold: egui bundles one weight, so the words are struck twice.
+    let ink = *palette.get(SESSION_CAPTION.ink);
+    for nudge in [0.0, BOLD_STRIKE_PX] {
+        ui.painter().text(
+            egui::pos2(rect.left() + 2.0 + nudge, rect.bottom() - 4.0),
+            egui::Align2::LEFT_BOTTOM,
+            format!("{label} · {count}"),
+            palette.mono_font(10.0),
+            ink,
+        );
+    }
 }
 
 /// One piece of a line's words: its text, font and ink.
@@ -258,9 +263,9 @@ pub(super) type HeadFit<'a> =
 
 /// A day's or a session's header: a large caret, an optional glyph and the
 /// title's pieces, its figures flush right, on one [`Line`] `fit` decides,
-/// inside `pad`. Hovered, or `lit` (the session F2 acts on), it takes the
-/// hover fill inside its container's border; `folded`, it closes the
-/// container, so its fill rounds there too.
+/// inside `pad`, on its own plate inside its container's border. Hovered,
+/// or `lit` (the session F2 acts on), it takes the hover fill instead;
+/// `folded`, it closes the container, so its fill rounds there too.
 pub(super) fn draw_header(
     ui: &mut egui::Ui,
     look: &RowLook,
@@ -291,7 +296,7 @@ pub(super) fn draw_header(
     let size = egui::vec2(ui.available_width(), line.height() + pad.top + pad.bottom);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
-        if let Some(fill) = look.hover_fill.filter(|_| lit || response.hovered()) {
+        if let Some(fill) = look.fill_at(lit || response.hovered(), false) {
             let radius = (look.radius - 1.0).max(0.0);
             let rounding = corners([radius, if folded { radius } else { 0.0 }]);
             ui.painter()
@@ -395,8 +400,8 @@ fn paint_trade(
     sense: egui::Sense,
 ) -> egui::Response {
     let palette = theme::get(ui.ctx());
-    let long = words.side == Side::Buy;
-    let look = ledger_row(palette.resolved.dark, RowKind::Trade { long });
+    let result = words.result;
+    let look = ledger_row(palette.resolved.dark, RowKind::Trade { result });
     let ink = *palette.get(look.ink);
     let detail = *palette.get(look.detail_at(selected));
     let (title, small) = (palette.mono_font(TITLE_PX), palette.mono_font(DETAIL_PX));

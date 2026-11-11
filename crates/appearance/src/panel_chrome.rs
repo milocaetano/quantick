@@ -25,6 +25,16 @@ pub const CAPTION_SIZE: f32 = 10.5;
 pub const CAPTION_RULE_PX: f32 = 1.0;
 /// A trade card's left stripe in its result colour.
 pub const STRIPE_PX: f32 = 3.0;
+/// The panel's own margin around its blocks, which a full-bleed plate
+/// reaches back across: across, then above and below.
+pub const PANEL_MARGIN_X_PX: f32 = 10.0;
+pub const PANEL_MARGIN_Y_PX: f32 = 8.0;
+/// The space above a subgroup caption, where a separator used to stand.
+pub const CAPTION_GAP_PX: f32 = 6.0;
+/// A caption's extra space between letters.
+pub const CAPTION_TRACKING_PX: f32 = 0.7;
+/// The fold triangle's side on a band or a folding caption.
+pub const FOLD_ICON_PX: f32 = 9.0;
 
 /// A filled shape and the words written on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +115,7 @@ pub fn caption_words(name: &str) -> String {
 /// A trade card's stripe for a result of `sign`: the theme's buy ink for a
 /// win, the loss stripe for a loss, and the block's edge for a flat trade.
 #[must_use]
-pub fn result_stripe(sign: Ordering) -> Token {
+pub const fn result_stripe(sign: Ordering) -> Token {
     match sign {
         Ordering::Greater => Token::BuyInk,
         Ordering::Less => Token::PanelStripeLoss,
@@ -148,8 +158,18 @@ mod tests {
         let light = ResolvedTheme::bundled(false);
         let edge = light.color(BLOCK_EDGE);
         assert!(contrast_ratio(edge, light.color(Token::PanelBlock)) >= 2.0);
-        assert!(contrast_ratio(light.color(Token::PanelBand), light.color(Token::PanelBlock)) >= MARK);
-        assert!(contrast_ratio(light.color(Token::PanelPlate), light.color(Token::PanelGround)) >= MARK);
+        assert!(
+            contrast_ratio(
+                light.color(Token::PanelBand),
+                light.color(Token::PanelBlock)
+            ) >= MARK
+        );
+        assert!(
+            contrast_ratio(
+                light.color(Token::PanelPlate),
+                light.color(Token::PanelGround)
+            ) >= MARK
+        );
     }
 
     #[test]
@@ -186,8 +206,14 @@ mod tests {
             .filter(|token| !token.key().starts_with("panel_"))
             .map(|token| dark.color(token))
             .collect();
-        for token in Token::ALL.into_iter().filter(|t| t.key().starts_with("panel_")) {
-            assert!(existing.contains(&dark.color(token)), "{token:?} is a new Dark colour");
+        for token in Token::ALL
+            .into_iter()
+            .filter(|t| t.key().starts_with("panel_"))
+        {
+            assert!(
+                existing.contains(&dark.color(token)),
+                "{token:?} is a new Dark colour"
+            );
         }
     }
 

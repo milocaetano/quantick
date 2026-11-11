@@ -68,6 +68,7 @@ mod orderflow_worker;
 mod pane;
 mod pane_header;
 mod pane_menu;
+mod panel_chrome;
 mod paper_account;
 mod paper_calendar;
 mod paper_chrome;

@@ -463,3 +463,4 @@ mod tests;
 
 pub mod calendar;
 pub mod ledger_rows;
+pub mod metric_rows;
