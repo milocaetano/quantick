@@ -294,11 +294,13 @@ impl Tab {
             ),
         };
         let spec = pane.map(|pane| pane.spec.spec());
-        // The header's own words; a header whose presets name the interval
-        // writes it out here, where no preset stands beside it.
-        let bars = spec.map(|spec| match PaneHeader::of(identity, spec) {
-            header if header.presets => spec.parameter_summary(),
-            header => header.bars_text,
+        // The header's own words, less a "Time" the strip's name already says.
+        let bars = spec.map(|spec| {
+            if identity == PaneIdentity::Time && spec.time_interval_ms().is_some() {
+                spec.parameter_summary()
+            } else {
+                PaneHeader::of(identity, spec).bars_text
+            }
         });
         strip_label(kind, &bars.unwrap_or_default(), &self.symbol)
     }

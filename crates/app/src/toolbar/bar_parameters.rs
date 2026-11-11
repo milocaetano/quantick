@@ -1,6 +1,6 @@
 //! Render the registered parameter schema; no bar-kind dispatch lives here.
-use crate::theme;
 use eframe::egui;
+use egui_phosphor::regular as icons;
 use quantick_engine::bar_registry::NumberKind;
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection, SelectionCommand};
 use rust_decimal::{
@@ -39,7 +39,6 @@ pub(crate) fn draw_kinds(
 }
 
 pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarInputAvailability) {
-    let palette = theme::get(ui.ctx());
     let config = selection.spec();
     let definition = config.definition();
     for choice in definition.choices {
@@ -70,25 +69,19 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
     }
     let mut value = selection.spec().parameter();
     let mut changed = false;
+    let presets = ui.make_persistent_id(("parameter_presets", definition.id));
     let mut number = |ui: &mut egui::Ui| {
-        for (label, preset) in editor.presets {
-            let selected = value == Decimal::from(*preset);
-            let (fill, ink) = if selected {
-                (palette.accent(), palette.chip_ink())
-            } else {
-                (palette.control(), palette.text_muted())
-            };
-            let chip = ui.add(
-                egui::Button::new(egui::RichText::new(*label).color(ink).small())
-                    .fill(fill)
-                    .stroke(egui::Stroke::NONE)
-                    .rounding(egui::Rounding::same(9.0))
-                    .min_size(egui::vec2(28.0, 18.0)),
-            );
-            if chip.clicked() && !selected {
-                value = Decimal::from(*preset);
-                changed = true;
-            }
+        if !editor.presets.is_empty()
+            && !preset_list(
+                ui,
+                presets,
+                editor.presets,
+                descriptor.kind,
+                &mut value,
+                &mut changed,
+            )
+        {
+            return;
         }
         let response = match descriptor.kind {
             NumberKind::Count => {
@@ -109,7 +102,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
                 )
                 .is_some() =>
             {
-                // A calendar month has no fixed length to drag, and the chip
+                // A calendar month has no fixed length to drag, and the button
                 // already names it: nothing stands beside it.
                 ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
             }
@@ -147,10 +140,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
             if editor.presets.is_empty() {
                 number(ui);
             } else {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 3.0;
-                    number(ui);
-                });
+                ui.vertical(number);
             }
         })
         .response;
@@ -165,6 +155,75 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
             },
             inputs,
         );
+    }
+}
+
+/// The presets behind one button that names the value; a click unfolds them as
+/// a list inside the open menu, so no second popup closes the first. Returns
+/// whether the free editor shows: after "Custom…", or for a value no preset
+/// names.
+///
+/// The list keeps its fold and its Custom… while it paints frame after frame;
+/// a frame without it is a closed menu, and the next paint opens folded.
+fn preset_list(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    presets: &[(&str, i64)],
+    kind: NumberKind,
+    value: &mut Decimal,
+    changed: &mut bool,
+) -> bool {
+    let pass = ui.ctx().cumulative_pass_nr();
+    let (mut open, mut custom) = ui
+        .data(|data| data.get_temp::<(bool, bool, u64)>(id))
+        .filter(|(_, _, painted)| painted + 1 >= pass)
+        .map_or((false, false), |(open, custom, _)| (open, custom));
+    let named = |value: Decimal| {
+        presets
+            .iter()
+            .find(|(_, preset)| value == Decimal::from(*preset))
+            .map(|(label, _)| *label)
+    };
+    // Sticky: a drag from an unnamed value across a preset keeps its editor.
+    custom |= named(*value).is_none();
+    let words = named(*value).map_or_else(|| value_words(kind, *value), str::to_owned);
+    let button = ui
+        .add(egui::Button::new(format!("{words} {}", icons::CARET_DOWN)))
+        .on_hover_text("Choose a preset, or Custom…");
+    if button.clicked() {
+        open = !open;
+    }
+    if open {
+        for (label, preset) in presets {
+            let preset = Decimal::from(*preset);
+            if ui.selectable_label(*value == preset, *label).clicked() {
+                *changed |= *value != preset;
+                *value = preset;
+                (open, custom) = (false, false);
+            }
+        }
+        // A calendar month has no length to edit, so Custom… would open nothing.
+        let month = kind == NumberKind::Duration
+            && value
+                .to_i64()
+                .and_then(quantick_engine::time_bucket::calendar_months)
+                .is_some();
+        if !month && ui.selectable_label(custom, CUSTOM).clicked() {
+            (open, custom) = (false, true);
+        }
+    }
+    ui.data_mut(|data| data.insert_temp(id, (open, custom, pass)));
+    custom || named(*value).is_none()
+}
+
+/// The last row of an unfolded preset list: it reveals the free editor.
+const CUSTOM: &str = "Custom…";
+
+/// A value no preset names, written the way its kind reads.
+fn value_words(kind: NumberKind, value: Decimal) -> String {
+    match (kind, value.to_i64()) {
+        (NumberKind::Duration, Some(ms)) => quantick_engine::fmt_time_interval(ms),
+        _ => value.normalize().to_string(),
     }
 }
 
@@ -196,34 +255,185 @@ mod tests {
         }
     }
 
-    /// The menu's time editor offers the presets, and a frame without a click
-    /// leaves the selection as it found it.
-    #[test]
-    fn the_time_kind_paints_the_preset_chips_and_an_idle_frame_changes_nothing() {
-        let config = BUILTIN_BARS.parse("time:60000").unwrap();
-        let mut selection = BarSelection::new(config);
-        let ctx = egui::Context::default();
-        let mut painted = String::new();
-        for _ in 0..2 {
-            painted.clear();
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.set_min_width(800.0);
-                    ui.horizontal(|ui| draw(ui, &mut selection, BarInputAvailability::PRINTS));
-                });
-            });
-            for shape in output.shapes {
-                if let egui::epaint::Shape::Text(text) = shape.shape {
-                    painted.push_str(text.galley.text());
-                    painted.push(' ');
+    /// Paints `draw` once, then once per click, each click landing on the
+    /// first text the frame before painted that starts with it; returns the
+    /// texts the last frame painted.
+    fn paint(selection: &mut BarSelection, ctx: &egui::Context, clicks: &[&str]) -> Vec<String> {
+        let mut texts: Vec<(String, egui::Rect)> = Vec::new();
+        for click in std::iter::once(None).chain(clicks.iter().map(Some)) {
+            let mut input = egui::RawInput::default();
+            if let Some(click) = click {
+                let at = texts
+                    .iter()
+                    .find(|(text, _)| text.starts_with(*click))
+                    .unwrap_or_else(|| panic!("{click} missing from {texts:?}"))
+                    .1
+                    .center();
+                input.events.push(egui::Event::PointerMoved(at));
+                for pressed in [true, false] {
+                    input.events.push(egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
                 }
             }
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.horizontal(|ui| draw(ui, selection, BarInputAvailability::PRINTS));
+                });
+            });
+            texts = output
+                .shapes
+                .into_iter()
+                .filter_map(|shape| match shape.shape {
+                    egui::epaint::Shape::Text(text) => Some((
+                        text.galley.text().to_owned(),
+                        text.galley.rect.translate(text.pos.to_vec2()),
+                    )),
+                    _ => None,
+                })
+                .collect();
         }
-        for chip in ["1m", "5m", "15m", "1h"] {
-            assert!(painted.contains(chip), "{chip} missing from: {painted}");
+        texts.into_iter().map(|(text, _)| text).collect()
+    }
+
+    /// The time editor is one button naming the interval: no strip of preset
+    /// chips, and a frame without a click leaves the selection as it was.
+    #[test]
+    fn the_time_kind_paints_one_interval_button_and_an_idle_frame_changes_nothing() {
+        let config = BUILTIN_BARS.parse("time:300000").unwrap();
+        let mut selection = BarSelection::new(config);
+        let ctx = egui::Context::default();
+        let painted = paint(&mut selection, &ctx, &[]);
+        assert!(
+            painted.iter().any(|text| text.starts_with("5m ")),
+            "{painted:?}"
+        );
+        for chip in ["1m", "15m", "1h", CUSTOM] {
+            assert!(
+                !painted.iter().any(|text| text == chip),
+                "{chip} in {painted:?}"
+            );
         }
         assert_eq!(selection.spec(), config);
         assert_eq!(selection.pending(), None);
+    }
+
+    /// A click unfolds every preset and Custom…; picking one sets the interval
+    /// and folds the list back.
+    #[test]
+    fn the_interval_button_unfolds_the_presets_and_a_pick_sets_the_interval() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let painted = paint(&mut selection, &ctx, &["5m "]);
+        for (label, _) in quantick_engine::bar_registry::TIME_PRESETS {
+            assert!(
+                painted.iter().any(|text| text == label),
+                "{label} in {painted:?}"
+            );
+        }
+        assert!(painted.iter().any(|text| text == CUSTOM), "{painted:?}");
+        paint(&mut selection, &ctx, &["15m"]);
+        assert_eq!(
+            selection.spec(),
+            BUILTIN_BARS.parse("time:900000").unwrap(),
+            "the pick is the command"
+        );
+        let painted = paint(&mut selection, &ctx, &[]);
+        assert!(
+            painted.iter().any(|text| text.starts_with("15m ")),
+            "{painted:?}"
+        );
+        assert!(!painted.iter().any(|text| text == "1h"), "the list folds");
+    }
+
+    /// Custom… reveals the free editor; an interval no preset names keeps it
+    /// shown under a button that writes the interval out.
+    #[test]
+    fn custom_and_an_unnamed_interval_show_the_free_editor() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let before = paint(&mut selection, &ctx, &[]);
+        let after = paint(&mut selection, &ctx, &["5m ", CUSTOM]);
+        assert!(after.len() > before.len(), "{before:?} then {after:?}");
+        let mut odd = BarSelection::new(BUILTIN_BARS.parse("time:90000").unwrap());
+        let painted = paint(&mut odd, &egui::Context::default(), &[]);
+        assert!(
+            painted.iter().any(|text| text.starts_with("90s ")),
+            "{painted:?}"
+        );
+        assert!(
+            painted.iter().filter(|text| text.contains("90s")).count() >= 2,
+            "{painted:?}"
+        );
+    }
+
+    /// A named interval shows no drag until Custom…, which brings one that
+    /// writes the interval out.
+    #[test]
+    fn a_named_interval_shows_its_drag_only_after_custom() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let idle = paint(&mut selection, &ctx, &[]);
+        assert!(!idle.iter().any(|text| text == "5m"), "{idle:?}");
+        let custom = paint(&mut selection, &ctx, &["5m ", CUSTOM]);
+        assert!(custom.iter().any(|text| text == "5m"), "{custom:?}");
+    }
+
+    /// A drag from an unnamed interval that crosses a preset keeps its editor:
+    /// the value is named now, but the hand is still on the drag.
+    #[test]
+    fn the_free_editor_survives_crossing_a_preset() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:90000").unwrap());
+        let ctx = egui::Context::default();
+        let unnamed = paint(&mut selection, &ctx, &[]);
+        assert!(unnamed.iter().any(|text| text == "90s"), "{unnamed:?}");
+        selection
+            .update(
+                SelectionCommand::Replace(BUILTIN_BARS.parse("time:60000").unwrap()),
+                BarInputAvailability::PRINTS,
+            )
+            .unwrap();
+        let crossed = paint(&mut selection, &ctx, &[]);
+        assert!(
+            crossed.iter().any(|text| text.starts_with("1m ")),
+            "{crossed:?}"
+        );
+        assert!(
+            crossed.iter().any(|text| text == "1m"),
+            "the drag stays: {crossed:?}"
+        );
+    }
+
+    /// A calendar month has no length to edit, so its list offers no Custom….
+    #[test]
+    fn a_calendar_month_hides_custom() {
+        let month = quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+        let mut selection =
+            BarSelection::new(BUILTIN_BARS.parse(&format!("time:{month}")).unwrap());
+        let ctx = egui::Context::default();
+        let painted = paint(&mut selection, &ctx, &["1mo "]);
+        assert!(painted.iter().any(|text| text == "1w"), "the list unfolded");
+        assert!(!painted.iter().any(|text| text == CUSTOM), "{painted:?}");
+    }
+
+    /// A frame without the list is a closed menu: the next paint opens folded,
+    /// with no Custom… left over.
+    #[test]
+    fn a_skipped_frame_resets_the_list() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let custom = paint(&mut selection, &ctx, &["5m ", CUSTOM]);
+        assert!(custom.iter().any(|text| text == "5m"), "{custom:?}");
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let reopened = paint(&mut selection, &ctx, &[]);
+        assert!(!reopened.iter().any(|text| text == "5m"), "{reopened:?}");
+        paint(&mut selection, &ctx, &["5m "]);
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let reopened = paint(&mut selection, &ctx, &[]);
+        assert!(!reopened.iter().any(|text| text == "1h"), "{reopened:?}");
     }
 
     /// A venue that prints no volume still draws every kind: one it cannot back

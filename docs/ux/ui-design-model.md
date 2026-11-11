@@ -523,10 +523,11 @@ startup-scoped like `default_feed`); the factory default stays Flow.
 - **One engine, one tape.** Both panes are fed the same trades from the
   tab's feed; the time pane is a second `ChartState` with `BarSpec::Time`.
   No second bar-building path exists.
-- **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h
-  1d 1w 1mo` presets plus the existing custom interval drag (a calendar month
-  shows its name instead: it has no fixed length to drag). Days open at 00:00
-  UTC, weeks on Monday, months on the 1st. Each pane's bars control governs
+- **Time pane header** reads like every pane's, `Time · 5m ▾`; its bars menu
+  holds one button naming the interval, which unfolds the `1m 5m 15m 1h 1d 1w
+  1mo` presets and `Custom…` for the interval drag (a calendar month offers no
+  drag: it has no fixed length). Days open at 00:00 UTC, weeks on Monday,
+  months on the 1st. Each pane's bars control governs
   that pane wherever focus sits. Indicator commands land on the *focused* pane,
   the one the status bar reads, so `ƒx` focuses its own pane before it opens the
   library.

@@ -790,29 +790,21 @@ impl Capsule {
 /// One pane's header line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneHeader {
-    /// The pane's name, when it needs one. A time pane's presets already say
+    /// The pane's name, when it needs one. A time pane's bars already say
     /// what it is.
     pub mark: Option<&'static str>,
-    /// The bars this pane builds, as the bars control reads.
+    /// The bars this pane builds, as the bars control reads: the kind and its
+    /// parameter, "Time · 5m" as "Tick · 2000".
     pub bars_text: String,
-    /// Whether the timeframe presets stand beside the bars control.
-    pub presets: bool,
 }
 
 impl PaneHeader {
     /// The header line of a pane with this identity building these bars.
     #[must_use]
     pub fn of(identity: PaneIdentity, bars: BarConfiguration) -> Self {
-        let presets = identity == PaneIdentity::Time && bars.time_interval_ms().is_some();
         Self {
             mark: (identity == PaneIdentity::OrderFlow).then_some(ORDER_FLOW_MARK),
-            // The presets beside it name the interval, so the kind says enough.
-            bars_text: if presets {
-                kind_name(bars)
-            } else {
-                format!("{} · {}", kind_name(bars), bars.parameter_summary())
-            },
-            presets,
+            bars_text: format!("{} · {}", kind_name(bars), bars.parameter_summary()),
         }
     }
 }
@@ -836,11 +828,10 @@ mod tests {
         PaneHeader::of(identity, spec.into())
     }
 
-    fn expected(mark: Option<&'static str>, bars_text: &str, presets: bool) -> PaneHeader {
+    fn expected(mark: Option<&'static str>, bars_text: &str) -> PaneHeader {
         PaneHeader {
             mark,
             bars_text: bars_text.to_owned(),
-            presets,
         }
     }
 
@@ -848,37 +839,33 @@ mod tests {
     fn the_flow_pane_is_marked_and_writes_its_bars_in_full() {
         assert_eq!(
             header(PaneIdentity::OrderFlow, BarSpec::Tick(2000)),
-            expected(Some("ORDER FLOW"), "Tick · 2000", false)
+            expected(Some("ORDER FLOW"), "Tick · 2000")
         );
         assert_eq!(
             header(PaneIdentity::OrderFlow, BarSpec::Time(60_000)),
-            expected(Some("ORDER FLOW"), "Time · 1m", false),
-            "the flow pane has no presets to name the interval"
+            expected(Some("ORDER FLOW"), "Time · 1m")
         );
         assert_eq!(
             header(PaneIdentity::OrderFlow, BarSpec::Volume(Decimal::from(50))),
-            expected(Some("ORDER FLOW"), "Volume · 50.0", false)
+            expected(Some("ORDER FLOW"), "Volume · 50.0")
         );
     }
 
+    /// A time pane reads like every other: the kind and its parameter, so the
+    /// interval sits on the one control that changes it.
     #[test]
-    fn a_time_pane_on_time_bars_keeps_its_presets_and_says_only_the_kind() {
+    fn a_time_pane_writes_its_bars_in_full_like_every_pane() {
         assert_eq!(
             header(PaneIdentity::Time, BarSpec::Time(60_000)),
-            expected(None, "Time", true)
+            expected(None, "Time · 1m")
         );
         assert_eq!(
-            header(PaneIdentity::Time, BarSpec::Time(3_600_000)),
-            expected(None, "Time", true),
-            "the interval belongs to the presets"
+            header(PaneIdentity::Time, BarSpec::Time(300_000)),
+            expected(None, "Time · 5m")
         );
-    }
-
-    #[test]
-    fn a_time_pane_on_other_bars_drops_the_presets_it_would_misstate() {
         assert_eq!(
             header(PaneIdentity::Time, BarSpec::Tick(4)),
-            expected(None, "Tick · 4", false)
+            expected(None, "Tick · 4")
         );
     }
 
