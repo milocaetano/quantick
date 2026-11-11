@@ -184,11 +184,11 @@ fn the_same_drags_give_the_same_tree_bit_for_bit() {
 fn a_pane_share_is_set_along_the_named_axis_and_read_back() {
     let mut state = canvas("charts-2");
     assert_eq!(state.resize_pane(0, SplitAxis::Row, 0.7, AREA), Ok(true));
-    assert!((state.pane_share(0, SplitAxis::Row).unwrap() - 0.7).abs() < 1e-5);
+    assert!((state.pane_share(0, SplitAxis::Row, AREA).unwrap() - 0.7).abs() < 1e-5);
     assert!((rect_of(&state, 0).w - 1120.0).abs() < EPS);
     // The last child moves the seam before it.
     assert_eq!(state.resize_pane(1, SplitAxis::Row, 0.25, AREA), Ok(true));
-    assert!((state.pane_share(1, SplitAxis::Row).unwrap() - 0.25).abs() < 1e-5);
+    assert!((state.pane_share(1, SplitAxis::Row, AREA).unwrap() - 0.25).abs() < 1e-5);
     assert_eq!(
         state.resize_pane(1, SplitAxis::Row, 0.25, AREA),
         Ok(false),
@@ -197,7 +197,7 @@ fn a_pane_share_is_set_along_the_named_axis_and_read_back() {
     // Held to the minimum extent, like a drag.
     assert_eq!(state.resize_pane(0, SplitAxis::Row, 0.01, AREA), Ok(true));
     assert!((rect_of(&state, 0).w - MIN_TREE_PANE_PX).abs() < EPS);
-    assert_eq!(state.pane_share(0, SplitAxis::Column), None);
+    assert_eq!(state.pane_share(0, SplitAxis::Column, AREA), None);
 }
 
 #[test]
@@ -205,9 +205,9 @@ fn a_pane_share_names_the_nearest_split_along_its_axis() {
     let mut state = canvas("charts-4");
     assert_eq!(state.resize_pane(3, SplitAxis::Column, 0.6, AREA), Ok(true));
     // Slot 3's row took 60 % of the height, slot 2 with it.
-    assert!((state.pane_share(2, SplitAxis::Column).unwrap() - 0.6).abs() < 1e-5);
-    assert!((state.pane_share(0, SplitAxis::Column).unwrap() - 0.4).abs() < 1e-5);
-    assert!((state.pane_share(3, SplitAxis::Row).unwrap() - 0.5).abs() < 1e-5);
+    assert!((state.pane_share(2, SplitAxis::Column, AREA).unwrap() - 0.6).abs() < 1e-5);
+    assert!((state.pane_share(0, SplitAxis::Column, AREA).unwrap() - 0.4).abs() < 1e-5);
+    assert!((state.pane_share(3, SplitAxis::Row, AREA).unwrap() - 0.5).abs() < 1e-5);
 }
 
 #[test]
@@ -248,4 +248,85 @@ fn resized_shares_survive_a_save_and_read_as_a_change() {
     let back: CanvasState = toml::from_str(&saved).unwrap();
     assert_eq!(back, live);
     assert!((rect_of(&back, 0).w - 920.0).abs() < EPS);
+}
+
+#[test]
+fn a_split_with_no_children_has_no_seam_and_does_not_panic() {
+    let saved = r#"
+next_slot = 0
+[tree]
+node = "split"
+axis = "row"
+shares = []
+children = []
+"#;
+    let state: CanvasState = toml::from_str(saved).unwrap();
+    assert!(tree_seams(&state, AREA, DIVIDER).is_empty());
+}
+
+#[test]
+fn a_pair_narrower_than_both_minimums_is_refused_with_a_stable_reason() {
+    let narrow = CanvasRect::new(0.0, 0.0, 2.0 * MIN_TREE_PANE_PX - 1.0, 900.0);
+    let mut state = canvas("charts-2");
+    let before = root_shares(&state);
+    assert_eq!(
+        state.move_seam(&root(0), 10.0, narrow),
+        Err(CanvasRefusal::NoRoom)
+    );
+    assert_eq!(
+        state.resize_pane(0, SplitAxis::Row, 0.6, narrow),
+        Err(CanvasRefusal::NoRoom)
+    );
+    assert_eq!(root_shares(&state), before, "nothing moved");
+    assert_eq!(CanvasRefusal::NoRoom.code(), "canvas.no_room");
+}
+
+#[test]
+fn a_resize_trades_with_the_neighbour_whose_seam_moves_as_a_drag_does() {
+    let mut state = canvas("charts-3");
+    state.minimize(2).unwrap();
+    let seams = tree_seams(&state, AREA, DIVIDER);
+    assert!(seams[0].resizable && !seams[1].resizable, "only 0|1 drags");
+    assert_eq!(state.resize_pane(1, SplitAxis::Row, 0.5, AREA), Ok(true));
+    assert!((rect_of(&state, 1).w - 800.0).abs() < EPS, "half the row");
+    assert_eq!(rect_of(&state, 2).w, MINIMIZED_STRIP_PX, "the strip held");
+    assert!((state.pane_share(1, SplitAxis::Row, AREA).unwrap() - 0.5).abs() < 1e-5);
+    assert_eq!(
+        state.resize_pane(2, SplitAxis::Row, 0.5, AREA),
+        Err(CanvasRefusal::NoSeam),
+        "a folded chart is pinned"
+    );
+    let mut first = canvas("charts-3");
+    first.minimize(1).unwrap();
+    assert_eq!(
+        first.resize_pane(0, SplitAxis::Row, 0.5, AREA),
+        Err(CanvasRefusal::NoSeam),
+        "its only neighbour is folded"
+    );
+}
+
+#[test]
+fn a_pane_share_reads_what_the_screen_shows() {
+    let mut state = canvas("charts-2");
+    state.minimize(1).unwrap();
+    let strip = MINIMIZED_STRIP_PX / AREA.w;
+    assert!((state.pane_share(1, SplitAxis::Row, AREA).unwrap() - strip).abs() < 1e-6);
+    assert!((state.pane_share(0, SplitAxis::Row, AREA).unwrap() - (1.0 - strip)).abs() < 1e-6);
+    let mut state = canvas("charts-2");
+    state.maximize(0).unwrap();
+    assert_eq!(
+        state.pane_share(0, SplitAxis::Row, AREA),
+        None,
+        "a maximized chart covers the canvas, in no split"
+    );
+    assert_eq!(state.pane_share(1, SplitAxis::Row, AREA), None, "hidden");
+}
+
+#[test]
+fn a_drag_and_a_call_to_the_same_boundary_store_the_same_shares() {
+    let (mut dragged, mut called) = (canvas("charts-2"), canvas("charts-2"));
+    dragged.move_seam(&root(0), 160.0, AREA).unwrap();
+    called.resize_pane(0, SplitAxis::Row, 0.6, AREA).unwrap();
+    let (one, two) = (root_shares(&dragged), root_shares(&called));
+    assert!((one[0] - two[0]).abs() < 1e-6 && (one[1] - two[1]).abs() < 1e-6);
 }

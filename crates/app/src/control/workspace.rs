@@ -142,7 +142,10 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,
                     modified,
-                    canvas: Some(quantick_control_handlers::canvas::view(&tab.canvas.state)),
+                    canvas: Some(quantick_control_handlers::canvas::view(
+                        &tab.canvas.state,
+                        crate::app::canvas_wiring::drawn(&tab.canvas),
+                    )),
                 }
             })
             .collect(),

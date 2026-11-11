@@ -433,10 +433,13 @@ fn drops_windows_and_hooks_become_canvas_acts() {
 /// back as the share sent, and a refusal names its stable reason.
 #[test]
 fn a_resize_moves_the_tree_share_and_reads_it_back() {
-    use crate::canvas::{act, hook_acts, result};
+    use crate::canvas::{Drawn, act, hook_acts, result};
     use quantick_control_schema::canvas::CanvasDimension;
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
-    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let area = Drawn {
+        area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
+    };
     let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
     let resize = |slot, dimension, share| CanvasAct::Resize {
         slot,
@@ -448,7 +451,7 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
         act(&mut state, None, area, wide.clone()),
         Ok((true, Some(0)))
     );
-    let read = result(&state, true, Some(0), true);
+    let read = result(&state, true, Some(0), true, area);
     let share = |slot: usize| {
         read.panes[slot]
             .width_share
@@ -487,4 +490,78 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
 
     let acts = hook_acts("resize:0:width:0.25;resize:0:width:1.5;resize:0:depth:0.5");
     assert_eq!(acts, vec![resize(0, CanvasDimension::Width, 0.25)]);
+}
+
+/// A column-painted tab keeps its own dividers: a tree resize is refused,
+/// naming the call that moves them, and the readback claims no tree share
+/// the screen does not show.
+#[test]
+fn a_column_painted_tab_refuses_a_tree_resize_and_reads_no_share() {
+    use crate::canvas::{Drawn, act, view};
+    use quantick_control_schema::canvas::CanvasDimension;
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let columns = Drawn {
+        area,
+        columns: true,
+    };
+    let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
+    let before = state.clone();
+    let resize = CanvasAct::Resize {
+        slot: 0,
+        dimension: CanvasDimension::Width,
+        share: 0.6,
+    };
+    let error = act(&mut state, None, columns, resize).unwrap_err();
+    assert_eq!(
+        error.context.details.unwrap()["refusal"],
+        json!("canvas.column_layout")
+    );
+    assert!(
+        error
+            .context
+            .next_steps
+            .iter()
+            .any(|step| step.contains("layout.pane.resize")),
+        "the refusal names the call that moves the column divider: {:?}",
+        error.context.next_steps
+    );
+    assert_eq!(state, before, "nothing moved");
+    let read = view(&state, columns);
+    assert!(
+        read.panes
+            .iter()
+            .all(|pane| pane.width_share.is_none() && pane.height_share.is_none()),
+        "no tree share on a column-painted tab"
+    );
+}
+
+/// The readback is what the screen shows: a folded chart's strip and the
+/// chart beside it, and nothing while a chart is maximized.
+#[test]
+fn a_tree_share_reads_back_what_the_screen_shows() {
+    use crate::canvas::{Drawn, view};
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
+    let drawn = Drawn {
+        area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
+    };
+    let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
+    state.minimize(1).unwrap();
+    let read = view(&state, drawn);
+    let width = |slot: usize| {
+        read.panes[slot]
+            .width_share
+            .as_ref()
+            .map(|share| share.as_str().to_owned())
+    };
+    assert_eq!(width(0).as_deref(), Some("0.985"), "1576 of 1600 points");
+    assert_eq!(width(1).as_deref(), Some("0.015"), "the 24-point strip");
+    let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
+    state.maximize(0).unwrap();
+    let read = view(&state, drawn);
+    assert!(
+        read.panes.iter().all(|pane| pane.width_share.is_none()),
+        "a maximized chart sits in no split"
+    );
 }

@@ -163,7 +163,7 @@ fn dragging_a_tree_seam_resizes_both_charts() {
     let state = &app.active_tab().canvas.state;
     let first = state.tree().panes()[0].0;
     let before = state
-        .pane_share(first, SplitAxis::Row)
+        .pane_share(first, SplitAxis::Row, whole)
         .expect("the first chart holds a share of the row");
     let seam = tree_seams(state, whole, CANVAS_DIVIDER_PX)
         .into_iter()
@@ -178,7 +178,7 @@ fn dragging_a_tree_seam_resizes_both_charts() {
     run_frame(&mut app, &ctx);
     let state = &app.active_tab().canvas.state;
     let after = state
-        .pane_share(first, SplitAxis::Row)
+        .pane_share(first, SplitAxis::Row, whole)
         .expect("still in the row");
     let moved = (after - before) * area.width();
     assert!(
@@ -196,5 +196,44 @@ fn dragging_a_tree_seam_resizes_both_charts() {
     assert!(
         left.width() > right.width() + 100.0,
         "both charts redrew at the new boundary: {left:?} {right:?}"
+    );
+}
+
+/// A seam grabbed off its centre follows the pointer from the grab point, as
+/// the column painter's divider does: out and back to where it was pressed
+/// leaves the charts exactly as they were, with no first-frame jump.
+#[test]
+fn a_tree_seam_grabbed_off_centre_moves_only_as_far_as_the_pointer() {
+    use quantick_workspace::canvas::tree_seams;
+    let ctx = egui::Context::default();
+    let mut app = two_charts(&ctx);
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let shares = |app: &QuantickApp| match app.active_tab().canvas.state.tree() {
+        quantick_workspace::canvas::PaneTree::Split { shares, .. } => shares.to_vec(),
+        quantick_workspace::canvas::PaneTree::Pane { .. } => Vec::new(),
+    };
+    let before = shares(&app);
+    let seam = tree_seams(&app.active_tab().canvas.state, whole, CANVAS_DIVIDER_PX)
+        .into_iter()
+        .next()
+        .expect("one seam between the charts");
+    let grab = egui::pos2(
+        seam.rect.x + seam.rect.w / 2.0 + 3.0,
+        seam.rect.y + seam.rect.h / 2.0,
+    );
+    for events in [
+        vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+        vec![egui::Event::PointerMoved(grab + egui::vec2(40.0, 0.0))],
+        vec![egui::Event::PointerMoved(grab)],
+        vec![egui::Event::PointerMoved(grab), pointer_button(grab, false)],
+    ] {
+        run_frame_with_events(&mut app, &ctx, events);
+    }
+    let after = shares(&app);
+    let moved = (after[0] - before[0]) / (before[0] + before[1]) * area.width();
+    assert!(
+        moved.abs() < 0.05,
+        "back where it was pressed, unmoved: {before:?} -> {after:?} ({moved} px)"
     );
 }

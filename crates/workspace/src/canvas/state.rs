@@ -67,6 +67,9 @@ pub enum CanvasRefusal {
     /// No seam there can move: it needs two unfolded docked neighbours along
     /// a split, and no chart maximized over the canvas.
     NoSeam,
+    /// The two charts beside the seam are narrower than the least each keeps
+    /// together: the canvas has no room to move it.
+    NoRoom,
 }
 
 impl CanvasRefusal {
@@ -84,6 +87,7 @@ impl CanvasRefusal {
             Self::LastOpenPane => "canvas.last_open_pane",
             Self::Full => "canvas.full",
             Self::NoSeam => "canvas.no_seam",
+            Self::NoRoom => "canvas.no_room",
         }
     }
 }
@@ -102,6 +106,9 @@ impl std::fmt::Display for CanvasRefusal {
             Self::Full => write!(f, "the canvas holds at most {MAX_CANVAS_PANES} charts"),
             Self::NoSeam => f.write_str(
                 "no seam there can move: it needs two unfolded docked charts side by side and none maximized",
+            ),
+            Self::NoRoom => f.write_str(
+                "no room to move that seam: the charts beside it are narrower than the least each keeps",
             ),
         }
     }

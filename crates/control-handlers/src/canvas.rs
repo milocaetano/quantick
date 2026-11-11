@@ -79,6 +79,28 @@ pub enum CanvasAct {
     },
 }
 
+/// A tab's canvas as the window draws it: its area, and whether the column
+/// painter draws its docked charts with its own dividers and split, which
+/// `layout.pane.resize` moves, rather than the tree whose seams
+/// `canvas.pane.resize` moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drawn {
+    pub area: CanvasRect,
+    pub columns: bool,
+}
+
+/// A tree resize on a column-painted tab: its dividers are not the tree's.
+fn column_layout() -> ControlError {
+    let mut error = ControlError::invalid_request(
+        "the column painter draws this layout with its own dividers: the tree resize moves nothing on screen",
+    );
+    error.context.details = Some(serde_json::json!({ "refusal": "canvas.column_layout" }));
+    error.context.next_steps = vec![
+        "Move the column divider with layout.pane.resize (layout.pane.resize_pair between stacked context charts).".to_owned(),
+    ];
+    error
+}
+
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspace canvas is unavailable")
 }
@@ -341,17 +363,22 @@ pub fn picked(preset_id: &str) -> Result<&'static LayoutPreset, ControlError> {
         .ok_or_else(|| refused(&CanvasRefusal::UnknownPreset(preset_id.to_owned())))
 }
 
-/// Apply `act` to `state`, a canvas of `area`. An unconfirmed removal of a
-/// pane the `saved` workspace holds is refused, as the trader's dialog asks
-/// first. Answers whether the canvas changed and the slot acted on. A window
-/// whose pick lays out more than the model (a split, its painter) applies
-/// [`CanvasAct::PickLayout`] itself.
+/// Apply `act` to `state`, a canvas `drawn` as the window draws it. An
+/// unconfirmed removal of a pane the `saved` workspace holds is refused, as
+/// the trader's dialog asks first, and so is a resize of a column-painted
+/// tab, whose dividers are not the tree's. Answers whether the canvas changed
+/// and the slot acted on. A window whose pick lays out more than the model (a
+/// split, its painter) applies [`CanvasAct::PickLayout`] itself.
 pub fn act(
     state: &mut CanvasState,
     saved: Option<&CanvasState>,
-    area: CanvasRect,
+    drawn: Drawn,
     act: CanvasAct,
 ) -> Result<(bool, Option<u32>), ControlError> {
+    if drawn.columns && matches!(act, CanvasAct::Resize { .. }) {
+        return Err(column_layout());
+    }
+    let area = drawn.area;
     if let CanvasAct::Remove {
         slot,
         confirm: false,
@@ -720,8 +747,9 @@ pub fn result(
     changed: bool,
     slot: Option<u32>,
     unsaved: bool,
+    drawn: Drawn,
 ) -> CanvasResult {
-    let view = view(state);
+    let view = view(state, drawn);
     CanvasResult {
         changed,
         slot,
@@ -731,13 +759,14 @@ pub fn result(
     }
 }
 
-/// One tab's canvas as the wire reads it.
+/// One tab's canvas as the wire reads it, `drawn` as the window draws it:
+/// tree shares only where the tree painter shows them.
 #[must_use]
-pub fn view(state: &CanvasState) -> CanvasView {
+pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
     let panes = (state.panes().into_iter())
         .map(|(slot, kind, mode)| CanvasPaneDto {
-            width_share: share_on(state, slot, CanvasDimension::Width),
-            height_share: share_on(state, slot, CanvasDimension::Height),
+            width_share: share_on(state, slot, CanvasDimension::Width, drawn),
+            height_share: share_on(state, slot, CanvasDimension::Height, drawn),
             slot,
             kind: match kind {
                 PaneKind::Time => CanvasPaneKind::Time,
@@ -776,13 +805,18 @@ pub fn view(state: &CanvasState) -> CanvasView {
     }
 }
 
-/// `slot`'s share along `dimension`, as the wire writes it.
+/// `slot`'s share along `dimension` as the screen shows it, as the wire
+/// writes it; none on a column-painted tab, whose split is not the tree's.
 fn share_on(
     state: &CanvasState,
     slot: u32,
     dimension: CanvasDimension,
+    drawn: Drawn,
 ) -> Option<quantick_control::wire::CanonicalDecimal> {
-    let share = state.pane_share(slot, axis_of(dimension))?;
+    if drawn.columns {
+        return None;
+    }
+    let share = state.pane_share(slot, axis_of(dimension), drawn.area)?;
     canonical_f32(share, SHARE_DECIMAL_PLACES)
 }
 

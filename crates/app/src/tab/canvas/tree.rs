@@ -127,8 +127,9 @@ impl Tab {
 
     /// The seams between the docked bands, painted as the column painter's
     /// dividers and dragged as they are: a resize cursor over each, and a
-    /// drag moving it through the canvas model. After the panes, so a seam's
-    /// grab margin wins over the chart beside it.
+    /// drag carrying the seam as far as the pointer travelled from the grab,
+    /// through the canvas model. After the panes, so a seam's grab margin
+    /// wins over the chart beside it.
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
@@ -153,20 +154,28 @@ impl Tab {
                 ),
             };
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
-            let handle = ui
-                .interact(at.expand2(grab), id, egui::Sense::drag())
-                .on_hover_text("drag to resize the charts");
+            let handle = ui.interact(at.expand2(grab), id, egui::Sense::drag());
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(cursor);
             }
-            if handle.dragged()
-                && let Some(pointer) = ui.ctx().pointer_interact_pos()
-            {
-                let delta = match seam.axis {
-                    SplitAxis::Row => pointer.x - at.center().x,
-                    SplitAxis::Column => pointer.y - at.center().y,
-                };
-                let _ = self.canvas.state.move_seam(&seam.address, delta, canvas);
+            let along = |point: egui::Vec2| match seam.axis {
+                SplitAxis::Row => point.x,
+                SplitAxis::Column => point.y,
+            };
+            let centre = along(at.center().to_vec2());
+            if handle.drag_started() {
+                ui.ctx().data_mut(|data| data.insert_temp(id, centre));
+            }
+            let step = along(handle.drag_delta());
+            if handle.dragged() && step.abs() > f32::EPSILON {
+                // Where the seam is wanted: its centre at the grab plus every
+                // step since, so an off-centre grab never jumps it.
+                let wanted = ui.ctx().data_mut(|data| {
+                    let wanted = data.get_temp_mut_or(id, centre);
+                    *wanted += step;
+                    *wanted
+                });
+                let _ = (self.canvas.state).move_seam(&seam.address, wanted - centre, canvas);
             }
         }
     }
