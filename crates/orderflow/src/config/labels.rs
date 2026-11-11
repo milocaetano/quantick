@@ -169,6 +169,19 @@ mod compact_tests {
             assert_eq!(format_quantity_compact(Decimal::from(quantity)), text);
         }
     }
+
+    #[test]
+    fn a_quantity_that_rounds_to_a_thousand_takes_the_next_suffix() {
+        for (quantity, text) in [
+            (999_499, "999K"),
+            (999_500, "1M"),
+            (999_999, "1M"),
+            (999_999_999_i64, "1B"),
+            (9_960, "10K"),
+        ] {
+            assert_eq!(format_quantity_compact(Decimal::from(quantity)), text);
+        }
+    }
 }
 
 fn trim_decimal_zeros(value: &str) -> &str {
