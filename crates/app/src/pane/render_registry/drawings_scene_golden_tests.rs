@@ -178,11 +178,21 @@ fn fixtures() -> Vec<Fixture> {
             } else {
                 ANCHORS[..drawing_tool.required_points()].to_vec()
             };
+            let mut payload = drawing_tool.default_payload();
+            // The golden pins how a projecting extension paints; a fresh one
+            // now opens finite, so the fixture asks for the projection.
+            if let Some(fib) = payload
+                .as_any_mut()
+                .downcast_mut::<quantick_drawings::FibPayload>()
+                && drawing_tool.id() == "fib-extension"
+            {
+                fib.extend = quantick_drawings::FibExtend::Forward;
+            }
             Fixture {
                 label: drawing_tool.id().to_owned(),
                 tool: drawing_tool,
                 points,
-                payload: drawing_tool.default_payload(),
+                payload,
                 scale: plain,
             }
         })
