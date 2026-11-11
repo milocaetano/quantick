@@ -4,6 +4,7 @@
 
 use crate::canvas::{CanvasAct, CanvasHost, register};
 use quantick_control::error::ControlError;
+use quantick_control::wire::CanonicalDecimal;
 use quantick_control_host::actions::ActionRegistry;
 use quantick_control_host::authority::CAPABILITY_VERSION;
 use quantick_control_schema::canvas::{
@@ -35,6 +36,8 @@ impl CanvasHost for FakeCanvas {
                 slot: 2,
                 kind: CanvasPaneKind::Time,
                 mode: CanvasPaneMode::Docked,
+                width_share: Some(CanonicalDecimal::new("0.6").unwrap()),
+                height_share: None,
             }],
         })
     }
@@ -133,6 +136,15 @@ fn calls() -> Vec<(&'static str, Value, Option<CanvasAct>)> {
             json!({"slot": 2}),
             Some(CanvasAct::Return { slot: 2 }),
         ),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "width", "share": "0.6"}),
+            Some(CanvasAct::Resize {
+                slot: 0,
+                dimension: CanvasDimension::Width,
+                share: 0.6,
+            }),
+        ),
     ]
 }
 
@@ -209,6 +221,27 @@ fn malformed_canvas_calls_never_reach_the_canvas() {
         (POP_OUT_CAPABILITY_ID, json!({"slot": 1, "monitor": "  "})),
         (PICK_LAYOUT_CAPABILITY_ID, json!({})),
         (OPEN_WINDOW_MENU_CAPABILITY_ID, json!({"at": "kebab"})),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "width", "share": "0"}),
+        ),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "width", "share": "1"}),
+        ),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "height", "share": "0.1234567"}),
+        ),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "depth", "share": "0.5"}),
+        ),
+        (
+            RESIZE_CAPABILITY_ID,
+            json!({"slot": 0, "dimension": "width", "share": "-0.5"}),
+        ),
+        (RESIZE_CAPABILITY_ID, json!({"slot": 0, "share": "0.5"})),
     ] {
         let action = registry.lookup(id, CAPABILITY_VERSION).unwrap();
         assert!(
@@ -394,4 +427,64 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         "a chart lands on the canvas"
     );
     assert_eq!(PRIMARY_MONITOR, "primary");
+}
+
+/// A resize reaches the tree's shares through the model the drag moves, reads
+/// back as the share sent, and a refusal names its stable reason.
+#[test]
+fn a_resize_moves_the_tree_share_and_reads_it_back() {
+    use crate::canvas::{act, hook_acts, result};
+    use quantick_control_schema::canvas::CanvasDimension;
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
+    let resize = |slot, dimension, share| CanvasAct::Resize {
+        slot,
+        dimension,
+        share,
+    };
+    let wide = resize(0, CanvasDimension::Width, 0.7);
+    assert_eq!(
+        act(&mut state, None, area, wide.clone()),
+        Ok((true, Some(0)))
+    );
+    let read = result(&state, true, Some(0), true);
+    let share = |slot: usize| {
+        read.panes[slot]
+            .width_share
+            .as_ref()
+            .map(|s| s.as_str().to_owned())
+    };
+    assert_eq!(share(0).as_deref(), Some("0.7"));
+    assert_eq!(share(1).as_deref(), Some("0.3"));
+    assert_eq!(
+        read.panes[0].height_share, None,
+        "no split lays them top to bottom"
+    );
+    assert_eq!(
+        read.preset_id.as_deref(),
+        Some("charts-2"),
+        "still the layout"
+    );
+    assert_eq!(
+        act(&mut state, None, area, wide),
+        Ok((false, Some(0))),
+        "a repeat"
+    );
+
+    let refusal = |error: ControlError| error.context.details.unwrap()["refusal"].clone();
+    let tall = resize(0, CanvasDimension::Height, 0.5);
+    let error = act(&mut state, None, area, tall).unwrap_err();
+    assert_eq!(refusal(error), json!("canvas.no_seam"));
+    let error = act(
+        &mut state,
+        None,
+        area,
+        resize(9, CanvasDimension::Width, 0.5),
+    )
+    .unwrap_err();
+    assert_eq!(refusal(error), json!("canvas.unknown_pane"));
+
+    let acts = hook_acts("resize:0:width:0.25;resize:0:width:1.5;resize:0:depth:0.5");
+    assert_eq!(acts, vec![resize(0, CanvasDimension::Width, 0.25)]);
 }

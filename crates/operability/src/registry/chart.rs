@@ -275,6 +275,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         )],
         mapping: capability!("canvas.pane.return"),
     },
+    UiBehaviour {
+        id: "canvas.pane.resize",
+        title: "Resize docked charts of a canvas layout",
+        reach: "drag the divider between two docked charts of a layout the canvas tree lays out",
+        keys: &[(
+            Source::Authored,
+            "a drag on a seam the canvas model's `tree_seams` lists",
+        )],
+        mapping: capability!("canvas.pane.resize"),
+    },
 ];
 
 /// What a drag on a floating chart's grip is keyed by.
