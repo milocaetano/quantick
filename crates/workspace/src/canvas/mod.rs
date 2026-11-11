@@ -13,12 +13,14 @@
 //! - [`widgets`]: what the add button offers.
 //! - [`bands`]: what the window paints a canvas from and compares it by.
 //! - [`menu`]: a chart's ⋯ menu, its folded strip and the remove dialog.
+//! - [`seams`]: the seams between docked panes and the resize they share.
 
 pub mod bands;
 pub mod drag;
 pub mod drop;
 pub mod menu;
 pub mod presets;
+pub mod seams;
 pub mod state;
 pub mod tree;
 pub mod widgets;
@@ -41,6 +43,7 @@ pub use menu::{
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
 };
+pub use seams::{MIN_TREE_PANE_PX, SeamAddress, TreeSeam, tree_seams};
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
     remove_needs_confirm,
@@ -56,6 +59,8 @@ mod drag_tests;
 mod drop_tests;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod seams_tests;
 #[cfg(test)]
 mod state_tests;
 #[cfg(test)]

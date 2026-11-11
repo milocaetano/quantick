@@ -64,6 +64,9 @@ pub enum CanvasRefusal {
     LastOpenPane,
     /// The canvas already holds [`MAX_CANVAS_PANES`].
     Full,
+    /// No seam there can move: it needs two unfolded docked neighbours along
+    /// a split, and no chart maximized over the canvas.
+    NoSeam,
 }
 
 impl CanvasRefusal {
@@ -80,6 +83,7 @@ impl CanvasRefusal {
             Self::LastDockedPane => "canvas.last_docked_pane",
             Self::LastOpenPane => "canvas.last_open_pane",
             Self::Full => "canvas.full",
+            Self::NoSeam => "canvas.no_seam",
         }
     }
 }
@@ -96,6 +100,9 @@ impl std::fmt::Display for CanvasRefusal {
             Self::LastDockedPane => f.write_str("the canvas keeps at least one docked chart"),
             Self::LastOpenPane => f.write_str("the canvas keeps at least one chart unfolded"),
             Self::Full => write!(f, "the canvas holds at most {MAX_CANVAS_PANES} charts"),
+            Self::NoSeam => f.write_str(
+                "no seam there can move: it needs two unfolded docked charts side by side and none maximized",
+            ),
         }
     }
 }
@@ -131,6 +138,11 @@ impl CanvasState {
     #[must_use]
     pub fn tree(&self) -> &PaneTree {
         &self.tree
+    }
+
+    /// The docked tree, for the seam resize in [`super::seams`].
+    pub(super) fn tree_mut(&mut self) -> &mut PaneTree {
+        &mut self.tree
     }
 
     #[must_use]
@@ -488,7 +500,7 @@ impl CanvasState {
         Ok(kind)
     }
 
-    fn docked(&self, slot: PaneSlot) -> Result<PaneKind, CanvasRefusal> {
+    pub(super) fn docked(&self, slot: PaneSlot) -> Result<PaneKind, CanvasRefusal> {
         self.tree
             .panes()
             .into_iter()
