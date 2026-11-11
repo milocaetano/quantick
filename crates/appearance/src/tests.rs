@@ -728,26 +728,54 @@ fn bundled_themes_write_every_mode_token() {
 }
 
 #[test]
-fn a_drawing_colour_authored_on_dark_stays_on_dark_and_falls_back_on_light() {
+fn a_drawing_colour_authored_on_dark_stays_on_dark_and_is_shaded_on_light() {
     let dark = ResolvedTheme::default();
     let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let canvas = light.color(Token::Canvas);
     let near_white = PremultipliedRgba::from_rgb(0xF3, 0xF7, 0xFF);
     assert_eq!(dark.legible_drawing(near_white), near_white);
     assert_eq!(dark.legible_readout(near_white), near_white);
-    assert_eq!(
-        light.legible_drawing(near_white),
-        light.color(Token::DrawingDefault)
-    );
-    assert_eq!(
-        light.legible_readout(near_white),
-        light.color(Token::DrawingDefault)
-    );
+    let shaded = light.legible_drawing(near_white);
+    assert_ne!(shaded, light.color(Token::DrawingDefault));
+    assert!(contrast::contrast_ratio(shaded, canvas) >= contrast::MIN_DRAWING_CONTRAST);
     let faint = color::rgba_unmultiplied(0xF3, 0xF7, 0xFF, 128);
     assert_eq!(dark.legible_drawing(faint), faint);
     assert_eq!(
         light.legible_drawing(faint).a(),
         128,
-        "the fallback keeps the authored alpha"
+        "the shade keeps the authored alpha"
+    );
+}
+
+/// The trader's yellow zone on Light paper paints a deeper yellow, not the
+/// slate default it used to borrow (`docs/cores`, 2026-11-11).
+#[test]
+fn a_vanished_yellow_on_light_paper_keeps_its_hue() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let canvas = light.color(Token::Canvas);
+    let yellow = PremultipliedRgba::from_rgb(0xFF, 0xFF, 0x00);
+    assert!(contrast::contrast_ratio(yellow, canvas) < contrast::MIN_DRAWING_CONTRAST);
+    let painted = light.legible_drawing(yellow);
+    assert_ne!(painted, light.color(Token::DrawingDefault));
+    let [r, g, b, a] = painted.to_array();
+    assert_eq!(a, 255);
+    assert_eq!(r, g, "still yellow: red and green move together");
+    assert!(
+        b < 0x10 && r > 0x90,
+        "a deeper yellow, not grey: {painted:?}"
+    );
+    let ratio = contrast::contrast_ratio(painted, canvas);
+    assert!(ratio >= contrast::MIN_DRAWING_CONTRAST, "{ratio}");
+    assert!(
+        ratio < contrast::MIN_DRAWING_CONTRAST + 0.05,
+        "shaded no further than needed: {ratio}"
+    );
+    let zone = color::rgba_unmultiplied(0xFF, 0xFF, 0x00, 64);
+    let tinted = color::opaque(light.legible_drawing(zone));
+    assert_eq!(
+        (tinted.r(), tinted.b()),
+        (r, b),
+        "a translucent zone takes the same shade"
     );
 }
 
@@ -776,23 +804,26 @@ fn every_bundled_drawing_colour_is_painted_as_authored_on_its_own_theme() {
 }
 
 #[test]
-fn legibility_falls_back_only_below_the_threshold_and_only_to_a_better_ink() {
+fn legibility_shades_only_below_the_threshold_and_only_as_far_as_needed() {
     let white = PremultipliedRgba::from_rgb(255, 255, 255);
-    let ink = PremultipliedRgba::from_rgb(0x20, 0x20, 0x20);
+    let black = PremultipliedRgba::from_rgb(0, 0, 0);
     let invisible = PremultipliedRgba::from_rgb(0xF0, 0xF0, 0xF0);
     assert!(contrast::contrast_ratio(invisible, white) < contrast::MIN_DRAWING_CONTRAST);
-    assert_eq!(contrast::legible(invisible, white, ink), ink);
+    let darker = contrast::legible(invisible, white);
+    assert!(contrast::contrast_ratio(darker, white) >= contrast::MIN_DRAWING_CONTRAST);
+    assert!(darker.r() < invisible.r(), "shaded toward black on white");
+    let lighter = contrast::legible(PremultipliedRgba::from_rgb(0x10, 0x10, 0x10), black);
+    assert!(contrast::contrast_ratio(lighter, black) >= contrast::MIN_DRAWING_CONTRAST);
+    assert!(lighter.r() > 0x10, "shaded toward white on black");
     let soft = PremultipliedRgba::from_rgb(0x4D, 0xD0, 0xE1);
     assert!(contrast::contrast_ratio(soft, white) >= contrast::MIN_DRAWING_CONTRAST);
     assert_eq!(
-        contrast::legible(soft, white, ink),
+        contrast::legible(soft, white),
         soft,
         "a chosen soft hue is kept"
     );
-    let worse = PremultipliedRgba::from_rgb(255, 255, 255);
-    assert_eq!(contrast::legible(invisible, white, worse), invisible);
     let transparent = PremultipliedRgba::from_premultiplied([0, 0, 0, 0]);
-    assert_eq!(contrast::legible(transparent, white, ink), transparent);
+    assert_eq!(contrast::legible(transparent, white), transparent);
 }
 
 fn assert_contrast(theme: &ResolvedTheme, ink: Token, under: Token, least: f32) {
@@ -917,7 +948,7 @@ fn drawing_primaries_are_every_additive_mix_of_red_green_and_blue() {
 }
 
 /// A drawing still in its role's root default paints the surface's own colour
-/// for that role; an authored colour keeps the legibility fallback alone.
+/// for that role; an authored colour keeps the legibility shade alone.
 #[test]
 fn a_default_drawing_colour_takes_the_surface_role_and_an_authored_one_does_not() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
@@ -932,16 +963,17 @@ fn a_default_drawing_colour_takes_the_surface_role_and_an_authored_one_does_not(
         assert_eq!(flow.legible_drawing_as(born, role), flow.color(role));
         assert_eq!(light.legible_drawing_as(born, role), born);
     }
-    // Authored: main's stored blue stays, a vanished slate falls back as before.
+    // Authored: main's stored blue stays, a vanished slate is shaded legible.
     let blue = PremultipliedRgba::from_rgb(0x24, 0x5D, 0xB1);
     let slate = PremultipliedRgba::from_rgb(0x2B, 0x36, 0x41);
     for authored in [blue, slate] {
         let painted = flow.legible_drawing_as(authored, Token::DrawingVwap);
         assert_eq!(painted, flow.legible_drawing(authored));
     }
-    assert_eq!(
-        flow.legible_drawing(slate),
-        flow.color(Token::DrawingDefault)
+    let shaded = flow.legible_drawing(slate);
+    assert!(
+        contrast::contrast_ratio(shaded, flow.color(Token::Canvas))
+            >= contrast::MIN_DRAWING_CONTRAST
     );
     // Dark has no flow surface of its own: nothing changes there.
     let dark = ResolvedTheme::default();
