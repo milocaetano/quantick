@@ -119,8 +119,9 @@ pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
 /// small, the top twentieth large.
 pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
 
-/// Masses at or above this rank fraction carry their quantity: the top fifth.
-pub const PEAK_LABEL_RANK: f32 = 0.8;
+/// The largest masses' count divided by this carry their quantity: the top
+/// fifth, at least one when any mass is in view.
+pub const PEAK_LABEL_SHARE_DIVISOR: usize = 5;
 
 /// The smallest radius, in logical pixels, a ranked mass is drawn at: the
 /// bubble style's minimum, so the least mass is a dot, never hidden. Tick

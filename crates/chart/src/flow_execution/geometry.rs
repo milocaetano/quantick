@@ -122,16 +122,22 @@ impl FlowExecutionGeometry {
 
     fn scale_radii(&self, frame: &mut FlowTapeFrame) {
         if self.display_scale != 1.0 {
-            frame.view.radius_limit *= self.display_scale;
-            // A ranked peak mass is never drawn under the minimum radius,
-            // whatever gain the display applies after the ranking.
-            let least = if frame.view.region.divides_at_peaks() {
-                quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX
-            } else {
-                0.0
-            };
+            let full = frame.view.radius_limit;
+            let scaled_full = full * self.display_scale;
+            frame.view.radius_limit = scaled_full;
+            // Ranked peak masses keep their place on the rank map of the
+            // scaled range, from the minimum radius up, so no gain collapses
+            // the small ones into one dot or takes one under the minimum.
+            let least = quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX;
+            let ranked = frame.view.region.divides_at_peaks() && full > least.min(full);
+            let (least, scaled_least) = (least.min(full), least.min(scaled_full));
             for dot in &mut frame.dots {
-                dot.radius = (dot.radius * self.display_scale).max(least);
+                dot.radius = if ranked {
+                    let below = (full - dot.radius) / (full - least);
+                    scaled_full - below * (scaled_full - scaled_least)
+                } else {
+                    dot.radius * self.display_scale
+                };
             }
         }
     }

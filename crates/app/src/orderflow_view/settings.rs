@@ -367,19 +367,25 @@ impl OrderflowView {
                     }
                 }
             });
+        let tune = rule.tune(selected.as_deref());
         if let Some(style) = &mut self.config.volume_dots.tick_bubbles {
-            let mut peaks = style.peaks();
-            let hint = "one sphere per peak of each zoom region's volume by price; \
-                        sized by rank among the spheres on screen, vivid when one-sided";
-            if ui
-                .checkbox(&mut peaks, "Peak spheres")
-                .on_hover_text(hint)
-                .changed()
-            {
-                style.peak_spheres = Some(peaks);
+            ui.add_enabled_ui(tune.is_ok(), |ui| {
+                let mut peaks = style.peaks();
+                let hint = "one sphere per peak of each zoom region's volume by price; \
+                            sized by rank among the spheres on screen, vivid when one-sided";
+                if ui
+                    .checkbox(&mut peaks, "Peak spheres")
+                    .on_hover_text(hint)
+                    .changed()
+                {
+                    style.peak_spheres = Some(peaks);
+                }
+                let range = quantick_orderflow::config::controls::OPACITY_RANGE;
+                ui.add(egui::Slider::new(&mut style.opacity, range).text("sphere opacity"));
+            });
+            if let Err(refusal) = tune {
+                ui.small(refusal.reason());
             }
-            let range = quantick_orderflow::config::controls::OPACITY_RANGE;
-            ui.add(egui::Slider::new(&mut style.opacity, range).text("sphere opacity"));
         }
         ui.small(self.look.tick_hint());
     }

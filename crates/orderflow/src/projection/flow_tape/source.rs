@@ -128,6 +128,8 @@ pub struct FlowTapeSource {
     /// Peak regions' cuts per region window, and what they were read for.
     peak_cuts: super::peaks::PeakCutsByWindow,
     peak_key: Option<super::peaks::PeakKey>,
+    /// The admitted slots the kept cuts were last filled over.
+    peak_walked: Option<(usize, usize)>,
 }
 
 #[path = "incremental.rs"]
@@ -154,6 +156,7 @@ impl FlowTapeSource {
         if !beyond.is_empty() || !self.cells.is_empty() {
             self.memo = None;
             self.peak_cuts.clear();
+            self.peak_walked = None;
         }
         self.cells = inside;
         drop(beyond);

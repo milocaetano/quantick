@@ -114,6 +114,20 @@ impl TickSpherePane {
         }
     }
 
+    /// Whether the spheres a pane wears may be tuned (peak spheres, opacity),
+    /// from the settings panel or `orderflow.bubbles.tick.set`. The call tunes
+    /// a named preset, so the panel may tune exactly when the pane wears one
+    /// the call would admit: [`Self::admit`] of `worn`, and a pane wearing
+    /// custom spheres or none has nothing the call could name.
+    ///
+    /// # Errors
+    ///
+    /// Names why tuning is refused, in the words the call refuses with.
+    pub fn tune(self, worn: Option<&str>) -> Result<(), SphereRefusal> {
+        let worn = worn.ok_or(SphereRefusal::NoNamedPreset)?;
+        self.admit(Some(worn))
+    }
+
     /// Whether `preset` may be worn. Dropping spheres always may, whatever
     /// put them on (review #29); a named preset needs [`Self::may_choose`].
     ///
@@ -138,6 +152,22 @@ pub enum SphereRefusal {
     NotTickChart,
     /// The feed config switches no asset mode on for the pane's asset.
     AssetModeOff,
+    /// The pane wears custom spheres or none: there is no preset to tune.
+    NoNamedPreset,
+}
+
+impl SphereRefusal {
+    /// Why, in the words `orderflow.bubbles.tick.set` refuses with.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::NotTickChart => "Tick sphere presets require a tick chart",
+            Self::AssetModeOff => {
+                "Tick sphere presets require an asset whose config asset mode is on"
+            }
+            Self::NoNamedPreset => "peak_spheres and opacity tune a named preset",
+        }
+    }
 }
 
 impl From<SphereRefusal> for ControlError {
@@ -146,14 +176,15 @@ impl From<SphereRefusal> for ControlError {
         match refusal {
             SphereRefusal::NotTickChart => crate::bubble_scale::refused_precondition(
                 bubble_scale::TICK_CHART_PRECONDITION,
-                "Tick sphere presets require a tick chart",
+                refusal.reason(),
                 "switch the pane to a tick chart, or send a null preset",
             ),
             SphereRefusal::AssetModeOff => crate::bubble_scale::refused_precondition(
                 tick_bubbles::ASSET_MODE_PRECONDITION,
-                "Tick sphere presets require an asset whose config asset mode is on",
+                refusal.reason(),
                 "switch an asset mode on for this asset in the feed config (symbol_asset_modes)",
             ),
+            SphereRefusal::NoNamedPreset => invalid(refusal.reason()),
         }
     }
 }
@@ -245,9 +276,7 @@ fn tick_tuning(
         opacity,
     };
     if input.preset.is_none() && tuning != TickTuning::default() {
-        return Err(invalid(
-            "peak_spheres and opacity tune a named preset; a null preset takes neither",
-        ));
+        return Err(invalid(SphereRefusal::NoNamedPreset.reason()));
     }
     Ok(tuning)
 }
@@ -260,6 +289,33 @@ mod tick_rule_tests {
     /// Review #19/#29: one rule decides tick spheres for the picker and for
     /// tick.set. Choosing needs a tick chart and the asset's config mode;
     /// dropping them is always allowed, whatever put them on.
+    /// Review round 2 #3: the panel tunes exactly when the call could: a
+    /// named preset worn where the call admits it.
+    #[test]
+    fn tuning_follows_the_rule_the_call_asks() {
+        let pane = |tick_chart, asset_mode| TickSpherePane {
+            tick_chart,
+            asset_mode,
+        };
+        assert_eq!(pane(true, true).tune(Some("mini index regions")), Ok(()));
+        assert_eq!(
+            pane(true, true).tune(None),
+            Err(SphereRefusal::NoNamedPreset)
+        );
+        assert_eq!(
+            pane(false, true).tune(Some("mini index regions")),
+            Err(SphereRefusal::NotTickChart)
+        );
+        assert_eq!(
+            pane(true, false).tune(Some("mini index regions")),
+            Err(SphereRefusal::AssetModeOff)
+        );
+        for refusal in [SphereRefusal::NotTickChart, SphereRefusal::AssetModeOff] {
+            let error = ControlError::from(refusal);
+            assert!(format!("{error:?}").contains(refusal.reason()), "{error:?}");
+        }
+    }
+
     #[test]
     fn tick_spheres_need_a_tick_chart_and_the_asset_mode_but_anyone_may_drop_them() {
         for tick_chart in [false, true] {
