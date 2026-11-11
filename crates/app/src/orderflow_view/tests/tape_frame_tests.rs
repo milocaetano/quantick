@@ -150,6 +150,7 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     assert!(view.tape_dots.borrow().retained_group_count() > 0);
     let membership = format!("{:?}", view.tape_dots.borrow());
     let style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
@@ -158,6 +159,7 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
         opacity: 0.8,
     };
     let visible = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         ..style
     };

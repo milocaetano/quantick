@@ -16,7 +16,9 @@ pub use chrome::{
     place_flow_chrome,
 };
 pub use constants::FLOW_EXECUTION_OFFSET;
-use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
+use constants::{
+    FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX, FLOW_ZOOM_SUPPORT_RADIUS_SHARE,
+};
 mod geometry;
 mod labels;
 pub use geometry::FlowExecutionGeometry;
@@ -113,6 +115,10 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
         }
         _ => pixels.1,
     };
+    let region = session.region_span(
+        tick_bubbles.is_some_and(|style| style.zoom_regions),
+        f64::from(pixels.0) / slots.len() as f64,
+    );
     let request = FlowRequest {
         epoch,
         layout_revision: 0,
@@ -132,7 +138,12 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
             reference: tick_bubbles.map_or(FlowReference::VisibleRegions, FlowReference::from),
             radius_limit: tick_bubbles
                 .map_or(FLOW_RADIUS_LIMIT_PX, |style| style.bubbles().max_radius),
-            merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,
+            merge_support_radius: tick_bubbles
+                .filter(|style| style.zoom_regions)
+                .map_or(FLOW_MERGE_SUPPORT_RADIUS_PX, |style| {
+                    style.bubbles().max_radius * FLOW_ZOOM_SUPPORT_RADIUS_SHARE
+                }),
+            region,
             exclude_opening: session.ignore_opening(),
         },
     };

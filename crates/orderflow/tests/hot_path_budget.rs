@@ -549,6 +549,7 @@ fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade], look: Flo
             reference: look.reference,
             radius_limit: look.radius_limit,
             merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,
+            region: Default::default(),
             exclude_opening: false,
         },
     };
@@ -585,6 +586,7 @@ const REGIONS: FlowLook = FlowLook {
 /// them: the projection the worker keeps and refinishes per region window.
 fn spheres() -> FlowLook {
     let style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
         reference_quantity: 10.0,
         max_radius: 32.0,
         label_min_radius: 8.0,

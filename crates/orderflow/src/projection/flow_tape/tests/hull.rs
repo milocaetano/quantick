@@ -28,6 +28,7 @@ fn at_scale(trades: &[Trade], width: f32, height: f32, prices: PriceWindow) -> F
             reference: FlowReference::VisibleRegions,
             radius_limit: 7.0,
             merge_support_radius: 6.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     )

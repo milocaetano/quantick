@@ -63,6 +63,7 @@ fn projected_reference(
             reference,
             radius_limit: 7.0,
             merge_support_radius: 12.0,
+            region: Default::default(),
             exclude_opening: false,
         },
     )

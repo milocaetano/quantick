@@ -1,8 +1,8 @@
 //! The spheres of an unchanged view, merged and finished again only in the
 //! region windows a print joined since the last projection.
 //!
-//! FLOW merges inside region windows of [`FLOW_REGION_WINDOW_MS`], never
-//! across them. Under one view and one opening selection a new print changes
+//! FLOW merges inside region windows ([`FlowRegionSpan`]), never across
+//! them. Under one view and one opening selection a new print changes
 //! only its window's groups. Fixed references retain their radii; a visible
 //! maximum with a floor resizes the cloned output at its common reference.
 //! The live edge merges one window rather than every candle on screen, and
@@ -10,8 +10,8 @@
 //! The frame is exactly the one
 //! [`FlowTapeSource::project`] builds.
 use super::super::{
-    Admission, FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView,
-    Group, admit, finish_group, merge_window,
+    Admission, FlowRegionSpan, FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView, Group,
+    admit, clip_merged, finish_group, merge_window,
 };
 use super::{FlowOpeningSelection, FlowTapeSource, cell_group, valid};
 use rust_decimal::Decimal;
@@ -70,11 +70,13 @@ fn finish_window(
             Admission::Standalone => standalone.push((key, group)),
         }
     }
-    let merged = if mergeable.is_empty() {
+    let mut merged = if mergeable.is_empty() {
         Vec::new()
     } else {
         merge_window(mergeable, view)
     };
+    spheres.offscreen += clip_merged(&mut merged, view, |group| group);
+    spheres.offscreen += clip_merged(&mut standalone, view, |(_, group)| group);
     spheres.opening = merged
         .iter()
         .chain(standalone.iter().map(|(_, group)| group))
@@ -111,10 +113,7 @@ impl FlowTapeSource {
             #[cfg(test)]
             self.cells_walked
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let window = cell
-                .mark
-                .first_timestamp_ms
-                .div_euclid(FLOW_REGION_WINDOW_MS);
+            let window = view.region.key(key.0, cell.mark.first_timestamp_ms);
             if only.is_some_and(|(only, _)| !only.contains(&window)) {
                 continue;
             }
@@ -145,6 +144,14 @@ impl FlowTapeSource {
         openings: FlowOpeningSelection<'_>,
     ) -> FlowTapeFrame {
         let dirty = std::mem::take(&mut self.dirty);
+        let dirty_slots = std::mem::take(&mut self.dirty_slots);
+        let dirty = match view.region {
+            FlowRegionSpan::Time => dirty,
+            FlowRegionSpan::Candles(_) => dirty_slots
+                .into_iter()
+                .map(|slot| view.region.key(slot, 0))
+                .collect(),
+        };
         let dirty_from = self.dirty_from.take();
         let Some(reference) = view.reference.typed().filter(|_| valid(view)) else {
             self.memo = None;

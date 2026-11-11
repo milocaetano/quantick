@@ -252,6 +252,8 @@ pub struct FlowSession<R> {
     tail: Option<FlowTail>,
     /// The price scale tick spheres merge at ([`Self::merge_px_per_price`]).
     merge_px_per_price: Option<f64>,
+    /// The candles a zoom region spans ([`Self::region_span`]).
+    region_candles: Option<usize>,
     ignore_opening: bool,
 }
 impl<R: FlowRunner> FlowSession<R> {
@@ -334,6 +336,19 @@ impl<R: FlowRunner> FlowSession<R> {
             .unwrap_or(live);
         self.merge_px_per_price = Some(held);
         held
+    }
+    /// The bounds tick spheres merge inside on a chart drawing a candle
+    /// `px_per_candle` wide: market time unless the look asks for
+    /// `zoom_regions`, then the held rung of candles
+    /// ([`FlowRegionSpan::held`]), so only a zoom step regroups a sphere.
+    pub fn region_span(&mut self, zoom_regions: bool, px_per_candle: f64) -> FlowRegionSpan {
+        if !zoom_regions {
+            self.region_candles = None;
+            return FlowRegionSpan::Time;
+        }
+        let candles = FlowRegionSpan::held(self.region_candles, px_per_candle);
+        self.region_candles = Some(candles);
+        FlowRegionSpan::Candles(candles)
     }
     /// The newest print the last capture saw, which tells the next capture
     /// whether a new epoch is a recut of the same tape.
