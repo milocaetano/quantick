@@ -96,17 +96,37 @@ pub const PEAK_PROMINENCE_PERCENT: u32 = 8;
 /// stray print far away never makes the profile unbounded.
 pub const PEAK_PROFILE_MAX_ROWS: usize = 4_096;
 
-/// Rank fractions (the share of the masses in view at or below a mass) at
-/// which [`PEAK_RADIUS_SHARES`] are reached; linear between them.
-pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
+/// The smoothing sigma, in pixels, as a share of the look's full-size
+/// radius: one radius is half the largest sphere's diameter. Two equal
+/// Gaussians stay two peaks only past two sigma apart, so two kept peaks
+/// stand at least about one largest diameter apart on screen; closer than
+/// that they are one mass. The profile's rows are the smallest power-of-two
+/// multiple of the tape's tick at least this tall.
+pub const PEAK_SIGMA_RADIUS_SHARE: f64 = 1.0;
 
-/// A mass's radius, as a share of the look's full-size radius, at each of
-/// [`PEAK_RANK_STOPS`]: the median small, the top twentieth large.
-pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
+/// The most times the tick doubles into a profile row: a row of 2^40 ticks
+/// is far coarser than any chart draws, and the bound keeps a degenerate
+/// price scale from looping.
+pub const PEAK_ROW_MAX_DOUBLINGS: u32 = 40;
 
-/// Masses at or above this rank fraction carry their quantity: the top fifth.
-pub const PEAK_LABEL_RANK: f32 = 0.8;
+/// Masses of at least the reference divided by this carry their quantity:
+/// the largest only, so labels never pile.
+pub const PEAK_LABEL_REFERENCE_DIVISOR: u32 = 2;
+
+/// The radius, in logical pixels, a mass too small for its earned area is
+/// drawn at: the bubble style's minimum, so a small mass is a dot, never
+/// hidden. Tick styles carry no minimum of their own.
+pub const PEAK_MIN_RADIUS_PX: f32 = crate::config::DEFAULT_BUBBLE_MIN_RADIUS;
 
 /// The fill strength of a perfectly balanced mass; a one-sided mass is drawn
 /// at full strength, and strength is linear in `|buy - sell| / (buy + sell)`.
 pub const PEAK_BALANCED_STRENGTH: f32 = 0.45;
+
+/// Rank fractions at which [`PEAK_RADIUS_SHARES`] are reached.
+pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
+
+/// A mass's radius share at each of [`PEAK_RANK_STOPS`].
+pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
+
+/// Masses at or above this rank fraction carry their quantity.
+pub const PEAK_LABEL_RANK: f32 = 0.8;
