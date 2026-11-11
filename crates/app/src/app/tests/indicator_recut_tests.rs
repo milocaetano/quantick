@@ -54,7 +54,13 @@ fn a_spec_change_rebuilds_its_pane_when_only_the_neighbour_prefix_moves() {
     let flow = &mut app.active_tab_mut().flow_pane;
     assert_eq!(flow.state.spec(), &spec, "the bars were re-cut");
     finish_indicator_commands(flow);
-    let bars = flow.series_read().closed_bars().len();
+    let expected = flow.series_read().closed_bars();
+    let bars = expected.len();
+    assert_eq!(flow.indicators.all()[0].columns[0].len(), bars);
+    for (value, bar) in flow.indicators.all()[0].columns[0].iter().zip(&expected) {
+        use rust_decimal::prelude::ToPrimitive;
+        assert_eq!(*value, bar.close.to_f64().unwrap());
+    }
     assert_ne!(bars, before, "the new rule cuts a different number of bars");
     assert_eq!(
         flow.indicators.all()[0].rows,
@@ -140,6 +146,12 @@ plot(close)"
 
     let time = &mut app.active_tab_mut().time_panes[0];
     finish_indicator_commands(time);
+    let expected = time.series_read().closed_bars();
+    assert_eq!(time.indicators.all()[0].columns[0].len(), expected.len());
+    for (value, bar) in time.indicators.all()[0].columns[0].iter().zip(&expected) {
+        use rust_decimal::prelude::ToPrimitive;
+        assert_eq!(*value, bar.close.to_f64().unwrap());
+    }
     assert_eq!(
         time.indicators.all()[0].rows,
         time.series_read().closed_bars().len(),
