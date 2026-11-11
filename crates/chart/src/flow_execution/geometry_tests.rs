@@ -233,6 +233,45 @@ fn peak_spheres_keep_the_minimum_and_reach_the_old_paths_largest() {
     }
 }
 
+/// Review round 2 #4: a display gain ranks into the scaled range instead of
+/// clamping the scaled radii, so the rank map's spread survives any gain.
+#[test]
+fn a_display_gain_keeps_the_rank_spread() {
+    let mut peaks = viewport_source();
+    peaks.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1);
+    let style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        ..viewport_style()
+    };
+    let clip = [[0.0, 0.0], [300.0, 200.0]];
+    let least = quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX;
+    let radii = |display: f32| {
+        let camera = viewport_camera(64.0, (90.0, 110.0)).with_display_scale(display);
+        let frame = camera.viewport_frame(&peaks, Some(style), clip).unwrap();
+        let radii: Vec<f32> = frame.dots.iter().map(|dot| dot.radius).collect();
+        (radii, frame.view.radius_limit)
+    };
+    let (plain, full) = radii(1.0);
+    for display in [0.25, 1.5] {
+        let (scaled, scaled_full) = radii(display);
+        assert_eq!(scaled_full, full * display);
+        let scaled_least = least.min(scaled_full);
+        for (before, after) in plain.iter().zip(&scaled) {
+            let place = (before - least) / (full - least);
+            let now = (after - scaled_least) / (scaled_full - scaled_least);
+            assert!(
+                (place - now).abs() < 1e-4,
+                "x{display}: {place} became {now}"
+            );
+        }
+        assert!(
+            scaled.windows(2).all(|pair| pair[0] < pair[1]),
+            "x{display}: {scaled:?}"
+        );
+    }
+}
+
 #[test]
 fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regrouping() {
     let source = viewport_source();

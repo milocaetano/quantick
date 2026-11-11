@@ -826,3 +826,121 @@ fn a_recorded_win_session_matches_the_prototype() {
         );
     }
 }
+
+/// Review round 2 #1: cuts kept for a region that was still forming are
+/// read again after it completes under a non-peak projection: untick while a
+/// region forms, let it finish under `Candles`, tick again.
+#[test]
+fn kept_cuts_follow_prints_made_while_peaks_were_off() {
+    let mut rows = plateaus(40, 1);
+    rows.extend(
+        plateaus(40, 1)
+            .into_iter()
+            .map(|(price, quantity)| (price + 30, quantity)),
+    );
+    let trades = prints(&rows, Side::Buy);
+    let execution = |ordinal: usize| FlowExecution {
+        ordinal,
+        slot: ordinal / 11,
+        accepted_ordinal: ordinal % 11,
+        ticks_per_bar: 11.into(),
+        trade: &trades[ordinal],
+        opening: false,
+    };
+    let view = |region| FlowTapeView {
+        end_slot: 2,
+        clip_right: 2.into(),
+        prices: PriceWindow::new(900.into(), 1_100.into()).unwrap(),
+        height_px: 8_000.0,
+        region,
+        reference: FlowReference::VisibleRegionsAtLeast(1.into()),
+        ..super::view(20.0)
+    };
+    let openings = FlowOpeningSelection::default();
+    let (peaks, plain) = (
+        view(FlowRegionSpan::Peaks(2)),
+        view(FlowRegionSpan::Candles(2)),
+    );
+    let mut source = FlowTapeSource::default();
+    // Ten prints: enough for the tape to name its tick, so the key holds.
+    source.append((0..10).map(execution));
+    let _ = source.project_cached(1, 0, 22, 0..22, peaks, openings);
+    source.append((10..22).map(execution));
+    let _ = source.project_cached(1, 0, 22, 0..22, plain, openings);
+    let cached = source.project_cached(1, 0, 22, 0..22, peaks, openings);
+    assert_eq!(cached, source.project(1, 0, 22, 0..22, peaks, openings));
+    conserved(&cached, &trades);
+}
+
+/// Review round 2 #2: with the opening ignored, the opening mass stays out
+/// of the ranking but is drawn where its volume would rank: never under the
+/// minimum radius, and equal volume is an equal sphere.
+#[test]
+fn an_ignored_opening_mass_is_drawn_at_the_rank_of_its_volume() {
+    for opening in [1, 50] {
+        let trades = [
+            trade(0, 1_000, opening, Side::Buy),
+            trade(3_600_000, 1_100, 50, Side::Sell),
+            trade(3_601_000, 1_200, 100, Side::Sell),
+        ];
+        let view = FlowTapeView {
+            exclude_opening: true,
+            ..peak_view(3, FlowRegionSpan::Peaks(1), (0, 3), (900, 1_300), 4.0)
+        };
+        let frame = project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: ordinal,
+                    accepted_ordinal: 0,
+                    ticks_per_bar: 1.into(),
+                    trade,
+                    opening: ordinal == 0,
+                }),
+            1,
+            3,
+            3,
+            view,
+        );
+        assert!(matches!(
+            frame.scale_basis,
+            FlowScaleBasis::RankedVisibleMasses { masses: 2, .. }
+        ));
+        let radius = |quantity: i64| {
+            frame
+                .dots
+                .iter()
+                .find(|dot| dot.mark.quantity == quantity.into())
+                .map(|dot| dot.radius)
+                .unwrap()
+        };
+        let anchor = frame.dots.iter().find(|dot| dot.opening_anchor).unwrap();
+        assert!(
+            anchor.radius >= PEAK_MIN_RADIUS_PX,
+            "{opening}: {}",
+            anchor.radius
+        );
+        assert!(anchor.radius <= radius(100));
+        if opening == 50 {
+            assert_eq!(
+                anchor.radius,
+                ranked_radius(0.5),
+                "equal volume, equal size"
+            );
+        }
+    }
+}
+
+/// Review round 2 #5: the top fifth exactly, at least one.
+#[test]
+fn labels_go_to_the_top_fifth_exactly() {
+    for (count, labelled) in [(1, 1), (5, 1), (10, 2), (27, 5)] {
+        let quantities: Vec<i64> = (1..=count).map(|n| n * 10).collect();
+        let frame = masses(&quantities);
+        let floor = frame.peak_label_floor().unwrap();
+        let carried = frame.dots.iter().filter(|dot| dot.mark.quantity >= floor);
+        assert_eq!(carried.count(), labelled, "{count} masses");
+    }
+}
