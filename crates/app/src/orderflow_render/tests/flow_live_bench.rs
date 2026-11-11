@@ -47,7 +47,6 @@ const HISTORY: egui::Rect = egui::Rect {
 const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
     zoom_regions: false,
     peak_spheres: None,
-    peak_max_radius: None,
     reference_quantity: 1.0,
     max_radius: 32.0,
     label_min_radius: 8.0,

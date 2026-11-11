@@ -574,7 +574,6 @@ fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
         viewport_scale: None,
         zoom_regions: true,
         peak_spheres: Some(true),
-        peak_max_radius: None,
         max_radius: 32.0,
         label_min_radius: 8.0,
         opacity: 0.9,

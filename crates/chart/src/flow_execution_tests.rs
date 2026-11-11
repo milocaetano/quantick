@@ -183,7 +183,6 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -241,7 +240,6 @@ fn an_unrepresentable_reference_reads_the_named_fallback() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1e30,
@@ -283,7 +281,6 @@ fn tick_reference_mode_changes_at_eof_without_changing_execution_regions() {
     let mut tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_quantity: 1.0,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
@@ -348,7 +345,6 @@ fn a_busy_tape_never_starves_the_seed_of_spheres() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -416,7 +412,6 @@ fn a_busy_seed_fill_is_bounded_and_the_live_edge_publishes_at_once() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -497,7 +492,6 @@ fn seed_and_live_candles_all_get_spheres() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -564,7 +558,6 @@ fn a_pan_keeps_every_tick_sphere_on_screen() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4.0,
@@ -687,7 +680,6 @@ fn bench_flow_frames_over_five_days() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -769,7 +761,6 @@ fn a_pan_never_cuts_a_peak_region_at_the_edge() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: true,
         peak_spheres: Some(true),
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         reference_quantity: 1.0,

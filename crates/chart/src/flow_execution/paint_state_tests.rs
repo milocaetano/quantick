@@ -35,7 +35,6 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
     let tick = TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         reference_quantity: 1.0,
         reference_mode: TickReferenceMode::VisibleMax,
         viewport_scale: Some(ViewportBubbleScale {
@@ -66,7 +65,6 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
         TickBubbleStyle {
             zoom_regions: false,
             peak_spheres: None,
-            peak_max_radius: None,
             max_radius: 48.0,
             ..tick
         },
@@ -77,7 +75,6 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
         TickBubbleStyle {
             zoom_regions: false,
             peak_spheres: None,
-            peak_max_radius: None,
             viewport_scale: None,
             ..tick
         },

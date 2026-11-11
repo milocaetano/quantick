@@ -586,8 +586,6 @@ mod tests {
                 assert_eq!(preset.name, "mini index regions");
                 assert!(tick.zoom_regions);
                 assert!(tick.peaks());
-                assert_eq!(tick.peak_max_radius, Some(24.0));
-                assert_eq!(tick.bubbles().max_radius, 24.0);
                 assert!(tick.viewport_scale.is_some());
                 assert_eq!(
                     tick.reference_mode,

@@ -62,13 +62,9 @@ pub struct TickBubblesSnapshot {
     #[serde(default)]
     pub zoom_regions: bool,
     /// Each zoom region is divided at the peaks of its volume-by-price
-    /// profile: one sphere per peak, its area its volume.
+    /// profile: one sphere per peak, sized by rank among the spheres in view.
     #[serde(default)]
     pub peak_spheres: bool,
-    /// The full-size radius while peak spheres are on, when the look sets
-    /// one apart from `max_radius`.
-    #[serde(default)]
-    pub peak_max_radius: Option<String>,
     pub max_radius: String,
     pub label_min_radius: String,
     pub opacity: String,
@@ -95,7 +91,6 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
             viewport_scale: style.viewport_scale.map(Into::into),
             zoom_regions: style.zoom_regions,
             peak_spheres: style.peaks(),
-            peak_max_radius: style.peak_max_radius.map(|radius| radius.to_string()),
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
             opacity: style.opacity.to_string(),

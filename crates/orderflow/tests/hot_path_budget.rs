@@ -603,7 +603,6 @@ fn spheres() -> FlowLook {
     let style = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         reference_quantity: 10.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -618,12 +617,12 @@ fn spheres() -> FlowLook {
     }
 }
 
-/// The mini index's peak spheres at their 24 px radius: a visible reference with a floor, zoom
+/// The mini index's peak spheres at their 18 px radius: a visible reference with a floor, zoom
 /// regions of the rung an 8 px candle holds, divided at their peaks.
 fn peaks() -> FlowLook {
     FlowLook {
         reference: FlowReference::VisibleRegionsAtLeast(Decimal::ONE),
-        radius_limit: 24.0,
+        radius_limit: 18.0,
         region: FlowRegionSpan::Peaks(FlowRegionSpan::held(None, f64::from(PX_PER_BAR))),
     }
 }

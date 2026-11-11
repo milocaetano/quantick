@@ -68,7 +68,7 @@ impl BubbleLook {
     }
 
     /// A saved look from before peak spheres (`peak_spheres` absent) that
-    /// otherwise wears a preset takes that preset's peak switch and radius;
+    /// otherwise wears a preset takes that preset's peak switch;
     /// a look that says `false` keeps it.
     pub fn adopt_preset_peaks(&self, config: &mut quantick_orderflow::HeatmapConfig) {
         let Some(tick) = &mut config.volume_dots.tick_bubbles else {
@@ -79,7 +79,6 @@ impl BubbleLook {
         }
         let bare = |style: TickBubbleStyle| TickBubbleStyle {
             peak_spheres: None,
-            peak_max_radius: None,
             ..style
         };
         let preset = self
@@ -90,7 +89,6 @@ impl BubbleLook {
             .find(|style| bare(*style) == bare(*tick));
         if let Some(preset) = preset {
             tick.peak_spheres = preset.peak_spheres;
-            tick.peak_max_radius = tick.peak_max_radius.or(preset.peak_max_radius);
         }
     }
 
@@ -198,7 +196,6 @@ mod tests {
         };
         let saved = TickBubbleStyle {
             peak_spheres: None,
-            peak_max_radius: None,
             ..preset
         };
         assert_eq!(wear(saved), preset);

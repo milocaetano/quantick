@@ -83,26 +83,9 @@ mod grouping_tests {
         assert_eq!(unticked.fingerprint(), fixed.fingerprint(), "both draw off");
         let peaks = super::TickBubbleStyle {
             peak_spheres: Some(true),
-            peak_max_radius: Some(24.0),
             ..fixed
         };
-        assert_eq!(peaks.bubbles().max_radius, 24.0);
-        assert_eq!(fixed.bubbles().max_radius, 32.0);
-        let off_with_radius = super::TickBubbleStyle {
-            peak_max_radius: Some(24.0),
-            ..unticked
-        };
-        assert_eq!(
-            off_with_radius.bubbles(),
-            fixed.bubbles(),
-            "off never reads it"
-        );
-        let mut sanitized = peaks;
-        sanitized.sanitize();
-        assert_eq!(
-            (sanitized.max_radius, sanitized.peak_max_radius),
-            (32.0, Some(24.0))
-        );
+        assert_eq!(peaks.bubbles(), fixed.bubbles(), "one radius for both");
         assert_eq!(
             toml::from_str::<super::TickBubbleStyle>(&toml::to_string(&peaks).unwrap()).unwrap(),
             peaks
@@ -235,7 +218,6 @@ zoom_regions = true
             let mut style = super::TickBubbleStyle {
                 zoom_regions: false,
                 peak_spheres: None,
-                peak_max_radius: None,
                 viewport_scale: None,
                 reference_mode: crate::TickReferenceMode::Fixed,
                 reference_quantity: invalid,
@@ -298,11 +280,6 @@ pub struct TickBubbleStyle {
     /// otherwise wears; an untick is saved as `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_spheres: Option<bool>,
-    /// The full-size radius while peak spheres are on, so a joined mass has
-    /// room to grow; omitted keeps [`Self::max_radius`]. The off path never
-    /// reads it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub peak_max_radius: Option<f32>,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub max_radius: f32,
@@ -322,19 +299,7 @@ impl TickBubbleStyle {
         if usable_reference(self.reference_quantity).is_none() {
             self.reference_quantity = FALLBACK_REFERENCE_QUANTITY;
         }
-        let off = Self {
-            peak_spheres: None,
-            ..*self
-        };
-        self.peak_max_radius = self.peak_max_radius.map(|radius| {
-            Self {
-                max_radius: radius,
-                ..off
-            }
-            .bubbles()
-            .max_radius
-        });
-        let style = off.bubbles();
+        let style = self.bubbles();
         self.max_radius = style.max_radius;
         self.label_min_radius = style.label_min_radius;
         self.opacity = style.opacity;
@@ -358,20 +323,10 @@ impl TickBubbleStyle {
         self.peak_spheres == Some(true)
     }
 
-    /// The full-size radius this look draws at: the peak radius while peak
-    /// spheres are on and one is set.
-    #[must_use]
-    pub fn full_radius(self) -> f32 {
-        match self.peak_max_radius {
-            Some(radius) if self.peaks() => radius,
-            _ => self.max_radius,
-        }
-    }
-
     #[must_use]
     pub fn bubbles(self) -> BubbleStyle {
         let mut style = BubbleStyle {
-            max_radius: self.full_radius(),
+            max_radius: self.max_radius,
             label_min_radius: self.label_min_radius,
             opacity: self.opacity,
             show_trade_count: false,
@@ -389,7 +344,7 @@ impl TickBubbleStyle {
         let density = viewport.map_or([0; 2], super::ViewportBubbleScale::fingerprint);
         [
             self.reference_quantity.to_bits(),
-            u64::from(self.full_radius().to_bits()),
+            u64::from(self.max_radius.to_bits()),
             u64::from(self.label_min_radius.to_bits()),
             u64::from(self.opacity.to_bits()),
             // The enumerated policies share one word: the reference mode in

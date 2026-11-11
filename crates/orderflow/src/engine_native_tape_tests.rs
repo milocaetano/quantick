@@ -108,7 +108,6 @@ fn tick_style_changes_preserve_the_native_tape_revision_and_factual_groups() {
     changed.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: crate::TickReferenceMode::Fixed,
         reference_quantity: 30.0,

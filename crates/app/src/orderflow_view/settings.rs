@@ -370,7 +370,7 @@ impl OrderflowView {
         if let Some(style) = &mut self.config.volume_dots.tick_bubbles {
             let mut peaks = style.peaks();
             let hint = "one sphere per peak of each zoom region's volume by price; \
-                        area is volume, vivid when one-sided";
+                        sized by rank among the spheres on screen, vivid when one-sided";
             if ui
                 .checkbox(&mut peaks, "Peak spheres")
                 .on_hover_text(hint)

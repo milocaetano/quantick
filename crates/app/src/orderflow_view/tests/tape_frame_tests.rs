@@ -152,7 +152,6 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     let style = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
@@ -163,7 +162,6 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     let visible = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         ..style
     };

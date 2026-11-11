@@ -12,7 +12,6 @@ const HISTORY: FlowBounds = [[0.0, 0.0], [600.0, 400.0]];
 const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
     zoom_regions: false,
     peak_spheres: None,
-    peak_max_radius: None,
     reference_quantity: 40.0,
     max_radius: 24.0,
     label_min_radius: 8.0,

@@ -96,7 +96,6 @@ fn tick_spheres_stand_on_their_executions() {
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4500.0,
@@ -238,7 +237,6 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
             peak_spheres: None,
-            peak_max_radius: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
@@ -284,7 +282,6 @@ fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publi
     let style = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
         peak_spheres: None,
-        peak_max_radius: None,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
             x_units_per_pixel: 1.0 / 22.0,
             price_units_per_pixel: 1.0,
@@ -385,7 +382,6 @@ fn tick_spheres_follow_the_pane_theme() {
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
             peak_spheres: None,
-            peak_max_radius: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
@@ -823,7 +819,6 @@ fn tick_separator_palette_changes_rebuild_cached_meshes_and_keep_snapshots() {
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
             peak_spheres: None,
-            peak_max_radius: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
             reference_quantity: 9000.0,
