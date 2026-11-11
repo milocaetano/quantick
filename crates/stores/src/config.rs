@@ -1421,12 +1421,20 @@ mod tests {
             "127.0.0.1:9100"
         );
 
-        // Both MetaTrader feeds open on the pie summary. Crypto keeps the
-        // trader's existing look; automatic tape scopes restore it on exit.
+        // Both MetaTrader feeds open on the pie summary. Every crypto market
+        // opens on one look, declared feed-wide.
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
-        assert_eq!(binance.bubble_preset.as_deref(), None);
-        assert_eq!(hyperliquid.bubble_preset.as_deref(), None);
+        let futures = config.feed("binance-futures").expect("USD-M feed");
+        for crypto in [binance, futures, hyperliquid] {
+            assert_eq!(
+                crypto.bubble_preset.as_deref(),
+                Some("Crypto default"),
+                "{}",
+                crypto.id
+            );
+            assert!(crypto.symbol_bubble_presets.is_empty(), "{}", crypto.id);
+        }
         // The mini index alone reads regionally; the mini dollar beside it
         // falls back to the feed-wide look. That ladder is the whole point of
         // per-symbol declarations.
@@ -1442,11 +1450,20 @@ mod tests {
             b3.bubble_preset_for("WDO$N").as_deref(),
             Some("live lane pie")
         );
-        assert_eq!(
-            binance.bubble_preset_for("BTCUSDT").as_deref(),
-            Some("Binance BTC Spot spheres")
-        );
-        assert_eq!(hyperliquid.bubble_preset_for("BTC").as_deref(), None);
+        for (crypto, symbol) in [
+            (binance, "BTCUSDT"),
+            (binance, "ETHUSDT"),
+            (futures, "BTCUSDT.p"),
+            (hyperliquid, "BTC"),
+            (hyperliquid, "ETH"),
+        ] {
+            assert_eq!(
+                crypto.bubble_preset_for(symbol).as_deref(),
+                Some("Crypto default"),
+                "{}/{symbol}",
+                crypto.id
+            );
+        }
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing

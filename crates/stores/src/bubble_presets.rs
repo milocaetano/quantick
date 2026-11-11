@@ -537,10 +537,10 @@ mod tests {
     }
 
     #[test]
-    fn only_btc_shipped_presets_opt_into_stable_size_and_depth_averaging() {
+    fn only_crypto_shipped_presets_opt_into_stable_size_and_depth_averaging() {
         let shipped = embedded();
         for preset in &shipped.presets {
-            let btc = preset.name.starts_with("Binance BTC");
+            let btc = preset.name.starts_with("Binance BTC") || preset.name == "Crypto default";
             assert_eq!(
                 preset.bubbles.viewport_scale.is_some(),
                 btc,
@@ -569,11 +569,13 @@ mod tests {
                 );
                 assert_eq!(
                     tick.max_radius,
-                    if preset.name.contains("Spot") {
-                        32.0
-                    } else {
+                    if preset.name.contains("perpetual") {
                         36.0
-                    }
+                    } else {
+                        32.0
+                    },
+                    "{}",
+                    preset.name
                 );
                 assert_eq!(tick.label_min_radius, 8.0);
                 assert_eq!(tick.opacity, 0.9);
@@ -727,6 +729,20 @@ mod tests {
         }
     }
 
+    /// Every crypto market opens on "Crypto default", a copy of the BTC spot
+    /// spheres the trader approved; the original stays so a saved look naming
+    /// it still resolves. The two differ by name alone.
+    #[test]
+    fn the_crypto_default_is_the_btc_spot_spheres_under_its_own_name() {
+        let shipped = embedded();
+        let mut spot = shipped
+            .get("Binance BTC Spot spheres")
+            .expect("the BTC spot preset stays")
+            .clone();
+        spot.name = "Crypto default".to_owned();
+        assert_eq!(shipped.get("Crypto default"), Some(&spot));
+    }
+
     #[test]
     fn the_embedded_fallback_matches_the_tracked_presets_file() {
         // The panel reads and writes `config/bubbles.toml` at the repository
@@ -831,7 +847,10 @@ mod tests {
         for preset in &presets.presets {
             if !matches!(
                 preset.name.as_str(),
-                "mini index regions" | "Binance BTC Spot spheres" | "Binance BTC perpetual spheres"
+                "mini index regions"
+                    | "Crypto default"
+                    | "Binance BTC Spot spheres"
+                    | "Binance BTC perpetual spheres"
             ) {
                 assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
                 assert!(

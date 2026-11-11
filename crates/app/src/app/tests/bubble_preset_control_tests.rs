@@ -130,7 +130,7 @@ fn whole_presets_reapply_drift_and_are_authorized_retry_safe() {
 #[test]
 fn bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe() {
     const RESET: &str = "orderflow.bubbles.reset";
-    const FACTORY: &str = "Binance BTC perpetual spheres";
+    const FACTORY: &str = "Crypto default";
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     let config: crate::config::AppConfig =

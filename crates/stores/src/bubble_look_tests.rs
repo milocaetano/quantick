@@ -382,10 +382,9 @@ fn edit(screen: &mut Screen, change: impl FnOnce(&mut HeatmapConfig)) {
 fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
     let operator = saved_over();
     for (market, name) in [
-        (
-            ("binance-futures", "BTCUSDT.p"),
-            "Binance BTC perpetual spheres",
-        ),
+        (("binance-futures", "BTCUSDT.p"), "Crypto default"),
+        (("binance", "ETHUSDT"), "Crypto default"),
+        (("hyperliquid", "ETH"), "Crypto default"),
         (("metatrader-tickmill", "XAUUSD"), "live lane pie"),
         (("metatrader-b3", "WINZ26"), "mini index regions"),
     ] {
@@ -537,7 +536,16 @@ fn without_a_shipped_declared_preset_the_reset_wears_what_the_operator_file_open
     assert_eq!(screen.look.look_name(), "my look");
     assert_eq!(screen.config.bubbles.max_radius, own.bubbles.max_radius);
 
-    let mut eth = bound(&store, ("binance", "ETHUSDT"), &operator);
+    // Binance with no look declared, feed-wide or for ETHUSDT.
+    let mut undeclared = shipped_config();
+    let binance = undeclared
+        .feeds
+        .iter_mut()
+        .find(|feed| feed.id == "binance");
+    let binance = binance.expect("a shipped feed");
+    binance.bubble_preset = None;
+    assert!(!binance.symbol_bubble_presets.contains_key("ETHUSDT"));
+    let mut eth = bound_in(&store, &undeclared, ("binance", "ETHUSDT"), &operator);
     let active = operator.get(&operator.active).expect("the active look");
     tune(&mut eth);
     assert!(eth.look.restore_factory(&mut eth.config));
