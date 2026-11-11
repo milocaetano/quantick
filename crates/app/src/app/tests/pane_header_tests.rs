@@ -3159,21 +3159,21 @@ fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
     assert!(!ctx.memory(|memory| memory.any_popup_open()), "another tab");
 }
 
-/// Once two panes share the canvas the focused one, flow or time, wears an
-/// accent frame and no other pane does; a lone pane is focused by definition
+/// Once two panes share the canvas the focused one, flow or time, wears a
+/// focus frame and no other pane does; a lone pane is focused by definition
 /// and wears none.
 #[test]
-fn only_the_focused_pane_of_a_split_wears_the_accent_frame() {
+fn only_the_focused_pane_of_a_split_wears_the_focus_frame() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let accent = crate::theme::ACCENT;
+    let border = crate::theme::get(&ctx).widget_active_border();
     let framed = |output: &egui::FullOutput, pane: egui::Rect| {
         output
             .shapes
             .iter()
             .filter(|clipped| match &clipped.shape {
                 egui::Shape::Rect(shape) => {
-                    shape.stroke.color == accent
+                    shape.stroke.color == border
                         && shape.stroke.width >= 2.0
                         && shape.rect.contains(pane.center())
                 }
