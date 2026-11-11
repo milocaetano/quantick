@@ -151,6 +151,22 @@ impl crate::ResolvedTheme {
         )
     }
 
+    /// The plate and ink of a drawing's price-axis tag in the drawing's own
+    /// colour: the colour as a filled plate with computed ink on it, or —
+    /// where the theme turns label plates off — no plate and the colour as
+    /// the ink.
+    #[must_use]
+    pub fn drawing_tag_paint(
+        &self,
+        color: PremultipliedRgba,
+    ) -> (PremultipliedRgba, PremultipliedRgba) {
+        if self.drawing_label_plates {
+            (color, self.ink_on(color))
+        } else {
+            (crate::color::TRANSPARENT, color)
+        }
+    }
+
     /// A drawing's authored colour as it is painted on this theme's canvas;
     /// see [`legible`].
     #[must_use]

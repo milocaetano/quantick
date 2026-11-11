@@ -353,11 +353,13 @@ fn paint_plate(
         (chart_rect.top() - plate.top()).max(0.0) + (chart_rect.bottom() - plate.bottom()).min(0.0),
     ));
 
-    painter.rect_filled(
-        plate,
-        READOUT_RADIUS_PX,
-        appearance.color(Token::DrawingReadoutPlate),
-    );
+    if appearance.drawing_label_plates {
+        painter.rect_filled(
+            plate,
+            READOUT_RADIUS_PX,
+            appearance.color(Token::DrawingReadoutPlate),
+        );
+    }
     let mut cursor = plate.min + vec2(READOUT_PAD_X_PX, READOUT_PAD_Y_PX);
     for (line, size) in readout.lines.iter().zip(&sizes) {
         let advance = size.y + READOUT_LINE_GAP_PX;

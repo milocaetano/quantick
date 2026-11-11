@@ -32,6 +32,7 @@ impl BookmapOverride {
             candle_outline_opacity: self.candle_outline_opacity,
             candle_wick_opacity: self.candle_wick_opacity,
             chart_time_grid: None,
+            drawing_label_plates: None,
             chart_axes: None,
             colors: self.colors.clone(),
             plot_ink: self.plot_ink.clone(),

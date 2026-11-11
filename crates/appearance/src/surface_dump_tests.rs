@@ -1,6 +1,7 @@
 //! The bundled surfaces as text, every byte a renderer reads off them, against
 //! the dump taken at the commit before the flow pane's lights existed: the
 //! bulb's off state, and Dark, paint exactly what they painted then.
+//! One deliberate edit since: Light's paper `drawing_default` is black.
 use crate::{DARK, LIGHT, ResolvedTheme, Token};
 use std::fmt::Write;
 
