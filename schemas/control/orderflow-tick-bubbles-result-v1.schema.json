@@ -18,9 +18,17 @@
         "opacity": {
           "type": "string"
         },
+        "peak_max_radius": {
+          "default": null,
+          "description": "The full-size radius while peak spheres are on, when the look sets\none apart from `max_radius`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "peak_spheres": {
           "default": false,
-          "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+          "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, its area its volume.",
           "type": "boolean"
         },
         "reference_mode": {

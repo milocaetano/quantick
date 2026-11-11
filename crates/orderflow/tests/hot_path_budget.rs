@@ -618,12 +618,12 @@ fn spheres() -> FlowLook {
     }
 }
 
-/// The mini index's peak spheres: a visible reference with a floor, zoom
+/// The mini index's peak spheres at their 24 px radius: a visible reference with a floor, zoom
 /// regions of the rung an 8 px candle holds, divided at their peaks.
 fn peaks() -> FlowLook {
     FlowLook {
         reference: FlowReference::VisibleRegionsAtLeast(Decimal::ONE),
-        radius_limit: 18.0,
+        radius_limit: 24.0,
         region: FlowRegionSpan::Peaks(FlowRegionSpan::held(None, f64::from(PX_PER_BAR))),
     }
 }
