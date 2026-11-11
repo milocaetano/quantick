@@ -2121,11 +2121,13 @@ fn observer_per_scope_capture_cost() {
 /// `appearance.state` were merged together; 81179 on Windows with the tab
 /// strip's three tokens, each semantic color adding about 67 bytes to the
 /// capture; 1303 allocations, 83242 bytes on Windows once main's venue candles
-/// (#786) were merged in. No Linux reading of that tree yet, and Linux has read
-/// a few bytes apart before, so the byte ceiling sits about 3.5% above the
-/// Windows reading: room for a few more tokens, not for a new scope.
+/// (#786) were merged in; 1317 allocations, 86540 bytes on Windows with the
+/// settings panels' fourteen `panel_*` tokens. No Linux reading of that tree
+/// yet, and Linux has read a few bytes apart before, so the byte ceiling sits
+/// about 3.5% above the Windows reading: room for a few more tokens, not for a
+/// new scope.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 86200;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 89600;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
