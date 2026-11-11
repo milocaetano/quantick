@@ -282,6 +282,23 @@ fn a_pair_narrower_than_both_minimums_is_refused_with_a_stable_reason() {
 }
 
 #[test]
+fn a_pair_exactly_as_wide_as_both_minimums_never_panics_on_rounding() {
+    // At 240 px some shares round the low bound past the high one.
+    let snug = CanvasRect::new(0.0, 0.0, 2.0 * MIN_TREE_PANE_PX, 900.0);
+    for step in 1..4000_u16 {
+        let half = f32::from(step) * 0.000_25;
+        let mut state = canvas("charts-2");
+        if let PaneTree::Split { shares, .. } = state.tree_mut() {
+            shares.to_mut().copy_from_slice(&[half, half]);
+        }
+        let moved = state.move_seam(&root(0), 7.0, snug);
+        assert!(moved.is_ok(), "{half}: {moved:?}");
+        let shares = root_shares(&state);
+        assert!((shares[0] + shares[1] - 2.0 * half).abs() < EPS, "{half}");
+    }
+}
+
+#[test]
 fn a_resize_trades_with_the_neighbour_whose_seam_moves_as_a_drag_does() {
     let mut state = canvas("charts-3");
     state.minimize(2).unwrap();

@@ -255,7 +255,11 @@ impl CanvasState {
         pair: &Pair,
         wanted: f32,
     ) -> Result<bool, CanvasRefusal> {
-        let first = wanted.clamp(pair.first_min, pair.pair_share - pair.second_min);
+        // max then min, never `clamp`: a pair exactly as wide as both minimums
+        // can round its low bound past its high one, and `clamp` panics there.
+        let first = wanted
+            .max(pair.first_min)
+            .min(pair.pair_share - pair.second_min);
         if (first - pair.first_share).abs() < STILL_PX * pair.unit {
             return Ok(false);
         }
