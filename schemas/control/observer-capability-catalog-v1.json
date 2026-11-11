@@ -19147,17 +19147,9 @@
               "opacity": {
                 "type": "string"
               },
-              "peak_max_radius": {
-                "default": null,
-                "description": "The full-size radius while peak spheres are on, when the look sets\none apart from `max_radius`.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "peak_spheres": {
                 "default": false,
-                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, its area its volume.",
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
                 "type": "boolean"
               },
               "reference_mode": {
@@ -19526,17 +19518,9 @@
               "opacity": {
                 "type": "string"
               },
-              "peak_max_radius": {
-                "default": null,
-                "description": "The full-size radius while peak spheres are on, when the look sets\none apart from `max_radius`.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "peak_spheres": {
                 "default": false,
-                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, its area its volume.",
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
                 "type": "boolean"
               },
               "reference_mode": {
@@ -20022,17 +20006,9 @@
               "opacity": {
                 "type": "string"
               },
-              "peak_max_radius": {
-                "default": null,
-                "description": "The full-size radius while peak spheres are on, when the look sets\none apart from `max_radius`.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "peak_spheres": {
                 "default": false,
-                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, its area its volume.",
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
                 "type": "boolean"
               },
               "reference_mode": {
@@ -29149,14 +29125,23 @@
             "type": "object"
           },
           "FlowExecutionScaleBasis": {
-            "enum": [
-              "empty",
-              "visible_region_max",
-              "visible_ordinary_region_max",
-              "opening_only_fallback",
-              "typed_reference"
-            ],
-            "type": "string"
+            "oneOf": [
+              {
+                "enum": [
+                  "empty",
+                  "visible_region_max",
+                  "visible_ordinary_region_max",
+                  "opening_only_fallback",
+                  "typed_reference"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "ranked_visible_masses",
+                "description": "Peak spheres: radius by rank among the visible masses; the frame's\nnotes name how many and from which quantity labels are drawn.",
+                "type": "string"
+              }
+            ]
           },
           "FlowExecutionScaleMode": {
             "enum": [
@@ -29538,17 +29523,9 @@
               "opacity": {
                 "type": "string"
               },
-              "peak_max_radius": {
-                "default": null,
-                "description": "The full-size radius while peak spheres are on, when the look sets\none apart from `max_radius`.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "peak_spheres": {
                 "default": false,
-                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, its area its volume.",
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
                 "type": "boolean"
               },
               "reference_mode": {
