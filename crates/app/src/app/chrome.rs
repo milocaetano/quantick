@@ -58,6 +58,15 @@ pub(super) struct ChromeState {
     /// Whether the toolbar's layout popover is open.
     pub(super) layout_picker_open: bool,
 
+    /// The toolbar's + and its ADD TO CANVAS menu.
+    pub(super) add_menu: crate::add_widget::AddMenu,
+
+    /// Where the capsule's parts were drawn last frame.
+    pub(super) capsule: crate::toolbar::capsule::CapsuleRects,
+
+    /// The toolbar's controls as last drawn, for the observer scene.
+    pub(crate) toolbar_controls: Vec<crate::toolbar::DrawnControl>,
+
     /// The layout being renamed, its draft, and the pane-local strip that
     /// opened the editor. The catalogue mutation remains workspace-wide; only
     /// the transient text box belongs to one footer.

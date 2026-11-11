@@ -49,6 +49,7 @@ pub mod time_marks;
 pub mod toolbar_collapse;
 pub mod venue_history;
 pub mod viewport;
+pub mod widgets;
 pub use quantick_engine::work_meter;
 
 #[cfg(test)]

@@ -309,22 +309,6 @@ impl ChartPane {
         }
     }
 
-    /// The strategies beside the series their rulers warm on, for a
-    /// re-arm from outside the pane.
-    #[cfg(test)]
-    pub(crate) fn strategies_with_series(
-        &mut self,
-    ) -> (&mut PaneStrategies, gesture::PaneSeriesRead<'_>) {
-        (
-            &mut self.strategies,
-            gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-        )
-    }
-
     /// One pane's side of the quick range — see [`quick_range::QuickRangeView`].
     pub(super) fn quick_range_view(
         &self,
@@ -586,19 +570,6 @@ impl ChartPane {
             .map(|band| drawings::pos(band.rect.center()))
     }
 
-    #[cfg(test)]
-    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
-        self.model.pending_indicator_guide = Some((slot.0, enabled));
-    }
-
-    /// Stand in for the gesture that raises a settings request, so the app's
-    /// side of the wiring can be tested without driving egui through a pane
-    /// layout it would have to re-derive.
-    #[cfg(test)]
-    pub fn request_settings(&mut self, slot: SlotId) {
-        self.model.pending_settings = Some(slot.0);
-    }
-
     /// Handle mouse navigation, TradingView-style:
     /// - drag the candles → pan time (x, moves the whole chart) and price (y);
     /// - scroll over them → zoom time;
@@ -840,6 +811,35 @@ impl ChartPane {
     #[must_use]
     pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
         self.paper_hud_anchor
+    }
+}
+
+#[cfg(test)]
+impl ChartPane {
+    /// The strategies beside the series their rulers warm on, for a
+    /// re-arm from outside the pane.
+    pub(crate) fn strategies_with_series(
+        &mut self,
+    ) -> (&mut PaneStrategies, gesture::PaneSeriesRead<'_>) {
+        (
+            &mut self.strategies,
+            gesture::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+        )
+    }
+
+    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
+        self.model.pending_indicator_guide = Some((slot.0, enabled));
+    }
+
+    /// Stand in for the gesture that raises a settings request, so the app's
+    /// side of the wiring can be tested without driving egui through a pane
+    /// layout it would have to re-derive.
+    pub fn request_settings(&mut self, slot: SlotId) {
+        self.model.pending_settings = Some(slot.0);
     }
 }
 
@@ -1209,7 +1209,9 @@ impl ChartPane {
         let capsule =
             Some(Capsule::of(CapsuleSide::Time, glyph, None)).filter(|c| !c.is_empty())?;
         let height = crate::theme::get(ui.ctx()).layout(crate::time_header::HEIGHT_PX);
-        let header = egui::Rect::from_x_y_ranges(area.x_range(), area.top() - height..=area.top());
+        let right = area.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX;
+        let header =
+            egui::Rect::from_x_y_ranges(area.left()..=right, area.top() - height..=area.top());
         let (mut intent, painted) = (None, &mut self.frame.header_controls);
         let at = (CapsuleSide::Time, self.id);
         self.frame.capsules[0] =

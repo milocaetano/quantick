@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 /// change adds now take theirs in [`layout`].
 #[cfg(test)]
 use crate::canvas_layout::PaneIdAllocator;
-use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
+use crate::canvas_layout::{MAX_CANVAS_PANES, MAX_CONTEXT_PANES};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
@@ -32,7 +32,7 @@ use crate::state::BarConfiguration;
 use quantick_feed::{FeedHandle, FeedLatency, FeedLink};
 use std::path::PathBuf;
 
-mod canvas;
+pub(crate) mod canvas;
 pub(crate) mod context_resize;
 mod feed;
 pub(crate) mod layout;
@@ -62,103 +62,7 @@ const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
 /// short enough that it is a mark on the rail rather than the rail itself.
 const RAIL_GRIP_HEIGHT_PX: f32 = 24.0;
 
-/// How many charts a tab's canvas shows for its market (§11), and which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CanvasLayout {
-    /// The flow pane alone — quantick's default and its identity.
-    #[default]
-    Single,
-    /// The time pane alone: a full-window timeframe chart, header included,
-    /// with no split. The flow pane keeps being fed off screen, exactly as
-    /// the time pane does while Single is showing.
-    Time,
-    /// Time pane left, flow pane right, on a draggable divider.
-    TimeAndFlow,
-    /// Two time panes stacked in the left column, flow pane right.
-    TimeTimeAndFlow,
-}
-
-impl CanvasLayout {
-    /// The registry entry this layout is a name for.
-    ///
-    /// The one place a variant is turned into panes. Everything that wants to
-    /// know what a layout *holds* reads the table through here rather than
-    /// matching on the variant, so an arrangement added to the registry does
-    /// not have to be taught to every caller one at a time.
-    #[must_use]
-    pub fn preset(self) -> &'static LayoutPreset {
-        let id = match self {
-            CanvasLayout::Single => "flow",
-            CanvasLayout::Time => "time",
-            CanvasLayout::TimeAndFlow => "time+flow",
-            CanvasLayout::TimeTimeAndFlow => "time+time+flow",
-        };
-        canvas_layout::preset(id).expect("every canvas layout names a registered preset")
-    }
-
-    /// The layout a registry entry names, if the canvas can draw it.
-    ///
-    /// The inverse of [`Self::preset`], and deliberately partial: the registry
-    /// is allowed to describe an arrangement the canvas has not learned to
-    /// draw yet, and answering `None` is how that stays visible instead of
-    /// being approximated into the nearest layout that happens to exist.
-    #[must_use]
-    pub fn from_preset(preset: &LayoutPreset) -> Option<Self> {
-        match preset.id {
-            "flow" => Some(CanvasLayout::Single),
-            "time" => Some(CanvasLayout::Time),
-            "time+flow" => Some(CanvasLayout::TimeAndFlow),
-            "time+time+flow" => Some(CanvasLayout::TimeTimeAndFlow),
-            _ => None,
-        }
-    }
-
-    /// The panes this layout draws, left to right.
-    #[must_use]
-    pub fn kinds(self) -> &'static [PaneKind] {
-        self.preset().kinds
-    }
-
-    /// Whether this layout draws the time pane at all.
-    #[must_use]
-    pub fn shows_time(self) -> bool {
-        self.kinds().contains(&PaneKind::Time)
-    }
-
-    /// Whether this layout draws the flow pane at all.
-    #[must_use]
-    pub fn shows_flow(self) -> bool {
-        self.kinds().contains(&PaneKind::Flow)
-    }
-}
-
-impl From<crate::config::DeclaredLayout> for CanvasLayout {
-    fn from(declared: crate::config::DeclaredLayout) -> Self {
-        match declared {
-            crate::config::DeclaredLayout::Flow => CanvasLayout::Single,
-            crate::config::DeclaredLayout::Time => CanvasLayout::Time,
-            crate::config::DeclaredLayout::TimeAndFlow => CanvasLayout::TimeAndFlow,
-            crate::config::DeclaredLayout::TimeTimeAndFlow => CanvasLayout::TimeTimeAndFlow,
-        }
-    }
-}
-
-/// The way back, for the saved workspace ([`crate::ui_state`]), which has to
-/// write a layout out in the vocabulary a config reads.
-///
-/// A canvas layout a config should not name would have to answer for itself
-/// here — which is the point of keeping the two enums apart, and the reason
-/// this conversion is total today and may not always be.
-impl From<CanvasLayout> for crate::config::DeclaredLayout {
-    fn from(layout: CanvasLayout) -> Self {
-        match layout {
-            CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
-            CanvasLayout::Time => crate::config::DeclaredLayout::Time,
-            CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
-            CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
-        }
-    }
-}
+pub use crate::canvas_layout::CanvasLayout;
 
 /// One open market. See the module docs for what does and does not live here.
 /// One frame's answer, for both panes, to "what shared mark of the *other*
@@ -451,63 +355,6 @@ impl Tab {
         }
     }
 
-    /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
-    #[cfg(test)]
-    pub(crate) fn time_header_chip(&self, index: usize) -> Option<egui::Rect> {
-        self.time_header_chips.get(index).copied()
-    }
-
-    /// Where the canvas divider landed, while the split is shown.
-    #[cfg(test)]
-    pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
-        self.canvas_divider
-    }
-
-    /// Where the collapsed context rail landed.
-    #[cfg(test)]
-    pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
-        self.collapsed_rail
-    }
-
-    #[cfg(test)]
-    pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
-        self.canvas
-            .flow_collapsed
-            .then_some(self.collapsed_rail)
-            .flatten()
-    }
-
-    /// Where the dividers between stacked context charts landed.
-    #[cfg(test)]
-    pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
-        self.context_dividers.get(index).copied()
-    }
-
-    /// Forget which candle generation was acted on, so the next poll treats
-    /// the feed's as new — what a reconnect storing a fresh block does.
-    #[cfg(test)]
-    pub fn forget_ohlcv_generation_for_test(&mut self) {
-        self.session.forget_candle_generations();
-    }
-
-    /// Swap in a feed the test drives, through the same path a respawn takes.
-    #[cfg(test)]
-    pub fn attach_for_test(&mut self, handle: FeedHandle) {
-        self.attach(handle);
-    }
-
-    /// Publish a latency reading as the attached feed would, for a test that
-    /// needs the tab to have read one.
-    #[cfg(test)]
-    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
-        let (tx, rx) = tokio::sync::watch::channel(split);
-        self.link.feed_latency = rx;
-        // The sender is dropped on purpose: a `watch` receiver keeps serving
-        // the value it was born with, which is what a test wants and what
-        // `unsplit_latency` relies on in production.
-        drop(tx);
-    }
-
     /// The display name of the currently selected feed, or its id as a
     /// fallback.
     pub fn feed_display_name<'a>(&'a self, config: &'a AppConfig) -> &'a str {
@@ -585,6 +432,58 @@ impl Tab {
         self.link
             .forced_latency
             .or(*self.link.feed_latency.borrow())
+    }
+}
+
+#[cfg(test)]
+impl Tab {
+    /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
+    pub(crate) fn time_header_chip(&self, index: usize) -> Option<egui::Rect> {
+        self.time_header_chips.get(index).copied()
+    }
+
+    /// Where the canvas divider landed, while the split is shown.
+    pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
+        self.canvas_divider
+    }
+
+    /// Where the collapsed context rail landed.
+    pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
+        self.collapsed_rail
+    }
+
+    pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
+        self.canvas
+            .flow_collapsed
+            .then_some(self.collapsed_rail)
+            .flatten()
+    }
+
+    /// Where the dividers between stacked context charts landed.
+    pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.context_dividers.get(index).copied()
+    }
+
+    /// Forget which candle generation was acted on, so the next poll treats
+    /// the feed's as new — what a reconnect storing a fresh block does.
+    pub fn forget_ohlcv_generation_for_test(&mut self) {
+        self.session.forget_candle_generations();
+    }
+
+    /// Swap in a feed the test drives, through the same path a respawn takes.
+    pub fn attach_for_test(&mut self, handle: FeedHandle) {
+        self.attach(handle);
+    }
+
+    /// Publish a latency reading as the attached feed would, for a test that
+    /// needs the tab to have read one.
+    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
+        let (tx, rx) = tokio::sync::watch::channel(split);
+        self.link.feed_latency = rx;
+        // The sender is dropped on purpose: a `watch` receiver keeps serving
+        // the value it was born with, which is what a test wants and what
+        // `unsplit_latency` relies on in production.
+        drop(tx);
     }
 }
 

@@ -281,12 +281,6 @@ impl ReplayView {
         self.get_data.provider()
     }
 
-    /// Whether the browser is open.
-    #[cfg(test)]
-    pub(crate) fn browser_is_open(&self) -> bool {
-        self.browser_open
-    }
-
     /// Open the browser, rescanning the folder it already knows.
     pub fn open_browser(&mut self) {
         self.browser_open = true;
@@ -1158,6 +1152,14 @@ impl ReplayView {
             action = Some(ReplayAction::Control(ReplayControl::TogglePlay));
         }
         action
+    }
+}
+
+#[cfg(test)]
+impl ReplayView {
+    /// Whether the browser is open.
+    pub(crate) fn browser_is_open(&self) -> bool {
+        self.browser_open
     }
 }
 

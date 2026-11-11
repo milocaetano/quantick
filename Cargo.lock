@@ -3058,6 +3058,7 @@ dependencies = [
  "quantick-sim",
  "quantick-sources",
  "quantick-stores",
+ "quantick-workspace",
  "rust_decimal",
  "schemars",
  "serde",

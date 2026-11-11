@@ -139,13 +139,6 @@ impl Tab {
         self.canvas.last_canvas.width()
     }
 
-    /// Put the tab back in the state it opens in: never drawn, so no canvas
-    /// width is known — how a background tab looks after a workspace restore.
-    #[cfg(test)]
-    pub fn forget_canvas_width_for_test(&mut self) {
-        self.canvas.last_canvas.max = self.canvas.last_canvas.min;
-    }
-
     /// Whether any context chart is actually on screen.
     ///
     /// The layout has to *hold* one, the tab has to have *built* one, and the
@@ -427,6 +420,15 @@ impl Tab {
             );
         }
         changed
+    }
+}
+
+#[cfg(test)]
+impl Tab {
+    /// Put the tab back in the state it opens in: never drawn, so no canvas
+    /// width is known — how a background tab looks after a workspace restore.
+    pub fn forget_canvas_width_for_test(&mut self) {
+        self.canvas.last_canvas.max = self.canvas.last_canvas.min;
     }
 }
 
@@ -715,9 +717,16 @@ impl Tab {
         style: &ChartStyle,
         ids: &mut PaneIdAllocator,
     ) {
-        // The slot this pane will take is the next free one in the stack.
-        let slot = self.time_panes.len();
-        let Some(mut pane) = self.canvas.take_pending_pane(slot, ids) else {
+        // A chart a removal freed and a new slot sat on is built again, so it
+        // never shows the removed chart's look; else the next free slot.
+        let built = self.time_panes.len();
+        let reseed = (self.canvas.seats.take_reseed()).filter(|seat| *seat < built);
+        let slot = reseed.unwrap_or(built);
+        let pane = match reseed {
+            Some(seat) => Some(self.canvas.fresh_pane(seat, ids)),
+            None => self.canvas.take_pending_pane(slot, ids),
+        };
+        let Some(mut pane) = pane else {
             return;
         };
         pane.seed_from(
@@ -744,7 +753,10 @@ impl Tab {
             .inherit_states(&self.flow_pane.layer_read().states(style));
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
-        self.time_panes.push(pane);
+        match reseed {
+            Some(seat) => self.time_panes[seat] = pane,
+            None => self.time_panes.push(pane),
+        }
         // One pane per frame, for the reason the first one waits a frame at
         // all: seeding replays every retained trade, and building three at
         // once would hold the render thread for three times as long. The
@@ -754,7 +766,9 @@ impl Tab {
         }
         // Its copy counts against a running campaign's memory ceiling, and
         // there is something for a prefix to go in front of now.
-        self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
+        if reseed.is_none() {
+            self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
+        }
     }
 
     /// The layout each pane opens on, from a saved workspace: the flow pane's

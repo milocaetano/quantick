@@ -770,6 +770,7 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// rescued something.
 #[cfg(any(feature = "scenario-harness", test))]
 fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
+    // The window menu hung from the toolbar's list door, as its click does.
     if let Some(value) = env.var("QUANTICK_WORKSPACE_MENU") {
         let tab = app.runtime.tabs.active_id();
         if !app.chrome.window_menu.tab_workspace.stage(tab, &value) {
@@ -780,7 +781,7 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // takes. An env var is an explicit request for this run, so it wins
     // over a feed's declared `default_layout`.
     if let Some(name) = env.var("QUANTICK_LAYOUT") {
-        let layout = crate::config::DeclaredLayout::parse(&name).map(CanvasLayout::from);
+        let layout = crate::tab::layout::named(&name);
         match layout {
             Some(layout) => app.active_tab_mut().set_layout(layout),
             None => tracing::warn!(
@@ -813,20 +814,7 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
     let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
     if tab.canvas.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
-        let shares = tab.canvas.context_height_shares();
-        let shares = [
-            shares
-                .first()
-                .copied()
-                .filter(|share| *share > 0.0)
-                .unwrap_or(0.5),
-            shares
-                .get(1)
-                .copied()
-                .filter(|share| *share > 0.0)
-                .unwrap_or(0.5),
-        ];
-        tab.canvas.restore_context_heights(&shares, &[upper, lower]);
+        tab.canvas.fold_context_pane(upper);
     }
     // The Workspace menu's own path, so a validation run can see the save
     // confirmation without a click. A menu entry cannot be reached by an
@@ -839,6 +827,15 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
         .is_some_and(|value| value == "1")
     {
         app.workspace_save_adapter().save_workspace("autostart");
+    }
+    // A chart's ⋯ menu open, or one of its rows pressed, as a click does.
+    let menu = env.var("QUANTICK_PANE_MENU");
+    if let Some((slot, row)) = menu
+        .as_deref()
+        .and_then(quantick_workspace::canvas::menu_hook)
+    {
+        let menus = &mut app.active_tab_mut().canvas.menus;
+        (menus.open, menus.picked) = (row.is_none().then_some(slot), row.map(|row| (slot, row)));
     }
     // The three file entries, reachable with no click for the same reason
     // (`.claude/skills/ui-harness`). Each runs the menu entry's own code
@@ -897,6 +894,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_INDICATOR_SCRIPTS_AUTOSTART",
     "QUANTICK_INVERTED",
     "QUANTICK_LAYOUT",
+    "QUANTICK_PANE_MENU",
     "QUANTICK_LAYOUT_DELETE",
     "QUANTICK_LAYOUT_RENAME",
     "QUANTICK_LAYOUT_TAB",

@@ -71,18 +71,6 @@ impl ChartPane {
         self.publish_partial();
     }
 
-    /// Put `bars` in front of the trade-derived series, or take the prefix
-    /// away when they are empty.
-    ///
-    /// Everything anchored to a bar index moves with the change, exactly as a
-    /// trade-history prepend moves it: the viewport keeps its right edge, the
-    /// drawings keep their bars, the indicator columns keep their candles
-    /// until the rebuild lands. Returns whether anything changed.
-    #[cfg(test)]
-    pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
-        self.install_venue_history(bars, None, false)
-    }
-
     /// [`Self::install_history_prefix`], with the venue's seam `lead` merged
     /// into the first engine bar (`ChartState::set_venue_lead`), and whether
     /// it leaves nothing of that bar's bucket unaccounted for.
@@ -264,17 +252,6 @@ impl ChartPane {
     /// Install a complete recut and catch up the live tail before moving anchors.
     pub fn prepare_history(&mut self) -> bool {
         self.history_worker.poll(&self.state)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hold_history_publication(&mut self, held: bool) {
-        self.history_worker.held = held;
-    }
-
-    /// Make this pane's rebuild read as failed until a retry.
-    #[cfg(test)]
-    pub(crate) fn fail_history_publication(&mut self) {
-        self.history_worker.fail = true;
     }
 
     pub fn install_history(&mut self) -> bool {
@@ -470,5 +447,28 @@ impl ChartPane {
     fn partial_command(&mut self) -> IndicatorCommand {
         self.lane
             .command(self.state.partial().cloned(), self.state.trades())
+    }
+}
+
+#[cfg(test)]
+impl ChartPane {
+    /// Put `bars` in front of the trade-derived series, or take the prefix
+    /// away when they are empty.
+    ///
+    /// Everything anchored to a bar index moves with the change, exactly as a
+    /// trade-history prepend moves it: the viewport keeps its right edge, the
+    /// drawings keep their bars, the indicator columns keep their candles
+    /// until the rebuild lands. Returns whether anything changed.
+    pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
+        self.install_venue_history(bars, None, false)
+    }
+
+    pub(crate) fn hold_history_publication(&mut self, held: bool) {
+        self.history_worker.held = held;
+    }
+
+    /// Make this pane's rebuild read as failed until a retry.
+    pub(crate) fn fail_history_publication(&mut self) {
+        self.history_worker.fail = true;
     }
 }

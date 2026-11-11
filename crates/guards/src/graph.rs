@@ -127,7 +127,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `drawings` and `chart-interaction` for the annotate tier, which resolves
     // its anchors and folds its placements through the marks' own update;
     // `session` for the History press, which the handler phrases as the
-    // tab session's own act and judges from its answer.
+    // tab session's own act and judges from its answer; `workspace` for the
+    // canvas model a canvas act runs against.
     (
         "control-handlers",
         &[
@@ -146,6 +147,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "sim",
             "sources",
             "stores",
+            "workspace",
         ],
     ),
     ("mcp", &["control", "control-local"]),

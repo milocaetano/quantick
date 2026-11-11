@@ -41,7 +41,7 @@ fn chip_rect(app: &QuantickApp, index: usize) -> egui::Rect {
 }
 
 fn preset_layout(index: usize) -> CanvasLayout {
-    CanvasLayout::from_preset(&crate::canvas_layout::LAYOUT_PRESETS[index]).unwrap()
+    CanvasLayout::from_preset(&crate::canvas_layout::LAYOUT_PRESETS[index])
 }
 
 fn two_tabs(app: &mut QuantickApp, ctx: &egui::Context) -> TabEnds {

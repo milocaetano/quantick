@@ -28,7 +28,7 @@ pub const RAIL_ICON: IconSize = IconSize {
 /// around the glyph that a 44 px rail does not read as cramped.
 pub const TOOLRAIL_ICON: IconSize = IconSize {
     glyph: 18.0,
-    hit: 32.0,
+    hit: quantick_chart_interaction::tool_rail::BUTTON_HIT_PX,
 };
 
 /// Opacity of a disabled glyph.
@@ -206,13 +206,6 @@ impl<'a> IconButton<'a> {
     #[must_use]
     pub fn active_marker(mut self, edge: MarkerEdge) -> Self {
         self.marker_edge = Some(edge);
-        self
-    }
-
-    /// Replace the family's square hit target, for a face that is a picture.
-    #[must_use]
-    pub fn hit_size(mut self, hit: egui::Vec2) -> Self {
-        self.hit = hit;
         self
     }
 

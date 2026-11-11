@@ -15,6 +15,7 @@
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
 //! reach every tab holding it, and a workspace's whole promise is that nothing
 //! reaches another tab until Save to.
+use crate::canvas::{CanvasState, preset};
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -71,6 +72,30 @@ impl DeclaredLayout {
 }
 
 impl DeclaredLayout {
+    /// The layout registry's id for this layout: the same word serde writes.
+    #[must_use]
+    pub const fn preset_id(self) -> &'static str {
+        match self {
+            Self::Flow => "flow",
+            Self::Time => "time",
+            Self::TimeAndFlow => "time+flow",
+            Self::TimeTimeAndFlow => "time+time+flow",
+        }
+    }
+
+    /// The nearest of the four words for `preset`: the canvas a recipe
+    /// carries beside it names the rest.
+    #[must_use]
+    pub fn nearest(preset: &crate::canvas::LayoutPreset) -> Self {
+        let flow = preset.kinds.contains(&crate::canvas::PaneKind::Flow);
+        match (preset.time_panes(), flow) {
+            (0, _) => Self::Flow,
+            (_, false) => Self::Time,
+            (1, true) => Self::TimeAndFlow,
+            (_, true) => Self::TimeTimeAndFlow,
+        }
+    }
+
     /// How many context charts this layout shows.
     #[must_use]
     pub const fn context_panes(self) -> usize {
@@ -137,6 +162,11 @@ pub struct WorkspaceRecipe {
     /// them onto the panes.
     #[serde(default, rename = "context_bars", skip_serializing)]
     pub legacy_context_bars: Vec<String>,
+    /// The canvas: its pane tree, folds and floating panes. Absent in a
+    /// recipe written before the canvas model, which means the canvas
+    /// `layout` names, as [`Self::canvas_state`] reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<CanvasState>,
 }
 
 impl Default for WorkspaceRecipe {
@@ -156,6 +186,7 @@ impl Default for WorkspaceRecipe {
             footprint_style: None,
             flow_bars: None,
             legacy_context_bars: Vec::new(),
+            canvas: None,
         }
     }
 }
@@ -168,6 +199,18 @@ impl WorkspaceRecipe {
     #[must_use]
     pub fn is_factory(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// The canvas this recipe shows: the one it saved, or for a recipe from
+    /// before the canvas model the preset its `layout` names.
+    #[must_use]
+    pub fn canvas_state(&self) -> CanvasState {
+        self.canvas.clone().unwrap_or_else(|| {
+            CanvasState::from_preset(
+                preset(self.layout.preset_id())
+                    .expect("every declared layout is a registered preset"),
+            )
+        })
     }
 
     /// What the pane at `index` keeps, by its place: 0 is the flow pane, then
@@ -378,6 +421,7 @@ impl WorkspaceRecipe {
                     .collect::<Vec<_>>(),
                 recipe.context_panes_collapsed.clone(),
                 recipe.context_panes.len(),
+                recipe.canvas.clone(),
             )
         };
         if canvas(self) != canvas(base) {

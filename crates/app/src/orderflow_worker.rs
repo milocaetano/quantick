@@ -151,11 +151,6 @@ impl BookWorker {
             .clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn published(&self) -> BookPublished {
-        self.publication().book
-    }
-
     /// Just the capture bucket from the published mailbox: the footprint needs
     /// it every frame, even with every layer off, without cloning the frame.
     pub(crate) fn published_base_grouping(&self) -> Decimal {
@@ -166,6 +161,13 @@ impl BookWorker {
             .expect("book published mailbox poisoned")
             .book
             .base_price_grouping
+    }
+}
+
+#[cfg(test)]
+impl BookWorker {
+    pub(crate) fn published(&self) -> BookPublished {
+        self.publication().book
     }
 }
 

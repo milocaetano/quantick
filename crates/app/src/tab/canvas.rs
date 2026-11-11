@@ -10,6 +10,7 @@
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
+use quantick_workspace::canvas::{PANE_MENU_BUTTON_PX, seat_slot};
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
@@ -25,6 +26,8 @@ use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
+
+pub(crate) mod tree;
 
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
@@ -108,10 +111,13 @@ struct CanvasFrame {
     flow_band: egui::Rect,
     collapsed_rail: Option<egui::Rect>,
     flow_rail: Option<egui::Rect>,
+    /// Laid out from the model's tree: no column divider, no rails.
+    tree: bool,
 }
 
 /// Where each visible pane draws this frame, after the context column has
 /// spent its header strips.
+#[derive(Default)]
 struct PaneRects {
     /// Per context chart, top to bottom: the chart rect and its layout strip.
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
@@ -123,6 +129,11 @@ struct PaneRects {
     /// The row of the flow pane's side headers, painted after its chart, and the
     /// bar inputs its bars control offers.
     flow_side_row: Option<(egui::Rect, BarInputAvailability)>,
+    /// The panes this pass leaves alone, drawn by a pass of their own: the
+    /// floating ones on the canvas's pass, every other on a floating one's.
+    kept: SmallVec<[PaneIndex; MAX_CANVAS_PANES]>,
+    /// A floating chart's own pass, after the canvas's made this frame's aim.
+    solo: bool,
 }
 
 impl Tab {
@@ -146,6 +157,7 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        self.canvas.menus.drawn.clear();
         let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
         self.update_tape_clock_at(monotonic_ms);
         // Undecorated Windows can report a small positive client area while
@@ -153,14 +165,21 @@ impl Tab {
         if ui.input(|input| input.viewport().minimized.unwrap_or(false)) {
             return;
         }
-        let frame = self.canvas_frame(area);
         if self.connection.overlay_owns_canvas() {
+            self.canvas.last_canvas = area;
             let plot = self.lead_pane().plot_style(chrome.style, ui.ctx());
             let fill = crate::pane::background_color(&plot);
             ui.painter().rect_filled(area, 0.0, fill);
             return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
         }
-        let rects = self.draw_context_column(ui, &frame, chrome);
+        let (frame, rects) = if self.canvas.column_painted() {
+            let frame = self.canvas_frame(area);
+            let rects = self.draw_context_column(ui, &frame, chrome);
+            (frame, rects)
+        } else {
+            self.draw_tree(ui, area, chrome)
+        };
+        self.canvas.drawn_bands = rects.pane_bands.clone();
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -168,6 +187,7 @@ impl Tab {
         let picks = self.shared_picks(ui);
         let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
         self.apply_shared_interactions(&edits);
+        self.draw_floating(tab_id, ui, chrome);
 
         // Drawings marked "show on all timeframes" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
@@ -175,7 +195,7 @@ impl Tab {
         // that needs both panes borrowed at once — immutably, which is also
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
-        self.draw_layer_capsules(ui, chrome);
+        self.draw_layer_capsules(ui, chrome, |side| !rects.kept.contains(&side.index()));
         self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
@@ -197,82 +217,24 @@ impl Tab {
     /// Measure this frame's [`CanvasFrame`], clamping the split fraction so
     /// neither column is narrower than a pane.
     fn canvas_frame(&mut self, area: egui::Rect) -> CanvasFrame {
-        // How many context charts this layout asks for, and how many the tab
-        // has actually built. The lower of the two is what gets drawn: a
-        // layout may name a pane the tab is still building, and half a canvas
-        // is better than a frame of nothing.
         self.canvas.last_canvas = area;
-        let context_wanted = self
-            .canvas
-            .layout
-            .kinds()
-            .iter()
-            .filter(|kind| matches!(kind, PaneKind::Time))
-            .count();
-        let context_shown = context_wanted.min(self.time_panes.len());
-        let show_time = context_shown > 0;
-        // The flow pane also stands in for a time pane still being built, so
-        // the frame between asking for the Time layout and the pane existing
-        // shows the market rather than nothing.
-        let show_flow = self.canvas.layout.shows_flow() || !show_time;
-        let split = show_time && show_flow;
-        if split
-            && !self.canvas.context_collapsed
-            && !self.canvas.flow_collapsed
-            && area.width() > 0.0
-        {
-            let floor = canvas_layout::MIN_PANE_WIDTH_PX / area.width();
-            self.canvas.split_fraction = clamp_pane_fraction(self.canvas.split_fraction.max(floor));
-        }
-        // One visible pane is handed the whole canvas and the rest of this
-        // reduces to nothing: no divider, no focus frame — though a lone time
-        // pane keeps its header.
-        let (time_area, divider, flow_band) = if split {
-            let width = if self.canvas.flow_collapsed {
-                canvas_layout::PaneWidth::Auto
-            } else if self.canvas.context_collapsed {
-                canvas_layout::PaneWidth::Collapsed {
-                    restore: self.canvas.split_fraction,
-                }
-            } else {
-                canvas_layout::PaneWidth::Manual(self.canvas.split_fraction)
-            };
-            let flow_width = if self.canvas.flow_collapsed {
-                canvas_layout::PaneWidth::Collapsed {
-                    restore: 1.0 - self.canvas.split_fraction,
-                }
-            } else {
-                canvas_layout::PaneWidth::Auto
-            };
-            let row = canvas_layout::split_row(area, &[width, flow_width]);
-            (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
-        } else if show_time {
-            (Some(area), None, area)
-        } else {
-            (None, None, area)
-        };
-        // A collapsed column paints a rail, not charts: eight pixels is a
-        // handle, not a chart, and laying one out there would draw a price
-        // axis and nothing else.
-        let collapsed_rail = (split && self.canvas.context_collapsed)
-            .then_some(time_area)
-            .flatten();
-        let flow_rail = (split && self.canvas.flow_collapsed).then_some(flow_band);
-        let time_area = if collapsed_rail.is_some() {
-            None
-        } else {
-            time_area
-        };
+        let canvas = &mut self.canvas;
+        let folds = (canvas.context_collapsed, canvas.flow_collapsed);
+        let (fraction, across) = (&mut canvas.split_fraction, (area.left(), area.width()));
+        let built = self.time_panes.len();
+        let at = canvas_layout::column_frame(canvas.layout, built, across, fraction, folds);
+        let band = |(from, to)| egui::Rect::from_x_y_ranges(from..=to, area.y_range());
         CanvasFrame {
             area,
-            context_shown,
-            show_flow: show_flow && flow_rail.is_none(),
-            split,
-            time_area,
-            divider,
-            flow_band,
-            collapsed_rail,
-            flow_rail,
+            context_shown: at.context_shown,
+            show_flow: at.show_flow,
+            split: at.split,
+            time_area: at.time.map(band),
+            divider: at.divider.map(band),
+            flow_band: band(at.flow),
+            collapsed_rail: at.context_rail.map(band),
+            flow_rail: at.flow_rail.map(band),
+            tree: false,
         }
     }
 
@@ -287,31 +249,12 @@ impl Tab {
     ) -> PaneRects {
         let palette = theme::get(ui.ctx());
         let context_shown = frame.context_shown;
-        let bar_inputs = crate::toolbar::available_bar_inputs(
-            chrome.capabilities,
-            self.deal_recording_view().as_ref(),
-        );
-        let mut rects = PaneRects {
-            context_charts: SmallVec::new(),
-            context_dividers: SmallVec::new(),
-            flow_areas: None,
-            pane_bands: SmallVec::new(),
-            flow_side_row: None,
-        };
+        let bar_inputs = self.bar_inputs(chrome);
+        let mut rects = PaneRects::default();
         #[cfg(test)]
         self.context_dividers.clear();
-        self.canvas.context_stack.frame =
-            frame
-                .time_area
-                .map(|column| super::context_resize::StackFrame {
-                    column,
-                    pane_ids: self
-                        .time_panes
-                        .iter()
-                        .take(context_shown)
-                        .map(|pane| pane.id)
-                        .collect(),
-                });
+        let shown = &self.time_panes[..context_shown.min(self.time_panes.len())];
+        super::context_resize::show_stack(&mut self.canvas.context_stack, frame.time_area, shown);
         if let Some(column) = frame.time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
@@ -456,12 +399,20 @@ impl Tab {
 
     /// Each time pane's capsule, docked in its header, and the tape's seam, after
     /// the charts and their shared marks, so nothing strokes across them.
-    fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
+    fn draw_layer_capsules(
+        &mut self,
+        ui: &mut egui::Ui,
+        chrome: &mut CanvasChrome<'_>,
+        drawn: impl Fn(PaneSide) -> bool,
+    ) {
         let mut focus = None;
         let now_ms = crate::metrics::wall_clock_ms();
         let seam_words = self.connection.seam_line(&self.symbol, now_ms);
         let link = self.connection.spoken_link(now_ms);
         for (pane, side) in self.panes_with_sides_mut() {
+            if !drawn(side) {
+                continue;
+            }
             let sides = crate::pane::SideChrome {
                 style: chrome.style,
                 capabilities: chrome.capabilities,
@@ -508,6 +459,7 @@ impl Tab {
         };
         let painted = &mut pane.frame.header_controls;
         let intent = crate::pane_header::draw_marked(ui, strip, &header, pane.id, row, painted);
+        self.menu_button(ui, strip, None, theme::get(ui.ctx()).flow_gear_ink());
         self.apply_flow_intent(intent, chrome);
     }
 
@@ -570,6 +522,7 @@ impl Tab {
         // left of it.
         let capsule_px = quantick_chart::flow_band::docked_reserve_px(CapsuleSide::Time);
         let reserve_px = capsule_px
+            + PANE_MENU_BUTTON_PX
             + job_slot.as_ref().map_or(0.0, |slot| {
                 crate::loading::slot_width(ui, slot) + quantick_chart::pane_header::GROUP_GAP_PX
             });
@@ -594,9 +547,12 @@ impl Tab {
             },
         );
         if let Some(job_slot) = &job_slot {
-            let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right() - capsule_px;
+            let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right()
+                - capsule_px
+                - PANE_MENU_BUTTON_PX;
             crate::loading::draw_slot(ui, right, strip, job_slot, None);
         }
+        self.menu_button(ui, strip, Some(slot), theme::get(ui.ctx()).text_muted());
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
@@ -614,6 +570,21 @@ impl Tab {
                     quantick_engine::bar_selection::BarInputAvailability::PRINTS,
                 )
                 .expect("time control stays in the interval domain");
+        }
+    }
+
+    /// The ⋯ at `strip`'s right end for the chart `seat` shows (`None`: the
+    /// flow), while the canvas holds it.
+    fn menu_button(
+        &mut self,
+        ui: &egui::Ui,
+        strip: egui::Rect,
+        seat: Option<usize>,
+        ink: egui::Color32,
+    ) {
+        let canvas = &mut self.canvas;
+        if let Some(slot) = seat_slot(&canvas.state, &mut canvas.seats, seat) {
+            crate::pane_menu::button(ui, strip, (slot, &canvas.state), &mut canvas.menus, ink);
         }
     }
 
@@ -646,12 +617,18 @@ impl Tab {
         // Cleared before the loop, set by whichever panes it actually walks: a
         // collapsed context column would otherwise keep the rect it last had,
         // and the overlay would paint off the visible canvas.
-        flow_pane.frame.area = None;
-        flow_pane.frame.layout_strip = None;
-        if rects.flow_areas.is_none() {
+        let kept = |index: PaneIndex| rects.kept.contains(&index);
+        if !kept(0) {
+            flow_pane.frame.area = None;
+            flow_pane.frame.layout_strip = None;
+        }
+        if rects.flow_areas.is_none() && !kept(0) {
             flow_pane.frame.clear_hidden();
         }
         for (slot, pane) in time_panes.iter_mut().enumerate() {
+            if kept(slot + 1) {
+                continue;
+            }
             pane.frame.area = None;
             pane.frame.layout_strip = None;
             if rects.context_charts.get(slot).is_none_or(Option::is_none) {
@@ -680,12 +657,15 @@ impl Tab {
             .filter_map(|(slot, areas)| areas.map(|(chart, _)| (slot + 1, chart)))
             .chain(rects.flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
             .collect();
+        // Focus answers only in the pass that draws the focused pane.
+        let kept = rects.kept.contains(&focused);
+        let fallback = if kept { PaneIndex::MAX } else { focused };
         let trading_pane = trading_pane(
             ui.ctx().pointer_latest_pos(),
             &addressed,
             paper.gesture_active(),
             *paper_drag_pane,
-            focused,
+            fallback,
         );
         let chart_style = chrome.style;
         let mut chrome = PaneChrome {
@@ -718,7 +698,9 @@ impl Tab {
         // one pane is this same loop with one entry in it. The input pane
         // leads because it makes this frame's aim, which every later pane
         // paints whole or as its echo; an aim no pane remakes paints nowhere.
-        chrome.paper.clear_cmd_preview();
+        if !rects.solo {
+            chrome.paper.clear_cmd_preview();
+        }
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.
         let pane_styles: SmallVec<[_; MAX_CANVAS_PANES]> = time_panes
@@ -780,7 +762,9 @@ impl Tab {
         // actually drags, to fall through to the pointer. A flick across a
         // divider in one frame then repriced the order against the
         // neighbour's scale, which is the whole thing the pin exists to stop.
-        *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        if !rects.solo || addressed.iter().any(|(side, _)| *side == trading_pane) {
+            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        }
         edits
     }
 
@@ -804,12 +788,13 @@ impl Tab {
         if frame.time_area.is_some() {
             self.draw_context_dividers(tab_id, ui, &rects.context_dividers);
         }
-        let (Some(_), Some(divider)) = (frame.time_area, frame.divider) else {
+        if let (Some(_), Some(divider)) = (frame.time_area, frame.divider) {
+            let drawn_width = divider.center().x - area.left();
+            if frame.flow_rail.is_none() {
+                self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
+            }
+        } else if !frame.tree {
             return;
-        };
-        let drawn_width = divider.center().x - area.left();
-        if frame.flow_rail.is_none() {
-            self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
         }
         // An accent frame around the focused pane, flow or context, once there
         // is another pane on screen to tell it from: the click that activates

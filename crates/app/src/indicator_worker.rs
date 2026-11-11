@@ -214,29 +214,28 @@ impl IndicatorWorker {
         }
         events
     }
+}
 
+#[cfg(test)]
+impl IndicatorWorker {
     /// How many forming-bar updates have been sent down this channel.
     ///
     /// The cost the UI controls: the worker coalesces them anyway, so sending
     /// one per print is work that buys nothing.
-    #[cfg(test)]
     pub(crate) fn partial_updates_for_test(&self) -> usize {
         self.partial_updates.get()
     }
 
-    #[cfg(test)]
     pub(crate) fn lane_traffic_for_test(&self) -> usize {
         self.lane_traffic.get()
     }
 
-    #[cfg(test)]
     pub(crate) fn retained_lane_for_test(&self) -> (usize, usize) {
         let probe = self.lane_probe_for_test();
         (probe.len, probe.capacity)
     }
 
     /// The worker thread's own report on its forming run and heap work.
-    #[cfg(test)]
     pub(crate) fn lane_probe_for_test(&self) -> LaneProbe {
         let (tx, rx) = channel();
         self.send(WorkerCommand::InspectLane(tx));

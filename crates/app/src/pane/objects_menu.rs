@@ -21,38 +21,6 @@ use super::menus::PaneMenuIntent;
 use quantick_chart_interaction::pane::{Effect, Intent, Model, update};
 
 impl PaneContextMenu {
-    #[cfg(test)]
-    pub(crate) fn draw_object_rows(
-        &mut self,
-        ui: &mut egui::Ui,
-        drawings: &Drawings,
-        indicators: &IndicatorViews,
-    ) -> Option<PaneMenuIntent> {
-        #[cfg(test)]
-        self.object_rects.clear();
-        let entries = quantick_chart_interaction::pane_menu::object_entries(
-            &super::menus::object_facts(drawings, indicators),
-        );
-        super::menu_renderer::render(
-            ui,
-            self,
-            &mut Model::default(),
-            &[quantick_chart_interaction::pane_menu::Entry {
-                label: String::new(),
-                hint: None,
-                disabled: None,
-                trace: quantick_chart_interaction::pane_menu::Trace::None,
-                kind: quantick_chart_interaction::pane_menu::Kind::Scroll {
-                    maximum_height: 320.0,
-                    children: entries,
-                },
-            }],
-            None,
-        )
-        .into_iter()
-        .next()
-    }
-
     /// The question "clear objects…" raised, over this chart until answered.
     /// `count` is how many objects the chart holds; `pane` names the window.
     pub(crate) fn draw_clear_objects_confirm(
@@ -91,5 +59,39 @@ impl PaneContextMenu {
             });
         }
         None
+    }
+}
+
+#[cfg(test)]
+impl PaneContextMenu {
+    pub(crate) fn draw_object_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        drawings: &Drawings,
+        indicators: &IndicatorViews,
+    ) -> Option<PaneMenuIntent> {
+        #[cfg(test)]
+        self.object_rects.clear();
+        let entries = quantick_chart_interaction::pane_menu::object_entries(
+            &super::menus::object_facts(drawings, indicators),
+        );
+        super::menu_renderer::render(
+            ui,
+            self,
+            &mut Model::default(),
+            &[quantick_chart_interaction::pane_menu::Entry {
+                label: String::new(),
+                hint: None,
+                disabled: None,
+                trace: quantick_chart_interaction::pane_menu::Trace::None,
+                kind: quantick_chart_interaction::pane_menu::Kind::Scroll {
+                    maximum_height: 320.0,
+                    children: entries,
+                },
+            }],
+            None,
+        )
+        .into_iter()
+        .next()
     }
 }

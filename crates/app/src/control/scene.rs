@@ -183,6 +183,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
         push_quick_range(&mut controls, app);
         push_pane_headers(&mut controls, app, tabs.active_id(), active);
     }
+    push_toolbar(&mut controls, app);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     push_settings(&mut controls, app);
@@ -254,6 +255,44 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
     SceneOwnerKindDto::FeedStatus,
     SceneOwnerKindDto::TabStrip,
 ];
+
+/// The toolbar's list door, capsule and open layout popover, as drawn.
+fn push_toolbar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let owner = (SceneOwnerKindDto::Toolbar, TOOLBAR_OWNER_ID.to_owned());
+    push_drawn(controls, app.chrome_reads().toolbar, owner);
+}
+
+/// Controls a surface published as it drew them, under `owner`.
+fn push_drawn(
+    controls: &mut Vec<SceneControlSnapshot>,
+    drawn: &[crate::toolbar::DrawnControl],
+    (kind, id): (SceneOwnerKindDto, String),
+) {
+    for control in drawn {
+        let bounds = rect_bounds(control.rect);
+        controls.push(SceneControlSnapshot {
+            control_id: control.id.clone(),
+            label: control.label.clone(),
+            description: None,
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                kind,
+                id: id.clone(),
+            },
+            selected: control.selected,
+            availability: available(),
+            bounds_availability: match &bounds {
+                Bounds::Rect(_) => available(),
+                _ => unavailable("the_control_rectangle_is_not_reportable"),
+            },
+            bounds: bounds.into_snapshot(),
+            capability_id: control.capability.map(str::to_owned),
+        });
+    }
+}
+
+/// The owner every fixed toolbar control names.
+const TOOLBAR_OWNER_ID: &str = "toolbar";
 
 /// The contextual drawing actions visible after a temporary range settles.
 fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
@@ -462,6 +501,8 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let capabilities = tab.capabilities(app.tab_reads().config());
     let style = app.chrome_reads().style();
     let folds = app.tab_reads().tabs().panel_folds();
+    let owner = (SceneOwnerKindDto::Tab, tab_control_id(tab_id));
+    push_drawn(controls, &tab.canvas.menus.drawn, owner);
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
             let (label, role, selected, blocked, capability, description) = match control {

@@ -587,19 +587,6 @@ impl PaperTrading {
     // already knows must not move because the code behind it did.
     // ------------------------------------------------------------------
 
-    /// The report's state and its environment, together.
-    ///
-    /// Test-only, and a delegation: the parts are the account's now.
-    #[cfg(test)]
-    pub(crate) fn report_parts(
-        &mut self,
-    ) -> (
-        &mut crate::paper_report::ReportState,
-        crate::paper_report::ReportEnv<'_>,
-    ) {
-        self.account.report_parts()
-    }
-
     /// The strategy editor window, drawn from the app's own frame - a
     /// window that lives inside a dock tab disappears the moment the trader
     /// looks at another panel. Returns true when anything changed, so the
@@ -678,6 +665,21 @@ impl PaperTrading {
     /// acknowledgement's lifetime as testable as the engine's arithmetic.
     pub(crate) fn show_toast(&mut self, message: String) {
         self.account.set_toast(message);
+    }
+}
+
+#[cfg(test)]
+impl PaperTrading {
+    /// The report's state and its environment, together.
+    ///
+    /// Test-only, and a delegation: the parts are the account's now.
+    pub(crate) fn report_parts(
+        &mut self,
+    ) -> (
+        &mut crate::paper_report::ReportState,
+        crate::paper_report::ReportEnv<'_>,
+    ) {
+        self.account.report_parts()
     }
 }
 

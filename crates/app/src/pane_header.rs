@@ -205,6 +205,7 @@ pub fn draw_marked(
     ui.painter()
         .hline(strip.x_range(), strip.bottom() - 0.5, rule);
     let inner = strip.shrink2(CONTENT_PADDING);
+    let inner = inner.with_max_x(inner.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX);
     let inner = inner.with_min_x((inner.left() + FRAME_PX).min(inner.right()));
     let bulb = palette.resolved.has_lit_flow().then_some(row.lights_on);
     let bare_controls_px = row.state.map_or(0.0, |_| flow_controls_px(bulb.is_some()));

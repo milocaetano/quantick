@@ -393,13 +393,6 @@ impl OrderflowView {
         base
     }
 
-    /// The last capture bucket adopted into the UI mirror.
-    #[cfg(test)]
-    #[must_use]
-    pub fn base_capture_grouping(&self) -> Decimal {
-        self.published.base_price_grouping
-    }
-
     /// Whether L2 depth capture is recording. Says nothing about whether the
     /// map is on screen — see [`depth_visible`](Self::depth_visible).
     #[must_use]
@@ -980,17 +973,6 @@ impl OrderflowView {
         });
     }
 
-    /// Deterministic shorthand for tests that do not inspect arrival latency.
-    #[cfg(test)]
-    pub fn handle_depth_event(&mut self, event: DepthEvent) {
-        let received_at_ms = match &event {
-            DepthEvent::Snapshot { observed_at_ms, .. } => *observed_at_ms,
-            DepthEvent::Update { event_time_ms, .. } => *event_time_ms,
-            DepthEvent::Status { .. } => 0,
-        };
-        self.handle_depth_event_at(event, received_at_ms);
-    }
-
     pub fn health(&mut self) -> OrderflowHealth {
         self.sync_published();
         self.published.health.clone()
@@ -1148,13 +1130,6 @@ impl OrderflowView {
         self.worker.send(BookCommand::ResetSummaryCounters);
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_worker_for_test(symbol: &str, worker: BookWorker) -> Self {
-        let mut view = Self::new(symbol);
-        view.worker = worker;
-        view
-    }
-
     /// The stored presets, which an asset's declared look names.
     pub(crate) fn bubble_presets(&self) -> &bubble_presets::BubblePresetFile {
         self.look.presets()
@@ -1182,14 +1157,6 @@ impl OrderflowView {
         self.worker.send(BookCommand::TapeEpoch(epoch));
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
-        self.apply_named_preset_with(
-            name,
-            spheres,
-            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
-        )
-    }
     pub(crate) fn apply_named_preset_with(
         &mut self,
         name: &str,
@@ -1267,6 +1234,39 @@ impl OrderflowView {
         self.flow_execution
             .set_ignore_opening(settings.flow_ignore_opening);
         self.apply_config(before);
+    }
+}
+
+#[cfg(test)]
+impl OrderflowView {
+    /// The last capture bucket adopted into the UI mirror.
+    #[must_use]
+    pub fn base_capture_grouping(&self) -> Decimal {
+        self.published.base_price_grouping
+    }
+
+    /// Deterministic shorthand for tests that do not inspect arrival latency.
+    pub fn handle_depth_event(&mut self, event: DepthEvent) {
+        let received_at_ms = match &event {
+            DepthEvent::Snapshot { observed_at_ms, .. } => *observed_at_ms,
+            DepthEvent::Update { event_time_ms, .. } => *event_time_ms,
+            DepthEvent::Status { .. } => 0,
+        };
+        self.handle_depth_event_at(event, received_at_ms);
+    }
+
+    pub(crate) fn with_worker_for_test(symbol: &str, worker: BookWorker) -> Self {
+        let mut view = Self::new(symbol);
+        view.worker = worker;
+        view
+    }
+
+    pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
+        self.apply_named_preset_with(
+            name,
+            spheres,
+            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
+        )
     }
 }
 

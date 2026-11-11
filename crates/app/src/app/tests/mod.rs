@@ -41,6 +41,8 @@ mod bar_registry_tests;
 mod bare_canvas;
 mod bench_batches;
 mod calendar_history_tests;
+mod canvas_layout_tests;
+mod capsule_tests;
 mod chart_settings_local_tests;
 mod chart_view_tests;
 mod context_menu_settings_tests;
@@ -52,6 +54,7 @@ mod drawing_demo_baselines;
 mod drawing_magnet_tests;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod floating_pane_tests;
 mod grid_pixel_tests;
 mod history_interaction_tests;
 mod history_publication_tests;
@@ -74,6 +77,7 @@ mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
 mod pane_focus_click_tests;
+mod pane_menu_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_grid_tests;
@@ -94,6 +98,7 @@ mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
+mod widget_surface_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
@@ -360,6 +365,7 @@ fn test_config() -> AppConfig {
             asset_families: Vec::new(),
             asset_aliases: Default::default(),
             symbol_asset_modes: Default::default(),
+            symbol_widgets: Default::default(),
             contract_rolls: Default::default(),
             default_layout: None,
             default_bars: None,
@@ -1781,6 +1787,10 @@ fn app_backfilled_with(
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
                 native_candle_intervals: false,
+                liquidations: false,
+                open_interest: false,
+                funding: false,
+                spot_perp_pair: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,
@@ -1904,6 +1914,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
@@ -1919,6 +1930,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,

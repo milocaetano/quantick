@@ -804,12 +804,6 @@ impl DrawingChromeSurface {
         self.manager.open = open;
     }
 
-    /// Open the inspector, or shut it.
-    #[cfg(test)]
-    pub fn set_inspector_open(&mut self, open: bool) {
-        self.shared.open = open;
-    }
-
     /// Whether the floating inspector is on screen. Read by the host before
     /// it formats the band name, which only the inspector's title shows.
     pub fn inspector_open(&self) -> bool {
@@ -913,14 +907,6 @@ impl DrawingChromeSurface {
     /// Close the editor, if one is open, and return its undo record.
     pub fn end_inline_text_edit(&mut self) -> Option<DrawingEdit> {
         self.inline.end()
-    }
-
-    /// Park the inspector where a hand put it. The hook that stands in for one
-    /// reaches [`inspector::Inspector::place_by_hand`] through the opt-in
-    /// owner launch scenario.
-    #[cfg(test)]
-    pub fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
-        self.inspector.place_by_hand(position);
     }
 
     /// Restore the position a workspace file remembered.
@@ -1033,75 +1019,77 @@ impl DrawingChromeSurface {
     pub fn take_inspector_position_dirty(&mut self) -> bool {
         self.inspector.take_position_dirty()
     }
+}
+
+#[cfg(test)]
+impl DrawingChromeSurface {
+    /// Open the inspector, or shut it.
+    pub fn set_inspector_open(&mut self, open: bool) {
+        self.shared.open = open;
+    }
+
+    /// Park the inspector where a hand put it. The hook that stands in for one
+    /// reaches [`inspector::Inspector::place_by_hand`] through the opt-in
+    /// owner launch scenario.
+    pub fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
+        self.inspector.place_by_hand(position);
+    }
 
     /// The rest is what a test needs to say about state that has no other
     /// door: the pin it is about to click, the position it is about to check,
     /// the flag a capture hook would otherwise have to be launched to set.
-    #[cfg(test)]
     pub fn set_inspector_pinned(&mut self, pinned: bool) {
         self.shared.pinned = pinned;
     }
 
-    #[cfg(test)]
     pub fn set_inspector_tab(&mut self, tab: InspectorTab) {
         self.inspector.tab = tab;
     }
 
-    #[cfg(test)]
     pub fn inspector_pos(&self) -> Option<egui::Pos2> {
         self.inspector.pos
     }
 
-    #[cfg(test)]
     pub fn set_inspector_pos(&mut self, position: Option<egui::Pos2>) {
         self.inspector.pos = position;
     }
 
-    #[cfg(test)]
     pub fn inspector_moved(&self) -> bool {
         self.inspector.moved
     }
 
-    #[cfg(test)]
     pub fn set_inspector_moved(&mut self, moved: bool) {
         self.inspector.moved = moved;
     }
 
-    #[cfg(test)]
     pub fn inspector_pin_touched(&self) -> bool {
         self.inspector.pin_touched
     }
 
-    #[cfg(test)]
     pub fn set_inspector_pin_touched(&mut self, touched: bool) {
         self.inspector.pin_touched = touched;
     }
 
-    #[cfg(test)]
     pub fn context_bar(&self) -> &crate::drawings::context_bar::ContextBar {
         &self.bar.bar
     }
 
-    #[cfg(test)]
     pub fn context_bar_mut(&mut self) -> &mut crate::drawings::context_bar::ContextBar {
         &mut self.bar.bar
     }
 
-    #[cfg(test)]
     pub fn set_pending_text_note(&mut self, pending: bool) {
         self.scenario.request_note(pending);
     }
 
     /// Forget the rectangle the bar was last drawn at, so a test can prove a
     /// frame drew it again rather than read a stale one.
-    #[cfg(test)]
     pub fn forget_context_bar_rect(&mut self) {
         self.bar.last_drawn_rect = None;
     }
 
     /// Open an edit gesture by hand, so a test can prove that one which
     /// outlives its selection is committed rather than dropped.
-    #[cfg(test)]
     pub fn open_edit_gesture(&mut self, tab: u64, side: PaneSide, index: usize, before: Drawing) {
         self.shared.edit_baseline = Some(DrawingEdit {
             tab,
@@ -1111,17 +1099,14 @@ impl DrawingChromeSurface {
         });
     }
 
-    #[cfg(test)]
     pub fn context_bar_rect(&self) -> Option<egui::Rect> {
         self.bar.last_drawn_rect
     }
 
-    #[cfg(test)]
     pub fn inspector_pin_rect(&self) -> Option<egui::Rect> {
         self.inspector.pin_rect
     }
 
-    #[cfg(test)]
     pub fn manager_action_rects(&self) -> &[(usize, &'static str, egui::Rect)] {
         &self.manager.action_rects
     }

@@ -119,18 +119,6 @@ impl ChartSettingsSurface {
         self.open
     }
 
-    /// Whether the window is on screen showing `tab`.
-    #[cfg(test)]
-    pub fn is_open_on(&self, tab: ChartSettingsTab) -> bool {
-        self.open && self.tab == tab
-    }
-
-    /// The tab shown, or shown next time the window opens.
-    #[cfg(test)]
-    pub fn tab(&self) -> ChartSettingsTab {
-        self.tab
-    }
-
     /// Put the window on screen at `tab` over the chart's `current` look —
     /// every entry point comes through here, so a click and a named call
     /// cannot disagree about the window. The Candles sitting starts now, not
@@ -194,6 +182,19 @@ impl ChartSettingsSurface {
         self.last_change = Some(now);
         // A later knob drag makes the look nobody's preset again.
         self.pending_preset = preset;
+    }
+}
+
+#[cfg(test)]
+impl ChartSettingsSurface {
+    /// Whether the window is on screen showing `tab`.
+    pub fn is_open_on(&self, tab: ChartSettingsTab) -> bool {
+        self.open && self.tab == tab
+    }
+
+    /// The tab shown, or shown next time the window opens.
+    pub fn tab(&self) -> ChartSettingsTab {
+        self.tab
     }
 }
 

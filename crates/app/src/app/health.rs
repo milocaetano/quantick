@@ -95,16 +95,11 @@ impl HealthCounters {
         &self,
         runtime: &WorkspaceRuntime,
         config: &crate::config::AppConfig,
-        home: bool,
     ) -> statusbar::StatusModel {
         let tab = runtime.active_tab();
         let pane = tab.focused_pane();
         let note = tab.side_note(config);
-        let row = (runtime.workspace.book).tab_row(runtime.tabs.active_id());
         statusbar::StatusModel {
-            workspace: (!home).then_some(row.0),
-            modified: row.1,
-            autosave: runtime.workspace.book.autosave(),
             venue: if tab.link.replay.is_some() {
                 "recording".to_owned()
             } else {

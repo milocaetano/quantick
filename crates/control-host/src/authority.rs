@@ -148,6 +148,9 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 
 /// The canvas: which charts are on screen, where and how wide.
 pub const LAYOUT_MODULE_ID: &str = "layout";
+/// The workspace canvas: its layout catalogue, per-chart menu, add button and
+/// floating charts.
+pub const CANVAS_MODULE_ID: &str = "canvas";
 
 /// Names that once meant something and now split, with what replaced each, and
 /// which of those are named ahead of being built (none today).
@@ -192,6 +195,8 @@ pub const TAB_MODULE_ID: &str = "tab";
 pub const MARKET_MODULE_ID: &str = "market";
 /// The venues' lists of markets.
 pub const CATALOG_MODULE_ID: &str = "catalog";
+/// The widget panes' floating windows: Depth, Big Trades and the rest.
+pub const WIDGET_MODULE_ID: &str = "widget";
 
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -626,6 +631,17 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             title: "Layout".to_owned(),
             description: "The canvas: which charts are on screen, where they sit, and how wide."
                 .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(CANVAS_MODULE_ID),
+            title: "Canvas".to_owned(),
+            description: "The workspace canvas: layouts, minimized, maximized, floating and popped-out charts."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(WIDGET_MODULE_ID),
+            title: "Widget".to_owned(),
+            description: "The widget panes, each in its floating window over the chart.".to_owned(),
         },
         ModuleDescriptor {
             id: module(HOME_MODULE_ID),

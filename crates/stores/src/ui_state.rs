@@ -991,6 +991,7 @@ mod tests {
                 asset_families: Vec::new(),
                 asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                symbol_widgets: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Which pane.",
+  "properties": {
+    "id": {
+      "description": "`depth`, `big_trades`, `liquidations`, `open_interest` or\n`spot_perp_cvd`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "WidgetInput",
+  "type": "object"
+}

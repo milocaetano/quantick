@@ -114,14 +114,6 @@ impl ToastSurface {
         });
     }
 
-    /// Take the current message off screen. Test-only: in the product a
-    /// toast leaves on its own deadline or on Undo, never by command.
-    #[cfg(test)]
-    pub fn clear(&mut self) {
-        self.pending = None;
-        self.deferred = None;
-    }
-
     /// Put a held message up, if the slot has come free.
     ///
     /// Called at the top of the draw, after expiry, so a deferred message
@@ -140,15 +132,23 @@ impl ToastSurface {
             });
         }
     }
+}
+
+#[cfg(test)]
+impl ToastSurface {
+    /// Take the current message off screen. Test-only: in the product a
+    /// toast leaves on its own deadline or on Undo, never by command.
+    pub fn clear(&mut self) {
+        self.pending = None;
+        self.deferred = None;
+    }
 
     /// The message on screen, if any.
-    #[cfg(test)]
     pub fn message(&self) -> Option<&str> {
         self.pending.as_ref().map(|pending| &*pending.message)
     }
 
     /// Whether the message on screen offers Undo.
-    #[cfg(test)]
     pub fn offers_undo(&self) -> bool {
         self.pending
             .as_ref()
@@ -156,7 +156,6 @@ impl ToastSurface {
     }
 
     /// Where the Undo button was painted last frame, for tests that click it.
-    #[cfg(test)]
     pub fn undo_rect(&self) -> Option<egui::Rect> {
         self.undo_rect
     }

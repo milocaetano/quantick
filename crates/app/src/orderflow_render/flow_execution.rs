@@ -84,27 +84,6 @@ pub(crate) struct FlowDrawing {
     appearance: Arc<crate::theme::Palette>,
 }
 impl FlowDrawing {
-    /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
-    /// whose keys held since `previous`, this look's drawing before, are kept from it.
-    #[cfg(test)]
-    pub fn styled(
-        (frame, plan): (&FlowTapeFrame, FlowPresentation),
-        look: (egui::Color32, Option<egui::Color32>),
-        tick_look: Option<quantick_orderflow::TickLook>,
-        (painter, history): (&egui::Painter, egui::Rect),
-        previous: Option<&Self>,
-    ) -> Self {
-        let appearance = crate::theme::get(painter.ctx());
-        Self::with_appearance(
-            (frame, plan),
-            look,
-            tick_look,
-            (painter, history),
-            previous,
-            appearance,
-        )
-    }
-
     pub(super) fn with_appearance(
         (frame, plan): (&FlowTapeFrame, FlowPresentation),
         look: (egui::Color32, Option<egui::Color32>),
@@ -144,6 +123,29 @@ impl FlowDrawing {
             mesh.texture_id = texels[index % 2];
             clip.add(egui::Shape::mesh(mesh));
         }
+    }
+}
+
+#[cfg(test)]
+impl FlowDrawing {
+    /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
+    /// whose keys held since `previous`, this look's drawing before, are kept from it.
+    pub fn styled(
+        (frame, plan): (&FlowTapeFrame, FlowPresentation),
+        look: (egui::Color32, Option<egui::Color32>),
+        tick_look: Option<quantick_orderflow::TickLook>,
+        (painter, history): (&egui::Painter, egui::Rect),
+        previous: Option<&Self>,
+    ) -> Self {
+        let appearance = crate::theme::get(painter.ctx());
+        Self::with_appearance(
+            (frame, plan),
+            look,
+            tick_look,
+            (painter, history),
+            previous,
+            appearance,
+        )
     }
 }
 

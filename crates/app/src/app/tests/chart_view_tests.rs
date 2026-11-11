@@ -370,7 +370,14 @@ fn an_offline_empty_tab_gives_the_overlay_the_whole_canvas() {
             .any(|text| text.starts_with("No connection to"))
     );
     assert!(texts.iter().any(|text| text == "Reconnect"));
-    for chrome in CHROME {
+    // The capsule names the workspace, which may share a layout's name.
+    let workspace = app
+        .runtime
+        .workspace
+        .book
+        .tab_row(app.runtime.tabs.active_id())
+        .0;
+    for chrome in CHROME.into_iter().filter(|chrome| *chrome != workspace) {
         assert!(
             !texts.iter().any(|text| text == chrome),
             "no pane chrome: {chrome}"

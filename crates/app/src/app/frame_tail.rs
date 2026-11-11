@@ -27,17 +27,6 @@ pub(super) struct FrameTailInput<'a> {
     pub chip_rect: Option<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
-    /// The tail with every account settled at its paper stage.
-    #[cfg(test)]
-    pub fn execute(
-        self,
-        input: FrameTailInput<'_>,
-        spawn: &mut LiveFeedSpawn<'_>,
-        stages: impl IntoIterator<Item = FrameTailStage>,
-    ) {
-        self.execute_settling(input, spawn, stages, settle_paper_panels);
-    }
-
     /// One window's tail: only the account on screen settles here; the ones
     /// no window shows settle once, after every window.
     pub fn execute_watched(
@@ -97,6 +86,19 @@ impl FrameTailOwners<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl FrameTailOwners<'_> {
+    /// The tail with every account settled at its paper stage.
+    pub fn execute(
+        self,
+        input: FrameTailInput<'_>,
+        spawn: &mut LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.execute_settling(input, spawn, stages, settle_paper_panels);
     }
 }
 

@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 use super::CanvasLayout;
 use super::context_resize::ContextStack;
-use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
+use crate::canvas_layout::{LayoutPreset, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneSide};
 
 /// The geometry owner of one tab's canvas. The tab holds one and reads its
@@ -18,6 +18,11 @@ pub struct TabCanvas {
     /// and this field with `split_fraction` and the tab's focus is what it
     /// would write.
     pub layout: CanvasLayout,
+    /// The canvas as the headless model holds it: the pane tree, the folds,
+    /// the maximized pane and the floating ones. Picked layouts and the
+    /// `canvas.*` capabilities change it; a layout the column painter cannot
+    /// draw, or any fold or maximize, is painted from it.
+    pub state: quantick_workspace::canvas::CanvasState,
     /// The context column's share of the canvas width while it is shown.
     ///
     /// Kept while the column is collapsed, which is what it springs back to.
@@ -33,7 +38,19 @@ pub struct TabCanvas {
     /// Pixel width and opening direction of the divider drag in flight.
     pub(super) drag: Option<(f32, bool, bool)>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
-    pub(super) last_canvas: egui::Rect,
+    pub(crate) last_canvas: egui::Rect,
+    /// Which built time pane each time slot of [`Self::state`] shows, kept
+    /// across edits so a removed chart never moves another; a picked layout
+    /// seats them afresh.
+    pub(crate) seats: quantick_workspace::canvas::Seats,
+    /// The floating chart held by its grip or an edge, and what letting go
+    /// or its own window asked for.
+    pub(crate) floats: crate::floating_panes::FloatingPanes,
+    /// The charts' ⋯ menus, their strips and the remove dialog.
+    pub(crate) menus: crate::pane_menu::PaneMenus,
+    /// Every pane band the last drawn frame laid out, header to strip.
+    pub(crate) drawn_bands:
+        SmallVec<[(PaneSide, egui::Rect); crate::canvas_layout::MAX_CANVAS_PANES]>,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by `Tab::apply_pending_layout` on the following frame.
     pub(super) pending_context_panes: usize,
@@ -61,12 +78,19 @@ impl Default for TabCanvas {
     fn default() -> Self {
         Self {
             layout: CanvasLayout::Single,
+            state: quantick_workspace::canvas::CanvasState::from_preset(
+                CanvasLayout::Single.preset(),
+            ),
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: false,
             flow_collapsed: false,
             context_stack: ContextStack::default(),
             drag: None,
             last_canvas: egui::Rect::ZERO,
+            drawn_bands: SmallVec::new(),
+            menus: Default::default(),
+            seats: Default::default(),
+            floats: Default::default(),
             pending_context_panes: 0,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -96,6 +120,8 @@ impl TabCanvas {
         self.context_collapsed = false;
         self.flow_collapsed = false;
         self.expand_context_stack();
+        self.state.apply_preset(layout.preset());
+        self.seats.clear();
         if layout == previous {
             return None;
         }
@@ -116,11 +142,11 @@ impl TabCanvas {
             // The split reveals whichever pane the previous layout was not
             // showing: the time pane coming from Single, the flow pane coming
             // from Time.
-            CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
-                CanvasLayout::Single => PaneSide::Time(0),
-                CanvasLayout::Time => PaneSide::Flow,
-                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => focus,
-            },
+            _ if !layout.shows_flow() => PaneSide::Time(0),
+            _ if !layout.shows_time() => PaneSide::Flow,
+            _ if !previous.shows_time() => PaneSide::Time(0),
+            _ if !previous.shows_flow() => PaneSide::Flow,
+            _ => focus,
         })
     }
 
@@ -131,6 +157,11 @@ impl TabCanvas {
         slot: usize,
         ids: &mut PaneIdAllocator,
     ) -> Option<ChartPane> {
+        // A chart the canvas holds beyond what a layout asked for (one added
+        // or floating) is built like any other.
+        let time = |(_, kind, _): &(_, PaneKind, _)| *kind == PaneKind::Time;
+        let wanted = self.state.panes().iter().filter(|pane| time(pane)).count();
+        self.pending_context_panes = (self.pending_context_panes).max(wanted.saturating_sub(slot));
         if self.pending_context_panes == 0 {
             return None;
         }
@@ -154,6 +185,15 @@ impl TabCanvas {
                 .map(crate::layouts::LayoutId),
         );
         Some(pane)
+    }
+
+    /// A new chart for `seat`, opening as a chart nobody saved: the canvas's
+    /// opening interval, no saved layout.
+    pub(super) fn fresh_pane(&self, seat: usize, ids: &mut PaneIdAllocator) -> ChartPane {
+        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
+        pane.presentation.candles = quantick_stores::pane_style::restore(&[], seat + 1);
+        pane.layout.opening = Some(None);
+        pane
     }
 
     /// Name the layout a context pane will open on when the stack builds it.
@@ -219,6 +259,26 @@ impl TabCanvas {
         true
     }
 
+    /// Whether the column painter draws this frame: a layout it knows, laid
+    /// out as its preset, nothing floating, folded or maximized by the
+    /// canvas model.
+    /// Anything else is painted from [`Self::state`]'s tree.
+    pub(crate) fn column_painted(&self) -> bool {
+        self.layout.is_column()
+            && self.state.floating().is_empty()
+            && self.state.maximized().is_none()
+            && self.state.minimized().is_empty()
+            && self.state.preset() == Some(self.layout.preset())
+    }
+
+    /// Put the column painter's split where the layout's tree puts the flow
+    /// pane, so a picked layout draws exactly what its thumbnail drew.
+    pub(crate) fn split_to_preset(&mut self) {
+        if self.layout.is_column() && self.layout.shows_time() {
+            self.split_fraction = (self.layout.preset().flow_left()).unwrap_or(self.split_fraction);
+        }
+    }
+
     /// Fold or restore the flow pane while retaining the split's open width.
     pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
         if self.flow_collapsed == collapsed && (!collapsed || !self.context_collapsed) {
@@ -230,4 +290,31 @@ impl TabCanvas {
         }
         true
     }
+}
+
+/// The layout a hook or a config names: a config word first (so
+/// `time+time+flow` stays the stacked column it always was), else a preset id.
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) fn named(name: &str) -> Option<CanvasLayout> {
+    let declared = crate::config::DeclaredLayout::parse(name).map(CanvasLayout::from);
+    declared.or_else(|| crate::canvas_layout::preset(name).map(CanvasLayout::from_preset))
+}
+
+/// Lay `tab` out as `preset`, the split where the preset's tree puts it:
+/// the one way every picker, menu and call applies a layout. Answers whether
+/// the canvas changed.
+pub(crate) fn pick(tab: &mut super::Tab, preset: &'static LayoutPreset) -> bool {
+    let before = (
+        tab.canvas.layout,
+        tab.canvas.state.clone(),
+        tab.canvas.split_fraction,
+    );
+    tab.set_layout(CanvasLayout::from_preset(preset));
+    tab.canvas.split_to_preset();
+    before
+        != (
+            tab.canvas.layout,
+            tab.canvas.state.clone(),
+            tab.canvas.split_fraction,
+        )
 }

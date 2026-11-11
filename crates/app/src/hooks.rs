@@ -142,6 +142,14 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     ("crates/app/src/feed_notice.rs", crate::feed_notice::HOOKS),
     ("crates/app/src/loading.rs", crate::loading::HOOKS),
     (
+        "crates/app/src/widget_surfaces/mod.rs",
+        crate::widget_surfaces::HOOKS,
+    ),
+    (
+        "crates/app/src/app/canvas_wiring.rs",
+        crate::app::canvas_wiring::HOOKS,
+    ),
+    (
         "crates/app/src/footprint_config.rs",
         crate::footprint_config::HOOKS,
     ),
@@ -250,17 +258,6 @@ impl ScenarioInputs {
         )
     }
 
-    /// Inputs a test states outright, as `(name, value)` pairs.
-    #[cfg(test)]
-    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
-        Self::capture(|name| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| (*value).into())
-        })
-    }
-
     /// The captured value of `name`, when the launch set one.
     pub fn var(&self, name: &str) -> Option<String> {
         debug_assert!(
@@ -268,6 +265,19 @@ impl ScenarioInputs {
             "{name} is not a scenario input; declare it with its owner"
         );
         self.0.get(name).cloned().flatten()
+    }
+}
+
+#[cfg(test)]
+impl ScenarioInputs {
+    /// Inputs a test states outright, as `(name, value)` pairs.
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        Self::capture(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).into())
+        })
     }
 }
 

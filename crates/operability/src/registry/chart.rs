@@ -155,19 +155,131 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.preset.apply",
         title: "Switch the canvas to another arrangement",
-        reach: "toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
+        reach: "the capsule's layout popover, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
         keys: &[
             (Source::ToolbarAction, "SetLayout"),
+            (Source::ToolbarAction, "ToggleLayoutPopover"),
             (Source::LayoutPreset, "flow"),
-            (Source::LayoutPreset, "time"),
             (Source::LayoutPreset, "time+flow"),
             (Source::LayoutPreset, "time+time+flow"),
+            (Source::LayoutPreset, "stack2+flow"),
+            (Source::LayoutPreset, "stack3+flow"),
+            (Source::LayoutPreset, "grid4+flow"),
+            (Source::LayoutPreset, "flow-over-time"),
+            (Source::LayoutPreset, "flow-over-2time"),
+            (Source::LayoutPreset, "time"),
+            (Source::LayoutPreset, "charts-2"),
+            (Source::LayoutPreset, "charts-3"),
+            (Source::LayoutPreset, "charts-4"),
+            (Source::LayoutPreset, "charts-5"),
+            (Source::LayoutPreset, "charts-6"),
+            (Source::LayoutPreset, "charts-7"),
+            (Source::LayoutPreset, "charts-8"),
             (Source::Hotkey, "LAYOUT_PRESET_KEYS"),
             (Source::MenuEntry, "Layout"),
         ],
-        mapping: capability!("layout.preset.apply"),
+        mapping: capability!("layout.preset.apply", "canvas.layout.pick"),
+    },
+    UiBehaviour {
+        id: "canvas.window_menu.open",
+        title: "Open the window menu from the toolbar's list door",
+        reach: "the toolbar's list door at its left end",
+        keys: &[(Source::ToolbarAction, "ToggleWindowMenu")],
+        mapping: capability!("canvas.window_menu.open"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.minimize",
+        title: "Fold a chart to a strip at its edge",
+        reach: "a chart header's ⋯ menu, Minimize; the remove dialog's Minimize instead",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.minimize"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.maximize",
+        title: "Fill the canvas with one chart",
+        reach: "a chart header's ⋯ menu, Maximize",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.maximize"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.restore",
+        title: "Bring a folded or maximized chart back to its place",
+        reach: "a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.restore"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.remove",
+        title: "Remove a chart from the canvas, asking first when the save holds it",
+        reach: "a chart header's ⋯ menu, Remove chart, then the dialog's Remove",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.remove"),
+    },
+    UiBehaviour {
+        id: "canvas.widget.add",
+        title: "Add a chart or a widget to the canvas",
+        reach: "the toolbar's + left of the capsule, then a row of ADD TO CANVAS",
+        keys: &[(Source::ToolbarAction, "ToggleAddMenu")],
+        mapping: capability!("canvas.widget.add"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.float",
+        title: "Move or resize a floating chart over the canvas",
+        reach: "a floating chart's grip dropped away from the edges and corners, or an edge dragged",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.float"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.dock",
+        title: "Dock a floating chart into the layout at an edge",
+        reach: "a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.dock"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.park",
+        title: "Park a floating chart in a canvas corner",
+        reach: "a floating chart's grip dropped in a canvas corner",
+        keys: &[(Source::Authored, GRIP)],
+        mapping: capability!("canvas.pane.park"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.pop_out",
+        title: "Open a chart in its own OS window",
+        reach: "a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.pop_out"),
+    },
+    UiBehaviour {
+        id: "canvas.pane.return",
+        title: "Bring a chart from its own window back over the canvas",
+        reach: "the chart window's ⋯ menu, Return to canvas; closing that window",
+        keys: &[(
+            Source::Authored,
+            "a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum",
+        )],
+        mapping: capability!("canvas.pane.return"),
     },
 ];
+
+/// What a drag on a floating chart's grip is keyed by.
+const GRIP: &str =
+    "the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides";
 
 /// History.
 pub(super) const HISTORY: &[UiBehaviour] = &[

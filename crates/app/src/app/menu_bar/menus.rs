@@ -38,11 +38,26 @@ const SUBMENU_LIFT_PX: f32 = 6.0;
 /// Submenu levels the table allows below the root.
 const MAX_SUBMENU_LEVELS: usize = 2;
 
+/// The button the menu hangs from. Both open the same menu; the door only
+/// decides where it drops and which way its submenus open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::app) enum MenuDoor {
+    /// The title bar's `⋮`, at the window's right edge: panes open leftwards.
+    #[default]
+    Kebab,
+    /// The toolbar's `≡`, at the window's left edge: panes open rightwards.
+    Toolbar,
+}
+
 /// Whether the menu is up, and which submenus are open along the way.
 #[derive(Default)]
 pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) open: bool,
     pub(in crate::app) viewport: Option<egui::ViewportId>,
+    /// The button the open menu hangs from.
+    door: MenuDoor,
+    /// Where the toolbar's `≡` was drawn last frame, on the window it is on.
+    pub(in crate::app) toolbar_door: Option<egui::Rect>,
     /// The window Settings and Help opened on, apart from the menu's own.
     pub(in crate::app) windows_viewport: Option<egui::ViewportId>,
     pub(in crate::app) settings_open: bool,
@@ -77,12 +92,33 @@ impl WindowMenuState {
     /// Open or close the menu on this window. Opened from the keyboard, its first
     /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
     pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {
+        self.toggle_from(viewport, MenuDoor::Kebab, by_keyboard);
+    }
+
+    /// [`Self::toggle`], hanging the menu from `door`.
+    pub(in crate::app) fn toggle_from(
+        &mut self,
+        viewport: egui::ViewportId,
+        door: MenuDoor,
+        by_keyboard: bool,
+    ) {
         // Open on another window, this press still opens it here.
         let open = !self.is_open_on(viewport);
         self.close();
         self.open = open;
         self.viewport = Some(viewport);
+        self.door = door;
         self.focus_pane = (open && by_keyboard).then_some(0);
+    }
+
+    /// Whether the menu is up on this window and hangs from `door`.
+    pub(in crate::app) fn opened_from(&self, viewport: egui::ViewportId, door: MenuDoor) -> bool {
+        self.is_open_on(viewport) && self.door == door
+    }
+
+    /// The button the menu hangs from.
+    pub(in crate::app) const fn door(&self) -> MenuDoor {
+        self.door
     }
 
     pub(in crate::app) fn is_open_on(&self, viewport: egui::ViewportId) -> bool {
@@ -117,12 +153,13 @@ pub(super) struct WindowMenu<'a> {
 }
 
 impl WindowMenu<'_> {
-    /// Draw the open panes, anchored under the `⋮` button at `kebab`.
+    /// Draw the open panes, anchored under the button at `door`: the `⋮`'s
+    /// right edge, or the toolbar `≡`'s left edge.
     pub(super) fn show(
         &self,
         ctx: &egui::Context,
         state: &mut WindowMenuState,
-        kebab: egui::Rect,
+        door: egui::Rect,
         commands: &mut Vec<MenuCommand>,
     ) {
         if !state.is_open_on(ctx.viewport_id()) {
@@ -130,7 +167,11 @@ impl WindowMenu<'_> {
         }
         let recorded = commands.len();
         state.panes.clear();
-        self.pane(ctx, state, 0, ROOT, kebab.right_bottom(), commands);
+        let at = match state.door {
+            MenuDoor::Kebab => door.right_bottom(),
+            MenuDoor::Toolbar => door.left_bottom(),
+        };
+        self.pane(ctx, state, 0, ROOT, at, commands);
         // A switch stays up so the trader sees it flip; anything else is done.
         let acted = commands[recorded..]
             .iter()
@@ -139,7 +180,7 @@ impl WindowMenu<'_> {
             let escape = input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
             let outside = input.pointer.any_pressed()
                 && input.pointer.interact_pos().is_some_and(|at| {
-                    !kebab.contains(at) && !state.panes.iter().any(|pane| pane.contains(at))
+                    !door.contains(at) && !state.panes.iter().any(|pane| pane.contains(at))
                 });
             escape || outside
         });
@@ -154,15 +195,21 @@ impl WindowMenu<'_> {
         state: &mut WindowMenuState,
         level: usize,
         items: &[Item],
-        top_right: egui::Pos2,
+        corner: egui::Pos2,
         commands: &mut Vec<MenuCommand>,
     ) {
         let mut child = None;
         let mut over_submenu = false;
+        let rightwards = state.door == MenuDoor::Toolbar;
+        let pivot = if rightwards {
+            egui::Align2::LEFT_TOP
+        } else {
+            egui::Align2::RIGHT_TOP
+        };
         let area = egui::Area::new(egui::Id::new(("window_menu_pane", level)))
             .order(egui::Order::Foreground)
-            .pivot(egui::Align2::RIGHT_TOP)
-            .fixed_pos(top_right)
+            .pivot(pivot)
+            .fixed_pos(corner)
             .constrain(true)
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
@@ -187,11 +234,14 @@ impl WindowMenu<'_> {
                                     };
                                     over_submenu |= row.hovered();
                                     if state.path[level] == Some(id) {
-                                        child = Some((
-                                            id,
+                                        let corner = if rightwards {
+                                            row.rect.right_top()
+                                                + egui::vec2(SUBMENU_GAP_PX, -SUBMENU_LIFT_PX)
+                                        } else {
                                             row.rect.left_top()
-                                                + egui::vec2(-SUBMENU_GAP_PX, -SUBMENU_LIFT_PX),
-                                        ));
+                                                + egui::vec2(-SUBMENU_GAP_PX, -SUBMENU_LIFT_PX)
+                                        };
+                                        child = Some((id, corner));
                                     }
                                 }
                             }
@@ -227,12 +277,17 @@ impl WindowMenu<'_> {
             id,
             SubmenuId::Layouts | SubmenuId::Layout | SubmenuId::MoveChart
         );
+        // The caret points the way the submenu opens.
+        let caret = match state.door {
+            MenuDoor::Kebab => icons::CARET_LEFT,
+            MenuDoor::Toolbar => icons::CARET_RIGHT,
+        };
         let response = ui
             .add_enabled(
                 !empty && (self.chart_shown || !chart_row),
                 egui::Button::new(submenu(id).0)
                     .selected(state.path[level] == Some(id))
-                    .shortcut_text(crate::theme::supporting_text(ui, icons::CARET_LEFT)),
+                    .shortcut_text(crate::theme::supporting_text(ui, caret)),
             )
             .on_disabled_hover_text(if empty {
                 "No workspace files opened yet"

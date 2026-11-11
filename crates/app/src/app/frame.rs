@@ -238,9 +238,8 @@ impl QuantickApp {
 
     /// The status bar's facts, read as the line beside them reads them.
     pub(super) fn status_model(&self) -> statusbar::StatusModel {
-        let home = self.chrome.title_bar.surface.is_home();
         let runtime = self.runtime.bound(&self.presentation.binding);
-        self.health.status_model(runtime, &self.config, home)
+        self.health.status_model(runtime, &self.config)
     }
 
     /// The indicator requests of this frame; a guide switch goes through the
@@ -250,39 +249,6 @@ impl QuantickApp {
         let id = crate::control::INDICATOR_GUIDE_CAPABILITY_ID;
         for input in guides {
             let _ = self.control_action(id, 1, crate::control::ActionOrigin::Human, input);
-        }
-    }
-
-    #[cfg(test)]
-    fn draw_frame_with_tail(
-        &mut self,
-        ctx: &egui::Context,
-        now: Instant,
-        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
-        tail: impl IntoIterator<Item = FrameTailStage>,
-    ) {
-        self.draw_frame_with_stages(ctx, now, spawn, FramePlan::stages(), tail);
-    }
-
-    /// Run `stages` in the order given. Production passes the validated
-    /// plan; tests replay a swapped order through these same adapters, via
-    /// the `#[cfg(test)]` door, to show the harm the declared dependencies
-    /// prevent.
-    #[cfg(test)]
-    fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
-        &mut self,
-        ctx: &egui::Context,
-        now: Instant,
-        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
-        stages: impl IntoIterator<Item = FrameStage>,
-        tail: T,
-    ) {
-        self.presentation.context = Some(ctx.clone());
-        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
-        let mut scratch = FrameScratch::default();
-        let mut tail = Some(tail);
-        for stage in stages {
-            self.run_frame_stage(stage, ctx, now, &mut scratch, spawn, &mut tail);
         }
     }
 
@@ -595,7 +561,6 @@ impl QuantickApp {
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
-        super::menu_bar::workspace_cell(self, ctx, &scratch.status);
         if scratch.status.open_display_settings {
             super::desk_wiring::open_settings_on(&mut self.chrome.window_menu, ctx);
         }
@@ -722,9 +687,7 @@ impl QuantickApp {
                     panel_folds,
                 };
                 tab.draw_canvas(tab_id, ui, area, &mut chrome);
-                if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
-                    self.indicator_wiring().open_indicator_picker_on(side);
-                }
+                super::canvas_wiring::settle_canvas(self, ui.ctx());
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
@@ -792,6 +755,40 @@ impl QuantickApp {
             spawn,
             stages,
         );
+    }
+}
+
+#[cfg(test)]
+impl QuantickApp {
+    fn draw_frame_with_tail(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        tail: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.draw_frame_with_stages(ctx, now, spawn, FramePlan::stages(), tail);
+    }
+
+    /// Run `stages` in the order given. Production passes the validated
+    /// plan; tests replay a swapped order through these same adapters, via
+    /// the `#[cfg(test)]` door, to show the harm the declared dependencies
+    /// prevent.
+    fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameStage>,
+        tail: T,
+    ) {
+        self.presentation.context = Some(ctx.clone());
+        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
+        let mut scratch = FrameScratch::default();
+        let mut tail = Some(tail);
+        for stage in stages {
+            self.run_frame_stage(stage, ctx, now, &mut scratch, spawn, &mut tail);
+        }
     }
 }
 

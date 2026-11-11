@@ -1,237 +1,29 @@
-//! The cockpit tier's canvas capabilities: rearranging the trader's charts.
-//!
-//! Every one of these calls the same function the menu and the keyboard call.
-//! That is the point rather than a tidiness preference: a capability with its
-//! own copy of "apply a layout" would drift from the one a click takes, and
-//! the drift would be an assistant and a trader disagreeing about what the
-//! canvas is currently showing.
-//!
-//! They live under the `cockpit` effect, which the `annotator` profile does
-//! **not** inherit. The annotate tier's consent text tells the trader that
-//! nothing granted there can rearrange their window; a capability that arrived
-//! under a grant whose own words deny it would be a trust bug with no surface
-//! to find it on.
+//! The window's adapter onto `quantick_control_handlers::layout`: the layout
+//! calls validate and answer there, and every act below is the one the
+//! window's own strip, divider, rail, menu or header makes.
 
-use crate::app::{LayoutPort, TabsMutPort, TabsPort};
+use crate::app::control_host::ControlPort;
+use crate::app::{LayoutPort, TabsPort};
+use crate::pane::PaneSide;
+use crate::tab::Tab;
 pub(crate) use quantick_control_schema::layout::*;
 
-use quantick_control::{
-    error::ControlError,
-    registry::RegistryError,
-    wire::{ActorContext, WireU64},
-};
+use quantick_chart::state::{BarConfiguration, SpecSelector};
+use quantick_control::{error::ControlError, wire::ActorKind};
+use quantick_control_handlers::layout::{CanvasReading, LayoutHost, LayoutTab};
+use quantick_workspace::canvas_layout::LayoutPreset;
+use quantick_workspace::layout_document::{LayoutBook, LayoutError, LayoutId};
 
-use serde_json::Value;
-
-use crate::{
-    canvas_layout,
-    tab::{CanvasLayout, Tab},
-};
-
-use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION},
-    gateway::ControlAccess,
-};
-
-pub(super) mod stack;
-
-mod v2;
-
-/// The strip as the control plane reports it — one reading for the layout
-/// calls and `observe.workspace` alike.
+/// The strip as `observe.workspace` reports it: the focused pane's layout lit.
 pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnapshot> {
-    // "Active" on the wire is what the strip lights: the focused pane's
-    // layout. Every pane's own is in `workspace.summary`.
-    layout_tabs_marking(app, app.layout_state().focused_pane_layout())
-}
-
-/// The same reading with `active` on a layout the caller names: a call that
-/// addressed another pane answers about it. Counts are what the focused pane
-/// shows, its tab's copy, as the chart does.
-fn layout_tabs_marking<P: LayoutPort + ?Sized>(
-    app: &P,
-    active: crate::layouts::LayoutId,
-) -> Vec<LayoutTabSnapshot> {
     let state = app.layout_state();
-    state
-        .layouts()
-        .layouts()
-        .iter()
-        .map(|layout| LayoutTabSnapshot {
-            layout_id: WireU64::new(layout.id.0),
-            name: layout.name.clone(),
-            active: layout.id == active,
-            indicator_count: WireU64::new(state.shown_count(layout.id) as u64),
-        })
-        .collect()
-}
-
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    stack::register(registry)?;
-    registry.register(apply_preset_descriptor(), apply_preset)?;
-    registry.register(move_pane_descriptor(), move_pane)?;
-    registry.register(resize_descriptor(), resize)?;
-    registry.register(collapse_descriptor(), collapse)?;
-    registry.register(expand_descriptor(), expand)?;
-    registry.register(flow_collapse_descriptor(), collapse_flow)?;
-    registry.register(flow_expand_descriptor(), expand_flow)?;
-    registry.register(focus_descriptor(), focus)?;
-    registry.register(interval_descriptor(), set_interval)?;
-    registry.register(bar_spec_descriptor(), set_bar_spec)?;
-    registry.register(tab_switch_descriptor(), tab_switch)?;
-    registry.register(tab_create_descriptor(), tab_create)?;
-    registry.register(tab_rename_descriptor(), tab_rename)?;
-    // `layout.tab.delete` is deliberately not registered: it destroys an
-    // indicator set, and no effect policy allows a destructive capability yet
-    // (`contract.rs`, `allows_destructive: false`); the strip and menu delete.
-    v2::register(registry)
-}
-
-/// `subject` is the layout the call acted on, when it named a pane; `None`
-/// answers about the focused pane, which is what a rename or a delete moved
-/// nothing away from.
-fn tab_result<P: LayoutPort + ?Sized>(
-    app: &P,
-    changed: bool,
-    subject: Option<crate::layouts::LayoutId>,
-) -> Result<Value, ControlError> {
-    let subject = subject.unwrap_or_else(|| app.layout_state().focused_pane_layout());
-    let active = app
-        .layout_state()
-        .layouts()
-        .get(subject)
-        .unwrap_or_else(|| app.layout_state().layouts().active());
-    let payload = LayoutTabResult {
-        active_layout_id: WireU64::new(active.id.0),
-        active_layout_name: active.name.clone(),
-        layouts: layout_tabs_marking(app, active.id),
-        changed,
-    };
-    serde_json::to_value(payload).map_err(|error| {
-        ControlError::invalid_request(format!(
-            "the layout tab result could not be encoded: {error}"
-        ))
+    let active = state.focused_pane_layout();
+    quantick_control_handlers::layout::layout_tabs(state.layouts(), active, |id| {
+        state.shown_count(id)
     })
 }
 
-fn resolve_layout_tab<P: LayoutPort + ?Sized>(
-    app: &P,
-    target: &LayoutTabTarget,
-) -> Result<crate::layouts::LayoutId, ControlError> {
-    let by_id = target
-        .layout_id
-        .map(|id| crate::layouts::LayoutId(id.get()))
-        .map(|id| {
-            app.layout_state()
-                .layouts()
-                .on_strip(id)
-                .map(|layout| layout.id)
-                .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
-        })
-        .transpose()?;
-    let by_name = target
-        .name
-        .as_deref()
-        .map(|name| {
-            app.layout_state()
-                .layouts()
-                .by_name(name)
-                .map(|layout| layout.id)
-                .ok_or_else(|| {
-                    ControlError::invalid_request(format!("no layout is called {name:?}"))
-                })
-        })
-        .transpose()?;
-    match (by_id, by_name) {
-        (Some(id), Some(named)) if id != named => Err(ControlError::invalid_request(
-            "layout_id and name name different layouts",
-        )),
-        (Some(id), _) | (None, Some(id)) => Ok(id),
-        // Omitted: the layout the focused pane shows — the one the strip
-        // lights, never the book's own default.
-        (None, None) => Ok(app.layout_state().focused_pane_layout()),
-    }
-}
-
-fn layout_error(error: crate::layouts::LayoutError) -> ControlError {
-    ControlError::invalid_request(error.to_string())
-}
-
-fn tab_switch<P: TabsPort + LayoutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: SwitchLayoutTabInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let id = resolve_layout_tab(app, &input.layout)?;
-    let index = tab_index(
-        app,
-        TabTarget {
-            tab_id: input.tab_id,
-        },
-    )?;
-    let tab = app
-        .tab_reads()
-        .tab_at(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let side = match input.pane {
-        Some(pane) => {
-            let pane = pane.get() as usize;
-            if tab.pane_at(pane).is_none() {
-                return Err(ControlError::invalid_request(format!(
-                    "this tab has no pane at address {pane}"
-                )));
-            }
-            crate::pane::PaneSide::from_index(pane)
-        }
-        None => tab.focused_side(),
-    };
-    let tab_id = app.tab_reads().tabs().id_at(index);
-    let changed = app
-        .layout_adapter()
-        .switch_pane_layout(tab_id, side, id)
-        .map_err(layout_error)?;
-    tab_result(app, changed, Some(id))
-}
-
-fn tab_create<P: LayoutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: CreateLayoutTabInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let id = app
-        .layout_adapter()
-        .create_layout(input.name.as_deref())
-        .map_err(layout_error)?;
-    tab_result(app, true, Some(id))
-}
-
-fn tab_rename<P: LayoutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: RenameLayoutTabInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let id = resolve_layout_tab(app, &input.target)?;
-    let changed = app
-        .layout_adapter()
-        .rename_layout(id, &input.new_name)
-        .map_err(layout_error)?;
-    tab_result(app, changed, None)
-}
-
 /// Which tab a call names, as an index into the open strip.
-///
-/// A tab id that no longer exists is refused rather than resolved to the
-/// active one: a caller that named a tab meant that tab, and quietly acting on
-/// a different market is the worst answer available.
 pub(crate) fn tab_index<P: TabsPort + ?Sized>(
     app: &P,
     target: TabTarget,
@@ -239,284 +31,108 @@ pub(crate) fn tab_index<P: TabsPort + ?Sized>(
     quantick_control_handlers::tab_index(&app.tab_reads(), target.tab_id)
 }
 
-fn result<P: TabsPort + ?Sized>(
-    app: &P,
-    index: usize,
-    changed: bool,
-) -> Result<Value, ControlError> {
-    let tab = app
-        .tab_reads()
-        .tab_at(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let focused = tab.focused_side().index() as u64;
-    let payload = LayoutResult {
-        tab_id: WireU64::new(app.tab_reads().tabs().id_at(index)),
-        preset_id: tab.canvas.layout.preset().id.to_owned(),
-        pane_count: WireU64::new(tab.pane_count() as u64),
-        focused_pane: WireU64::new(focused),
-        fraction: f64::from(tab.canvas.split_fraction),
-        collapsed: tab.canvas.context_collapsed,
-        flow_collapsed: tab.canvas.flow_collapsed,
-        changed,
-    };
-    serde_json::to_value(payload).map_err(|error| {
-        ControlError::invalid_request(format!("the layout result could not be encoded: {error}"))
-    })
+impl LayoutHost for dyn ControlPort {
+    fn layout_book(&self) -> &LayoutBook {
+        self.layout_state().layouts()
+    }
+    fn focused_pane_layout(&self) -> LayoutId {
+        self.layout_state().focused_pane_layout()
+    }
+    fn shown_count(&self, layout: LayoutId) -> usize {
+        self.layout_state().shown_count(layout)
+    }
+    fn switch_pane_layout(
+        &mut self,
+        tab_id: u64,
+        side: PaneSide,
+        layout: LayoutId,
+    ) -> Result<bool, LayoutError> {
+        self.layout_adapter()
+            .switch_pane_layout(tab_id, side, layout)
+    }
+    fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
+        self.layout_adapter().create_layout(name)
+    }
+    fn rename_layout(&mut self, layout: LayoutId, name: &str) -> Result<bool, LayoutError> {
+        self.layout_adapter().rename_layout(layout, name)
+    }
+    fn move_context_pane(&mut self, tab_id: u64, from: usize, to: usize) -> bool {
+        self.layout_adapter().move_context_pane_at(tab_id, from, to)
+    }
+    fn layout_tab(&mut self, index: usize) -> Option<&mut dyn LayoutTab> {
+        Some(self.tabs_mut().tab_at_mut(index)?)
+    }
 }
 
-/// The tab at `index` for a write, refused if it closed while the call ran.
-fn tab_mut<P: TabsMutPort + ?Sized>(app: &mut P, index: usize) -> Result<&mut Tab, ControlError> {
-    app.tabs_mut()
-        .tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))
-}
-
-fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: ApplyPresetInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input.target)?;
-    let preset = canvas_layout::preset(&input.preset_id).ok_or_else(|| {
-        ControlError::invalid_request(format!(
-            "no layout preset is named {}; `describe` lists them",
-            input.preset_id
-        ))
-    })?;
-    let layout = CanvasLayout::from_preset(preset).ok_or_else(|| {
-        ControlError::invalid_request(format!(
-            "the canvas cannot draw the preset {} yet",
-            preset.id
-        ))
-    })?;
-    let tab = tab_mut(app, index)?;
-    let changed = tab.canvas.layout != layout;
-    tab.set_layout(layout);
-    result(app, index, changed)
-}
-
-fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: MovePaneInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input.target)?;
-    let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    app.tab_reads()
-        .tab_at(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let tab_id = app.tab_reads().tabs().id_at(index);
-    // The one reposition path — the same call the window menu takes, which
-    // moves the slot bookkeeping and the drawing keys with the pane.
-    let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
-    result(app, index, changed)
-}
-
-fn resize<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: ResizeInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input.target)?;
-    let tab = tab_mut(app, index)?;
-    // The descriptor promises a call cannot reach a width a hand could not,
-    // and that promise moved when the floor did: `clamp_pane_fraction` is a
-    // 0..1 sanity clamp now, and the width floor lives in the splitter, which
-    // a stored fraction never passes through. Left as it was, `fraction: 0.0`
-    // stored a zero the canvas did not draw — and the trader's next divider
-    // nudge, computing from that zero, collapsed the column instead of
-    // widening it.
-    //
-    // A width the trader could not drag to is refused rather than clamped: a
-    // caller that asked for a fifth of a pane meant something, and silently
-    // giving them a different width is how a client and a canvas come to
-    // disagree about what is on screen.
-    let asked = crate::pane::clamp_pane_fraction(input.fraction as f32);
-    let floor = canvas_layout::MIN_PANE_WIDTH_PX;
-    let canvas = tab.last_canvas_width();
-    if canvas > 0.0 {
-        let wanted_px = asked * canvas;
-        if wanted_px < floor || canvas - wanted_px < floor {
-            return Err(ControlError::invalid_request(format!(
-                "a share of {asked} leaves a pane under the {floor}px floor on this                  {canvas}px canvas; collapse the column instead of squeezing it away"
-            )));
+impl LayoutTab for Tab {
+    fn reading(&self) -> CanvasReading {
+        CanvasReading {
+            preset_id: self.canvas.layout.preset().id,
+            pane_count: self.pane_count(),
+            focused_pane: self.focused_side().index(),
+            fraction: self.canvas.split_fraction,
+            collapsed: self.canvas.context_collapsed,
+            flow_collapsed: self.canvas.flow_collapsed,
         }
     }
-    let changed = (tab.canvas.split_fraction - asked).abs() > f32::EPSILON;
-    tab.canvas.split_fraction = asked;
-    result(app, index, changed)
-}
-
-fn collapse<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    set_collapsed(app, input, true)
-}
-
-fn expand<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    set_collapsed(app, input, false)
-}
-
-fn set_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    input: &Value,
-    collapsed: bool,
-) -> Result<Value, ControlError> {
-    let input: TabTarget = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input)?;
-    let tab = tab_mut(app, index)?;
-    // The same call the divider drag, the rail and the menu take.
-    let changed = tab.canvas.set_context_collapsed(collapsed);
-    result(app, index, changed)
-}
-
-fn collapse_flow<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    set_flow_collapsed(app, input, true)
-}
-
-fn expand_flow<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    set_flow_collapsed(app, input, false)
-}
-
-fn set_flow_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    input: &Value,
-    collapsed: bool,
-) -> Result<Value, ControlError> {
-    let input: TabTarget = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input)?;
-    let tab = tab_mut(app, index)?;
-    if !tab.canvas.layout.shows_flow() || !tab.canvas.layout.shows_time() {
-        return Err(ControlError::invalid_request(
-            "the flow pane has no right rail in this layout",
-        ));
+    fn has_pane(&self, pane: usize) -> bool {
+        self.pane_at(pane).is_some()
     }
-    let changed = tab.canvas.set_flow_collapsed(collapsed);
-    result(app, index, changed)
-}
-
-fn focus<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: FocusInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let index = tab_index(app, input.target)?;
-    let pane = input.pane.get() as usize;
-    let tab = tab_mut(app, index)?;
-    if tab.pane_at(pane).is_none() {
-        return Err(ControlError::invalid_request(format!(
-            "this tab has no pane at address {pane}"
-        )));
+    fn focused_side(&self) -> PaneSide {
+        Tab::focused_side(self)
     }
-    let wanted = crate::pane::PaneSide::from_index(pane);
-    // A hidden pane cannot hold focus (`focused_side` would answer another),
-    // so saying yes to it would report a change that never happened.
-    if !tab.drawn_panes().shows(wanted) {
-        return Err(ControlError::invalid_request(format!(
-            "the pane at address {pane} is not on screen: expand it before focusing it"
-        )));
+    fn last_canvas_width(&self) -> f32 {
+        Tab::last_canvas_width(self)
     }
-    let changed = tab.focus != wanted;
-    tab.focus = wanted;
-    result(app, index, changed)
-}
-
-fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: IntervalInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let asked = quantick_engine::bar_registry::BUILTIN_BARS
-        .find("time")
-        .expect("registered time definition")
-        .configure(input.interval_ms.into(), None)
-        .map_err(|_| {
-            ControlError::invalid_request(format!(
-                "an interval of {} ms is outside the range a chart accepts",
-                input.interval_ms
-            ))
-        })?;
-    let index = tab_index(app, input.target)?;
-    let pane = input.pane.get() as usize;
-    if pane == 0 {
-        return Err(ControlError::invalid_request(
-            "the flow pane's bars are set by its header's bars control or layout.pane.set_bar_spec, not by an interval"
-                .to_owned(),
-        ));
+    fn pick_preset(&mut self, preset: &'static LayoutPreset) -> bool {
+        crate::tab::layout::pick(self, preset)
     }
-    let tab = tab_mut(app, index)?;
-    let Some(chart) = tab.pane_at_mut(pane) else {
-        return Err(ControlError::invalid_request(format!(
-            "this tab has no context chart at address {pane}"
-        )));
-    };
-    let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
-    chart
-        .spec
-        .update(
-            quantick_engine::bar_selection::SelectionCommand::Replace(asked),
-            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+    fn set_split_fraction(&mut self, fraction: f32) -> bool {
+        let changed = (self.canvas.split_fraction - fraction).abs() > f32::EPSILON;
+        self.canvas.split_fraction = fraction;
+        changed
+    }
+    fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
+        self.canvas.set_context_collapsed(collapsed)
+    }
+    fn flow_has_rail(&self) -> bool {
+        self.canvas.layout.shows_flow() && self.canvas.layout.shows_time()
+    }
+    fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
+        self.canvas.set_flow_collapsed(collapsed)
+    }
+    fn shows(&self, side: PaneSide) -> bool {
+        self.drawn_panes().shows(side)
+    }
+    fn focus(&mut self, side: PaneSide) -> bool {
+        std::mem::replace(&mut self.focus, side) != side
+    }
+    fn bars_mut(&mut self, pane: usize) -> Option<&mut SpecSelector> {
+        self.pane_at_mut(pane).map(|chart| &mut chart.spec)
+    }
+    fn set_pane_bar_spec(&mut self, pane: usize, spec: BarConfiguration) -> Result<bool, String> {
+        Tab::set_pane_bar_spec(self, pane, spec).map_err(|error| error.to_string())
+    }
+    fn resize_context_pair(
+        &mut self,
+        tab_id: u64,
+        (upper_pane_id, lower_pane_id): (u64, u64),
+        fraction: f32,
+        actor: ActorKind,
+    ) -> Option<Result<(f32, bool), String>> {
+        let (column, _) = self.canvas.context_stack_geometry(&self.time_panes)?;
+        let request = crate::tab::context_resize::ResizeContextPair {
+            upper_pane_id,
+            lower_pane_id,
+            wanted_y: eframe::egui::lerp(column.y_range(), fraction),
+        };
+        let result = self
+            .canvas
+            .resize_context_pair(tab_id, request, actor, &self.time_panes);
+        Some(
+            result
+                .map(|done| (done.fraction, done.changed))
+                .map_err(|error| error.to_string()),
         )
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    result(app, index, changed)
-}
-
-fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: BarSpecInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let spec = quantick_engine::bar_registry::BUILTIN_BARS
-        .parse(&input.spec)
-        .map_err(|error| ControlError::invalid_request(format!("invalid bar spec: {error}")))?;
-    let index = tab_index(app, input.target)?;
-    let pane = input.pane.get() as usize;
-    let tab = tab_mut(app, index)?;
-    if tab.pane_at(pane).is_none() {
-        return Err(ControlError::invalid_request(format!(
-            "this tab has no pane at address {pane}"
-        )));
     }
-    let changed = tab
-        .set_pane_bar_spec(pane, spec)
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    result(app, index, changed)
 }
