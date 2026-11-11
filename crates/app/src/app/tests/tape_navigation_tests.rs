@@ -1815,12 +1815,12 @@ fn the_wheel_over_the_tape_zooms_it_with_the_bubble_settings_open() {
 fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    assert!(app.active_tab_mut().tape_mut().apply_preset(preset, false) || preset == "mini index regions");
+    // `split_app` already wears the mini index look; any other one is put on.
+    if preset != "mini index regions" {
+        assert!(app.active_tab_mut().tape_mut().apply_preset(preset, false));
+    }
     run_frame(&mut app, &ctx);
-    crate::orderflow_panel::open_on(
-        app.active_tab_mut(),
-        crate::ui_state::PanelSection::Bubbles,
-    );
+    crate::orderflow_panel::open_on(app.active_tab_mut(), crate::ui_state::PanelSection::Bubbles);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().settings_panel.is_open());
@@ -1836,7 +1836,11 @@ fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(tape), press(true)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(tape), press(true)],
+    );
     run_frame_with_events(&mut app, &ctx, vec![press(false)]);
     wheel(&mut app, &ctx, tape);
     assert_ne!(
