@@ -2,12 +2,13 @@ use super::super::draw_frame::DrawFrame;
 use super::{Contribution, Package};
 use crate::pane::constants::SIDEBAR_BODY_FRAC;
 use crate::{
-    candle_view::{BarSlot, draw_candle, draw_pixel_candle, is_bullish},
+    candle_view::{BarSlot, draw_laid_candle, is_bullish},
+    chart::candle_geometry,
     indicators::IndicatorViews,
     viewport::Viewport,
 };
 use eframe::egui;
-use quantick_chart::candle_casing::bar_casing;
+use quantick_chart::candle_casing::{LaidCandle, bar_casing};
 use quantick_chart::candle_pixels::{CandleRun, PixelBodies};
 use quantick_stores::footprint_presentation::CandleStyles;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -96,51 +97,43 @@ fn clear(pass: &mut CandlePass<'_, '_>) {
         );
     });
 }
+/// Each bar is resolved and laid out once. Cased, every plate is painted
+/// before any candle, so a plate never covers its neighbour.
 fn paint(pass: &mut CandlePass<'_, '_>) {
     let painted = pass.indicators.paints_any();
     let mut run = pass.pixel_run();
-    let color = |index: usize, forming| {
-        painted
-            .then(|| pass.indicators.slot_paint(index..index + 1, forming))
-            .flatten()
-    };
-    let resolved = |index, bar: &quantick_engine::Bar, forming| {
-        let rgba = color(index, forming).map(|c| [c.r, c.g, c.b, c.a]);
-        let style = pass.styles.of(index);
-        style.resolved_painted(is_bullish(bar), forming, rgba)
-    };
     let palette = crate::theme::get(pass.painter.ctx());
-    if let Some(width) = palette.resolved.candle_casing_px {
-        // Every plate before any candle: a plate never covers its neighbour.
-        let (mut plates, ink, ppp) = (run, palette.casing(), pass.painter.ctx().pixels_per_point());
-        pass.bars(|index, bar, forming| {
-            let BarSlot { xc, half_width } = pass.slot(index);
-            let paint = resolved(index, bar, forming);
-            let bar = (&pass.frame.scale, bar);
-            for plate in bar_casing(plates.as_mut(), bar, (xc, half_width), &paint, (ppp, width)) {
-                let min = egui::pos2(plate.left, plate.top);
-                let rect = egui::Rect::from_min_max(min, egui::pos2(plate.right, plate.bottom));
-                pass.painter.rect_filled(rect, egui::Rounding::ZERO, ink);
-            }
-        });
-    }
+    let casing = palette.resolved.candle_casing_px;
+    let mut laid = Vec::new();
     pass.bars(|index, bar, forming| {
-        let color = color(index, forming);
+        let color = painted
+            .then(|| pass.indicators.slot_paint(index..index + 1, forming))
+            .flatten();
+        let BarSlot { xc, half_width } = pass.slot(index);
+        let rgba = color.map(|c| [c.r, c.g, c.b, c.a]);
         let style = pass.styles.of(index);
-        if let Some(run) = run.as_mut() {
-            let xc = pass.slot(index).xc;
-            let paint = resolved(index, bar, forming);
-            draw_pixel_candle(pass.painter, run, xc, &pass.frame.scale, bar, &paint);
-            return;
+        let paint = style.resolved_painted(is_bullish(bar), forming, rgba);
+        let (scale, height) = (&pass.frame.scale, paint.min_body_height);
+        let candle = match run.as_mut() {
+            Some(run) => LaidCandle::Pixels(run.place_bar(scale, bar, xc, &paint)),
+            None => LaidCandle::Geometry(candle_geometry(scale, bar, xc, half_width, height)),
+        };
+        match casing {
+            Some(_) => laid.push((xc, candle, paint)),
+            None => draw_laid_candle(pass.painter, &candle, &paint),
         }
-        draw_candle(
-            pass.painter,
-            pass.slot(index),
-            &pass.frame.scale,
-            bar,
-            forming,
-            style,
-            color,
-        );
     });
+    let Some(width) = casing else { return };
+    let (ink, ppp) = (palette.casing(), pass.painter.ctx().pixels_per_point());
+    for (xc, candle, paint) in &laid {
+        let plates = bar_casing(candle, *xc, paint, (ppp, width));
+        for plate in plates.into_iter().flatten() {
+            let min = egui::pos2(plate.left, plate.top);
+            let rect = egui::Rect::from_min_max(min, egui::pos2(plate.right, plate.bottom));
+            pass.painter.rect_filled(rect, egui::Rounding::ZERO, ink);
+        }
+    }
+    for (_, candle, paint) in &laid {
+        draw_laid_candle(pass.painter, candle, paint);
+    }
 }

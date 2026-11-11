@@ -1,10 +1,9 @@
 //! The plate a candle sits on where its surface cases candles: the lit flow
 //! pane lays each one on a white plate so the heat under it never touches the
 //! body or the wick. A surface without a casing width draws no plate.
-use crate::candle_pixels::{CandlePixels, CandleRun};
-use crate::geometry::{CandleGeometry, PixelRect, PriceScale, VerticalSegment, candle_geometry};
+use crate::candle_pixels::CandlePixels;
+use crate::geometry::{CandleGeometry, PixelRect, VerticalSegment};
 use crate::style::ResolvedCandlePaint;
-use quantick_engine::Bar;
 
 /// The wick's plate reaches this far either side of the wick beyond the width.
 const WICK_PLATE_EXTRA_PX: f32 = 0.5;
@@ -34,29 +33,30 @@ pub fn candle_casing(geometry: &CandleGeometry, xc: f32, width: f32) -> [PixelRe
     ]
 }
 
-/// The plates under `bar`'s candle, `width` wide, laid out as the candle is
-/// painted: on `run`'s whole pixels where the candles snap, so a plate hugs
-/// the snapped body and wick, else where `paint` puts its geometry. `run`
-/// must see the bars in the order the candles' own run does.
+/// Where a candle was laid out: on its run's whole device pixels, or where
+/// its geometry falls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LaidCandle {
+    Pixels(CandlePixels),
+    Geometry(CandleGeometry),
+}
+
+/// The plates under a candle laid out as `laid`, centred on `xc`, `width`
+/// wide: on whole pixels a plate hugs the snapped body and wick. The wick's
+/// plate is `None` where `paint` draws no wick.
 #[must_use]
 pub fn bar_casing(
-    run: Option<&mut CandleRun>,
-    (scale, bar): (&PriceScale, &Bar),
-    (xc, half_width): (f32, f32),
+    laid: &LaidCandle,
+    xc: f32,
     paint: &ResolvedCandlePaint,
     (pixels_per_point, width): (f32, f32),
-) -> [PixelRect; 2] {
-    match run {
-        Some(run) => pixel_casing(
-            &run.place_bar(scale, bar, xc, paint),
-            pixels_per_point,
-            width,
-        ),
-        None => {
-            let geometry = candle_geometry(scale, bar, xc, half_width, paint.min_body_height);
-            candle_casing(&geometry, xc, width)
-        }
-    }
+) -> [Option<PixelRect>; 2] {
+    let [body, wick] = match laid {
+        LaidCandle::Pixels(pixels) => pixel_casing(pixels, pixels_per_point, width),
+        LaidCandle::Geometry(geometry) => candle_casing(geometry, xc, width),
+    };
+    let wick_shows = paint.wick.is_some_and(|[.., alpha]| alpha > 0);
+    [Some(body), wick_shows.then_some(wick)]
 }
 
 /// The plates under a whole-pixel candle, from the very pixels its run placed.
@@ -137,5 +137,38 @@ mod tests {
             (wick.left, wick.right, wick.top, wick.bottom),
             (11.0, 15.0, 18.5, 61.5)
         );
+    }
+
+    /// A hidden wick, or one painted fully transparent, lays no plate.
+    #[test]
+    fn a_hidden_wick_lays_no_plate() {
+        let geometry = CandleGeometry {
+            body: PixelRect {
+                left: 10.0,
+                right: 16.0,
+                top: 40.0,
+                bottom: 60.0,
+            },
+            upper_wick: Some(VerticalSegment {
+                x: 13.0,
+                top: 20.0,
+                bottom: 40.0,
+            }),
+            lower_wick: None,
+        };
+        let laid = LaidCandle::Geometry(geometry);
+        let paint = |wick| ResolvedCandlePaint {
+            fill: Some([0, 0, 0, 255]),
+            outline: [0; 4],
+            wick,
+            outline_width: 1.0,
+            wick_width: 1.0,
+            corner_radius: 0.0,
+            min_body_height: 1.0,
+        };
+        let plates = |wick| bar_casing(&laid, 13.0, &paint(wick), (1.0, 1.5)).map(|p| p.is_some());
+        assert_eq!(plates(Some([0, 0, 0, 255])), [true, true]);
+        assert_eq!(plates(Some([0, 0, 0, 0])), [true, false]);
+        assert_eq!(plates(None), [true, false]);
     }
 }

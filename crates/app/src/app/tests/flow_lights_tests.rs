@@ -163,3 +163,24 @@ fn lit_candles_sit_on_plates_and_unlit_ones_on_none() {
     let on = run_frame(&mut app, &ctx);
     assert!(plates(&on) >= 2, "a body plate and a wick plate per candle");
 }
+
+/// Lit, every plate is painted before any candle, so no plate covers a
+/// neighbour: the whole-pixel candle pass is one run of rects, plates first.
+#[test]
+fn every_plate_is_painted_before_any_candle() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = in_theme(&ctx, quantick_appearance::LIGHT);
+    set_flow_bars(&mut app, BarSpec::Tick(1));
+    let ink = crate::theme::surface(&ctx, ChartSurface::LitFlow).casing();
+    settings_call(&mut app, LIGHTS_CAPABILITY_ID, json!({ "on": true })).unwrap();
+    run_frame(&mut app, &ctx);
+    let shapes = flat_shapes(&run_frame(&mut app, &ctx));
+    let plate = |shape: &egui::Shape| matches!(shape, egui::Shape::Rect(rect) if rect.fill == ink);
+    let first = shapes.iter().position(plate).expect("a plate");
+    let pass: Vec<bool> = (shapes[first..].iter())
+        .map_while(|shape| matches!(shape, egui::Shape::Rect(_)).then(|| plate(shape)))
+        .collect();
+    let plates = pass.iter().take_while(|is_plate| **is_plate).count();
+    assert!(plates >= 4, "two candles' plates at least: {pass:?}");
+    assert!(pass[plates..].iter().all(|is_plate| !is_plate), "{pass:?}");
+}
