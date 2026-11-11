@@ -12,10 +12,10 @@ mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
 pub use constants::{
     FLOW_REGION_HOLD_BAND, FLOW_REGION_MIN_WIDTH_PX, FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD,
-    LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS, PEAK_BALANCED_STRENGTH,
-    PEAK_LABEL_REFERENCE_DIVISOR, PEAK_MIN_RADIUS_PX, PEAK_PROFILE_MAX_ROWS,
-    PEAK_PROMINENCE_PERCENT, PEAK_ROW_MAX_DOUBLINGS, PEAK_SIGMA_RADIUS_SHARE,
-    PEAK_SMOOTHING_KERNEL, PEAK_SMOOTHING_SIGMA_TICKS,
+    LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS, PEAK_BALANCED_STRENGTH, PEAK_LABEL_RANK,
+    PEAK_MIN_RADIUS_PX, PEAK_PROFILE_MAX_ROWS, PEAK_PROMINENCE_PERCENT, PEAK_RADIUS_SHARES,
+    PEAK_RANK_STOPS, PEAK_ROW_MAX_DOUBLINGS, PEAK_SIGMA_RADIUS_SHARE, PEAK_SMOOTHING_KERNEL,
+    PEAK_SMOOTHING_SIGMA_TICKS,
 };
 mod peaks;
 mod region;
@@ -78,6 +78,13 @@ pub enum FlowScaleBasis {
     OpeningOnlyFallback,
     TypedReference,
     VisibleRegionMaxWithFloor,
+    /// Peak spheres: each mass's radius is its rank among `masses` visible
+    /// masses (the opening left out when it is ignored); the largest is
+    /// drawn at full radius and masses from `labelled_from` up carry labels.
+    RankedVisibleMasses {
+        masses: usize,
+        labelled_from: Decimal,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

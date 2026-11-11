@@ -264,65 +264,144 @@ fn a_pan_never_regroups_peak_spheres() {
     assert_eq!(low.off_axis_executions, upper);
 }
 
-/// Size is area proportional to volume against the frame's reference, with
-/// no quarter-of-the-reference floor: when two masses join, the joined sphere
-/// has the area of both. Labels go to masses of at least half the reference;
-/// colour strength follows the buy/sell imbalance.
+/// The radius rank `rank` gives at a 32 px full radius: the rank map's share
+/// of the range from the minimum radius up.
+fn ranked_radius(rank: f32) -> f32 {
+    let (stops, shares) = (PEAK_RANK_STOPS, PEAK_RADIUS_SHARES);
+    let at = stops.windows(2).position(|pair| rank <= pair[1]).unwrap();
+    let t = (rank - stops[at]) / (stops[at + 1] - stops[at]);
+    let share = shares[at] + t * (shares[at + 1] - shares[at]);
+    32.0 - (1.0 - share) * (32.0 - PEAK_MIN_RADIUS_PX)
+}
+
+/// One mass a candle, far apart in price, `quantities` in order.
+fn masses(quantities: &[i64]) -> FlowTapeFrame {
+    let trades: Vec<Trade> = quantities
+        .iter()
+        .enumerate()
+        .map(|(n, &quantity)| {
+            trade(
+                n as i64 * 1_000,
+                1_000 + n as i64 * 1_000,
+                quantity,
+                Side::Buy,
+            )
+        })
+        .collect();
+    let candles = trades.len();
+    let top = 1_000 * (candles as i64 + 1);
+    let view = peak_view(
+        candles,
+        FlowRegionSpan::Peaks(1),
+        (0, candles as i64),
+        (0, top),
+        0.25,
+    );
+    framed(&trades, |ordinal| ordinal, view)
+}
+
+/// Size is rank among the masses in view: more volume is never a smaller
+/// sphere, equal volume is an equal sphere, and the scale says so. Labels go
+/// to the top fifth by rank.
 #[test]
-fn joined_masses_add_their_areas_and_colour_by_imbalance() {
+fn spheres_are_ranked_monotonically_and_ties_share_a_rank() {
+    let frame = masses(&[40, 10, 80, 20, 80, 20]);
+    let mut dots = frame.dots.clone();
+    dots.sort_by_key(|dot| dot.mark.quantity);
+    for pair in dots.windows(2) {
+        assert!(pair[0].radius <= pair[1].radius, "monotonic");
+        if pair[0].mark.quantity == pair[1].mark.quantity {
+            assert_eq!(pair[0].radius, pair[1].radius, "ties share a rank");
+        }
+    }
+    for dot in &dots {
+        let at_or_below = dots
+            .iter()
+            .filter(|other| other.mark.quantity <= dot.mark.quantity)
+            .count();
+        let expected = ranked_radius(at_or_below as f32 / 6.0);
+        assert!(
+            (dot.radius - expected).abs() < 1e-3,
+            "{} {}",
+            dot.radius,
+            expected
+        );
+    }
+    assert_eq!(dots[5].radius, 32.0);
+    assert_eq!(
+        frame.scale_basis,
+        FlowScaleBasis::RankedVisibleMasses {
+            masses: 6,
+            labelled_from: 80.into(),
+        }
+    );
+    assert_eq!(frame.effective_reference, Some(Decimal::from(80)));
+    assert_eq!(frame.peak_label_floor(), Some(Decimal::from(80)));
+    assert_eq!(frame.large_region_threshold(), None, "no quarter floor");
+    assert!(
+        flow_notes(Some(&frame), FlowProgress::default())
+            .contains(&"Peak spheres ranked among 6 visible masses; labels from 80".to_owned())
+    );
+}
+
+/// With one mass in view it is the largest; with two unequal ones the
+/// smaller sits at the median share; two equal ones are both the largest.
+#[test]
+fn one_or_two_masses_are_ranked_stably() {
+    assert_eq!(masses(&[50]).dots[0].radius, 32.0);
+    let two = masses(&[50, 100]);
+    assert_eq!(two.dots[0].radius, ranked_radius(0.5));
+    assert_eq!(two.dots[1].radius, 32.0);
+    let tie = masses(&[70, 70]);
+    assert!(tie.dots.iter().all(|dot| dot.radius == 32.0));
+    assert_eq!(masses(&[50, 100]), two, "the same masses, the same sizes");
+}
+
+/// A mass that joins two neighbours outranks an unchanged neighbour either
+/// part tied: the joined sphere grows, the neighbour falls back. Colour
+/// strength follows the buy/sell imbalance.
+#[test]
+fn a_join_outranks_the_neighbour_its_parts_tied() {
     let trades = [
         trade(1_000, 1_000, 100, Side::Buy),
         trade(2_000, 1_000, 100, Side::Buy),
-        trade(3_000, 2_000, 100, Side::Buy),
-        trade(3_500, 2_000, 100, Side::Sell),
-        trade(4_000, 6_000, 100, Side::Buy),
+        trade(3_000, 2_000, 50, Side::Buy),
+        trade(3_500, 2_000, 50, Side::Sell),
+        trade(4_000, 3_000, 150, Side::Buy),
     ];
     let slot = |ordinal: usize| [0, 1, 2, 2, 3][ordinal];
     let at = |region| {
         framed(
             &trades,
             slot,
-            peak_view(4, region, (0, 4), (0, 8_000), 0.25),
+            peak_view(4, region, (0, 4), (0, 4_000), 0.25),
         )
+    };
+    let find = |frame: &FlowTapeFrame, price: i64| {
+        frame
+            .dots
+            .iter()
+            .filter(|dot| dot.mark.price == Decimal::from(price))
+            .max_by_key(|dot| dot.mark.quantity)
+            .cloned()
+            .unwrap()
     };
     let apart = at(FlowRegionSpan::Peaks(1));
     let joined = at(FlowRegionSpan::Peaks(2));
     conserved(&apart, &trades);
     conserved(&joined, &trades);
-    assert_eq!(apart.dots.len(), 4);
-    assert_eq!(joined.dots.len(), 3);
-    let find = |frame: &FlowTapeFrame, price: i64, quantity: i64| {
-        frame
-            .dots
-            .iter()
-            .find(|dot| {
-                dot.mark.price == Decimal::from(price) && dot.mark.quantity == quantity.into()
-            })
-            .cloned()
-            .unwrap()
-    };
-    let part = find(&apart, 1_000, 100);
-    let both = find(&joined, 1_000, 200);
-    let single = find(&joined, 6_000, 100);
-    let ratio = both.radius / part.radius;
-    assert!((ratio - 2_f32.sqrt()).abs() < 1e-4, "joined {ratio}");
-    let ratio = both.radius / single.radius;
-    assert!(
-        (ratio - 2_f32.sqrt()).abs() < 1e-4,
-        "beside a single {ratio}"
-    );
-    assert_eq!(
-        both.radius, 32.0,
-        "the largest mass reaches the full radius"
-    );
-    assert_eq!(joined.large_region_threshold(), None, "no quarter floor");
-    assert_eq!(joined.peak_label_floor(), Some(Decimal::from(100)));
-    let balanced = find(&joined, 2_000, 200);
-    assert_eq!(joined.peak_fill_strength(&balanced), PEAK_BALANCED_STRENGTH);
+    let (part, before) = (find(&apart, 1_000), find(&apart, 2_000));
+    assert_eq!(part.radius, before.radius, "the part ties the neighbour");
+    let (both, after) = (find(&joined, 1_000), find(&joined, 2_000));
+    assert_eq!(both.mark.quantity, Decimal::from(200));
+    assert!(both.radius > part.radius, "the join grows");
+    assert!(both.radius > after.radius, "and outranks the neighbour");
+    assert!(after.radius < before.radius, "which falls back");
+    assert_eq!(joined.peak_fill_strength(&after), PEAK_BALANCED_STRENGTH);
     assert_eq!(joined.peak_fill_strength(&both), 1.0);
     let off = at(FlowRegionSpan::Candles(2));
     assert_eq!(off.peak_label_floor(), None);
-    assert_eq!(off.peak_fill_strength(&balanced), 1.0);
+    assert_eq!(off.peak_fill_strength(&after), 1.0);
 }
 
 /// One spot walked through three zoom steps: as its candles pool, the
@@ -333,7 +412,9 @@ fn a_joined_mass_grows_against_its_neighbour_through_three_zooms() {
         .map(|n| trade(n * 1_000, 1_000, 100, Side::Buy))
         .collect();
     trades.push(trade(5_000, 5_000, 400, Side::Sell));
-    let mut grown = Vec::new();
+    trades.push(trade(6_000, 3_000, 50, Side::Sell));
+    trades.push(trade(7_000, 4_000, 200, Side::Buy));
+    let mut shares = Vec::new();
     for candles in [1, 2, 4] {
         let view = peak_view(8, FlowRegionSpan::Peaks(candles), (0, 8), (0, 6_000), 0.25);
         let frame = framed(&trades, |ordinal| ordinal, view);
@@ -350,41 +431,9 @@ fn a_joined_mass_grows_against_its_neighbour_through_three_zooms() {
             .find(|dot| dot.mark.price == Decimal::from(5_000))
             .unwrap();
         assert_eq!(neighbour.radius, 32.0, "the neighbour never changes");
-        let areas = (spot.radius / neighbour.radius).powi(2);
-        let quantities = spot.mark.quantity / neighbour.mark.quantity;
-        assert!(
-            (f64::from(areas) - quantities.to_f64().unwrap()).abs() < 1e-4,
-            "area follows volume at {candles}"
-        );
-        grown.push(spot.radius);
+        shares.push(spot.radius / neighbour.radius);
     }
-    assert!(grown[0] < grown[1] && grown[1] < grown[2], "{grown:?}");
-}
-
-/// A mass of a hundredth of the reference draws at the minimum radius: small,
-/// never hidden.
-#[test]
-fn a_hundredth_of_the_reference_draws_at_the_minimum_radius() {
-    let trades = [
-        trade(1_000, 1_000, 100, Side::Buy),
-        trade(2_000, 2_000, 1, Side::Buy),
-    ];
-    let view = FlowTapeView {
-        radius_limit: 18.0,
-        ..peak_view(2, FlowRegionSpan::Peaks(1), (0, 2), (0, 4_000), 0.25)
-    };
-    let frame = framed(&trades, |ordinal| ordinal, view);
-    let small = frame
-        .dots
-        .iter()
-        .find(|dot| dot.mark.quantity == Decimal::ONE)
-        .unwrap();
-    assert_eq!(small.radius, PEAK_MIN_RADIUS_PX);
-    assert_eq!(
-        flow_notes(Some(&frame), FlowProgress::default()),
-        ["1 peak masses drawn at the minimum radius, larger than their area"],
-        "the readback says the dot is larger than its area"
-    );
+    assert!(shares[0] < shares[1] && shares[1] < shares[2], "{shares:?}");
 }
 
 /// Six hills of one candle, 15 points apart on a 5-point tick, with a lot in
@@ -402,7 +451,7 @@ fn six_hills() -> Vec<Trade> {
 /// than a sphere: the profile's rows are a power-of-two multiple of the tick
 /// chosen from the pixels a price unit is drawn, so a coarse zoom reads the
 /// six hills of one candle as one or two masses, a fine one as six, and no
-/// two kept masses stand closer than a full radius.
+/// two kept masses stand closer than two smoothing sigmas.
 #[test]
 fn close_hills_are_one_mass_at_a_coarse_price_step() {
     let trades = six_hills();
@@ -425,7 +474,11 @@ fn close_hills_are_one_mass_at_a_coarse_price_step() {
         prices.sort_by(f64::total_cmp);
         for pair in prices.windows(2) {
             let apart = (pair[1] - pair[0]) * f64::from(px_per_price);
-            assert!(apart >= 32.0, "{apart} px apart at {px_per_price}");
+            let sigma_px = PEAK_SIGMA_RADIUS_SHARE as f32 * 32.0;
+            assert!(
+                apart >= 2.0 * f64::from(sigma_px),
+                "{apart} px apart at {px_per_price}"
+            );
         }
         counts.push(frame.dots.len());
     }
@@ -481,56 +534,78 @@ fn the_price_step_holds_under_pan_and_a_zoom_wobble() {
         );
         framed(&trades, |_| 0, view)
     };
-    let held = facts(&at((990, 1_090), 0.81));
-    assert_eq!(facts(&at((1_003, 1_103), 0.81)), held, "a vertical pan");
-    // 32 px a sigma over 0.8 px a point is a 40-point row: 0.81 reads rows of
-    // 40, 0.79 alone would read rows of 80. The session holds 0.81 through it.
+    let held = facts(&at((990, 1_090), 0.65));
+    assert_eq!(facts(&at((1_003, 1_103), 0.65)), held, "a vertical pan");
+    // A 6.4 px sigma over 0.64 px a point is a 10-point row: 0.65 reads rows
+    // of 10, 0.63 alone would read rows of 20. The session holds 0.65.
     let mut session = FlowSession::<NoRunner>::default();
-    assert_eq!(session.merge_px_per_price(0.81), 0.81);
-    let wobble = session.merge_px_per_price(0.79);
-    assert_eq!(wobble, 0.81, "inside the hold band");
+    assert_eq!(session.merge_px_per_price(0.65), 0.65);
+    let wobble = session.merge_px_per_price(0.63);
+    assert_eq!(wobble, 0.65, "inside the hold band");
     assert_eq!(facts(&at((990, 1_090), wobble)), held);
     assert_eq!(session.merge_px_per_price(0.4), 0.4, "a zoom step");
 }
 
 /// The daily opening burst stays out of the prominence reference: the
-/// auction's spike does not swallow the ordinary hills of its region, and
-/// with the opening ignored in the scale the ordinary masses are sized
-/// against one another.
+/// auction's spike does not swallow the ordinary hills of its region. With
+/// the opening ignored it leaves the ranking and keeps its own treatment;
+/// with it counted it ranks like any mass.
 #[test]
 fn the_opening_burst_does_not_swallow_its_region() {
     let mut trades = vec![trade(0, 1_000, 10_000, Side::Buy)];
     for (n, price) in [1_100, 1_200].into_iter().enumerate() {
         trades.push(trade(3_600_000 + n as i64 * 1_000, price, 100, Side::Sell));
     }
-    let view = FlowTapeView {
-        exclude_opening: true,
-        ..peak_view(1, FlowRegionSpan::Peaks(1), (0, 1), (900, 1_300), 40.0)
+    let project = |exclude_opening| {
+        let view = FlowTapeView {
+            exclude_opening,
+            ..peak_view(1, FlowRegionSpan::Peaks(1), (0, 1), (900, 1_300), 40.0)
+        };
+        project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: 0,
+                    accepted_ordinal: ordinal,
+                    ticks_per_bar: 3.into(),
+                    trade,
+                    opening: ordinal == 0,
+                }),
+            1,
+            3,
+            3,
+            view,
+        )
     };
-    let frame = project_flow_tape(
-        trades
+    let counted = project(false);
+    let burst = counted.dots.iter().find(|dot| dot.opening_anchor).unwrap();
+    assert_eq!(burst.radius, 32.0, "counted, the burst ranks first");
+    assert!(
+        counted
+            .dots
             .iter()
-            .enumerate()
-            .map(|(ordinal, trade)| FlowExecution {
-                ordinal,
-                slot: 0,
-                accepted_ordinal: ordinal,
-                ticks_per_bar: 3.into(),
-                trade,
-                opening: ordinal == 0,
-            }),
-        1,
-        3,
-        3,
-        view,
+            .all(|dot| dot.opening_anchor || dot.radius < 32.0)
     );
+    let frame = project(true);
     conserved(&frame, &trades);
     assert_eq!(frame.dots.len(), 3, "the opening and both ordinary hills");
     assert!(frame.opening_exclusion_effective);
     assert_eq!(frame.effective_reference, Some(Decimal::from(100)));
+    assert_eq!(
+        frame.scale_basis,
+        FlowScaleBasis::RankedVisibleMasses {
+            masses: 2,
+            labelled_from: 100.into(),
+        },
+        "the burst left the ranking"
+    );
     for dot in frame.dots.iter().filter(|dot| !dot.opening_anchor) {
         assert_eq!(dot.radius, 32.0);
     }
+    let burst = frame.dots.iter().find(|dot| dot.opening_anchor).unwrap();
+    assert!(burst.opening_oversized, "the existing opening treatment");
 }
 
 /// Prices at the edge of what a decimal holds never panic the worker.
@@ -643,7 +718,7 @@ const GOLDEN_OFF_DIGESTS: [u64; 9] = [
 ];
 
 /// The prototype's measurement on a recorded WIN session: 60 candles of
-/// 2 000 prints, 70 from the end, at the mini index's 24 px peak radius, in
+/// 2 000 prints, 70 from the end, at the mini index's 18 px radius, in
 /// regions of two candles (28 px a candle) and of one (60 px a candle, where
 /// the worst overlap between two spheres is reported). Reads the
 /// `quantick-replay 1` CSV named by `PEAK_SPHERES_REPLAY_CSV`; run by name
@@ -706,7 +781,7 @@ fn a_recorded_win_session_matches_the_prototype() {
                 height_px: HEIGHT_PX,
                 prices: PriceWindow::new(low, high).unwrap(),
                 reference: FlowReference::VisibleRegionsAtLeast(Decimal::ONE),
-                radius_limit: 24.0,
+                radius_limit: 18.0,
                 merge_support_radius: 6.0,
                 region: FlowRegionSpan::Peaks(candles),
                 exclude_opening: false,

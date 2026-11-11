@@ -15,11 +15,10 @@
 //! reference. The cuts read the held price scale and the data, never the
 //! clip or the axis' offset, so a pan never regroups a mass.
 use super::constants::{
-    PEAK_BALANCED_STRENGTH, PEAK_LABEL_REFERENCE_DIVISOR, PEAK_PROFILE_MAX_ROWS,
-    PEAK_PROMINENCE_PERCENT, PEAK_ROW_MAX_DOUBLINGS, PEAK_SIGMA_RADIUS_SHARE,
-    PEAK_SMOOTHING_KERNEL,
+    PEAK_BALANCED_STRENGTH, PEAK_PROFILE_MAX_ROWS, PEAK_PROMINENCE_PERCENT, PEAK_ROW_MAX_DOUBLINGS,
+    PEAK_SIGMA_RADIUS_SHARE, PEAK_SMOOTHING_KERNEL,
 };
-use super::{FlowTapeDot, FlowTapeFrame, FlowTapeView, Group, MergeDisc as _};
+use super::{FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView, Group, MergeDisc as _};
 use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -322,15 +321,15 @@ fn prominence(values: &[Decimal], peak: usize) -> Decimal {
 }
 
 impl FlowTapeFrame {
-    /// The least quantity that carries a label under peak spheres: the
-    /// frame's reference divided by [`PEAK_LABEL_REFERENCE_DIVISOR`], so only
-    /// the largest masses do. `None` when the frame does not divide its
-    /// regions at peaks, or has no reference.
+    /// The least quantity that carries a label under peak spheres: the top
+    /// fifth by rank ([`PEAK_LABEL_RANK`](super::constants::PEAK_LABEL_RANK)), as the ranking found it. `None`
+    /// when the frame does not rank its masses.
     #[must_use]
     pub fn peak_label_floor(&self) -> Option<Decimal> {
-        self.effective_reference
-            .filter(|_| self.view.region.divides_at_peaks())
-            .map(|reference| reference / Decimal::from(PEAK_LABEL_REFERENCE_DIVISOR))
+        match self.scale_basis {
+            FlowScaleBasis::RankedVisibleMasses { labelled_from, .. } => Some(labelled_from),
+            _ => None,
+        }
     }
 
     /// How strongly a peak sphere's fill is drawn: a balanced mass at

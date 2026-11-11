@@ -81,6 +81,9 @@ pub enum FlowExecutionScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    /// Peak spheres: radius by rank among the visible masses; the frame's
+    /// notes name how many and from which quantity labels are drawn.
+    RankedVisibleMasses,
 }
 impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
     fn from(value: FlowScaleBasis) -> Self {
@@ -91,6 +94,7 @@ impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
             FlowScaleBasis::OpeningOnlyFallback => Self::OpeningOnlyFallback,
             FlowScaleBasis::TypedReference => Self::TypedReference,
             FlowScaleBasis::VisibleRegionMaxWithFloor => Self::VisibleRegionMax,
+            FlowScaleBasis::RankedVisibleMasses { .. } => Self::RankedVisibleMasses,
         }
     }
 }
