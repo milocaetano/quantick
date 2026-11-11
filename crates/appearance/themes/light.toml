@@ -39,6 +39,9 @@ flow_key_lit_dot = "#3AF0B2"
 flow_key_unlit_dot = "#6B7482"
 flow_key_unlit_ink = "#9AA3B0"
 flow_gear_ink = "#C9CFD8"
+# The bulb beside the gear while the flow pane's lights are on: a cool white,
+# never the gold family; at rest it wears the gear's ink.
+flow_bulb_lit = "#EAF4FF"
 trade_selection_halo = "#24588740"
 candle_preview_background = "#FFFCF7"
 candle_preview_bid = "#157EAE"
@@ -349,6 +352,60 @@ connection_action = "#7C8799"
 buy = ["#0A2D2B", "#0D3B38", "#11554E", "#0D6A5F", "#009880", "#29D9AE"]
 sell = ["#510E16", "#6A111A", "#951520", "#BD1217", "#FE3800", "#FDAF89"]
 ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]
+
+# The flow pane with its lights on, picked by the bulb beside the gear: a white
+# plot with liquidity in grey and only the wall in plum (docs/thema/white/
+# orderflow, round 4, "Ameixa"). Whatever it leaves out is this theme's paper,
+# never the island's [bookmap] overrides: drawings, VWAP and plot inks included.
+[lit_flow]
+# Each trail candle sits on a white plate this wide, so the heat never touches
+# its body or wick.
+candle_casing_px = 1.5
+
+[lit_flow.colors]
+flow_surface = "#FFFFFF"
+flow_divider = "#9AA1AC"
+tape_path = "#2828348C"
+buy = "#3DAE6F"
+sell = "#20242B"
+candle_bull_outline = "#0E3B22"
+candle_bear_outline = "#000000"
+casing = "#FFFFFFE6"
+
+# Empty is the paper; the grey climbs with size and only the top tenth, the
+# wall, turns plum. The 0.95 stop is the straight mix of its neighbours.
+# heat_gamma lifts each cell's intensity before the ramp reads it, and every
+# cell from heat_fade_below up paints its grey opaque, so weak and mid book
+# levels land on visible grey instead of washing out to the white ground.
+[lit_flow.orderflow]
+heat_gamma = 0.7
+heat_fade_below = 0.1
+ramp = ["#FFFFFF", "#F1F2F4", "#DADDE2", "#B9BEC7", "#8F96A3", "#6B7382", "#8A2C7C", "#621B58", "#3A0A33"]
+ramp_stops = [0.0, 0.15, 0.40, 0.62, 0.80, 0.87, 0.90, 0.95, 1.0]
+
+# Flat bubbles with a darker rim and a white hair (the separator) between them
+# and the heat; the legend and lane marks in dark ink on white.
+[lit_flow.orderflow.colors]
+crown_backing = "#20242B8C"
+separator = "#FFFFFF"
+buy = "#12A871"
+sell = "#E5404F"
+buy_rim = "#0A6344"
+sell_rim = "#8F1B27"
+consumption = "#20242B"
+depth_only = "#6A3FB8"
+bubble_text = "#FFFFFF"
+gap_fill = "#13172214"
+gap_boundary = "#808898"
+lane_now = "#1317228C"
+muted_text = "#586273"
+legend_text = "#161B24"
+legend_background = "#FFFFFFE6"
+legend_border = "#9AA1ACCC"
+bid_tint = "#1F5CB8"
+ask_tint = "#B3303C"
+preview_grid = "#13172210"
+preview_path = "#282834B3"
 
 # The title strip (logo, +, menu and window buttons) keeps the order-flow slate
 # with Dark's inks, so the logo renders exactly as it does in Dark. Market tabs

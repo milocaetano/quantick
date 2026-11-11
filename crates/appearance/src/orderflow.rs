@@ -9,6 +9,16 @@ pub struct OrderflowOverride {
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     pub ramp: Option<[ColorValue; 9]>,
+    /// Where each ramp colour sits along the intensity, from 0 to 1: the
+    /// first at 0, the last at 1, each past the one before.
+    pub ramp_stops: Option<[f32; 9]>,
+    /// An exponent over each cell's intensity before the ramp reads it, on top
+    /// of the look's own gamma: below 1 lifts weak liquidity off a white ground.
+    pub heat_gamma: Option<f32>,
+    /// Cells at or above this intensity paint their ramp colour opaque, fading
+    /// in linearly below it; left out, a cell's opacity follows its intensity,
+    /// which suits a ramp that starts at the dark ground.
+    pub heat_fade_below: Option<f32>,
 }
 
 /// Exact premultiplied palette bytes plus an opaque thermal ramp.
@@ -36,6 +46,48 @@ pub struct OrderflowAppearance {
     pub preview_grid: [u8; 4],
     pub preview_path: [u8; 4],
     pub ramp: [[u8; 3]; 9],
+    /// Where each ramp colour sits, in thousandths of the intensity.
+    #[serde(
+        default = "legacy_ramp_stops",
+        skip_serializing_if = "is_legacy_ramp_stops"
+    )]
+    pub ramp_stops: [u16; 9],
+    /// Flat bubbles ringed in these rims, buy then sell; `None` keeps the
+    /// look's own render mode and its side-coloured rims. Shading drawn for a
+    /// dark ground muddies on white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flat_rims: Option<[[u8; 4]; 2]>,
+    /// The palette's own heat gamma, in thousandths; `None` reads the ramp at
+    /// the look's intensity unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_gamma: Option<u16>,
+    /// The intensity, in thousandths, from which a cell paints opaque; `None`
+    /// keeps opacity proportional to intensity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_fade_below: Option<u16>,
+    /// Drawn for the surface it was resolved on: a pane's own palette choice,
+    /// picked for another ground, yields to it. Never saved.
+    #[serde(skip)]
+    pub surface_bound: bool,
+}
+
+/// The positions every ramp had before themes could author them, in thousandths.
+pub const LEGACY_RAMP_STOPS: [u16; 9] = [0, 90, 220, 380, 550, 700, 830, 930, 1000];
+/// One whole intensity in the units [`OrderflowAppearance::ramp_stops`] counts.
+pub const RAMP_STOP_UNIT: f32 = 1000.0;
+/// The gentlest and the steepest heat gamma a palette may author: the range
+/// the look's own gamma is held to.
+pub const HEAT_GAMMA_MIN: f32 = 0.1;
+pub const HEAT_GAMMA_MAX: f32 = 5.0;
+/// The lowest and the highest intensity a palette may fade its heat in below.
+pub const HEAT_FADE_BELOW_MIN: f32 = 0.01;
+pub const HEAT_FADE_BELOW_MAX: f32 = 1.0;
+
+const fn legacy_ramp_stops() -> [u16; 9] {
+    LEGACY_RAMP_STOPS
+}
+fn is_legacy_ramp_stops(stops: &[u16; 9]) -> bool {
+    *stops == LEGACY_RAMP_STOPS
 }
 
 /// Missing version-1 snapshot fields retain the historical decoration.
@@ -101,6 +153,24 @@ impl OrderflowOverride {
             preview_grid: color("preview_grid", fallback.map(|old| old.preview_grid), false)?,
             preview_path: color("preview_path", fallback.map(|old| old.preview_path), false)?,
             ramp: fallback.map_or([[0; 3]; 9], |old| old.ramp),
+            ramp_stops: fallback.map_or(LEGACY_RAMP_STOPS, |old| old.ramp_stops),
+            flat_rims: None,
+            heat_gamma: fallback.and_then(|old| old.heat_gamma),
+            heat_fade_below: fallback.and_then(|old| old.heat_fade_below),
+            surface_bound: false,
+        };
+        resolved.flat_rims = match (colors.remove("buy_rim"), colors.remove("sell_rim")) {
+            (Some(buy), Some(sell)) => Some([
+                buy.resolve("orderflow.colors.buy_rim")?.to_array(),
+                sell.resolve("orderflow.colors.sell_rim")?.to_array(),
+            ]),
+            (None, None) => fallback.and_then(|old| old.flat_rims),
+            _ => {
+                return Err(ThemeError::new(
+                    "orderflow.colors.buy_rim",
+                    "buy_rim and sell_rim are authored together",
+                ));
+            }
         };
         if let Some(key) = colors.keys().next() {
             return Err(ThemeError::new(
@@ -130,11 +200,94 @@ impl OrderflowOverride {
             }
             None => {}
         }
+        if let Some(stops) = &self.ramp_stops {
+            resolved.ramp_stops = ramp_stops(stops)?;
+        }
+        if let Some(gamma) = self.heat_gamma {
+            if !(gamma.is_finite() && (HEAT_GAMMA_MIN..=HEAT_GAMMA_MAX).contains(&gamma)) {
+                return Err(heat_gamma_error());
+            }
+            // In range, so the rounded value fits.
+            resolved.heat_gamma = Some((gamma * RAMP_STOP_UNIT).round() as u16);
+        }
+        if let Some(fade) = self.heat_fade_below {
+            if !(fade.is_finite() && (HEAT_FADE_BELOW_MIN..=HEAT_FADE_BELOW_MAX).contains(&fade)) {
+                return Err(heat_fade_below_error());
+            }
+            // In range, so the rounded value fits.
+            resolved.heat_fade_below = Some((fade * RAMP_STOP_UNIT).round() as u16);
+        }
         Ok(resolved)
     }
 }
 
+/// Authored positions in thousandths: 0 first, 1 last, each past the one before.
+fn ramp_stops(stops: &[f32; 9]) -> Result<[u16; 9], ThemeError> {
+    let mut thousandths = [0_u16; 9];
+    for (slot, stop) in thousandths.iter_mut().zip(stops) {
+        if !stop.is_finite() || !(0.0..=1.0).contains(stop) {
+            return Err(ramp_stops_error());
+        }
+        // In range, so the rounded value fits.
+        *slot = (stop * RAMP_STOP_UNIT).round() as u16;
+    }
+    rising_ramp_stops(&thousandths)?;
+    Ok(thousandths)
+}
+
+/// Stops in thousandths run from 0 to 1000, each past the one before: a
+/// theme's authored ones and a saved snapshot's alike, or the ramp divides
+/// by a zero-wide step.
+fn rising_ramp_stops(thousandths: &[u16; 9]) -> Result<(), ThemeError> {
+    let rising = thousandths.windows(2).all(|pair| pair[0] < pair[1]);
+    if thousandths[0] != 0 || thousandths[8] != 1000 || !rising {
+        return Err(ramp_stops_error());
+    }
+    Ok(())
+}
+
+fn heat_gamma_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.heat_gamma",
+        format!("must be finite and between {HEAT_GAMMA_MIN} and {HEAT_GAMMA_MAX}"),
+    )
+}
+
+fn heat_fade_below_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.heat_fade_below",
+        format!("must be finite and between {HEAT_FADE_BELOW_MIN} and {HEAT_FADE_BELOW_MAX}"),
+    )
+}
+
+fn ramp_stops_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.ramp_stops",
+        "must run from 0 to 1, each stop past the one before",
+    )
+}
+
 impl OrderflowAppearance {
+    /// Where ramp colour `index` sits along the intensity, from 0 to 1.
+    #[must_use]
+    pub fn ramp_stop(&self, index: usize) -> f32 {
+        f32::from(self.ramp_stops[index]) / RAMP_STOP_UNIT
+    }
+
+    /// The exponent the palette lays over each cell's intensity, if it authors one.
+    #[must_use]
+    pub fn heat_gamma(&self) -> Option<f32> {
+        self.heat_gamma
+            .map(|thousandths| f32::from(thousandths) / RAMP_STOP_UNIT)
+    }
+
+    /// The intensity from which the palette paints a cell opaque, if it authors one.
+    #[must_use]
+    pub fn heat_fade_below(&self) -> Option<f32> {
+        self.heat_fade_below
+            .map(|thousandths| f32::from(thousandths) / RAMP_STOP_UNIT)
+    }
+
     pub fn validate(&self) -> Result<(), ThemeError> {
         for (key, rgba) in [
             ("buy", self.buy),
@@ -151,7 +304,17 @@ impl OrderflowAppearance {
                 ));
             }
         }
-        Ok(())
+        if let Some(gamma) = self.heat_gamma()
+            && !(HEAT_GAMMA_MIN..=HEAT_GAMMA_MAX).contains(&gamma)
+        {
+            return Err(heat_gamma_error());
+        }
+        if let Some(fade) = self.heat_fade_below()
+            && !(HEAT_FADE_BELOW_MIN..=HEAT_FADE_BELOW_MAX).contains(&fade)
+        {
+            return Err(heat_fade_below_error());
+        }
+        rising_ramp_stops(&self.ramp_stops)
     }
 }
 
@@ -210,5 +373,28 @@ mod tests {
                 .to_string()
                 .contains("orderflow.colors.typo")
         );
+    }
+
+    /// A saved snapshot's stops pass the theme's own rule: one that does not
+    /// start at 0, end at 1 or rise at every step is refused, where it would
+    /// otherwise divide the ramp by a zero-wide step.
+    #[test]
+    fn a_snapshot_with_stops_that_do_not_rise_is_refused() {
+        let mut palette = ResolvedTheme::default().orderflow;
+        assert!(palette.validate().is_ok());
+        let legacy = crate::orderflow::LEGACY_RAMP_STOPS;
+        let mut duplicate = legacy;
+        duplicate[3] = duplicate[2];
+        let mut late_start = legacy;
+        late_start[0] = 10;
+        let mut short_end = legacy;
+        short_end[8] = 990;
+        let mut falling = legacy;
+        falling.swap(4, 5);
+        for stops in [duplicate, late_start, short_end, falling] {
+            palette.ramp_stops = stops;
+            let error = palette.validate().unwrap_err();
+            assert_eq!(error.field, "orderflow.ramp_stops", "{stops:?}");
+        }
     }
 }

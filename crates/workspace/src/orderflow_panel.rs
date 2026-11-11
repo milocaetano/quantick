@@ -89,7 +89,14 @@ pub enum PanelControl {
     Section(PanelSection),
     /// The title line's ×.
     Close,
+    /// The light bulb beside the gear: the flow pane's lights.
+    Lights,
 }
+
+/// The bulb's name, on its tooltip's first line and in the scene.
+pub const LIGHTS_NAME: &str = "Lights";
+/// What the bulb does, in the words its tooltip and the scene both carry.
+pub const LIGHTS_DESCRIPTION: &str = "Paints the order-flow pane, Trail and Tape, on white: liquidity in grey with only the wall in plum, flat bubbles, and drawings and VWAP in the chart's own colours. Off, the pane keeps its dark island. Light theme only; kept with the tab.";
 
 impl PanelControl {
     /// The control's stable name inside its pane's header.
@@ -99,6 +106,7 @@ impl PanelControl {
             Self::Gear => "settings".to_owned(),
             Self::Section(section) => format!("settings.{}", section.id()),
             Self::Close => "settings.close".to_owned(),
+            Self::Lights => "lights".to_owned(),
         }
     }
 }
@@ -184,6 +192,10 @@ pub struct OrderFlowPanel {
     open: bool,
     #[serde(default = "default_width", skip_serializing_if = "is_default_width")]
     width: f32,
+    /// The bulb beside the gear: the flow pane paints on its theme's lit
+    /// surface, where the theme authors one.
+    #[serde(default, skip_serializing_if = "is_false")]
+    lights: bool,
     #[serde(skip)]
     requested: Option<PanelSection>,
     /// The section kept at the top, and the frames that may still take.
@@ -196,6 +208,7 @@ impl Default for OrderFlowPanel {
         Self {
             open: false,
             width: PANEL_DEFAULT_WIDTH_PX,
+            lights: false,
             requested: None,
             landing: None,
         }
@@ -216,7 +229,18 @@ impl OrderFlowPanel {
     /// Nothing a file needs to say.
     #[must_use]
     pub fn is_default(&self) -> bool {
-        !self.open && is_default_width(&self.width)
+        !self.open && is_default_width(&self.width) && !self.lights
+    }
+
+    /// Whether the flow pane's lights are on.
+    #[must_use]
+    pub const fn lights_on(&self) -> bool {
+        self.lights
+    }
+
+    /// Switch the flow pane's lights; answers whether they changed.
+    pub fn set_lights(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.lights, on) != on
     }
 
     /// Open the panel, on `section` if one is named: the next frame expands it
@@ -290,6 +314,27 @@ mod tests {
     use super::*;
 
     const BTC: &str = "BTCUSDT";
+
+    /// The lights travel with the tab: off says nothing, on is written and read
+    /// back, and a file written before them opens with them off.
+    #[test]
+    fn the_lights_round_trip_with_the_tab_and_off_is_not_written() {
+        let mut panel = OrderFlowPanel::default();
+        assert!(!panel.lights_on());
+        assert!(toml::to_string(&panel).unwrap().is_empty());
+        assert!(panel.set_lights(true));
+        assert!(!panel.set_lights(true), "a repeat moves nothing");
+        assert!(!panel.is_default());
+        let written = toml::to_string(&panel).unwrap();
+        assert_eq!(written.trim(), "lights = true");
+        let read: OrderFlowPanel = toml::from_str(&written).unwrap();
+        assert!(read.lights_on());
+        let old: OrderFlowPanel = toml::from_str("open = true").unwrap();
+        assert!(!old.lights_on() && old.is_open());
+        assert!(panel.set_lights(false));
+        assert!(panel.is_default());
+        assert_eq!(PanelControl::Lights.id_in_header(), "lights");
+    }
     const ETH: &str = "ETHUSDT";
 
     #[test]

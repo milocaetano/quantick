@@ -41,8 +41,18 @@ impl PaletteChoice {
             _ => HeatmapTheme::Bookmap,
         }
     }
+    /// The choice in force over `inherited`: a palette bound to its surface
+    /// (the lit flow pane's) outranks one picked for another ground.
+    #[must_use]
+    pub fn under(self, inherited: &OrderflowAppearance) -> Self {
+        if inherited.surface_bound {
+            Self::Inherited
+        } else {
+            self
+        }
+    }
     pub fn resolve(self, inherited: &OrderflowAppearance) -> OrderflowAppearance {
-        match self {
+        match self.under(inherited) {
             Self::Inherited => *inherited,
             Self::Snapshot(palette) => palette,
             Self::Historical(theme) => {
@@ -72,6 +82,7 @@ impl PaletteChoice {
 }
 impl OrderflowRenderStyle {
     pub fn resolve_palette(&mut self, choice: PaletteChoice, inherited: &OrderflowAppearance) {
+        let choice = choice.under(inherited);
         self.theme = choice.historical();
         self.palette = match choice {
             PaletteChoice::Historical(_) => None,
@@ -98,6 +109,7 @@ impl OrderflowRenderStyle {
                 legend_text: rgba(p.legend_text),
                 legend_background: rgba(p.legend_background),
                 legend_border: rgba(p.legend_border),
+                flat_rims: p.flat_rims.map(|rims| rims.map(&rgba)),
             },
             None => Palette::for_theme(self.theme, rgba),
         }
@@ -106,18 +118,33 @@ impl OrderflowRenderStyle {
         let Some(p) = self.palette else {
             return super::theme::thermal_rgb(self.theme, intensity);
         };
-        let positions = [0.00, 0.09, 0.22, 0.38, 0.55, 0.70, 0.83, 0.93, 1.00];
         let t = finite_unit(intensity);
-        for i in 1..positions.len() {
-            if t <= positions[i] {
-                return mix_rgb(
-                    p.ramp[i - 1],
-                    p.ramp[i],
-                    (t - positions[i - 1]) / (positions[i] - positions[i - 1]),
-                );
+        for i in 1..p.ramp.len() {
+            let (from, to) = (p.ramp_stop(i - 1), p.ramp_stop(i));
+            if t <= to {
+                return mix_rgb(p.ramp[i - 1], p.ramp[i], (t - from) / (to - from));
             }
         }
         p.ramp[8]
+    }
+    /// Where on the ramp a cell of the look's `intensity` reads: the palette's
+    /// own heat gamma over the look's, `(v^look)^palette`; unchanged without one.
+    #[must_use]
+    pub fn heat_position(&self, intensity: f32) -> f32 {
+        let intensity = finite_unit(intensity);
+        match self.palette.and_then(|p| p.heat_gamma()) {
+            Some(gamma) => intensity.powf(gamma),
+            None => intensity,
+        }
+    }
+    /// How much of its ramp colour a cell of the look's `intensity` lays down,
+    /// before the look's opacity: full from the palette's fade point up, linear
+    /// below it. `None` where the palette authors none: opacity then follows
+    /// intensity, as on a ramp that starts at the dark ground.
+    #[must_use]
+    pub fn heat_coverage(&self, intensity: f32) -> Option<f32> {
+        let fade = self.palette.and_then(|p| p.heat_fade_below())?;
+        Some((finite_unit(intensity) / fade).min(1.0))
     }
     pub fn resting_rgb(&self, side: BookSide, intensity: f32) -> [u8; 3] {
         let Some(p) = self.palette else {
@@ -249,5 +276,90 @@ mod decoration_tests {
                 .separator,
             [0, 0, 0, 170]
         );
+    }
+}
+
+#[cfg(test)]
+mod lit_tests {
+    use super::*;
+    use quantick_appearance::{ChartSurface, LIGHT, ResolvedTheme};
+
+    /// The lit flow pane's palette outranks any the pane picked for the island,
+    /// reads its ramp on its own stops and rims its bubbles; the island keeps
+    /// the trader's pick.
+    #[test]
+    fn the_lit_palette_outranks_a_picked_one_and_reads_its_own_stops() {
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        let lit = light.surface(ChartSurface::LitFlow).orderflow;
+        let island = light.bookmap().orderflow;
+        let picks = [
+            PaletteChoice::Inherited,
+            PaletteChoice::Snapshot(island),
+            PaletteChoice::Historical(HeatmapTheme::HighContrast),
+        ];
+        for choice in picks {
+            let mut style = OrderflowRenderStyle::default();
+            style.resolve_palette(choice, &lit);
+            assert_eq!(style.palette, Some(lit), "{choice:?}");
+            assert_eq!(choice.resolve(&lit), lit);
+            assert_eq!(choice.under(&island), choice);
+        }
+        let mut style = OrderflowRenderStyle::default();
+        style.resolve_palette(PaletteChoice::Inherited, &lit);
+        assert_eq!(style.thermal_rgb(0.0), [255, 255, 255]);
+        assert_eq!(style.thermal_rgb(0.15), [0xF1, 0xF2, 0xF4]);
+        assert_eq!(style.thermal_rgb(0.90), [0x8A, 0x2C, 0x7C]);
+        assert_eq!(style.thermal_rgb(1.0), [0x3A, 0x0A, 0x33]);
+        let rims = Some([[0x0A, 0x63, 0x44, 255], [0x8F, 0x1B, 0x27, 255]]);
+        assert_eq!(style.colors(|c| c).flat_rims, rims);
+        style.resolve_palette(PaletteChoice::Inherited, &island);
+        assert_eq!(style.colors(|c| c).flat_rims, None);
+    }
+
+    /// On the lit pane weak liquidity reads further up the ramp and every cell
+    /// from the fade point up paints its grey opaque, so the book does not
+    /// wash out to the white ground. Paper, the island and Dark read as before.
+    #[test]
+    fn the_lit_palette_lifts_weak_liquidity_and_paints_it_opaque() {
+        use super::super::theme::heat_fill_parts;
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        let mut lit = OrderflowRenderStyle::default();
+        let lit_palette = light.surface(ChartSurface::LitFlow).orderflow;
+        lit.resolve_palette(PaletteChoice::Inherited, &lit_palette);
+        assert!(
+            lit.heat_position(0.05) >= 0.12,
+            "{}",
+            lit.heat_position(0.05)
+        );
+        assert_eq!(lit.heat_position(0.5), 0.5_f32.powf(0.7));
+        // A half-strength cell at the look's full opacity lays its ramp grey
+        // down whole, not half of it over white.
+        let (rgb, alpha) = heat_fill_parts(&lit, BookSide::Bid, 0.5, 0.5).unwrap();
+        assert_eq!(alpha, 1.0);
+        let band = super::super::theme::quantize_heat(0.5_f32.powf(0.7));
+        assert_eq!(rgb, lit.resting_rgb(BookSide::Bid, band));
+        // The band and the side's faint tint are all that part it from the ramp.
+        let ramp = lit.thermal_rgb(0.5_f32.powf(0.7));
+        for (got, want) in rgb.into_iter().zip(ramp) {
+            assert!(got.abs_diff(want) <= 6, "{rgb:?} against {ramp:?}");
+        }
+        assert!(rgb.into_iter().max().unwrap() < 200, "{rgb:?}");
+        // Below the fade point a cell fades in; a carried one keeps its dimming.
+        let (_, faint) = heat_fill_parts(&lit, BookSide::Ask, 0.05, 0.05).unwrap();
+        assert!((faint - 0.5).abs() < 1e-5, "{faint}");
+        let (_, carried) = heat_fill_parts(&lit, BookSide::Ask, 0.5, 0.25).unwrap();
+        assert!((carried - 0.5).abs() < 1e-5, "{carried}");
+
+        let dark = ResolvedTheme::parse(quantick_appearance::DARK).unwrap();
+        for plain in [&light, light.bookmap(), &dark, dark.bookmap()] {
+            let mut style = OrderflowRenderStyle::default();
+            style.resolve_palette(PaletteChoice::Inherited, &plain.orderflow);
+            for i in 0..=1000 {
+                let v = i as f32 / 1000.0;
+                assert_eq!(style.heat_position(v).to_bits(), v.to_bits());
+                assert_eq!(style.heat_coverage(v), None);
+            }
+            assert_eq!(heat_fill_parts(&style, BookSide::Bid, 0.05, 0.05), None);
+        }
     }
 }

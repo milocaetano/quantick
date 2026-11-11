@@ -174,6 +174,8 @@ pub enum HeaderIntent {
     ToggleSettings,
     /// The selector's pick, the same write as the tape menu's.
     SetLaneWindow(LaneWindow),
+    /// The bulb's click: the flow pane's lights on or off.
+    SetLights(bool),
 }
 
 /// One layer glyph this frame: drawn or not, and what blocks it if anything. A
@@ -551,6 +553,16 @@ pub struct HeaderFit {
 /// on the left, then the gear's end at the right. The strip glyph lives in the
 /// trail's capsule, the one side it draws on.
 pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GEAR_END_PX;
+/// The bulb's key, as bare as the gear's, standing left of it.
+pub const BULB_KEY_PX: f32 = GEAR_KEY_PX;
+/// What the bulb adds to the band's right end: its key and the gap to the gear.
+pub const BULB_END_PX: f32 = SEGMENT_GAP_PX + BULB_KEY_PX;
+
+/// The band's bare controls, the bulb's included where the theme offers it.
+#[must_use]
+pub fn flow_controls_px(bulb: bool) -> f32 {
+    FLOW_CONTROLS_PX + if bulb { BULB_END_PX } else { 0.0 }
+}
 
 impl HeaderControl {
     /// A section's header, as the flow pane's line lists it, on screen or not.
@@ -1156,6 +1168,9 @@ mod tests {
         assert_eq!((key_dot_inset(true), key_dot_inset(false)), (6.5, 10.0));
         assert_eq!(side_words_px([30.0, 40.0]), 28.0 + 38.0);
         assert_eq!(FLOW_CONTROLS_PX, 40.0 + 4.0 + 8.0 + 20.0);
+        // The bulb is a bare key like the gear's, a key gap left of it.
+        assert_eq!(flow_controls_px(false), FLOW_CONTROLS_PX);
+        assert_eq!(flow_controls_px(true), FLOW_CONTROLS_PX + 4.0 + 20.0);
         assert_eq!(GEAR_END_PX, 8.0 + 20.0);
         assert_eq!(SEGMENT_HEIGHT_PX, 3.0 + 14.0 + 3.0);
         assert_eq!(mark_px(70.0), 70.0 + 8.0 + 1.0);

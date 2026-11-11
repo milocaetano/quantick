@@ -130,11 +130,7 @@ pub(super) fn draw_surfaces(
     };
     let editor_pane = target_pane.unwrap_or(focused_pane);
     let editor_tab = target_tab.unwrap_or(focused_tab);
-    let palette = if editor_pane.orderflow.is_some() {
-        crate::theme::bookmap(ctx)
-    } else {
-        crate::theme::get(ctx)
-    };
+    let palette = editor_pane.palette(ctx);
     let editor_style = editor_pane
         .presentation
         .candles
@@ -173,7 +169,7 @@ pub(super) fn draw_surfaces(
             ),
             focused_chart_area: focused_pane.frame.chart_area,
             style: &editor_style,
-            style_bookmap: editor_pane.orderflow.is_some(),
+            style_surface: editor_pane.surface(),
             footprint: focused_pane.footprint_config(footprint_config),
             footprint_customized: focused_pane.presentation.footprint.config.is_own(),
             focused_side,

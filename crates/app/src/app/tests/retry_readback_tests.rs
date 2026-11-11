@@ -710,6 +710,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ),
         ("orderflow.settings.close", 1, Value::Null, Readback::Moves),
         (
+            "orderflow.settings.lights.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        (
             "orderflow.bubbles.save_changes.set",
             1,
             Value::Null,
@@ -1151,6 +1157,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "orderflow.settings.close" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
             }),
+            "orderflow.settings.lights.set" => {
+                // Only a theme that authors a lit flow pane offers the lights.
+                app.runtime
+                    .appearance
+                    .apply_candidate(quantick_appearance::LIGHT, false)
+                    .unwrap();
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "on": true,
+                })
+            }
             "orderflow.bubbles.save_changes.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

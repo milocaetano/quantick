@@ -22,8 +22,9 @@ mod typography;
 
 pub use color::PremultipliedRgba;
 pub use document::{
-    AXIS_RESERVATION_RANGE, BookmapOverride, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes, ColorValue,
-    PremultipliedValue, ResolvedTheme, ThemeDocument, TitleStripOverride,
+    AXIS_RESERVATION_RANGE, BookmapOverride, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes, ChartSurface,
+    ColorValue, LitFlowOverride, PremultipliedValue, ResolvedTheme, ThemeDocument,
+    TitleStripOverride,
 };
 pub use error::ThemeError;
 pub use palette::Token;
@@ -38,6 +39,9 @@ mod tests;
 
 #[cfg(test)]
 mod grid_tests;
+
+#[cfg(test)]
+mod surface_dump_tests;
 
 mod render_palette;
 pub use render_palette::RenderPalette;

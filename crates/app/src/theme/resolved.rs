@@ -2,7 +2,9 @@
 use eframe::egui;
 #[cfg(test)]
 use quantick_appearance::Token;
-use quantick_appearance::{Appearance, FontFamily, FontRole, PremultipliedRgba, ResolvedTheme};
+use quantick_appearance::{
+    Appearance, ChartSurface, FontFamily, FontRole, PremultipliedRgba, ResolvedTheme,
+};
 use std::sync::Arc;
 
 /// Install bundled definitions once; either configurable text family retains icons.
@@ -104,6 +106,7 @@ pub(super) fn rendered(color: PremultipliedRgba) -> egui::Color32 {
 struct Palettes {
     ui: Arc<Palette>,
     bookmap: Arc<Palette>,
+    lit_flow: Option<Arc<Palette>>,
     title_strip: Arc<Palette>,
 }
 impl Palettes {
@@ -116,8 +119,10 @@ impl Palettes {
                 Arc::new(Palette::new(resolved))
             }
         };
+        let lit = theme.surface(ChartSurface::LitFlow);
         Self {
             bookmap: surface(theme.bookmap()),
+            lit_flow: theme.has_lit_flow().then(|| surface(lit)),
             title_strip: surface(theme.title_strip()),
             ui: ui.clone(),
         }
@@ -177,8 +182,22 @@ pub fn bookmap(ctx: &egui::Context) -> Arc<Palette> {
     ctx.data_mut(|data| cached(data).value.bookmap.clone())
 }
 
+#[cfg(test)]
 pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
     scope(ctx, bookmap(ctx))
+}
+
+/// The painter colours of a chart pane's surface: paper, the island or lit.
+pub fn surface(ctx: &egui::Context, surface: ChartSurface) -> Arc<Palette> {
+    ctx.data_mut(|data| {
+        let palettes = &cached(data).value;
+        let lit = palettes.lit_flow.as_ref();
+        match surface {
+            ChartSurface::Paper => palettes.ui.clone(),
+            ChartSurface::Flow => palettes.bookmap.clone(),
+            ChartSurface::LitFlow => lit.unwrap_or(&palettes.bookmap).clone(),
+        }
+    })
 }
 
 /// The title strip's painter colors (logo, tabs, `+`, menu, window buttons).
@@ -355,5 +374,28 @@ mod surface_tests {
         );
         assert_ne!(get(&ctx).canvas(), surface.canvas());
         assert_eq!(get(&other).canvas(), root.canvas());
+    }
+
+    /// Light's lit flow pane paints on white with its own order-flow palette;
+    /// Dark has none and paints its island whatever is asked.
+    #[test]
+    fn the_lit_surface_is_lights_white_and_darks_island() {
+        let ctx = egui::Context::default();
+        let mut state = Appearance::default();
+        state.apply(quantick_appearance::LIGHT).unwrap();
+        sync(&ctx, &state);
+        let lit = surface(&ctx, ChartSurface::LitFlow);
+        assert_eq!(lit.color(Token::ChartCanvas), egui::Color32::WHITE);
+        assert!(lit.resolved.orderflow.surface_bound);
+        assert!(!Arc::ptr_eq(&lit, &bookmap(&ctx)));
+        {
+            let _scope = scope(&ctx, lit.clone());
+            assert!(Arc::ptr_eq(&get(&ctx), &lit));
+        }
+        state.apply(quantick_appearance::DARK).unwrap();
+        sync(&ctx, &state);
+        let dark = surface(&ctx, ChartSurface::LitFlow);
+        assert!(Arc::ptr_eq(&dark, &bookmap(&ctx)));
+        assert!(Arc::ptr_eq(&surface(&ctx, ChartSurface::Paper), &get(&ctx)));
     }
 }

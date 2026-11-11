@@ -57,6 +57,26 @@ pub fn separator_ring_width(radius: f32) -> f32 {
     (radius * SEPARATOR_RING_SCALE).clamp(SEPARATOR_MIN_RING_PX, SEPARATOR_MAX_RING_PX)
 }
 
+/// The white halo a rimmed (lit) bubble wears outside its rim, as a share of
+/// its radius: about three pixels on an ordinary bubble, never a thread on a
+/// small one nor a collar on a sweep.
+const LIT_HALO_SCALE: f32 = 0.25;
+
+/// See [`LIT_HALO_SCALE`].
+const LIT_HALO_MIN_PX: f32 = 1.5;
+
+/// See [`LIT_HALO_SCALE`].
+const LIT_HALO_MAX_PX: f32 = 3.5;
+
+/// Halo width for a rimmed bubble of this radius.
+pub fn lit_halo_width(radius: f32) -> f32 {
+    (radius * LIT_HALO_SCALE).clamp(LIT_HALO_MIN_PX, LIT_HALO_MAX_PX)
+}
+
+/// The darker rim a rimmed (lit) bubble wears at its edge, whatever the
+/// look's outline width: flat bubbles on white have no shading to edge them.
+pub const FLAT_RIM_PX: f32 = 1.25;
+
 /// Pixels added beyond `front_length_scale × radius`, so the consumption mark
 /// on even the smallest bubble is long enough to read as a mark.
 pub const FRONT_END_PADDING_PX: f32 = 6.0;
@@ -174,5 +194,18 @@ mod tests {
         assert!(impact_ring_alpha(1.0) > impact_ring_alpha(0.0));
         assert!(impact_ring_alpha(0.0) >= IMPACT_RING_BASE_ALPHA);
         assert!(impact_ring_alpha(1.0) <= 1.0);
+    }
+}
+
+#[cfg(test)]
+mod lit_halo_tests {
+    use super::*;
+
+    #[test]
+    fn a_lit_halo_is_about_three_pixels_on_an_ordinary_bubble_and_bounded() {
+        assert_eq!(lit_halo_width(12.0), 3.0);
+        assert_eq!(lit_halo_width(2.0), 1.5);
+        assert_eq!(lit_halo_width(40.0), 3.5);
+        assert!(lit_halo_width(12.0) > separator_ring_width(12.0));
     }
 }

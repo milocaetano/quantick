@@ -360,9 +360,9 @@ impl OrderflowPort for dyn ControlPort {
         &self,
         visit: &mut quantick_control_handlers::orderflow::PanelVisit<'_>,
     ) {
-        let tabs = self.tab_reads().tabs();
+        let (tabs, lit) = (self.tab_reads().tabs(), self.appearance().has_lit_flow());
         for (tab_id, tab) in tabs.iter_with_ids() {
-            let panel = &tab.tape().settings_panel;
+            let panel = (&tab.tape().settings_panel, lit);
             visit(tab_id, &tab.symbol, panel, tabs.panel_folds());
         }
     }

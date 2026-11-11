@@ -189,6 +189,7 @@ fn bundled_light_changes_every_semantic_color_and_preserves_readable_text() {
         Token::FlowKeyUpInk,
         Token::FlowKeyUnlitInk,
         Token::FlowGearInk,
+        Token::FlowBulbLit,
     ];
     for token in Token::ALL {
         let same = light.color(token) == dark.color(token);

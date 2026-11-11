@@ -464,12 +464,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let folds = app.tab_reads().tabs().panel_folds();
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
-            // What a side shows, whatever its key reads, as its tooltip says.
-            let description = match control {
-                HeaderControl::Side(side) => Some(side_description(side).to_owned()),
-                _ => None,
-            };
-            let (label, role, selected, blocked, capability) = match control {
+            let (label, role, selected, blocked, capability, description) = match control {
                 HeaderControl::Side(side) => {
                     let segment = pane
                         .flow_header_state()
@@ -484,6 +479,8 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                             .and_then(|segment| segment.refusal)
                             .map(SideRefusal::code),
                         quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
+                        // What a side shows, whatever its key reads, as its tooltip says.
+                        Some(side_description(side)),
                     )
                 }
                 HeaderControl::Layer(toggle) => (
@@ -493,6 +490,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     pane.layer_blocked(toggle.layer(), capabilities)
                         .map(|block| block.code),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
+                    None,
                 ),
                 HeaderControl::TapeWindow => (
                     quantick_chart::flow_band::WINDOW_SELECTOR_NAME,
@@ -500,6 +498,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     false,
                     None,
                     quantick_control_schema::tape_view::TAPE_VIEW_CAPABILITY_ID,
+                    None,
                 ),
                 HeaderControl::Sample(sample) => (
                     sample.name(),
@@ -507,6 +506,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     false,
                     None,
                     quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
+                    None,
                 ),
                 HeaderControl::Settings(control) => {
                     settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)
@@ -516,7 +516,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
             controls.push(SceneControlSnapshot {
                 control_id: format!("pane.{}.header.{}", pane.id, control.id_in_header()),
                 label: label.to_owned(),
-                description,
+                description: description.map(str::to_owned),
                 role,
                 owner: SceneOwnerSnapshot {
                     kind: SceneOwnerKindDto::Tab,

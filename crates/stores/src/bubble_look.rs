@@ -607,7 +607,10 @@ fn dress(
 ) {
     let worn = config.volume_dots.tick_bubbles;
     preset.apply_to(config);
-    if config.palette == quantick_orderflow::config::theme::PaletteChoice::Inherited {
+    // A palette bound to the lit flow pane is that pane's, never a look's.
+    if config.palette == quantick_orderflow::config::theme::PaletteChoice::Inherited
+        && !appearance.surface_bound
+    {
         config.palette = quantick_orderflow::config::theme::PaletteChoice::Snapshot(*appearance);
     }
     if !spheres {

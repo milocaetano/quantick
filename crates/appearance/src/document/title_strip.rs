@@ -31,6 +31,7 @@ impl TitleStripOverride {
             orderflow: Default::default(),
             bookmap: None,
             title_strip: None,
+            lit_flow: None,
         }
         .resolve_with(Some(parent))
         .map_err(|error| ThemeError::new(format!("title_strip.{}", error.field), error.message))

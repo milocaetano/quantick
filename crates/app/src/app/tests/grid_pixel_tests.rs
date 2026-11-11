@@ -59,7 +59,7 @@ fn capture(
     let style = pane.presentation.candles.resolve_surface(
         &app.runtime.style,
         app.runtime.appearance.resolved(),
-        pane.orderflow.is_some(),
+        pane.surface(),
     );
     let expected_color = crate::pane::grid_color(&style);
     let time_grid = style
@@ -202,7 +202,7 @@ fn inherited_light_time_grid_aligns_at_each_dpi_without_moving_prices_or_exclude
                 let mut style = pane.presentation.candles.resolve_surface(
                     &app.runtime.style,
                     app.runtime.appearance.resolved(),
-                    pane.orderflow.is_some(),
+                    pane.surface(),
                 );
                 style.ownership.grid = Inheritance::Explicit;
                 app.active_tab_mut()

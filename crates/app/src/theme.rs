@@ -10,7 +10,7 @@ pub use supporting::{preset_input, supporting_label, supporting_text};
 pub mod store;
 
 pub use resolved::{
-    Palette, axes, bookmap, bookmap_scope, get, install_fonts, scope, sync, title_strip_scope,
+    Palette, axes, bookmap, get, install_fonts, scope, surface, sync, title_strip_scope,
 };
 
 pub use chrome::apply;

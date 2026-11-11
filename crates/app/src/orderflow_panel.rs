@@ -190,6 +190,7 @@ impl OrderflowSettingsPort for dyn ControlPort {
             tab_id: Some(WireU64::new(tab)),
         };
         let index = crate::control::layout::tab_index(self, target)?;
+        let lights_offered = self.appearance().has_lit_flow();
         let (tab, folds) = self
             .tabs_mut()
             .tab_with_panel_folds(index)
@@ -201,6 +202,7 @@ impl OrderflowSettingsPort for dyn ControlPort {
             folds,
             asset: &tab.symbol,
             flow_shown,
+            lights_offered,
         })
     }
 }
