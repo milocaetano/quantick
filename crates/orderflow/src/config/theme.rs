@@ -432,11 +432,14 @@ pub fn heat_fill_parts(
     // maps to the SAME colour: adjacent runs merge into one crisp, stable
     // band instead of a flickering gradient that reads as "meteors". The
     // faintest noise (rounding to zero) drops out entirely.
-    let intensity = quantize_heat(raw_intensity);
+    // The palette may read the ramp further up than the look's intensity
+    // and paint each cell opaque past a fade point (the lit pane on white).
+    let intensity = quantize_heat(style.heat_position(raw_intensity));
     if intensity <= 0.0 {
         return None;
     }
-    let alpha = finite_unit(base_alpha * (intensity / raw_intensity) * style.heat_opacity);
+    let coverage = style.heat_coverage(raw_intensity).unwrap_or(intensity);
+    let alpha = finite_unit(base_alpha * (coverage / raw_intensity) * style.heat_opacity);
     if alpha <= 0.0 {
         return None;
     }

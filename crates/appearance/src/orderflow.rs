@@ -12,6 +12,13 @@ pub struct OrderflowOverride {
     /// Where each ramp colour sits along the intensity, from 0 to 1: the
     /// first at 0, the last at 1, each past the one before.
     pub ramp_stops: Option<[f32; 9]>,
+    /// An exponent over each cell's intensity before the ramp reads it, on top
+    /// of the look's own gamma: below 1 lifts weak liquidity off a white ground.
+    pub heat_gamma: Option<f32>,
+    /// Cells at or above this intensity paint their ramp colour opaque, fading
+    /// in linearly below it; left out, a cell's opacity follows its intensity,
+    /// which suits a ramp that starts at the dark ground.
+    pub heat_fade_below: Option<f32>,
 }
 
 /// Exact premultiplied palette bytes plus an opaque thermal ramp.
@@ -50,6 +57,14 @@ pub struct OrderflowAppearance {
     /// dark ground muddies on white.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flat_rims: Option<[[u8; 4]; 2]>,
+    /// The palette's own heat gamma, in thousandths; `None` reads the ramp at
+    /// the look's intensity unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_gamma: Option<u16>,
+    /// The intensity, in thousandths, from which a cell paints opaque; `None`
+    /// keeps opacity proportional to intensity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat_fade_below: Option<u16>,
     /// Drawn for the surface it was resolved on: a pane's own palette choice,
     /// picked for another ground, yields to it. Never saved.
     #[serde(skip)]
@@ -60,6 +75,13 @@ pub struct OrderflowAppearance {
 pub const LEGACY_RAMP_STOPS: [u16; 9] = [0, 90, 220, 380, 550, 700, 830, 930, 1000];
 /// One whole intensity in the units [`OrderflowAppearance::ramp_stops`] counts.
 pub const RAMP_STOP_UNIT: f32 = 1000.0;
+/// The gentlest and the steepest heat gamma a palette may author: the range
+/// the look's own gamma is held to.
+pub const HEAT_GAMMA_MIN: f32 = 0.1;
+pub const HEAT_GAMMA_MAX: f32 = 5.0;
+/// The lowest and the highest intensity a palette may fade its heat in below.
+pub const HEAT_FADE_BELOW_MIN: f32 = 0.01;
+pub const HEAT_FADE_BELOW_MAX: f32 = 1.0;
 
 const fn legacy_ramp_stops() -> [u16; 9] {
     LEGACY_RAMP_STOPS
@@ -133,6 +155,8 @@ impl OrderflowOverride {
             ramp: fallback.map_or([[0; 3]; 9], |old| old.ramp),
             ramp_stops: fallback.map_or(LEGACY_RAMP_STOPS, |old| old.ramp_stops),
             flat_rims: None,
+            heat_gamma: fallback.and_then(|old| old.heat_gamma),
+            heat_fade_below: fallback.and_then(|old| old.heat_fade_below),
             surface_bound: false,
         };
         resolved.flat_rims = match (colors.remove("buy_rim"), colors.remove("sell_rim")) {
@@ -179,6 +203,20 @@ impl OrderflowOverride {
         if let Some(stops) = &self.ramp_stops {
             resolved.ramp_stops = ramp_stops(stops)?;
         }
+        if let Some(gamma) = self.heat_gamma {
+            if !(gamma.is_finite() && (HEAT_GAMMA_MIN..=HEAT_GAMMA_MAX).contains(&gamma)) {
+                return Err(heat_gamma_error());
+            }
+            // In range, so the rounded value fits.
+            resolved.heat_gamma = Some((gamma * RAMP_STOP_UNIT).round() as u16);
+        }
+        if let Some(fade) = self.heat_fade_below {
+            if !(fade.is_finite() && (HEAT_FADE_BELOW_MIN..=HEAT_FADE_BELOW_MAX).contains(&fade)) {
+                return Err(heat_fade_below_error());
+            }
+            // In range, so the rounded value fits.
+            resolved.heat_fade_below = Some((fade * RAMP_STOP_UNIT).round() as u16);
+        }
         Ok(resolved)
     }
 }
@@ -208,6 +246,20 @@ fn rising_ramp_stops(thousandths: &[u16; 9]) -> Result<(), ThemeError> {
     Ok(())
 }
 
+fn heat_gamma_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.heat_gamma",
+        format!("must be finite and between {HEAT_GAMMA_MIN} and {HEAT_GAMMA_MAX}"),
+    )
+}
+
+fn heat_fade_below_error() -> ThemeError {
+    ThemeError::new(
+        "orderflow.heat_fade_below",
+        format!("must be finite and between {HEAT_FADE_BELOW_MIN} and {HEAT_FADE_BELOW_MAX}"),
+    )
+}
+
 fn ramp_stops_error() -> ThemeError {
     ThemeError::new(
         "orderflow.ramp_stops",
@@ -220,6 +272,20 @@ impl OrderflowAppearance {
     #[must_use]
     pub fn ramp_stop(&self, index: usize) -> f32 {
         f32::from(self.ramp_stops[index]) / RAMP_STOP_UNIT
+    }
+
+    /// The exponent the palette lays over each cell's intensity, if it authors one.
+    #[must_use]
+    pub fn heat_gamma(&self) -> Option<f32> {
+        self.heat_gamma
+            .map(|thousandths| f32::from(thousandths) / RAMP_STOP_UNIT)
+    }
+
+    /// The intensity from which the palette paints a cell opaque, if it authors one.
+    #[must_use]
+    pub fn heat_fade_below(&self) -> Option<f32> {
+        self.heat_fade_below
+            .map(|thousandths| f32::from(thousandths) / RAMP_STOP_UNIT)
     }
 
     pub fn validate(&self) -> Result<(), ThemeError> {
@@ -237,6 +303,16 @@ impl OrderflowAppearance {
                     "must be opaque: bubble presets and thermal ramps use RGB",
                 ));
             }
+        }
+        if let Some(gamma) = self.heat_gamma()
+            && !(HEAT_GAMMA_MIN..=HEAT_GAMMA_MAX).contains(&gamma)
+        {
+            return Err(heat_gamma_error());
+        }
+        if let Some(fade) = self.heat_fade_below()
+            && !(HEAT_FADE_BELOW_MIN..=HEAT_FADE_BELOW_MAX).contains(&fade)
+        {
+            return Err(heat_fade_below_error());
         }
         rising_ramp_stops(&self.ramp_stops)
     }

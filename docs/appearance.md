@@ -192,7 +192,12 @@ palette fields preserve premultiplied alpha.
 `0, .09, .22, .38, .55, .70, .83, .93, 1`; `ramp_stops` places them elsewhere,
 from 0 to 1, each past the one before. `buy_rim` and `sell_rim`, written
 together, draw flat bubbles ringed in them. Missing colors or the ramp inherit
-Dark independently.
+Dark independently. `heat_gamma` (0.1 to 5) raises each heat cell's intensity
+to that power, on top of the look's own gamma, before the ramp reads it; below
+1 it lifts weak liquidity. `heat_fade_below` (0.01 to 1) paints every cell at or
+above that intensity in its full ramp colour, fading in linearly below it.
+Without it a cell's opacity follows its intensity, which suits a ramp that starts
+at a dark ground. Both are absent from Dark and from Light's paper and island.
 
 ## Lit flow surface
 
@@ -201,7 +206,10 @@ by the bulb beside the band's gear (`orderflow.settings.lights.set`). Its
 `[lit_flow.colors]` and `[lit_flow.orderflow]` derive from the root theme, not
 from `[bookmap]`, so drawings, VWAP and plot inks are the root's paper colors.
 Its order-flow palette outranks a palette the pane picked for the island. A theme
-without the table offers no bulb; the bundled Light authors it, Dark does not. `candle_casing_px` lays each candle on a plate that wide in `casing`; rimmed
+without the table offers no bulb; the bundled Light authors it, Dark does not.
+Light's `[lit_flow.orderflow]` sets `heat_gamma = 0.7` and `heat_fade_below = 0.1`,
+the mock's mapping, so weak and mid book levels read as grey on the white plot
+instead of washing out. `candle_casing_px` lays each candle on a plate that wide in `casing`; rimmed
 bubbles wear a white halo about three pixels wide in `separator`. Heat cells, preview and legend sample the same resolved
 ramp; the live strip and bubble controls read the same selected palette.
 

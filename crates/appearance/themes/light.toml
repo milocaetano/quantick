@@ -374,7 +374,12 @@ casing = "#FFFFFFE6"
 
 # Empty is the paper; the grey climbs with size and only the top tenth, the
 # wall, turns plum. The 0.95 stop is the straight mix of its neighbours.
+# heat_gamma lifts each cell's intensity before the ramp reads it, and every
+# cell from heat_fade_below up paints its grey opaque, so weak and mid book
+# levels land on visible grey instead of washing out to the white ground.
 [lit_flow.orderflow]
+heat_gamma = 0.7
+heat_fade_below = 0.1
 ramp = ["#FFFFFF", "#F1F2F4", "#DADDE2", "#B9BEC7", "#8F96A3", "#6B7382", "#8A2C7C", "#621B58", "#3A0A33"]
 ramp_stops = [0.0, 0.15, 0.40, 0.62, 0.80, 0.87, 0.90, 0.95, 1.0]
 

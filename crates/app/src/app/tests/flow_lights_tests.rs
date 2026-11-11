@@ -143,6 +143,33 @@ fn the_lights_survive_a_save_and_a_restart() {
     assert!(lit(&fresh));
 }
 
+/// A canvas layout change only stops drawing the flow pane: hidden behind a
+/// lone time chart and shown again, it keeps its lights and so does the call's
+/// readback.
+#[test]
+fn the_lights_survive_a_layout_that_hides_the_flow_pane() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = in_theme(&ctx, quantick_appearance::LIGHT);
+    settings_call(&mut app, LIGHTS_CAPABILITY_ID, json!({ "on": true })).unwrap();
+    for layout in [
+        CanvasLayout::Time,
+        CanvasLayout::TimeAndFlow,
+        CanvasLayout::Time,
+        CanvasLayout::TimeTimeAndFlow,
+        CanvasLayout::Single,
+    ] {
+        app.active_tab_mut().set_layout(layout);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert!(lit(&app), "{layout:?}");
+    }
+    let read = settings_call(&mut app, LIGHTS_CAPABILITY_ID, json!({ "on": true })).unwrap();
+    assert_eq!(
+        (read["lights_saved"].clone(), read["changed"].clone()),
+        (json!(true), json!(false))
+    );
+}
+
 /// Lit, every trail candle sits on a plate in the lit casing ink; off, no
 /// plate is painted at all.
 #[test]

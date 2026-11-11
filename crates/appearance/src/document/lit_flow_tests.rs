@@ -200,6 +200,22 @@ fn an_invalid_lit_surface_rejects_the_whole_theme() {
             "[lit_flow]\ncandle_casing_px=nan",
             "lit_flow.candle_casing_px",
         ),
+        (
+            "[lit_flow.orderflow]\nheat_gamma=0.05",
+            "lit_flow.orderflow.heat_gamma",
+        ),
+        (
+            "[lit_flow.orderflow]\nheat_gamma=nan",
+            "lit_flow.orderflow.heat_gamma",
+        ),
+        (
+            "[lit_flow.orderflow]\nheat_fade_below=0.0",
+            "lit_flow.orderflow.heat_fade_below",
+        ),
+        (
+            "[lit_flow.orderflow]\nheat_fade_below=1.5",
+            "lit_flow.orderflow.heat_fade_below",
+        ),
     ] {
         let error = state
             .apply(&format!("version=1\nname='Invalid lights'\n{invalid}"))
@@ -208,6 +224,28 @@ fn an_invalid_lit_surface_rejects_the_whole_theme() {
         assert_eq!(state.resolved(), before.resolved());
         assert_eq!(state.revision(), before.revision());
     }
+}
+
+#[test]
+fn only_the_lit_pane_lifts_and_fills_its_heat() {
+    let (dark, light) = (ResolvedTheme::parse(DARK).unwrap(), light());
+    let lit = &light.surface(ChartSurface::LitFlow).orderflow;
+    assert_eq!(lit.heat_gamma(), Some(0.7));
+    assert_eq!(lit.heat_fade_below(), Some(0.1));
+    lit.validate().unwrap();
+    for plain in [&light, light.bookmap(), &dark, dark.bookmap()] {
+        assert_eq!(plain.orderflow.heat_gamma, None);
+        assert_eq!(plain.orderflow.heat_fade_below, None);
+    }
+    let mut saved = *lit;
+    saved.heat_gamma = Some(9_000);
+    assert_eq!(saved.validate().unwrap_err().field, "orderflow.heat_gamma");
+    let mut saved = *lit;
+    saved.heat_fade_below = Some(0);
+    assert_eq!(
+        saved.validate().unwrap_err().field,
+        "orderflow.heat_fade_below"
+    );
 }
 
 #[test]
