@@ -138,8 +138,15 @@ fn chart_centre(app: &QuantickApp, side: PaneSide, name: &str) -> egui::Pos2 {
         .center()
 }
 
-/// Accent frames around the centre of `side`'s chart in `output`.
-fn frames_around(output: &egui::FullOutput, app: &QuantickApp, side: PaneSide) -> usize {
+/// Focus frames (the active-widget border) around the centre of `side`'s
+/// chart in `output`.
+fn frames_around(
+    ctx: &egui::Context,
+    output: &egui::FullOutput,
+    app: &QuantickApp,
+    side: PaneSide,
+) -> usize {
+    let border = crate::theme::get(ctx).widget_active_border();
     let Some(chart) = app.active_tab().pane(side).frame.chart_area else {
         return 0;
     };
@@ -148,7 +155,7 @@ fn frames_around(output: &egui::FullOutput, app: &QuantickApp, side: PaneSide) -
         .iter()
         .filter(|clipped| match &clipped.shape {
             egui::Shape::Rect(shape) => {
-                shape.stroke.color == crate::theme::ACCENT
+                shape.stroke.color == border
                     && shape.stroke.width >= 2.0
                     && shape.rect.contains(chart.center())
             }
@@ -191,7 +198,7 @@ fn a_click_activates_every_drawn_pane_in_every_arrangement() {
                 for &side in drawn {
                     let framed = drawn.len() > 1 && side == to;
                     assert_eq!(
-                        frames_around(&output, &app, side),
+                        frames_around(&ctx, &output, &app, side),
                         usize::from(framed),
                         "{name}: focus on {to:?}, the frame around {side:?}"
                     );
@@ -221,6 +228,6 @@ fn the_bottom_chart_takes_focus_with_the_flow_pane_put_away() {
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().focused_side(), BOTTOM);
-    assert_eq!(frames_around(&output, &app, BOTTOM), 1);
-    assert_eq!(frames_around(&output, &app, TOP), 0);
+    assert_eq!(frames_around(&ctx, &output, &app, BOTTOM), 1);
+    assert_eq!(frames_around(&ctx, &output, &app, TOP), 0);
 }

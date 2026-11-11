@@ -170,8 +170,14 @@ pub fn inset_seams(rect: CanvasRect, area: CanvasRect, divider: f32) -> CanvasRe
 }
 
 /// The recipe signal's reading of a canvas: every pane's slot, kind and
-/// mode, the matched preset, and each floating pane's place, bitwise.
-pub type Signal = (Vec<(u32, u8, u8)>, Option<&'static str>, Vec<[u32; 4]>);
+/// mode, the matched preset, each floating pane's place and the tree's
+/// shares, bitwise.
+pub type Signal = (
+    Vec<(u32, u8, u8)>,
+    Option<&'static str>,
+    Vec<[u32; 4]>,
+    Vec<u32>,
+);
 
 /// A hashable reading of `state` for the recipe signal.
 #[must_use]
@@ -185,11 +191,26 @@ pub fn signal(state: &CanvasState) -> Signal {
             [rect.x, rect.y, rect.w, rect.h].map(f32::to_bits)
         }
     });
+    let mut shares = Vec::new();
+    share_bits(state.tree(), &mut shares);
     (
         panes,
         state.preset().map(|preset| preset.id),
         floating.collect(),
+        shares,
     )
+}
+
+/// Every split's shares in `tree`, depth first, bitwise: a seam drag moves
+/// them and nothing else.
+fn share_bits(tree: &PaneTree, out: &mut Vec<u32>) {
+    if let PaneTree::Split {
+        children, shares, ..
+    } = tree
+    {
+        out.extend(shares.iter().map(|share| share.to_bits()));
+        children.iter().for_each(|child| share_bits(child, out));
+    }
 }
 
 /// `state` with its slots renumbered in reading order: the tree, the folded

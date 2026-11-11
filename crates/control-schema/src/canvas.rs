@@ -10,6 +10,7 @@
 use crate::readback::{EVERY_OPTIONAL_TEST, Readback, snapshot};
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use quantick_control::schema::generated_schema;
+use quantick_control::wire::CanonicalDecimal;
 use quantick_control_host::authority::CANVAS_MODULE_ID;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,11 @@ pub const DOCK_CAPABILITY_ID: &str = "canvas.pane.dock";
 pub const PARK_CAPABILITY_ID: &str = "canvas.pane.park";
 pub const POP_OUT_CAPABILITY_ID: &str = "canvas.pane.pop_out";
 pub const RETURN_CAPABILITY_ID: &str = "canvas.pane.return";
+pub const RESIZE_CAPABILITY_ID: &str = "canvas.pane.resize";
+
+/// Decimal places a pane's share is written and accepted with: the same as
+/// `workspace.summary`'s split fraction, so a sent share reads back as sent.
+pub const SHARE_DECIMAL_PLACES: u32 = 6;
 
 /// Every canvas capability, in the order the parent feature lists the actions.
 pub const CANVAS_CAPABILITY_IDS: &[&str] = &[
@@ -44,6 +50,7 @@ pub const CANVAS_CAPABILITY_IDS: &[&str] = &[
     PARK_CAPABILITY_ID,
     POP_OUT_CAPABILITY_ID,
     RETURN_CAPABILITY_ID,
+    RESIZE_CAPABILITY_ID,
 ];
 
 /// A canvas edge a floating chart docks at.
@@ -83,6 +90,16 @@ pub enum CanvasPaneMode {
     Maximized,
     Floating,
     OsWindow,
+}
+
+/// Which way a docked chart is resized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CanvasDimension {
+    /// Along a split that lays charts left to right.
+    Width,
+    /// Along a split that lays charts top to bottom.
+    Height,
 }
 
 /// A rectangle in canvas points (a monitor's points for an OS window).
@@ -171,12 +188,33 @@ pub struct PopOutInput {
     pub rect: Option<CanvasRectDto>,
 }
 
+/// Resize a docked chart by giving it a share of the layout around it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResizePaneInput {
+    pub slot: u32,
+    /// `width` resizes it within the nearest split laying charts left to
+    /// right, `height` within the nearest laying them top to bottom.
+    pub dimension: CanvasDimension,
+    /// The share of that split the chart's branch takes, strictly between
+    /// 0 and 1, with at most six decimal places. Its neighbour gives or
+    /// takes the difference; both keep the minimum a drag keeps.
+    pub share: CanonicalDecimal,
+}
+
 /// One pane of the canvas after the call.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CanvasPaneDto {
     pub slot: u32,
     pub kind: CanvasPaneKind,
     pub mode: CanvasPaneMode,
+    /// A docked chart's share of the nearest split laying charts left to
+    /// right, to six places; absent when none holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_share: Option<CanonicalDecimal>,
+    /// The same along the nearest split laying them top to bottom.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_share: Option<CanonicalDecimal>,
 }
 
 /// One tab's canvas as the workspace summary reads it: the readback every
@@ -310,6 +348,11 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
             "Return a chart to the canvas",
             "Brings a chart from its own window back over the canvas, floating and centred.",
         ),
+        RESIZE_CAPABILITY_ID => canvas_descriptor::<ResizePaneInput, CanvasResult>(
+            id,
+            "Resize a docked chart",
+            "Moves the seam between a docked chart and its neighbour, as dragging the divider between them does: the chart's branch takes share (0..1, six places) of the nearest split along dimension, held to the minimum a drag keeps. The result's panes carry each chart's width_share and height_share.",
+        ),
         _ => return None,
     };
     Some(descriptor)
@@ -344,6 +387,10 @@ pub const READBACKS: &[Readback] = &[
     ),
     edit(POP_OUT_CAPABILITY_ID, "the pane reads os_window"),
     edit(RETURN_CAPABILITY_ID, "the pane reads floating"),
+    edit(
+        RESIZE_CAPABILITY_ID,
+        "the pane's width_share or height_share reads the applied share",
+    ),
 ];
 
 const fn edit(capability: &'static str, applied: &'static str) -> Readback {
@@ -398,6 +445,10 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             "canvas-pop-out-input-v1.schema.json",
             schema::<PopOutInput>(),
         ),
+        (
+            "canvas-resize-input-v1.schema.json",
+            schema::<ResizePaneInput>(),
+        ),
         ("canvas-result-v1.schema.json", schema::<CanvasResult>()),
     ]
 }
@@ -422,5 +473,13 @@ mod tests {
             )
             .is_err()
         );
+        let resize = |share: serde_json::Value| {
+            serde_json::from_value::<ResizePaneInput>(
+                serde_json::json!({"slot": 0, "dimension": "width", "share": share}),
+            )
+        };
+        assert!(resize("0.6".into()).is_ok());
+        assert!(resize(serde_json::json!(0.6)).is_err(), "no JSON floats");
+        assert!(resize("0.60".into()).is_err(), "canonical decimals only");
     }
 }
