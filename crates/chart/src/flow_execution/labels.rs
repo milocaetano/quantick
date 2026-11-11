@@ -31,7 +31,7 @@ impl FlowPresentation {
         let mut labels: Vec<_> = self
             .regions
             .iter()
-            .filter(|region| region.disc.radius >= style.label_min_radius)
+            .filter(|region| floor.is_some() || region.disc.radius >= style.label_min_radius)
             .filter(|region| {
                 floor.is_none_or(|floor| frame.dots[region.dot_index].mark.quantity >= floor)
             })

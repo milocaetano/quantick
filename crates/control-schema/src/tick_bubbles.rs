@@ -58,7 +58,8 @@ pub struct TickBubblesSnapshot {
     #[serde(default)]
     pub viewport_scale: Option<ViewportBubbleScaleSnapshot>,
     /// Spheres merge inside whole candles chosen by the zoom, not one second
-    /// of market time; the frame's `region_candles` says how many.
+    /// of market time; the frame's `region_candles` says how many. True
+    /// whenever `peak_spheres` is, which divides those same regions.
     #[serde(default)]
     pub zoom_regions: bool,
     /// Each zoom region is divided at the peaks of its volume-by-price
@@ -89,7 +90,7 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
                 }
             },
             viewport_scale: style.viewport_scale.map(Into::into),
-            zoom_regions: style.zoom_regions,
+            zoom_regions: style.zoom_regions || style.peaks(),
             peak_spheres: style.peaks(),
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
@@ -120,7 +121,7 @@ pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
         TICK_BUBBLES_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Set tick chart sphere preset",
-        "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Optional peak_spheres and opacity tune the named preset as the settings panel does (omitted keeps the preset's own; refused with a null preset). Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+        "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Optional peak_spheres and opacity tune the named preset as the settings panel does (omitted keeps what the pane wears of that preset, else the preset's own; refused with a null preset); peak spheres divide zoom regions, so the readback reports zoom_regions true with them. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
         "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
@@ -153,6 +154,30 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Test agent D3: peak spheres imply zoom regions, and the readback says so
+    /// even for a look whose own zoom switch is off.
+    #[test]
+    fn peak_spheres_read_back_with_their_zoom_regions() {
+        let style = quantick_orderflow::TickBubbleStyle {
+            reference_quantity: 1.0,
+            reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+            viewport_scale: None,
+            zoom_regions: false,
+            peak_spheres: Some(true),
+            max_radius: 32.0,
+            label_min_radius: 8.0,
+            opacity: 0.9,
+        };
+        assert!(!style.zoom_regions);
+        let snapshot = TickBubblesSnapshot::from(style);
+        assert!(snapshot.peak_spheres && snapshot.zoom_regions);
+        let off = TickBubblesSnapshot::from(quantick_orderflow::TickBubbleStyle {
+            peak_spheres: None,
+            ..style
+        });
+        assert!(!off.zoom_regions);
+    }
 
     #[test]
     fn preset_is_required_and_nullable() {

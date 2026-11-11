@@ -596,10 +596,15 @@ fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
         .count();
     assert_eq!(fits, 2, "the middle mass would fit its label");
     let labels = plan.quantity_labels(&frame, Some(style));
+    assert_eq!(labels.len(), 1, "only the top fifth carries one");
+    let readable = quantick_orderflow::TickBubbleStyle {
+        label_min_radius: 64.0,
+        ..style
+    };
     assert_eq!(
-        labels.len(),
+        plan.quantity_labels(&frame, Some(readable)).len(),
         1,
-        "only masses of half the reference carry one"
+        "test agent D2: the top fifth is offered whatever the readable radius"
     );
     assert_eq!(labels[0].center, centers[0]);
     // The fill strength is part of each region's key, so a drawing kept

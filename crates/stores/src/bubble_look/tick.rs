@@ -250,6 +250,15 @@ mod tests {
         };
         let fresh = look.tick_style_tuned(name, opacity, Some(other));
         assert_eq!(fresh.unwrap().unwrap().peak_spheres, preset.peak_spheres);
+        // Test agent D4: the other direction, peak spheres alone keep the
+        // opacity the pane tuned.
+        let peaks_only = TickTuning {
+            peak_spheres: Some(true),
+            ..TickTuning::default()
+        };
+        let retick = look.tick_style_tuned(name, peaks_only, Some(worn));
+        let retick = retick.unwrap().unwrap();
+        assert_eq!((retick.peak_spheres, retick.opacity), (Some(true), 0.6));
     }
 
     #[test]

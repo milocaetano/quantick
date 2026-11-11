@@ -191,6 +191,48 @@ fn viewport_camera(px_per_bar: f32, range: (f64, f64)) -> FlowExecutionGeometry 
     FlowExecutionGeometry::new(viewport, 3, 0, range, [0.0, 0.0, 300.0, 200.0], false).unwrap()
 }
 
+/// Test agent D1: through the viewport gain and a display scale, the least
+/// peak sphere's painted radius (the readback's `radius_px`) never falls
+/// under the minimum, and the top-ranked one reaches what the old path's
+/// largest sphere reaches at the same camera.
+#[test]
+fn peak_spheres_keep_the_minimum_and_reach_the_old_paths_largest() {
+    let off = viewport_source();
+    let mut peaks = off.clone();
+    peaks.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1);
+    let style = viewport_style();
+    let peak_style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        ..style
+    };
+    let clip = [[0.0, 0.0], [300.0, 200.0]];
+    let least = quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX;
+    for (px_per_bar, display) in [(8.0, 1.0), (8.0, 0.5), (64.0, 1.0), (64.0, 0.25)] {
+        let camera = viewport_camera(px_per_bar, (90.0, 110.0)).with_display_scale(display);
+        let old = camera.viewport_frame(&off, Some(style), clip).unwrap();
+        let new = camera
+            .viewport_frame(&peaks, Some(peak_style), clip)
+            .unwrap();
+        let largest =
+            |frame: &FlowTapeFrame| frame.dots.iter().map(|dot| dot.radius).fold(0.0, f32::max);
+        let smallest = new
+            .dots
+            .iter()
+            .map(|dot| dot.radius)
+            .fold(f32::MAX, f32::min);
+        assert!(
+            smallest >= least,
+            "{smallest} at {px_per_bar} px, x{display}"
+        );
+        assert_eq!(
+            largest(&new),
+            largest(&old),
+            "at {px_per_bar} px, x{display}"
+        );
+    }
+}
+
 #[test]
 fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regrouping() {
     let source = viewport_source();
