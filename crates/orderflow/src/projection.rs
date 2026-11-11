@@ -103,19 +103,42 @@ use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier
 use heat_cells::percentile_99;
 use heat_cells::{DraftCell, PriceRows, book_gaps, finish_cells};
 
-/// One level's resting liquidity, summed over one bar and weighted by time.
+/// One level's resting liquidity inside one bar: every size it showed and
+/// for how long.
 ///
-/// The accumulator behind a bar slot's summary band: `weighted / span_ms` is
-/// the quantity that was typically resting at that price while the bar ran.
+/// The accumulator behind a bar slot's summary band, which reads at the
+/// largest size that stood there (`standing_quantity`).
 struct SlotHeat {
     generation: u64,
     /// Σ quantity × milliseconds it was displayed for, inside this bar.
     weighted: Decimal,
-    /// The bar's own duration, which the sum is averaged over — so a level
-    /// present for part of the bar reads proportionally fainter.
+    /// Each run's size and the milliseconds of this bar it covered.
+    stands: Vec<(Decimal, i64)>,
+    /// The bar's own duration.
     span_ms: i64,
     y0: f64,
     y1: f64,
+}
+
+impl SlotHeat {
+    /// The largest size the level held, or exceeded, for
+    /// [`constants::SLOT_WALL_STANDING_MS`] of the bar (the whole bar when it is
+    /// shorter): the wall the tape drew at its own size, not the bar's
+    /// average, which paints a wall that stood half a long tick bar as
+    /// ordinary book. A level that never stood that long reads by presence,
+    /// `weighted / span_ms`, so a brief touch stays faint.
+    fn standing_quantity(mut self) -> Decimal {
+        let needed = constants::SLOT_WALL_STANDING_MS.min(self.span_ms);
+        self.stands.sort_by_key(|stand| std::cmp::Reverse(stand.0));
+        let mut stood = 0_i64;
+        for (quantity, overlap) in &self.stands {
+            stood = stood.saturating_add(*overlap);
+            if stood >= needed {
+                return *quantity;
+            }
+        }
+        self.weighted / Decimal::from(self.span_ms)
+    }
 }
 
 /// Project retained order flow into `[0,1] × [0,1]` chart primitives.
@@ -234,12 +257,12 @@ pub fn project_settled(
     // run belongs leaves the candles' half of the chart frozen a window in the
     // past. With a tape on screen the two halves split the job the way the
     // prints already do: the tape keeps the runs themselves, second by second,
-    // and each bar slot carries *one summary band per level* — the quantity
-    // that was typically resting there while the bar ran, each run weighted by
-    // how much of the bar it covered. A wall that stood the whole bar reads at
-    // its own size; one that flickered for a tenth of it reads a tenth as
-    // bright. Both panes read on the same scale, so a stable wall looks the
-    // same on either side of the divider.
+    // and each bar slot carries *one summary band per level* — the largest
+    // size that stood there for a second while the bar ran. A wall the tape
+    // drew at its own size reads at that size in its bar, however long the
+    // bar; a flicker shorter than the second does not paint the bar. Both
+    // panes read on the same scale, so a wall looks the same on either side
+    // of the divider.
     //
     // Without a tape there is nothing to carry the detail, so the chart keeps
     // drawing every run where it happened, exactly as it always has.
@@ -284,6 +307,7 @@ pub fn project_settled(
                     .or_insert(SlotHeat {
                         generation: run.generation,
                         weighted: Decimal::ZERO,
+                        stands: Vec::new(),
                         span_ms: (span.end_ms - span.start_ms).max(1),
                         y0,
                         y1,
@@ -291,6 +315,7 @@ pub fn project_settled(
                 entry.weighted = entry
                     .weighted
                     .saturating_add(run.quantity.saturating_mul(Decimal::from(overlap)));
+                entry.stands.push((run.quantity, overlap));
                 entry.generation = entry.generation.max(run.generation);
                 drawn = true;
             }
@@ -319,15 +344,16 @@ pub fn project_settled(
     }
     for ((index, price_bucket, side), heat) in summary {
         let (x0, x1) = timeline.slot_bounds(index);
+        let (generation, y0, y1) = (heat.generation, heat.y0, heat.y1);
         drafts.push(DraftCell {
-            generation: heat.generation,
+            generation,
             side,
             price_bucket,
-            quantity: heat.weighted / Decimal::from(heat.span_ms),
+            quantity: heat.standing_quantity(),
             x0,
             x1,
-            y0: heat.y0,
-            y1: heat.y1,
+            y0,
+            y1,
             carried: false,
             time_averaged: false,
             current_book: false,
