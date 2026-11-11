@@ -11,11 +11,13 @@
 //! highest smoothed ordinary row (the opening burst stays out of that
 //! reference). Neighbouring peaks are cut apart at the lowest row between
 //! them; each segment's prints become one sphere at their volume-weighted
-//! price and place, sized like any sphere by area against the frame's
-//! reference. The cuts read the held price scale and the data, never the
-//! clip or the axis' offset, so a pan never regroups a mass.
+//! price and place, sized by its rank among the masses in view
+//! ([`FlowScaleBasis::RankedVisibleMasses`]). The cuts read the held price
+//! scale and the data, never the clip or the axis' offset, so a pan never
+//! regroups a mass.
 use super::constants::{
-    PEAK_BALANCED_STRENGTH, PEAK_PROFILE_MAX_ROWS, PEAK_PROMINENCE_PERCENT, PEAK_ROW_MAX_DOUBLINGS,
+    PEAK_BALANCED_STRENGTH, PEAK_LABEL_RANK, PEAK_MIN_RADIUS_PX, PEAK_PROFILE_MAX_ROWS,
+    PEAK_PROMINENCE_PERCENT, PEAK_RADIUS_SHARES, PEAK_RANK_STOPS, PEAK_ROW_MAX_DOUBLINGS,
     PEAK_SIGMA_RADIUS_SHARE, PEAK_SMOOTHING_KERNEL,
 };
 use super::{FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView, Group, MergeDisc as _};
@@ -320,9 +322,81 @@ fn prominence(values: &[Decimal], peak: usize) -> Decimal {
     height - left.max(right)
 }
 
+/// The share of `sorted` at or below `quantity`.
+fn rank(sorted: &[Decimal], quantity: Decimal) -> f32 {
+    sorted.partition_point(|held| *held <= quantity) as f32 / sorted.len().max(1) as f32
+}
+
+/// The share of the radius range [`PEAK_RANK_STOPS`] and
+/// [`PEAK_RADIUS_SHARES`] give `rank`; linear between stops.
+fn radius_share(rank: f32) -> f32 {
+    let last = PEAK_RANK_STOPS.len() - 1;
+    if rank >= PEAK_RANK_STOPS[last] {
+        return PEAK_RADIUS_SHARES[last];
+    }
+    let at = PEAK_RANK_STOPS[1..]
+        .iter()
+        .position(|stop| rank <= *stop)
+        .unwrap_or(last - 1);
+    let (from, to) = (PEAK_RANK_STOPS[at], PEAK_RANK_STOPS[at + 1]);
+    let t = ((rank - from) / (to - from)).clamp(0.0, 1.0);
+    PEAK_RADIUS_SHARES[at] + t * (PEAK_RADIUS_SHARES[at + 1] - PEAK_RADIUS_SHARES[at])
+}
+
 impl FlowTapeFrame {
+    /// The peak spheres' scale: every mass's radius is its rank among the
+    /// frame's masses (those the painted clip and the axis hold), from
+    /// [`PEAK_MIN_RADIUS_PX`] up to the full radius, ties sharing a rank so
+    /// equal volume is an equal sphere. With the opening ignored, a mass
+    /// holding the daily opening leaves the ranking and keeps the opening
+    /// treatment against the largest ranked mass. The frame's reference,
+    /// basis and opening flag describe exactly this. Every finished frame is
+    /// ranked once, before it is ordered for paint.
+    pub(super) fn rank_peaks(&mut self) {
+        if !self.view.region.divides_at_peaks() || self.dots.is_empty() {
+            return;
+        }
+        let ignored = |dot: &FlowTapeDot| self.view.exclude_opening && dot.opening_anchor;
+        let mut sorted: Vec<Decimal> = self
+            .dots
+            .iter()
+            .filter(|dot| !ignored(dot))
+            .map(|dot| dot.mark.quantity)
+            .collect();
+        // Openings alone in view are ranked among themselves.
+        let excluding = !sorted.is_empty() && sorted.len() < self.dots.len();
+        if sorted.is_empty() {
+            sorted = self.dots.iter().map(|dot| dot.mark.quantity).collect();
+        }
+        sorted.sort_unstable();
+        let largest = sorted[sorted.len() - 1];
+        let labelled_from = sorted
+            .iter()
+            .copied()
+            .find(|quantity| rank(&sorted, *quantity) >= PEAK_LABEL_RANK)
+            .unwrap_or(largest);
+        let full = self.view.radius_limit;
+        let least = PEAK_MIN_RADIUS_PX.min(full);
+        for dot in &mut self.dots {
+            if excluding && self.view.exclude_opening && dot.opening_anchor {
+                super::resize_dot(dot, self.view, largest, true);
+                continue;
+            }
+            let share = radius_share(rank(&sorted, dot.mark.quantity));
+            dot.radius = full - (1.0 - share) * (full - least);
+            dot.mark.size = if full > 0.0 { dot.radius / full } else { 0.0 };
+            dot.opening_oversized = false;
+        }
+        self.effective_reference = Some(largest);
+        self.scale_basis = FlowScaleBasis::RankedVisibleMasses {
+            masses: sorted.len(),
+            labelled_from,
+        };
+        self.opening_exclusion_effective = excluding;
+    }
+
     /// The least quantity that carries a label under peak spheres: the top
-    /// fifth by rank ([`PEAK_LABEL_RANK`](super::constants::PEAK_LABEL_RANK)), as the ranking found it. `None`
+    /// fifth by rank ([`PEAK_LABEL_RANK`]), as the ranking found it. `None`
     /// when the frame does not rank its masses.
     #[must_use]
     pub fn peak_label_floor(&self) -> Option<Decimal> {

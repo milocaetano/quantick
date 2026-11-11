@@ -235,6 +235,7 @@ impl FlowTapeFrame {
     }
 
     fn order_for_paint(&mut self) {
+        self.rank_peaks();
         self.paint_order = (0..self.dots.len()).collect();
         self.paint_order.sort_by_key(|&index| {
             let dot = &self.dots[index];
@@ -518,10 +519,6 @@ fn resize_dot(dot: &mut FlowTapeDot, view: FlowTapeView, reference: Decimal, exc
         } else {
             dot.mark.size
         };
-    if view.region.divides_at_peaks() {
-        // A mass too small for its earned area is still a dot.
-        dot.radius = dot.radius.max(PEAK_MIN_RADIUS_PX);
-    }
 }
 
 impl FlowTapeFrame {

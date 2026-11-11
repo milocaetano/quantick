@@ -87,18 +87,14 @@ pub fn flow_notes(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) 
                 area
             ));
         }
-        let floored = frame
-            .dots
-            .iter()
-            .filter(|dot| {
-                frame.view.region.divides_at_peaks()
-                    && frame.view.radius_limit * dot.mark.size < dot.radius
-                    && !dot.opening_oversized
-            })
-            .count();
-        if floored > 0 {
+        if let super::FlowScaleBasis::RankedVisibleMasses {
+            masses,
+            labelled_from,
+        } = frame.scale_basis
+        {
             hints.push(format!(
-                "{floored} peak masses drawn at the minimum radius, larger than their area"
+                "Peak spheres ranked among {masses} visible masses; labels from {}",
+                quantick_engine::display::display_decimal(labelled_from)
             ));
         }
         if frame.opening_exclusion_effective {
