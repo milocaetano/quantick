@@ -129,7 +129,7 @@ impl SlotHeat {
     /// `weighted / span_ms`, so a brief touch stays faint.
     fn standing_quantity(mut self) -> Decimal {
         let needed = constants::SLOT_WALL_STANDING_MS.min(self.span_ms);
-        self.stands.sort_by(|a, b| b.0.cmp(&a.0));
+        self.stands.sort_by_key(|stand| std::cmp::Reverse(stand.0));
         let mut stood = 0_i64;
         for (quantity, overlap) in &self.stands {
             stood = stood.saturating_add(*overlap);
