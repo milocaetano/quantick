@@ -73,6 +73,11 @@ pub fn ink_on(
 /// a dark one - and leaves every bundled default and swatch alone on both.
 pub const MIN_DRAWING_CONTRAST: f32 = 1.5;
 
+/// The least contrast a drawing's text keeps where no plate backs it: the
+/// WCAG body-text ratio, since bare digits over the chart are read, not
+/// glanced at.
+pub const MIN_BARE_TEXT_CONTRAST: f32 = 4.5;
+
 /// The colour a drawing is painted in over `background`: its authored `color`,
 /// or, when that has all but vanished there, the same hue shaded toward black
 /// (on a light background) or white (on a dark one) just far enough to reach
@@ -85,9 +90,18 @@ pub const MIN_DRAWING_CONTRAST: f32 = 1.5;
 /// canvas it was chosen for does.
 #[must_use]
 pub fn legible(color: PremultipliedRgba, background: PremultipliedRgba) -> PremultipliedRgba {
+    legible_at(color, background, MIN_DRAWING_CONTRAST)
+}
+
+/// [`legible`] held to `least` instead of [`MIN_DRAWING_CONTRAST`].
+fn legible_at(
+    color: PremultipliedRgba,
+    background: PremultipliedRgba,
+    least: f32,
+) -> PremultipliedRgba {
     let seen = |ink: PremultipliedRgba| contrast_ratio(ink, background);
     let hue = opaque(color);
-    if color.a() == 0 || seen(hue) >= MIN_DRAWING_CONTRAST {
+    if color.a() == 0 || seen(hue) >= least {
         return color;
     }
     let black = PremultipliedRgba::from_rgb(0, 0, 0);
@@ -97,7 +111,7 @@ pub fn legible(color: PremultipliedRgba, background: PremultipliedRgba) -> Premu
     } else {
         white
     };
-    let shade = shade_until_seen(hue, toward, |ink| seen(ink) >= MIN_DRAWING_CONTRAST);
+    let shade = shade_until_seen(hue, toward, |ink| seen(ink) >= least);
     if color.a() == u8::MAX {
         shade
     } else {
@@ -163,7 +177,24 @@ impl crate::ResolvedTheme {
         if self.drawing_label_plates {
             (color, self.ink_on(color))
         } else {
-            (crate::color::TRANSPARENT, self.legible_drawing(color))
+            (crate::color::TRANSPARENT, self.drawing_text_ink(color))
+        }
+    }
+
+    /// A drawing's text ink. With label plates the colour is painted as
+    /// authored (the renderer may back it); without them there is no backing,
+    /// so the hue is shaded on the canvas until it reaches
+    /// [`MIN_BARE_TEXT_CONTRAST`] — black stays black, a pale green deepens.
+    #[must_use]
+    pub fn drawing_text_ink(&self, color: PremultipliedRgba) -> PremultipliedRgba {
+        if self.drawing_label_plates {
+            color
+        } else {
+            legible_at(
+                color,
+                self.color(crate::Token::Canvas),
+                MIN_BARE_TEXT_CONTRAST,
+            )
         }
     }
 

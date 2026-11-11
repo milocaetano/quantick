@@ -1025,7 +1025,7 @@ fn light_drawings_are_black_and_their_labels_have_no_plate() {
     assert_eq!(light.drawing_tag_paint(ink), (color::TRANSPARENT, ink));
     // A pale pick still reads over paper: the bare ink is made legible.
     let (_, pale) = light.drawing_tag_paint(WHITE);
-    assert_eq!(pale, light.legible_drawing(WHITE));
+    assert_eq!(pale, light.drawing_text_ink(WHITE));
     assert_ne!(pale, WHITE);
     // The dark island keeps its plates, so a black drawing's tag stays seen.
     let island = light.bookmap();
@@ -1036,4 +1036,19 @@ fn light_drawings_are_black_and_their_labels_have_no_plate() {
     assert!(dark.drawing_label_plates);
     let blue = dark.color(Token::DrawingDefault);
     assert_eq!(dark.drawing_tag_paint(blue), (blue, dark.ink_on(blue)));
+}
+
+/// Bare drawing text on Light reads at body-text contrast: black stays
+/// black, a pale buy green is shaded deeper; Dark leaves the ink alone.
+#[test]
+fn bare_drawing_text_is_shaded_until_it_reads() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let canvas = light.color(Token::Canvas);
+    let black = PremultipliedRgba::from_rgb(0, 0, 0);
+    assert_eq!(light.drawing_text_ink(black), black);
+    let pale = PremultipliedRgba::from_rgb(120, 220, 140);
+    let ink = light.drawing_text_ink(pale);
+    assert!(contrast::contrast_ratio(ink, canvas) >= contrast::MIN_BARE_TEXT_CONTRAST);
+    let dark = ResolvedTheme::default();
+    assert_eq!(dark.drawing_text_ink(pale), pale);
 }
