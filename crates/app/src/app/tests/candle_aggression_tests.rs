@@ -319,8 +319,10 @@ fn candle_aggression_paints_after_co_enabled_footprint_plates() {
     );
 }
 
+/// A context header names the bars the pane applies, tick or time alike; time
+/// bars bring back no strip of timeframes, only the interval on the control.
 #[test]
-fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_time_bars() {
+fn a_context_header_names_the_applied_bars_tick_or_time() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = context_fixture(&ctx);
     let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -332,10 +334,6 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
         !texts.iter().any(|text| text == "1m"),
         "the tick chart must not claim the retained time preset is active"
     );
-    assert!(
-        !app.active_tab().time_header_chip(0).unwrap().is_positive(),
-        "a hidden time chip has no live hit rectangle"
-    );
     app.active_tab_mut().time_panes[0]
         .spec
         .update(
@@ -346,19 +344,12 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let texts = painted_text(&run_frame(&mut app, &ctx));
-    assert!(texts.iter().any(|text| text == "1m"));
-    let chip = app.active_tab().time_header_chip(1).unwrap();
     assert!(
-        chip.is_positive(),
-        "time bars retain their timeframe controls"
+        texts.iter().any(|text| text.starts_with("Time · 1m")),
+        "time bars read their interval on the control: {texts:?}"
     );
-    let flow = *app.active_tab().flow_pane.state.spec();
-    click_chart(&mut app, &ctx, chip.center());
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.active_tab().time_panes[0].state.spec(),
-        &BarSpec::Time(300_000)
+    assert!(
+        !texts.iter().any(|text| text == "5m"),
+        "no timeframe strip stands beside it: {texts:?}"
     );
-    assert_eq!(app.active_tab().flow_pane.state.spec(), &flow);
 }

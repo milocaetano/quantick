@@ -102,7 +102,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
                 )
                 .is_some() =>
             {
-                // A calendar month has no fixed length to drag, and the chip
+                // A calendar month has no fixed length to drag, and the button
                 // already names it: nothing stands beside it.
                 ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
             }
@@ -162,6 +162,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
 /// a list inside the open menu, so no second popup closes the first. Returns
 /// whether the free editor shows: after "Custom…", or for a value no preset
 /// names.
+///
+/// The list keeps its fold and its Custom… while it paints frame after frame;
+/// a frame without it is a closed menu, and the next paint opens folded.
 fn preset_list(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -170,14 +173,20 @@ fn preset_list(
     value: &mut Decimal,
     changed: &mut bool,
 ) -> bool {
+    let pass = ui.ctx().cumulative_pass_nr();
     let (mut open, mut custom) = ui
-        .data(|data| data.get_temp::<(bool, bool)>(id))
-        .unwrap_or_default();
-    let named = presets
-        .iter()
-        .find(|(_, preset)| *value == Decimal::from(*preset))
-        .map(|(label, _)| *label);
-    let words = named.map_or_else(|| value_words(kind, *value), str::to_owned);
+        .data(|data| data.get_temp::<(bool, bool, u64)>(id))
+        .filter(|(_, _, painted)| painted + 1 >= pass)
+        .map_or((false, false), |(open, custom, _)| (open, custom));
+    let named = |value: Decimal| {
+        presets
+            .iter()
+            .find(|(_, preset)| value == Decimal::from(*preset))
+            .map(|(label, _)| *label)
+    };
+    // Sticky: a drag from an unnamed value across a preset keeps its editor.
+    custom |= named(*value).is_none();
+    let words = named(*value).map_or_else(|| value_words(kind, *value), str::to_owned);
     let button = ui
         .add(egui::Button::new(format!("{words} {}", icons::CARET_DOWN)))
         .on_hover_text("Choose a preset, or Custom…");
@@ -193,12 +202,18 @@ fn preset_list(
                 (open, custom) = (false, false);
             }
         }
-        if ui.selectable_label(custom, CUSTOM).clicked() {
+        // A calendar month has no length to edit, so Custom… would open nothing.
+        let month = kind == NumberKind::Duration
+            && value
+                .to_i64()
+                .and_then(quantick_engine::time_bucket::calendar_months)
+                .is_some();
+        if !month && ui.selectable_label(custom, CUSTOM).clicked() {
             (open, custom) = (false, true);
         }
     }
-    ui.data_mut(|data| data.insert_temp(id, (open, custom)));
-    custom || named.is_none()
+    ui.data_mut(|data| data.insert_temp(id, (open, custom, pass)));
+    custom || named(*value).is_none()
 }
 
 /// The last row of an unfolded preset list: it reveals the free editor.
@@ -353,6 +368,72 @@ mod tests {
             painted.iter().filter(|text| text.contains("90s")).count() >= 2,
             "{painted:?}"
         );
+    }
+
+    /// A named interval shows no drag until Custom…, which brings one that
+    /// writes the interval out.
+    #[test]
+    fn a_named_interval_shows_its_drag_only_after_custom() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let idle = paint(&mut selection, &ctx, &[]);
+        assert!(!idle.iter().any(|text| text == "5m"), "{idle:?}");
+        let custom = paint(&mut selection, &ctx, &["5m ", CUSTOM]);
+        assert!(custom.iter().any(|text| text == "5m"), "{custom:?}");
+    }
+
+    /// A drag from an unnamed interval that crosses a preset keeps its editor:
+    /// the value is named now, but the hand is still on the drag.
+    #[test]
+    fn the_free_editor_survives_crossing_a_preset() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:90000").unwrap());
+        let ctx = egui::Context::default();
+        let unnamed = paint(&mut selection, &ctx, &[]);
+        assert!(unnamed.iter().any(|text| text == "90s"), "{unnamed:?}");
+        selection
+            .update(
+                SelectionCommand::Replace(BUILTIN_BARS.parse("time:60000").unwrap()),
+                BarInputAvailability::PRINTS,
+            )
+            .unwrap();
+        let crossed = paint(&mut selection, &ctx, &[]);
+        assert!(
+            crossed.iter().any(|text| text.starts_with("1m ")),
+            "{crossed:?}"
+        );
+        assert!(
+            crossed.iter().any(|text| text == "1m"),
+            "the drag stays: {crossed:?}"
+        );
+    }
+
+    /// A calendar month has no length to edit, so its list offers no Custom….
+    #[test]
+    fn a_calendar_month_hides_custom() {
+        let month = quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+        let mut selection =
+            BarSelection::new(BUILTIN_BARS.parse(&format!("time:{month}")).unwrap());
+        let ctx = egui::Context::default();
+        let painted = paint(&mut selection, &ctx, &["1mo "]);
+        assert!(painted.iter().any(|text| text == "1w"), "the list unfolded");
+        assert!(!painted.iter().any(|text| text == CUSTOM), "{painted:?}");
+    }
+
+    /// A frame without the list is a closed menu: the next paint opens folded,
+    /// with no Custom… left over.
+    #[test]
+    fn a_skipped_frame_resets_the_list() {
+        let mut selection = BarSelection::new(BUILTIN_BARS.parse("time:300000").unwrap());
+        let ctx = egui::Context::default();
+        let custom = paint(&mut selection, &ctx, &["5m ", CUSTOM]);
+        assert!(custom.iter().any(|text| text == "5m"), "{custom:?}");
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let reopened = paint(&mut selection, &ctx, &[]);
+        assert!(!reopened.iter().any(|text| text == "5m"), "{reopened:?}");
+        paint(&mut selection, &ctx, &["5m "]);
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let reopened = paint(&mut selection, &ctx, &[]);
+        assert!(!reopened.iter().any(|text| text == "1h"), "{reopened:?}");
     }
 
     /// A venue that prints no volume still draws every kind: one it cannot back

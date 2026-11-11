@@ -205,8 +205,6 @@ pub struct Tab {
     pub focus: PaneSide,
 
     #[cfg(test)]
-    time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
-    #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
     #[cfg(test)]
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
@@ -254,8 +252,6 @@ impl Tab {
             canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,
-            #[cfg(test)]
-            time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
             #[cfg(test)]
@@ -437,11 +433,6 @@ impl Tab {
 
 #[cfg(test)]
 impl Tab {
-    /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
-    pub(crate) fn time_header_chip(&self, index: usize) -> Option<egui::Rect> {
-        self.time_header_chips.get(index).copied()
-    }
-
     /// Where the canvas divider landed, while the split is shown.
     pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
         self.canvas_divider

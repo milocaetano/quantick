@@ -403,7 +403,7 @@ fn minutes_served_for_a_daily_request_still_fold_into_days() {
     );
 }
 
-/// The named calls reach the same calendar intervals the chips and the
+/// The named calls reach the same calendar intervals the presets and the
 /// quick switch do, and refuse one no control could produce.
 #[test]
 fn the_control_plane_sets_and_refuses_calendar_intervals() {

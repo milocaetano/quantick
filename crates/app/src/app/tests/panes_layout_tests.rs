@@ -1187,10 +1187,11 @@ fn enabling_the_split_lays_out_two_panes_and_a_divider() {
     assert!(time.width() > 0.0 && flow.width() > 0.0);
 }
 
-/// Both panes paint: each keeps its own price axis, and the time pane
-/// carries the timeframe selector §11 gives it.
+/// Both panes paint: each keeps its own price axis, and the time pane's
+/// header names its interval on its bars control, with no strip of
+/// timeframes beside it (§11).
 #[test]
-fn both_panes_paint_and_the_time_pane_carries_its_own_selector() {
+fn both_panes_paint_and_the_time_pane_names_its_interval() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
@@ -1199,10 +1200,14 @@ fn both_panes_paint_and_the_time_pane_carries_its_own_selector() {
         has_price_axis(&texts),
         "the split canvas still paints a chart: {texts:?}"
     );
-    for (label, _) in time_header::PRESETS {
+    assert!(
+        texts.iter().any(|text| text.starts_with("Time · 1m")),
+        "the time pane's header reads its bars: {texts:?}"
+    );
+    for (label, _) in quantick_engine::bar_registry::TIME_PRESETS {
         assert!(
-            texts.iter().any(|text| text == label),
-            "the time pane's header must offer {label:?}; painted: {texts:?}"
+            !texts.iter().any(|text| text == label),
+            "no {label:?} chip stands in the header; painted: {texts:?}"
         );
     }
 }
@@ -1323,9 +1328,10 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 }
 
 /// (c) The time pane's header governs the time pane and nothing else; the
-/// flow pane keeps its own bars (§11).
+/// flow pane keeps its own bars (§11). The interval is picked in its bars
+/// menu: the interval button, then the preset.
 #[test]
-fn a_timeframe_chip_moves_only_the_time_panes_spec() {
+fn the_time_panes_bars_menu_moves_only_its_own_spec() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let flow_spec = *app.active_tab().flow_pane.state.spec();
@@ -1335,11 +1341,19 @@ fn a_timeframe_chip_moves_only_the_time_panes_spec() {
         "the time pane opens on M1, not on the flow selector's interval"
     );
 
-    // The 15m chip, clicked where it was actually drawn.
-    let (label, expected_ms) = time_header::PRESETS[2];
-    let chip = app.active_tab().time_header_chip(2).expect("the 15m chip");
-    assert!(chip.is_positive(), "the {label} chip was laid out");
-    click_chart(&mut app, &ctx, chip.center());
+    let (label, expected_ms) = quantick_engine::bar_registry::TIME_PRESETS[2];
+    let menu = crate::pane_header::menu_id(app.active_tab().pane(PaneSide::Time(0)).id);
+    let control: egui::Rect = ctx
+        .data(|data| data.get_temp(menu))
+        .expect("the header drew");
+    click_chart(&mut app, &ctx, control.center());
+    let open = run_frame(&mut app, &ctx);
+    let button = format!("1m {}", egui_phosphor::regular::CARET_DOWN);
+    let button = painted_text_center(&open, &button).expect("the menu names the interval");
+    click_chart(&mut app, &ctx, button);
+    let list = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&list, label).expect("the list offers the preset");
+    click_chart(&mut app, &ctx, row);
     // The spec change is deferred one frame, exactly as the toolbar's is.
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -1384,10 +1398,13 @@ fn the_time_layout_shows_the_timeframe_chart_alone() {
         tab.canvas_divider_rect().is_none(),
         "one pane, no divider to drag"
     );
-    let chip = tab.time_header_chip(0).expect("chips recorded");
+    let menu = crate::pane_header::menu_id(time.id);
+    let control: egui::Rect = ctx
+        .data(|data| data.get_temp(menu))
+        .expect("the header drew");
     assert!(
-        chip.is_positive(),
-        "the header still offers its timeframes at full width"
+        control.is_positive(),
+        "the header still offers its bars control at full width"
     );
 }
 
