@@ -793,10 +793,12 @@ impl Tab {
             if frame.flow_rail.is_none() {
                 self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
             }
-        } else if !frame.tree {
+        } else if frame.tree {
+            self.draw_tree_seams(tab_id, ui, area);
+        } else {
             return;
         }
-        // An accent frame around the focused pane, flow or context, once there
+        // A frame around the focused pane, flow or context, once there
         // is another pane on screen to tell it from: the click that activates
         // a pane has to show which one it activated.
         if self.drawn_panes().count() < 2 {
@@ -807,7 +809,7 @@ impl Tab {
             ui.painter().rect_stroke(
                 band.shrink(FOCUS_FRAME_PX / 2.0),
                 0.0,
-                egui::Stroke::new(FOCUS_FRAME_PX, palette.accent()),
+                egui::Stroke::new(FOCUS_FRAME_PX, palette.widget_active_border()),
             );
         }
     }

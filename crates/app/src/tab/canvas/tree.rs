@@ -4,20 +4,23 @@
 //! The geometry is `quantick_workspace::canvas`'s, unchanged: each docked
 //! pane takes its tree rectangle, inset by half a divider on every edge it
 //! shares with a neighbour, so the seams read as the column painter's
-//! dividers do. Nothing here decides a layout.
+//! dividers do, and drag as they do. Nothing here decides a layout.
 
 use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
-    CanvasRect, FloatHost, PaneKind, PaneSlot, slot_seat, strip_label, tree_bands,
+    CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
+    tree_seams,
 };
 use smallvec::SmallVec;
 
 use super::{CanvasChrome, CanvasFrame, PaneRects, Tab};
 use crate::canvas_layout::{CANVAS_DIVIDER_PX, MAX_CANVAS_PANES};
 use crate::pane::canvas_split::PaneAreas;
-use crate::pane::{PaneSide, split_flow_pane, split_pane_header, split_pane_layout_strip};
+use crate::pane::{
+    CANVAS_DIVIDER_HANDLE_PX, PaneSide, split_flow_pane, split_pane_header, split_pane_layout_strip,
+};
 use crate::{floating_panes, theme};
 
 impl Tab {
@@ -60,9 +63,6 @@ impl Tab {
         self.canvas.context_stack.frame = None;
         #[cfg(test)]
         self.context_dividers.clear();
-        // The seams: the canvas shows through between the bands.
-        ui.painter()
-            .rect_filled(area, egui::Rounding::ZERO, palette.border());
         let mut rects = PaneRects {
             context_charts: SmallVec::from_elem(None, built),
             kept: (self.floating_sides().iter())
@@ -123,6 +123,52 @@ impl Tab {
             tree: true,
         };
         (frame, rects)
+    }
+
+    /// The seams between the docked bands, painted as the column painter's
+    /// dividers and dragged as they are: a resize cursor over each, and a
+    /// drag moving it through the canvas model. After the panes, so a seam's
+    /// grab margin wins over the chart beside it.
+    pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
+        let palette = theme::get(ui.ctx());
+        let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
+            let at = egui::Rect::from_min_size(
+                egui::pos2(seam.rect.x, seam.rect.y),
+                egui::vec2(seam.rect.w, seam.rect.h),
+            );
+            ui.painter()
+                .rect_filled(at, egui::Rounding::ZERO, palette.border());
+            if !seam.resizable {
+                continue;
+            }
+            let (grab, cursor) = match seam.axis {
+                SplitAxis::Row => (
+                    egui::vec2(CANVAS_DIVIDER_HANDLE_PX, 0.0),
+                    egui::CursorIcon::ResizeHorizontal,
+                ),
+                SplitAxis::Column => (
+                    egui::vec2(0.0, CANVAS_DIVIDER_HANDLE_PX),
+                    egui::CursorIcon::ResizeVertical,
+                ),
+            };
+            let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
+            let handle = ui
+                .interact(at.expand2(grab), id, egui::Sense::drag())
+                .on_hover_text("drag to resize the charts");
+            if handle.hovered() || handle.dragged() {
+                ui.ctx().set_cursor_icon(cursor);
+            }
+            if handle.dragged()
+                && let Some(pointer) = ui.ctx().pointer_interact_pos()
+            {
+                let delta = match seam.axis {
+                    SplitAxis::Row => pointer.x - at.center().x,
+                    SplitAxis::Column => pointer.y - at.center().y,
+                };
+                let _ = self.canvas.state.move_seam(&seam.address, delta, canvas);
+            }
+        }
     }
 
     /// What the bars controls may offer on this tab's feed.
