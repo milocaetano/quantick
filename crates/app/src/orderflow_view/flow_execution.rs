@@ -16,6 +16,7 @@ impl OrderflowView {
     pub(crate) fn flow_execution_replaces_history(&self) -> bool {
         self.flow_execution.replaces_history(&self.config)
     }
+    #[cfg(test)]
     pub(crate) fn flow_execution_frame(&self) -> Option<&FlowTapeFrame> {
         self.flow_execution.frame()
     }

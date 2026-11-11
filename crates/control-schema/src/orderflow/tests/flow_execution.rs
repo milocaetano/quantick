@@ -371,11 +371,22 @@ fn pending_new_request_does_not_relabel_the_completed_painted_frame() {
     assert_eq!(worker["current_requested_end_ordinal"], "200");
     assert_eq!(worker["requested_executions"], "120");
     assert_eq!(worker["submitted_executions"], "64");
+    // The notes the chart no longer paints are read here.
+    assert!(
+        value["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note == "Regional volume updating"),
+        "{}",
+        value["notes"]
+    );
 
     // When the caller reports the old request settled, facts stay the same and
     // only truthful progress/current metadata changes.
     let complete = wire(&frame, settled(&frame));
     assert_eq!(complete["worker"]["pending"], false);
+    assert_eq!(complete["notes"], serde_json::json!([]));
     assert_eq!(complete["retained_source_count"], "129");
     assert_eq!(complete["marks"], value["marks"]);
     assert_eq!(complete["buy_quantity"], value["buy_quantity"]);

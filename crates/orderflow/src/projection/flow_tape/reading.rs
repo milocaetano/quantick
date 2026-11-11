@@ -38,30 +38,12 @@ impl FlowTapeFrame {
     }
 }
 
-/// The one caption the flow pane still draws: its name and the notes it may
-/// never drop ([`caption_qualifications`]); none without notes.
+/// What a FLOW frame leaves out or infers, as plain notes: volume still
+/// updating or partial, records left out, and how the opening is scaled. The
+/// chart paints none of them (they flickered with every recompute); the
+/// control plane's `flow_execution` readback carries them instead.
 #[must_use]
-pub fn notes_caption(
-    frame: Option<&FlowTapeFrame>,
-    progress: super::FlowProgress,
-) -> Option<String> {
-    let notes = caption_qualifications(frame, progress)?;
-    Some(format!("FLOW | {notes}"))
-}
-
-/// The notes a FLOW caption may never drop, without its key: volume still
-/// updating or partial, records left out, and how the opening is scaled. A
-/// caption that cannot be placed still shows these.
-#[must_use]
-pub fn caption_qualifications(
-    frame: Option<&FlowTapeFrame>,
-    progress: super::FlowProgress,
-) -> Option<String> {
-    let notes = qualifications(frame, progress);
-    (!notes.is_empty()).then(|| notes.join(" | "))
-}
-
-fn qualifications(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) -> Vec<String> {
+pub fn flow_notes(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) -> Vec<String> {
     let mut hints = Vec::new();
     if progress.pending {
         hints.push(

@@ -17,7 +17,7 @@ pub use constants::{
 mod region;
 pub use region::FlowRegionSpan;
 mod reading;
-pub use reading::{caption_qualifications, notes_caption};
+pub use reading::flow_notes;
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;

@@ -85,13 +85,6 @@ pub const BBO_LINE_WIDTH_PX: f32 = 3.0;
 /// colour.
 pub const BBO_HALO_PX: f32 = 1.0;
 
-/// FLOW caption text size, in points.
-pub const FLOW_CAPTION_FONT_PX: f32 = 10.0;
-/// FLOW caption distance from the history pane's left edge, in pixels.
-pub const FLOW_CAPTION_INSET_PX: f32 = 8.0;
-/// Width the FLOW caption leaves free of wrapped text: its inset on both sides, in pixels.
-pub const FLOW_CAPTION_WRAP_MARGIN_PX: f32 = 2.0 * FLOW_CAPTION_INSET_PX;
-
 /// Chart width below which the chart legend hides, in pixels.
 pub const LEGEND_MIN_CHART_WIDTH_PX: f32 = 150.0;
 /// Gap between a legend glyph and its label, in pixels.

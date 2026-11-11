@@ -2,7 +2,6 @@
 use super::bubbles::{SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
 use super::{constants, premultiplied};
 use crate::orderflow_render::constants::{
-    FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX,
     LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, PIE_START_ANGLE,
 };
 use eframe::egui;
@@ -13,7 +12,7 @@ use quantick_chart::flow_execution::{self as flow, FlowPresentation, FlowQuantit
 use quantick_orderflow::HeatmapConfig;
 #[cfg(test)]
 use quantick_orderflow::projection::flow_tape::FlowTapeDot;
-use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
+use quantick_orderflow::projection::flow_tape::FlowTapeFrame;
 #[cfg(test)]
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -189,28 +188,6 @@ pub(super) fn flow_colors(backing: Option<egui::Color32>, oversized: bool) -> [e
         false,
     )
     .map(|[r, g, b, a]| egui::Color32::from_rgba_premultiplied(r, g, b, a))
-}
-
-/// The notes a FLOW caption may never drop, under whatever stands above them;
-/// nothing without notes.
-pub(crate) fn flow_caption(
-    painter: &egui::Painter,
-    history: egui::Rect,
-    top: f32,
-    frame: Option<&FlowTapeFrame>,
-    progress: FlowProgress,
-) -> Option<egui::Rect> {
-    let palette = crate::theme::get(painter.ctx());
-    let notes = quantick_orderflow::projection::flow_tape::notes_caption(frame, progress)?;
-    let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
-    let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
-    let font = palette.label_font(FLOW_CAPTION_FONT_PX);
-    let galley = painter.layout(notes, font, palette.text_muted(), wrap);
-    let rect = egui::Rect::from_min_size(at, galley.size());
-    painter
-        .with_clip_rect(history)
-        .galley(at, galley, palette.text_muted());
-    Some(rect)
 }
 
 mod flow_labels;
