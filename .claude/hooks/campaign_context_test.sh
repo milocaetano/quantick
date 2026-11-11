@@ -29,16 +29,6 @@ git -C "$fixture/repo" commit -qam child
 head=$(git -C "$fixture/repo" rev-parse HEAD)
 git_dir=$(git -C "$fixture/repo" rev-parse --absolute-git-dir)
 cp "$script_dir/guardrails.sh" "$helper" "$fixture/hooks/"
-cat > "$fixture/hooks/ai_review_threads.sh" <<'STUB'
-#!/bin/sh
-cat "$(dirname "$0")/threads"
-STUB
-cat > "$fixture/hooks/review_report.sh" <<'STUB'
-#!/bin/sh
-[ "${1:-}" = verify ] || exit 64
-printf 'https://example.test/%s-report\n' "$2"
-STUB
-printf '0\n' > "$fixture/hooks/threads"
 # Full CI at the exact head is pr-gate's own requirement, covered by
 # guardrails_test.sh; here it is green so the campaign boundaries are isolated.
 cat > "$fixture/hooks/full_ci.sh" <<'STUB'
@@ -50,7 +40,6 @@ cat > "$fixture/bin/gh" <<'STUB'
 case "$1 $2" in
     'pr view') cat "$(dirname "$0")/identity" ;;
     'pr checks') cat "$(dirname "$0")/checks" ;;
-    'issue view') cat "$(dirname "$0")/issue" ;;
     *) exit 1 ;;
 esac
 STUB
@@ -83,14 +72,9 @@ gate() {
     esac || return 1
     if [ -n "${4:-}" ]; then printf '%s' "$output" | grep -qF -- "$4"; fi
 }
-stamp_required() {
-    sh "$helper" key "$fixture/repo" > "$git_dir/arch-review-ok"
-    cp "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok"
-}
+# The one review every branch owes, recorded at the current campaign key.
 stamp() {
-    stamp_required
-    printf '%s %s\n' "$(git -C "$fixture/repo" symbolic-ref --quiet --short HEAD)" \
-        "$(sh "$helper" key "$fixture/repo")" > "$git_dir/ai-review-complete"
+    sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
 }
 
 allow 'default base remains main' test "$(sh "$helper" base "$fixture/repo")" = origin/main
@@ -135,34 +119,34 @@ stamp
 
 # The clients share the policy; their tool names do not change its decision.
 for client in Bash exec_command; do
-    rm "$git_dir/ai-review-complete"
+    rm "$git_dir/code-review-ok"
     for action in ready merge; do
-        allow "$client campaign $action denies missing AI completion" gate "$client" "gh pr $action 42" deny ai-review-complete
+        allow "$client campaign $action denies a missing code-review" gate "$client" "gh pr $action 42" deny code-review-ok
     done
-    printf 'feat/child %s\n' "$old_key" > "$git_dir/ai-review-complete"
+    # The campaign key binds the target tip: the same diff reviewed against an
+    # older tip is stale.
+    printf '%s\n' "$old_key" > "$git_dir/code-review-ok"
     git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$advanced"
-    stamp_required
     identity campaign/test "$head" "$advanced"
-    allow "$client base tip stales AI after earlier reviews refresh" gate "$client" 'gh pr ready 42' deny ai-review-complete
-    allow "$client base tip also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny ai-review-complete
+    allow "$client base tip stales the code-review" gate "$client" 'gh pr ready 42' deny code-review-ok
+    allow "$client base tip also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
     git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
     identity campaign/test "$head" "$base"
     stamp
     git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/other "$base"
     printf 'feat/child origin/campaign/other https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
-    stamp_required
     identity campaign/other "$head" "$base"
-    allow "$client equivalent base ref stales AI after earlier reviews refresh" gate "$client" 'gh pr ready 42' deny ai-review-complete
-    allow "$client changed target also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny ai-review-complete
+    allow "$client equivalent base ref stales the code-review" gate "$client" 'gh pr ready 42' deny code-review-ok
+    allow "$client changed target also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny code-review-ok
     context https://github.com/owner/repo/issues/1#issuecomment-2
     identity campaign/test "$head" "$base"
     stamp
     allow "$client campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" allow
     context none
-    allow "$client current AI cannot supply campaign merge authority" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
+    allow "$client a current code-review cannot supply campaign merge authority" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
     context https://github.com/owner/repo/issues/1#issuecomment-2
     printf 'pending\n' > "$fixture/bin/checks"
-    allow "$client current AI cannot replace green CI" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
+    allow "$client a current code-review cannot replace green CI" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
     printf 'pass\n' > "$fixture/bin/checks"
     allow "$client auto-merge denied" gate "$client" "gh pr merge 42 --auto" deny
     allow "$client admin override denied" gate "$client" "gh pr merge 42 --admin" deny
@@ -191,49 +175,37 @@ for client in Bash exec_command; do
         gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head --repo other/repo" deny
     allow "$client a cd prefix does not excuse auto-merge" \
         gate "$client" "cd $fixture/repo && gh pr merge 42 --auto" deny
-    printf 'feat/child small\n' > "$git_dir/mission-tier"
-    printf '1\n' > "$fixture/hooks/threads"
-    allow "$client small tier cannot skip open threads" gate "$client" 'gh pr ready 42' deny
-    printf '0\n' > "$fixture/hooks/threads"
     rm "$git_dir/mission-base"
     stamp
-    allow "$client small tier cannot merge main" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny
+    allow "$client a reviewed branch cannot merge main" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny
     allow "$client main auto-merge denied" gate "$client" 'gh pr merge 42 --auto' deny
     context https://github.com/owner/repo/issues/1#issuecomment-2
     stamp
 done
 # A /feature integration branch is the same contract under feature/.
-rm -f "$git_dir/mission-tier"
 git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
 printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
 identity feature/test "$head" "$base"
 allow 'a feature branch is an integration base' test "$(sh "$helper" base "$fixture/repo")" = origin/feature/test
 allow 'authorized feature merge with green CI' sh "$helper" check-pr "$fixture/repo" 42 merge
-# An implement worker records only code-review-ok; with a feature parent that
-# is what a feature child owes, beside green CI and the grant.
-rm "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok" "$git_dir/ai-review-complete"
+# Every branch owes the same code-review, so an implement worker's record is
+# what a feature or campaign child owes, beside green CI and the grant.
 printf 'feat/child implement\n' > "$git_dir/mission-tier"
-sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
-printf '<!-- quantick-feature:v1 -->\nbranch: `feature/test`\n' > "$fixture/bin/issue"
+stamp
 allow 'implement evidence merges into a feature branch' \
     gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
-printf '<!-- quantick-campaign:v1 -->\n' > "$fixture/bin/issue"
-allow 'a feature base without a feature parent keeps the mission reviews' \
-    gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny arch-review-ok
-printf '<!-- quantick-feature:v1 -->\n' > "$fixture/bin/issue"
 context https://github.com/owner/repo/issues/1#issuecomment-2
 identity campaign/test "$head" "$base"
-sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
-allow 'implement evidence still cannot merge into a campaign branch' \
-    gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny arch-review-ok
+stamp
+allow 'implement evidence merges into a campaign branch under its grant' \
+    gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
 printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
 identity feature/test "$head" "$base"
 rm "$git_dir/mission-tier"
 stamp
-allow 'feature merge with the mission reviews' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
+allow 'an untiered feature child merges on the code-review' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
 # A plain /implement PR into a feat/* or feature/* branch: no parent, no grant.
 git -C "$fixture/repo" update-ref refs/remotes/origin/feat/test "$base"
-rm -f "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok" "$git_dir/ai-review-complete"
 for target in feat/test feature/test; do
     printf 'feat/child origin/%s none none\n' "$target" > "$git_dir/mission-base"
     printf 'feat/child implement\n' > "$git_dir/mission-tier"
@@ -274,10 +246,9 @@ for target in feat/test feature/test; do
     git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$sibling"
     allow "$target advancing keeps the review of an unchanged diff" gate Bash "gh pr create --base $target" allow
     git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$base"
-    rm "$git_dir/mission-tier"
-    allow "$target without the tier keeps the mission reviews" gate Bash 'gh pr ready 42' deny arch-review-ok
+    rm "$git_dir/mission-tier" "$git_dir/code-review-ok"
+    allow "$target without the tier still owes the code-review" gate Bash 'gh pr ready 42' deny code-review-ok
     printf 'feat/child implement\n' > "$git_dir/mission-tier"
-    rm -f "$git_dir/code-review-ok"
     printf '{"hook_event_name":"SubagentStop","last_assistant_message":"REVIEW-VERDICT: pass %s %s"}' "$fixture/repo" "$head" |
         sh "$fixture/hooks/guardrails.sh" review-verdict
     allow "$target records the verdict under its own key" \

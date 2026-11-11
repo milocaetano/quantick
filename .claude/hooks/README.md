@@ -1,10 +1,9 @@
 # Agent guardrails
 
-Three rules in CLAUDE.md were enforceable only by an agent remembering them:
-work happens in a worktree, `arch-review` runs before the PR, and
-`delivery-review` grades the branch against what was actually asked for. An
-instruction in markdown is advice a long session can drift away from. A hook
-is a wall. These make the harness enforce all three.
+Two rules in CLAUDE.md were enforceable only by an agent remembering them:
+work happens in a worktree, and a code-review covers the exact change before a
+PR leaves draft. An instruction in markdown is advice a long session can drift
+away from. A hook is a wall. These make the harness enforce both.
 
 Wired for Claude Code in `.claude/settings.json` and for Codex in
 `.codex/hooks.json`; both call `guardrails.sh` (POSIX sh, no `jq`) and are
@@ -18,8 +17,8 @@ its `/hooks` screen, as required by the
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok`, applicable `delivery-review-ok`, and `ai-review-complete` match the exact change. Ready/merge also require each marker's durable current-review PR report and zero open AI threads. Only delivery has a bounded `small` exemption; draft creation is ungated. Alongside the gate, and never as part of it, it prints the read-cost advisory described below. |
-| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
+| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies a non-draft `gh pr create`, `gh pr ready` and `gh pr merge` until a current `code-review-ok` matches the exact change; draft creation is ungated, except on an `implement` branch. Ready and merge also name the PR number and want full CI at the exact head. Alongside the gate, and never as part of it, it prints the read-cost advisory described below. |
+| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming: a draft opens freely, and leaving draft wants `code-review-ok` (an `implement` branch owes it before any PR). |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 | `review-verdict` | `PostToolUse`, `SubagentStop` | `SubagentHandback` | Cannot block. Records `code-review-ok` from a review subagent's `REVIEW-VERDICT` line; see the `implement` tier. Claude Code only. |
 
@@ -33,8 +32,7 @@ The campaign key binds target ref/tip as well as diff. Invalid context fails
 closed; ready verifies the PR base/head, and merge additionally requires a
 persisted grant, current base, passing CI and the explicit head-pinned command.
 Main merges, auto-merge and queue shortcuts are reserved for the user.
-The small-tier exemption removes only delivery review, never AI completion, thread or merge
-authority checks. `campaign_context_test.sh` exercises these boundaries with
+`campaign_context_test.sh` exercises these boundaries with
 real git fixtures and fake GitHub responses through both client payloads; the
 main guardrail suite invokes it in CI. Existing command-detection limitations
 still apply; GitHub branch protections are the security boundary.
@@ -76,74 +74,23 @@ subtraction produced no match, which reads exactly like a clean file — the
 failure mode this repo's guards exist to prevent, reproduced in the hook that
 reports them.
 
-## Where the gate sits, now that the chain has two phases
+## Where the gate sits
 
-Phase one makes the branch work and ends at a **draft** PR. That PR is where
-`ai-review` posts its findings, one resolvable thread each, so the gate cannot
-sit in front of it: requiring the reviews before the draft exists would demand
-the reviews before the review that informs them. A draft ships nothing — it
-cannot be merged — so nothing is lost by letting it open.
+A draft PR ships nothing - it cannot be merged - so it opens with no marker.
+Leaving draft is where work leaves the branch: a non-draft `gh pr create`,
+`gh pr ready` and `gh pr merge` each want a current `code-review-ok`, the
+exact-diff key recorded from the code-review skill's verdict (see the
+`implement` tier for how it is written). Ready and merge must name the PR
+number - full CI and the campaign checks are read for one PR, never a guessed
+one - and want full CI green at the exact HEAD (see *Full CI at the exact
+head*). A merge to `main` stays the user's; a campaign or `/feature` base keeps
+its identity, grant and CI check.
 
-Phase two closes those threads, and the gate moved to where work actually
-leaves the branch: `gh pr ready` and `gh pr merge`. Both want what
-`gh pr create` always wanted — the applicable review projections, for the exact
-diff being shipped — plus their durable current-review PR reports,
-independently zero unresolved AI threads, and full CI green at the exact
-HEAD (see *Full CI at the exact head*).
-
-The tier is read, never required, exactly as before.
-
-### Recording AI completion
-
-The canonical [AI-review skill](../skills/ai-review/SKILL.md#record-completion)
-calls `review_report.sh`, the only documented producer. It verifies stable
-worktree/branch/HEAD/status/base/key and PR identity, publishes and reads back
-the durable report, then records the private `ai-review-complete` projection.
-A bare restamp has no matching receipt and fails. A completed review with
-findings may record completion, but the separate unresolved-thread check below
-still denies readiness/merge.
-
-The consumer is `pr-gate` in `guardrails.sh`: after the existing create return,
-it passes the current branch and shared review key to `require_marker`, then
-checks threads. The AI record is exactly one LF-terminated line,
-`<branch> <shared-review-key>`. Legacy architecture/delivery records keep their
-raw-key format and existing comparator. AI additionally binds its branch:
-switching branches can leave a raw diff byte-identical, so the key alone cannot
-satisfy that boundary. Detached heads, missing/malformed/stale records and a
-record in another worktree cannot supply completion. Campaign keys already
-bind base ref/tip; no second key algorithm is introduced.
-
-Zero findings alone never proves completion. The report records full HEAD,
-explicit base/ref tip, key, scope, six verdicts and finding IDs/count. The
-marker is a local cache paired with that durable receipt; this detects a bare
-manual marker but does not claim cryptographic proof of review quality.
-Same-branch rewords with the same key remain valid. Changed
-diffs or campaign bases require the canonical follow-up review before recording
-new completion. Existing command limits and main authority remain unchanged.
-
-### Counting the open threads
-
-The gate does not know what an `ai-review` thread is. It asks
-`ai_review_threads.sh`, the same script the reviewer used to post one, which
-recognises a thread by the marker it writes at the head of the first comment.
-One definition, two readers. A gate with its own definition would drift from
-the reviewer's, and the two failure modes are both bad: ignoring real findings,
-or blocking a merge on a human's ordinary question.
-
-`count` has a machine contract because a gate reads it — a number on stdout and
-exit 0, or nothing on stdout, a reason on stderr and **exit 2**. Exit 2 means
-"could not be determined", which is not the same answer as zero.
-
-### When the count cannot be taken
-
-`gh` missing, unauthenticated or unreachable, or a command that names no PR
-number: the gate emits an **`ask`** decision naming the reason. That keeps this
-file's fail-open rule — `ask` blocks nothing a human does not block, and a
-guardrail that stops a session over its own network is worse than no guardrail
-— while refusing to fail open *silently*. "This branch has no open findings"
-and "nobody knows whether it has any" are different answers, and a gate that
-prints the same nothing for both has taught its reader that silence means
-clean.
+The arch-review, delivery-review and ai-review skills do not gate a PR. Their
+durable reports and the open ai-review threads are read only by the final
+completion command (*Final mission and ship completion*), which counts threads
+through `ai_review_threads.sh`, the script the reviewer posts them with, and
+treats a list it could not take (exit 2) as unknown, never as zero.
 
 ### The one prefix the pinned forms allow
 
@@ -260,8 +207,8 @@ posts one) must not hide the green one. Exit 2 means GitHub could not answer, an
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was
 never pushed, which is a known answer: not green.
 
-`pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the reviews and
-the thread count, against the reviewed local HEAD. The denial names the way
+`pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the code-review
+marker, against the reviewed local HEAD. The denial names the way
 through: `gh pr edit <pr> --add-label full-ci`, wait for the full jobs, retry.
 `mission_ship_gate.sh` calls it again beside its all-checks rule, twice like
 that rule, so completion cannot pass on the fast job alone. That rule and the
@@ -273,7 +220,7 @@ Nothing in GitHub's ruleset requires a status check today, so these two gates
 are where full CI is enforced for agents, and a human merge still sees the
 checks on the PR.
 
-## Publishing and recording the reviews
+## Publishing the review reports
 
 Each review skill writes its verdict to a scratch report and calls the one
 producer from the clean reviewed worktree:
@@ -285,28 +232,16 @@ cd "$WT" && sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_P
 ```
 
 The producer publishes an identity-prefixed PR comment, reads it back, and only
-then records `arch-review-ok`, `delivery-review-ok`, or
-`ai-review-complete`. The gate requires both the current private projection and
-the matching durable receipt; a manually written file therefore fails. Receipt
-lookup is bounded to the latest 100 PR comments and fails closed when absent.
+then records its private projection. Final completion requires the matching
+durable receipt; a manually written file therefore fails. Receipt lookup is
+bounded to the latest 100 PR comments and fails closed when absent.
 
-They are separate files because they answer separate questions. `arch-review`
-asks whether the branch is well built — shape, plus the bug pass its step 0
-runs. `delivery-review` asks whether it is what was asked for, grading every
-ask in the ignored local `.claude/GOAL.md` (or the linked issue on recovery)
-and every acceptance criterion in it. The PR keeps only the concise
-`quantick-mission-summary:v1` block; raw mission and execution artifacts never
-enter the reviewed tree. A
-branch can pass either one while failing the other, so passing one is not
-evidence about the other and the gate never treats it as such. The denial names
-which projection is missing or stale; a generic "review is missing" would
-leave an agent guessing, and a wrong guess costs a whole review.
-
-The files live in the worktree's own git dir, so they are per-branch and never
-committed. Storing a hash of the change rather than a timestamp is what makes
-the gate honest: edit a tracked file after a review and that hash no longer
-matches, so the gate denies and names both values. A marker that only said "a
-review happened" would pass while the newest work went unreviewed.
+The `code-review-ok` marker lives in the worktree's own git dir, so it is
+per-branch and never committed. Storing a hash of the change rather than a
+timestamp is what makes the gate honest: edit a tracked file after a review and
+that hash no longer matches, so the gate denies and names both values. A marker
+that only said "a review happened" would pass while the newest work went
+unreviewed.
 
 ## Final mission and ship completion
 
@@ -350,16 +285,6 @@ When the change cannot be identified at all — no `origin/main`, unrelated
 histories — the gate falls back to the commit sha, which is what it keyed on
 before. That is stricter than failing open, and such a checkout is outside this
 workflow anyway: every review in it measures against that same ref.
-
-Since `arch-review`'s step 0 runs the bundled `code-review` first, its durable
-report names the level and findings before the producer accepts its PASS token.
-The gate can prove that current report exists; it cannot prove the judgment was
-good. The same boundary applies to `delivery-review-ok`: its durable verdict
-states the checklist source and what could have failed, while the gate binds
-that artifact to the exact review identity.
-
-One tier changes what this section requires: see *The `small` mission
-exemption* below. Everything above holds unchanged for every other branch.
 
 The gate proves a review was *recorded*, not that it was *good*. Nothing can
 prove the latter from outside the review. What it does remove is the failure
@@ -502,107 +427,50 @@ query. The rules it protects are also written in `CLAUDE.md`.
   scoped to the command that tripped it, rather than to the branch, is the
   shape worth building. It is not built here.
 
-  The `small` tier below is **not** that override and does not reopen this
-  question: it exempts delivery review, on a bound the branch has to
-  meet, and it is never mentioned by a denial to a branch that did not already
-  declare it. The section says why that distinction is load-bearing.
+## Declaring a tier
 
-## The `small` mission exemption
-
-`mission` declares a tier for a branch by writing **the branch's own name and
-the tier** into `mission-tier`, beside the review projections in the worktree's git
-dir — so it is per-branch, never committed, and discovered exactly the way the
-markers are. Both fields are required, and a one-field file is refused; the
-paragraph below the snippet says why:
+`mission` and `implement` declare a tier for a branch by writing **the branch's
+own name and the tier** into `mission-tier`, beside the marker in the worktree's
+git dir - so it is per-branch, never committed, and discovered exactly the way
+the marker is:
 
 ```sh
 WT=/path/to/worktree
-TIER=medium                     # small | medium | high | max
+TIER=medium                     # small | medium | high | max | implement
 cd "$WT" &&
   printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
     > "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
 
-`TIER` is a variable and defaults to `medium` here on purpose. This section is
-where both skills forward a reader looking for the mechanism, and a snippet
-whose literal value is the one word that switches the gate off is a snippet
-someone pastes verbatim onto a branch that never declared it.
+The file holds **`<branch> <tier>`**, and the branch half is load-bearing: a
+bare tier word would outlive its goal, and a worktree reused for a second branch
+would inherit a tier it never declared - measured on the first version of this
+file. A declaration naming another branch, a detached head, a one-field file and
+an unrecognised word all declare nothing.
 
-The file holds **`<branch> <tier>`**, and the branch half is load-bearing: the
-review projections go stale when the branch moves, while a bare
-tier word would outlive its mission. A worktree reused for a second branch then
-inherits an exemption it never asked for — measured, not imagined, on the first
-version of this feature. A declaration naming another branch grants nothing,
-and so does the one-field format that caused it.
-
-The tiers are `small`, `medium`, `high` and `max`, and only `small` changes
-what this gate requires: delivery review is omitted; architecture and AI remain.
-Every other tier, an unrecognised word, a declaration for another branch, and
-an absent file leave the full three-review gate in force — which is every
-branch that existed before this file did.
-
-That is a hole in a gate deliberately built without an override, so it is worth
-being exact about why it is not the skip file that got reverted.
-
-- **The denial never advertises it.** A branch that declared no tier gets the
-  message it has always got, naming neither tiers, nor the file, nor the word
-  `small`. `guardrails_test.sh` asserts that absence rather than trusting it,
-  because it is the kind of property a later edit breaks by being helpful.
-
-  **This is narrower than "the gate cannot teach its own way around itself",
-  and that stronger claim would be false.** `CLAUDE.md` is loaded in every
-  session and states the exemption; `arch-review`'s step 0 carries the runnable
-  command that reads the tier and `ship` step 4 says to read it from that file
-  rather than from prose; this very section carries a writable snippet. The
-  mechanism is documented on purpose — one nobody can find is one nobody can
-  audit — so what the denial buys is only that an agent which merely *forgot*
-  the review is not handed the bypass at the moment it is most tempted. The
-  load-bearing protection is the bound below, not the silence.
-- **The word has to be true.** The exemption lapses once the branch exceeds
-  `SMALL_TIER_MAX_CHANGED_LINES` changed lines — insertions plus deletions
-  against `origin/main` — and past that the branch pays in full whatever the
-  file says. So writing `small` dishonestly at PR time buys the exemption only
-  on branches where writing it honestly would have been allowed anyway. That is
-  the argument a skip file could never make, and it is the whole design.
-- **It is one exemption, not all reviews.** Architecture and AI are required at every tier. A
-  tier buys a shorter bug pass, never no bug pass: a small diff is not a safe
-  one, and three lines is a perfectly good size for a crash.
-- **It fails closed.** When the branch's size cannot be measured — no
-  `origin/main`, a `git` that errors — there is no exemption. This is the one
-  place in `guardrails.sh` that deliberately breaks the *Fail-open by design*
-  rule stated above: everywhere else an undetermined answer costs a permission
-  prompt, and here it would cost an ungraded branch. It is why the size is read
-  from `git diff --numstat` under `LC_ALL=C` rather than from `--shortstat`,
-  whose prose git translates — an English pattern over a localised line matches
-  nothing, sums to zero, and reads as an empty diff.
-
-What is **not** claimed: nothing stops an agent from declaring `small` on a
-branch that was small and still deserved grading, and nothing here could. The
-bound holds the blast radius down to what the tier's honest use already allows.
-It is a limit on the damage, not a proof of good faith.
+Only `implement` changes what `pr-gate` requires. The mission tiers `small`,
+`medium`, `high` and `max` face the gate an undeclared branch faces.
 
 ## The `implement` tier
 
 The `implement` skill's goal writes `<branch> implement` into the same
 `mission-tier` file. It is not a mission tier and is kept out of `TIERS`, so the
-mission loops and the `small` bound never see it. A branch that declares it owes
-exactly one review: `code-review-ok`, the exact-diff key, required before
-**any** PR, draft included, and again at ready and merge. The agent never
+mission loops never see it. A branch that declares it owes `code-review-ok`, the
+exact-diff key, before **any** PR, draft included, and again at ready and merge. The agent never
 writes it; Claude Code's auto-mode classifier denies that write.
 The `review-verdict` mode does, from the review subagent's report (a background
 review's `SubagentHandback` message, a foreground fork's last message). Its
 last `REVIEW-VERDICT: pass|fail <worktree> <HEAD>` line counts only while that
-worktree declares the tier and still sits at that HEAD: `pass` writes
+worktree still sits at that HEAD, whatever its tier: `pass` writes
 `review_key`, the key pr-gate computes, so a later commit leaves it stale;
 `fail` removes the record; no line changes nothing. Codex has no such event
-and records it with the command pr-gate prints. No arch, AI or delivery
-marker, durable report, thread count or
-full-CI check is asked for; a merge to `main` stays the user's alone. The trade
+and records it with the command pr-gate prints. Against `main` or a plain
+target no full-CI check is asked for; a merge to `main` stays the user's alone. The trade
 is deliberate: the tier exists to make a goal cheap in tokens, and what protects
-`main` past the review is CI on the PR and the user's own merge. Into an
-`origin/feature/*` base whose parent issue carries `<!-- quantick-feature:v1 -->`,
-the same marker suffices for ready and merge, beside full CI at the exact head
-and the persisted grant; `campaign/*` keeps the mission reviews. A plain
+`main` past the review is CI on the PR and the user's own merge. Into a
+`campaign/*` or `feature/*` base with a parent issue, the general gate applies:
+the same marker, full CI at the exact head and, for a merge, the persisted
+grant. A plain
 `/implement` PR into a `feat/*` or `feature/*` branch records
 `<branch> origin/<target> none none` in `mission-base`: the review and its key
 measure against that target, `gh pr create` must name `--base <target>`, and the
@@ -627,24 +495,13 @@ total is written down here on purpose — it moves with every case added, CI
 compares it against nothing, and a number nobody verifies is a line that
 quietly becomes false. The neutered run's total differs from the intact one
 besides, which is worth knowing before it sends someone bug-hunting: a
-neutered script defines no `*_MARKER_NAME` constants, so the loops that
-iterate them have nothing to iterate and their cases vanish, while the "no
-`MARKER_NAME` constants found" case appears in their place. Count failures,
-not the denominator.
+neutered script defines no `*MARKER*` constant, so the loops that iterate it
+have nothing to iterate and their cases vanish, while the "no `MARKER`
+constants found" case appears in their place. Count failures, not the
+denominator.
 
-Mutations run against the suite as built, including a neutered architecture
-staleness check, marker-name drift, a removed delivery check and a missing
-shared producer call.
-
-The ordering case asserts that the denial with neither review recorded names
-`arch-review-ok` — the review that runs first, since a delivery review of a
-branch the shape review is about to change is wasted work. Swap the two
-`require_marker` calls and that case goes red.
-
-The `pr-gate` cases move one marker at a time — arch-review satisfied and
-delivery-review absent, and the reverse — because the failure worth catching
-is one gate silently carrying the branch through for the other. Those cases
-assert the text of the denial, not only that it denied.
+The `pr-gate` cases assert the text of the denial, not only that it denied:
+missing, stale, corrupt and borrowed markers each name what is wrong.
 
 What they deliberately do **not** cover is the set of command spellings the
 matcher cannot see. There is no case pinning that a pipe or a newline reaches
@@ -660,12 +517,10 @@ place the suite is not hermetic — see the note in its header and in `ci.yml`.
 Three properties, and it is worth being exact about them because an
 overstatement here is a false sense of cover:
 
-- Every marker `guardrails.sh` defines is named by **each** of this file,
-  `mission` and `ship` — per file, not "somewhere among them". Checking the
-  set would stay green while the instruction vanished from two of the three.
-- Each review skill carries a recording command of its own, so `/arch-review`,
-  `/delivery-review` and `/ai-review` record their own markers instead of leaving them to
-  a caller. That asymmetry was a real bug here.
+- Every marker `guardrails.sh` defines is named by this file.
+- Each review skill publishes through the shared report producer, so
+  `/arch-review`, `/delivery-review` and `/ai-review` record their own reports
+  instead of leaving them to a caller. That asymmetry was a real bug here.
 - Every marker name the prose tells an agent to **write** is one the script
   reads. This is anchored on the recording command's shape rather than on the
   marker names, because the first version grepped for the current names to
