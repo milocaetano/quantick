@@ -147,7 +147,7 @@ impl FlowTapeSource {
         let dirty_slots = std::mem::take(&mut self.dirty_slots);
         let dirty = match view.region {
             FlowRegionSpan::Time => dirty,
-            FlowRegionSpan::Candles(_) => dirty_slots
+            FlowRegionSpan::Candles(_) | FlowRegionSpan::Peaks(_) => dirty_slots
                 .into_iter()
                 .map(|slot| view.region.key(slot, 0))
                 .collect(),

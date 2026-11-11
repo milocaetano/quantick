@@ -4,6 +4,8 @@ use quantick_engine::Side;
 mod hull;
 #[path = "tests/opening_anchor.rs"]
 mod opening_anchor;
+#[path = "tests/peaks.rs"]
+mod peaks;
 #[path = "tests/reading.rs"]
 mod reading;
 #[path = "tests/reference_modes.rs"]

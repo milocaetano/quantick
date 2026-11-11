@@ -73,3 +73,40 @@ pub(crate) const EVICTION_RESET_DIVISOR: usize = 2;
 /// loaded source must reach the last published count times this. Bounds
 /// total cold-fill projection work; a newer print never waits for one.
 pub(crate) const PUBLICATION_GROWTH_FACTOR: usize = 2;
+
+// Peak spheres (`peaks.rs`): a zoom region divided at the valleys of its
+// volume-by-price profile, one sphere per peak.
+
+/// The standard deviation, in native ticks, of the Gaussian that smooths a
+/// region's volume-by-price profile before its peaks are read.
+pub const PEAK_SMOOTHING_SIGMA_TICKS: f64 = 1.0;
+
+/// The Gaussian of [`PEAK_SMOOTHING_SIGMA_TICKS`] as exact integer weights,
+/// from the centre row out: `round(1e6 * exp(-d^2 / 2 sigma^2))` for each
+/// distance `d` in ticks, cut at four sigma. Integer weights keep the smoothed
+/// profile exact, so no float summation order can move a peak.
+pub const PEAK_SMOOTHING_KERNEL: [u32; 5] = [1_000_000, 606_531, 135_335, 11_109, 335];
+
+/// A peak counts when it rises above its higher saddle by at least this
+/// percentage of the region's highest smoothed row (its point of control).
+pub const PEAK_PROMINENCE_PERCENT: u32 = 8;
+
+/// The most rows a region's profile holds. A region whose prints span more
+/// native ticks than this reads them in whole multiples of the tick, so a
+/// stray print far away never makes the profile unbounded.
+pub const PEAK_PROFILE_MAX_ROWS: usize = 4_096;
+
+/// Rank fractions (the share of the masses in view at or below a mass) at
+/// which [`PEAK_RADIUS_SHARES`] are reached; linear between them.
+pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
+
+/// A mass's radius, as a share of the look's full-size radius, at each of
+/// [`PEAK_RANK_STOPS`]: the median small, the top twentieth large.
+pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
+
+/// Masses at or above this rank fraction carry their quantity: the top fifth.
+pub const PEAK_LABEL_RANK: f32 = 0.8;
+
+/// The fill strength of a perfectly balanced mass; a one-sided mass is drawn
+/// at full strength, and strength is linear in `|buy - sell| / (buy + sell)`.
+pub const PEAK_BALANCED_STRENGTH: f32 = 0.45;
