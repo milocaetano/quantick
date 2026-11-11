@@ -499,6 +499,7 @@ native_tape = true
 depth_time_averaging = true
 forward_book_preview = true
 stable_size = true
+
 [[presets]]
 name = "Binance BTC perpetual spheres"
 # Startup defaults inherit application appearance; manual selection captures it.

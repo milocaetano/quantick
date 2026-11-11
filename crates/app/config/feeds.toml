@@ -100,8 +100,9 @@ id = "binance"
 name = "Binance"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
-# Every crypto market opens on one look, and resets to it.
-bubble_preset = "Crypto default"
+# Every crypto market opens on one look, and resets to it. Declared per
+# symbol, so a symbol this feed does not list keeps the operator's look.
+symbol_bubble_presets = { "BTCUSDT" = "Crypto default", "ETHUSDT" = "Crypto default" }
 # Spot BTC keeps "BTCUSDT", the key its saved look has always used.
 symbol_asset_modes = { "BTCUSDT" = { quantity_unit = "BTC", look_key = "BTCUSDT" }, "ETHUSDT" = { quantity_unit = "ETH" } }
 symbol_widgets = { "BTCUSDT" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
@@ -123,7 +124,7 @@ id = "binance-futures"
 name = "Binance USD-M perpetual"
 provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
-bubble_preset = "Crypto default"
+symbol_bubble_presets = { "BTCUSDT.p" = "Crypto default" }
 symbol_asset_modes = { "BTCUSDT.p" = { quantity_unit = "BTC" } }
 symbol_widgets = { "BTCUSDT.p" = { tick = "0.50", notional_unit = "usd", big_trade_min = 250000 } }
 default_layout = "time+flow"
@@ -141,7 +142,7 @@ id = "hyperliquid"
 name = "Hyperliquid"
 provider = "hyperliquid"
 symbols = ["BTC", "ETH", "HYPE", "SOL", "ZEC"]
-bubble_preset = "Crypto default"
+symbol_bubble_presets = { "BTC" = "Crypto default", "ETH" = "Crypto default", "HYPE" = "Crypto default", "SOL" = "Crypto default", "ZEC" = "Crypto default" }
 symbol_asset_modes = { "BTC" = { quantity_unit = "BTC" }, "ETH" = { quantity_unit = "ETH" }, "HYPE" = { quantity_unit = "HYPE" }, "SOL" = { quantity_unit = "SOL" }, "ZEC" = { quantity_unit = "ZEC" } }
 
 # MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the

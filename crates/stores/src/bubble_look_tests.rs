@@ -528,7 +528,10 @@ fn without_a_shipped_declared_preset_the_reset_wears_what_the_operator_file_open
         .feeds
         .iter_mut()
         .find(|feed| feed.id == "hyperliquid");
-    hyperliquid.expect("a shipped feed").bubble_preset = Some("my look".to_owned());
+    hyperliquid
+        .expect("a shipped feed")
+        .symbol_bubble_presets
+        .insert("ETH".to_owned(), "my look".to_owned());
     let store = AssetBubblesStore::default().shared();
     let mut screen = bound_in(&store, &config, ("hyperliquid", "ETH"), &operator);
     tune(&mut screen);
@@ -543,8 +546,8 @@ fn without_a_shipped_declared_preset_the_reset_wears_what_the_operator_file_open
         .iter_mut()
         .find(|feed| feed.id == "binance");
     let binance = binance.expect("a shipped feed");
-    binance.bubble_preset = None;
-    assert!(!binance.symbol_bubble_presets.contains_key("ETHUSDT"));
+    assert_eq!(binance.bubble_preset, None);
+    binance.symbol_bubble_presets.remove("ETHUSDT");
     let mut eth = bound_in(&store, &undeclared, ("binance", "ETHUSDT"), &operator);
     let active = operator.get(&operator.active).expect("the active look");
     tune(&mut eth);

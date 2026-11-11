@@ -140,9 +140,8 @@ fn a_win_recording_in_a_btc_tab_is_still_the_mini_index() {
     let unknown = config.bubble_asset("binance", "NOSUCHSYMBOL");
     assert_eq!(unknown.key, "NOSUCHSYMBOL");
     assert_eq!(
-        unknown.preset.as_deref(),
-        Some(CRYPTO_PRESET),
-        "the tab feed's own look"
+        unknown.preset, None,
+        "a symbol Binance does not list keeps the operator's look"
     );
 }
 
@@ -172,9 +171,10 @@ fn a_pattern_on_one_venue_does_not_capture_another_venues_symbol() {
         .iter_mut()
         .find(|feed| feed.id == "hyperliquid")
         .expect("the Hyperliquid feed");
-    // A mode would give Hyperliquid's BTC a key of its own; the pattern's
-    // reach is what is under test.
+    // A mode or an exact declaration would give Hyperliquid's BTC a key of
+    // its own; the pattern's reach is what is under test.
     hyperliquid.symbol_asset_modes.remove("BTC");
+    hyperliquid.symbol_bubble_presets.remove("BTC");
     hyperliquid
         .symbol_bubble_presets
         .insert("BTC*".to_owned(), "live lane pie".to_owned());
@@ -197,10 +197,7 @@ fn an_unlisted_symbol_opens_on_its_tab_feeds_preset() {
     assert_eq!(roll.preset.as_deref(), Some("live lane pie"));
     let silver = config.bubble_asset("metatrader-tickmill", "XAGUSD");
     assert_eq!(silver.preset.as_deref(), Some("live lane pie"));
-    assert_eq!(
-        config.bubble_asset("binance", "WDOX26").preset.as_deref(),
-        Some(CRYPTO_PRESET)
-    );
+    assert_eq!(config.bubble_asset("binance", "WDOX26").preset, None);
 }
 
 /// Review round 2, finding 2: one key declared on two feeds opens on one

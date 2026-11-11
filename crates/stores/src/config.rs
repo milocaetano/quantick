@@ -1422,18 +1422,13 @@ mod tests {
         );
 
         // Both MetaTrader feeds open on the pie summary. Every crypto market
-        // opens on one look, declared feed-wide.
+        // opens on one look, declared per symbol: a symbol a crypto feed does
+        // not list keeps the operator's look.
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
         let futures = config.feed("binance-futures").expect("USD-M feed");
         for crypto in [binance, futures, hyperliquid] {
-            assert_eq!(
-                crypto.bubble_preset.as_deref(),
-                Some("Crypto default"),
-                "{}",
-                crypto.id
-            );
-            assert!(crypto.symbol_bubble_presets.is_empty(), "{}", crypto.id);
+            assert_eq!(crypto.bubble_preset, None, "{}", crypto.id);
         }
         // The mini index alone reads regionally; the mini dollar beside it
         // falls back to the feed-wide look. That ladder is the whole point of
@@ -1450,19 +1445,16 @@ mod tests {
             b3.bubble_preset_for("WDO$N").as_deref(),
             Some("live lane pie")
         );
-        for (crypto, symbol) in [
-            (binance, "BTCUSDT"),
-            (binance, "ETHUSDT"),
-            (futures, "BTCUSDT.p"),
-            (hyperliquid, "BTC"),
-            (hyperliquid, "ETH"),
-        ] {
-            assert_eq!(
-                crypto.bubble_preset_for(symbol).as_deref(),
-                Some("Crypto default"),
-                "{}/{symbol}",
-                crypto.id
-            );
+        for crypto in [binance, futures, hyperliquid] {
+            for symbol in &crypto.symbols {
+                assert_eq!(
+                    crypto.bubble_preset_for(symbol).as_deref(),
+                    Some("Crypto default"),
+                    "{}/{symbol}",
+                    crypto.id
+                );
+            }
+            assert_eq!(crypto.bubble_preset_for("WDOX26"), None, "{}", crypto.id);
         }
 
         // The default open is the split: timeframe context beside the flow

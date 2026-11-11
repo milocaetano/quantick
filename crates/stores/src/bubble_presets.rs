@@ -540,25 +540,25 @@ mod tests {
     fn only_crypto_shipped_presets_opt_into_stable_size_and_depth_averaging() {
         let shipped = embedded();
         for preset in &shipped.presets {
-            let btc = preset.name.starts_with("Binance BTC") || preset.name == "Crypto default";
+            let crypto = preset.name.starts_with("Binance BTC") || preset.name == "Crypto default";
             assert_eq!(
                 preset.bubbles.viewport_scale.is_some(),
-                btc,
+                crypto,
                 "{}",
                 preset.name
             );
-            assert_eq!(preset.live_lane.stable_size, btc, "{}", preset.name);
+            assert_eq!(preset.live_lane.stable_size, crypto, "{}", preset.name);
             assert_eq!(
-                preset.live_lane.depth_time_averaging, btc,
+                preset.live_lane.depth_time_averaging, crypto,
                 "{}",
                 preset.name
             );
             assert_eq!(
-                preset.live_lane.forward_book_preview, btc,
+                preset.live_lane.forward_book_preview, crypto,
                 "{}",
                 preset.name
             );
-            if btc {
+            if crypto {
                 assert!(preset.live_lane.native_tape);
                 assert!(preset.overlap_merge);
                 let tick = preset.tick_bubbles.unwrap();
