@@ -147,7 +147,18 @@ pub fn format_quantity_compact(quantity: Decimal) -> String {
     };
     let decimals = usize::from(scaled.abs() < 10.0);
     let formatted = format!("{scaled:.decimals$}");
-    format!("{}{suffix}", trim_decimal_zeros(&formatted))
+    // Rounding can reach the next suffix: 999,500 is `1M`, never `1000K`.
+    let carried = match suffix {
+        "K" => Some("M"),
+        "M" => Some("B"),
+        _ => None,
+    };
+    match carried {
+        Some(next) if formatted.trim_start_matches('-') == "1000" => {
+            format!("{}1{next}", if value < 0.0 { "-" } else { "" })
+        }
+        _ => format!("{}{suffix}", trim_decimal_zeros(&formatted)),
+    }
 }
 
 #[cfg(test)]
