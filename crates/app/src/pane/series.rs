@@ -12,7 +12,7 @@ use crate::price_view::PriceView;
 use crate::state::ChartState;
 
 use super::ChartPane;
-use quantick_chart_interaction::pane_history::PrefixChange;
+use quantick_chart_interaction::pane_history::{PrefixChange, PrefixInstallEffect};
 
 impl ChartPane {
     // The slot reads, each one line onto the composed series that owns its
@@ -84,26 +84,17 @@ impl ChartPane {
         let change = self
             .history_prefix
             .install(bars, &mut self.model.history, lead_changed);
-        let delta = match change {
-            PrefixChange::Unchanged => return false,
-            PrefixChange::LeadOnly => {
-                self.send_indicator_rebuild();
-                return true;
+        for effect in change.install_effects() {
+            match effect {
+                PrefixInstallEffect::ShiftViewport(delta) => {
+                    self.model.viewport.shift_right_edge(delta)
+                }
+                PrefixInstallEffect::ShiftDrawings(delta) => self.marks_mut().shift_bars(delta),
+                PrefixInstallEffect::ShiftIndicatorRows(added) => self.indicators.shift_rows(added),
+                PrefixInstallEffect::RebuildIndicators => self.send_indicator_rebuild(),
             }
-            PrefixChange::Replace { delta } => delta,
-        };
-        self.model.viewport.shift_right_edge(delta);
-        self.marks_mut().shift_bars(delta);
-        // Indicator columns have no signed shift: on growth they are nudged so
-        // the frames before the rebuild lands draw each value against its own
-        // candle, and on a shrink the rebuild below re-cuts them wholesale a
-        // round trip later. Drawings get no such second chance, which is why
-        // they take the signed delta above.
-        if let Ok(added) = usize::try_from(delta) {
-            self.indicators.shift_rows(added);
         }
-        self.send_indicator_rebuild();
-        true
+        change != PrefixChange::Unchanged
     }
 
     /// Apply the indicator worker's deltas, before the draw reads columns.
