@@ -1830,23 +1830,17 @@ fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
     let tape = egui::pos2((divider + chart.right()) / 2.0, chart.center().y);
     let window = app.active_tab().tape().live_lane_window();
     let before = candles_view(&app);
-    let press = |pressed| egui::Event::PointerButton {
-        pos: tape,
-        button: egui::PointerButton::Primary,
-        pressed,
-        modifiers: egui::Modifiers::NONE,
-    };
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(tape), press(true)],
-    );
-    run_frame_with_events(&mut app, &ctx, vec![press(false)]);
+    // The pointer comes off the panel onto the tape, as the hand does, and
+    // the panel is still open when the wheel lands.
+    let panel = egui::pos2(chart.right() + 40.0, chart.center().y);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(panel)]);
+    assert!(app.active_tab().tape().settings_panel.is_open());
     wheel(&mut app, &ctx, tape);
     assert_ne!(
         app.active_tab().tape().live_lane_window(),
         window,
         "the wheel over the tape zooms its window with the panel open"
     );
+    assert!(app.active_tab().tape().settings_panel.is_open());
     assert_eq!(candles_view(&app), before, "and leaves the candles alone");
 }
