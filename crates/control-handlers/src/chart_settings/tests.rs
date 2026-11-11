@@ -1,5 +1,6 @@
 //! Readback must describe the addressed surface, including inherited fields.
 use super::*;
+use quantick_chart::pane_style::ChartSurface;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -40,8 +41,8 @@ fn effective_style_readback_resolves_stale_theme_values_for_time_and_bookmap_upd
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let light =
         quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
-    for bookmap in [false, true] {
-        let surface = StyleSurface::new(light.resolved(), bookmap);
+    for surface in [ChartSurface::Paper, ChartSurface::Flow] {
+        let surface = StyleSurface::new(light.resolved(), surface);
         let (target, wire_target) = target();
         let mut session = ChartSettingsSession::default();
         let mut candles = settings();
@@ -123,10 +124,10 @@ fn effective_style_readback_resolves_dark_opening_look_on_light_surface_reset() 
         quantick_stores::appearance::load(&root.join("../appearance/themes/dark.toml")).unwrap();
     let light =
         quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
-    for bookmap in [false, true] {
+    for surface in [ChartSurface::Paper, ChartSurface::Flow] {
         let (target, wire_target) = target();
-        let dark_surface = StyleSurface::new(dark.resolved(), bookmap);
-        let light_surface = StyleSurface::new(light.resolved(), bookmap);
+        let dark_surface = StyleSurface::new(dark.resolved(), surface);
+        let light_surface = StyleSurface::new(light.resolved(), surface);
         let mut session = ChartSettingsSession::default();
         let mut candles = settings();
         let opened = dark_surface.resolve(ChartStyle::default());
@@ -211,11 +212,7 @@ fn effective_style_readback_resolves_dark_opening_look_on_light_surface_reset() 
         );
         assert_eq!(inspected.result.candle_preset, reset.result.candle_preset);
         assert!(!inspected.result.changed);
-        let expected_theme = if bookmap {
-            light.resolved().bookmap()
-        } else {
-            light.resolved()
-        };
+        let expected_theme = light.resolved().surface(surface);
         let mut expected_defaults = ChartStyle::default();
         expected_defaults.apply_theme(expected_theme);
         assert_eq!(expected.candles, expected_defaults.candles);
@@ -233,7 +230,7 @@ fn update_candles_reaches_both_the_default_and_the_thin_contour() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let light =
         quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
-    let surface = StyleSurface::new(light.resolved(), false);
+    let surface = StyleSurface::new(light.resolved(), ChartSurface::Paper);
     let contour = |style: &ChartStyle| {
         let run = CandleRun::for_frame(PixelBodies::Zoom, 10.0, 0.0, &style.candles, 1.5);
         (run.widths().border, run.widths().wick)
@@ -277,7 +274,7 @@ fn update_candles_refuses_a_changed_theme_owned_value_and_names_the_marker() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let light =
         quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
-    let surface = StyleSurface::new(light.resolved(), false);
+    let surface = StyleSurface::new(light.resolved(), ChartSurface::Paper);
     let current = surface.resolve(ChartStyle::default());
     let (target, wire_target) = target();
     type Edit = (&'static str, &'static str, fn(&mut ChartStyle));

@@ -48,6 +48,9 @@ impl<T: Copy> RenderPalette<T> {
     pub fn flow_gear_ink(&self) -> T {
         *self.get(Token::FlowGearInk)
     }
+    pub fn flow_bulb_lit(&self) -> T {
+        *self.get(Token::FlowBulbLit)
+    }
 
     pub fn trade_selection_halo(&self) -> T {
         *self.get(Token::TradeSelectionHalo)

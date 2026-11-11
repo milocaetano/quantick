@@ -26,9 +26,11 @@ pub(super) fn flow_runs(
     let canvas = background.to_array();
     let underlay = backing.as_ref().map(egui::Color32::to_array);
     let keys = plan.region_keys(frame, tick_look.is_some());
-    let hair_color = tick_colors.map_or(egui::Color32::TRANSPARENT, |colors| colors.separator);
+    // A palette that rims its bubbles (the lit flow pane's) draws them flat.
+    let flat = tick_colors.is_some_and(|colors| colors.flat_rims.is_some());
     let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
     let shade = |color| match &tick_style {
+        Some(style) if flat => SphereShading::flat(color).faded(style.opacity),
         Some(style) => SphereShading::sphere(color, style).faded(style.opacity),
         None => SphereShading::flat(color),
     };
@@ -42,18 +44,18 @@ pub(super) fn flow_runs(
                     .regional_fill_with(frame, canvas, underlay, &appearance.resolved)
                     .map(super::premultiplied),
             };
-            if let Some(style) = &tick_style
+            if let (Some(style), Some(colors)) = (&tick_style, tick_colors)
                 && disc.radius >= style.detail_min_radius
             {
-                let hair = super::bubbles::separator_ring_width(disc.radius);
-                tessellator.tessellate_shape(
-                    egui::Shape::circle_stroke(
-                        disc.center.into(),
-                        disc.radius + hair / 2.0,
-                        egui::Stroke::new(hair, hair_color),
-                    ),
-                    &mut rim,
-                );
+                let side = frame.dots[region.dot_index].dominant_side();
+                let rings = colors
+                    .edge(side, disc.radius)
+                    .rings(disc.radius, colors.separator);
+                for (radius, width, ink, alpha) in rings {
+                    let stroke = egui::Stroke::new(width, ink.gamma_multiply(alpha));
+                    let shape = egui::Shape::circle_stroke(disc.center.into(), radius, stroke);
+                    tessellator.tessellate_shape(shape, &mut rim);
+                }
             }
             for (side, angle, sweep) in region.sectors(frame, PIE_START_ANGLE) {
                 let (center, radius, color) =

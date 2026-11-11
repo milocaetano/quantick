@@ -65,7 +65,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         let fill = rgba(rgb, alpha);
 
         if in_lane && style.edge_glow > 0.0 {
-            let spread = 0.55 + quantize_heat(finite_unit(cell.intensity)) * 0.85;
+            let spread = 0.55 + quantize_heat(style.heat_position(cell.intensity)) * 0.85;
             let glow_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),

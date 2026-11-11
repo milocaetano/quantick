@@ -20143,6 +20143,16 @@
           "l2_open": {
             "type": "boolean"
           },
+          "lights_on": {
+            "default": false,
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
+            "type": "boolean"
+          },
           "open": {
             "type": "boolean"
           },
@@ -20174,6 +20184,114 @@
       "risk_reducing": false,
       "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
       "title": "Close the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets the bulb beside the order-flow band's gear. On, the flow pane (Trail and Tape) paints on the theme's lit surface: a white plot, liquidity in grey with only the wall in plum, flat rimmed bubbles, and drawings, VWAP and plot inks in the theme's own paper colours. Off, it keeps its dark island. Switching on is refused while the theme authors no lit surface (Dark); off is always taken and clears a choice saved under another theme. lights_on reports what paints now, lights_saved what is kept with the tab and restored on restart. Presentation only: executions, the book and the layers are untouched.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.lights.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "on": {
+            "description": "On paints the flow pane on the theme's lit surface; off, its dark island.",
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "on"
+        ],
+        "title": "SettingsLightsInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "lights_on": {
+            "default": false,
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the tab; repeating a value has no further effect, and the result and the orderflow.settings scope report it.",
+      "title": "Switch the order-flow pane's lights",
       "version": 1
     },
     {
@@ -20253,6 +20371,16 @@
             "type": "boolean"
           },
           "l2_open": {
+            "type": "boolean"
+          },
+          "lights_on": {
+            "default": false,
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -20362,6 +20490,16 @@
             "type": "boolean"
           },
           "l2_open": {
+            "type": "boolean"
+          },
+          "lights_on": {
+            "default": false,
+            "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+            "type": "boolean"
+          },
+          "lights_saved": {
+            "default": false,
+            "description": "The lights as saved with the tab, whatever the theme paints.",
             "type": "boolean"
           },
           "open": {
@@ -30076,6 +30214,16 @@
                 "type": "boolean"
               },
               "l2_open": {
+                "type": "boolean"
+              },
+              "lights_on": {
+                "default": false,
+                "description": "The flow pane paints lit now: the lights are saved on and the theme\nauthors a lit surface (Light).",
+                "type": "boolean"
+              },
+              "lights_saved": {
+                "default": false,
+                "description": "The lights as saved with the tab, whatever the theme paints.",
                 "type": "boolean"
               },
               "open": {

@@ -2,11 +2,10 @@
 
 use eframe::egui;
 use quantick_engine::Bar;
-use quantick_indicators::Rgba8;
 
-use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
-use crate::style::{CandleStyle, ResolvedCandlePaint};
-use quantick_chart::candle_pixels::CandleRun;
+use crate::chart::VerticalSegment;
+use crate::style::ResolvedCandlePaint;
+use quantick_chart::candle_casing::LaidCandle;
 
 /// Whether a bar reads as bullish, and so which of the two candle colours it
 /// wears.
@@ -34,30 +33,17 @@ pub struct BarSlot {
     pub half_width: f32,
 }
 
-/// Draw one candle from pure geometry and a resolved paint description.
+/// Draw one candle already laid out, in the paint resolved for it: on whole
+/// device pixels where its run placed it, else from its pure geometry.
 ///
 /// The heatmap precedes this function; regional FLOW circles, native Tape
 /// and ordinary aggression layers follow it. Candle body
 /// mode and alpha always come from the configured style.
-///
-/// `bar_paint` is the colour an indicator asked this bar to wear (Pine's
-/// `barcolor`); `None` — the ordinary case — draws the trader's own direction
-/// colours.
-pub fn draw_candle(
-    painter: &egui::Painter,
-    slot: BarSlot,
-    scale: &PriceScale,
-    bar: &Bar,
-    forming: bool,
-    style: &CandleStyle,
-    bar_paint: Option<Rgba8>,
-) {
-    let paint = style.resolved_painted(
-        is_bullish(bar),
-        forming,
-        bar_paint.map(|c| [c.r, c.g, c.b, c.a]),
-    );
-    let geometry = candle_geometry(scale, bar, slot.xc, slot.half_width, paint.min_body_height);
+pub fn draw_laid_candle(painter: &egui::Painter, laid: &LaidCandle, paint: &ResolvedCandlePaint) {
+    let geometry = match laid {
+        LaidCandle::Pixels(pixels) => return paint_pixels(painter, pixels, paint),
+        LaidCandle::Geometry(geometry) => geometry,
+    };
     let body = egui::Rect::from_min_max(
         egui::pos2(geometry.body.left, geometry.body.top),
         egui::pos2(geometry.body.right, geometry.body.bottom),
@@ -99,20 +85,6 @@ pub fn draw_candle(
             egui::Stroke::new(width, color32(paint.outline)),
         );
     }
-}
-
-/// Draw one candle by TradingView's whole-pixel rule: `run` decides where
-/// every pixel goes (`quantick_chart::candle_pixels`); this only paints
-/// them, as rectangles on device-pixel boundaries that nothing feathers.
-pub fn draw_pixel_candle(
-    painter: &egui::Painter,
-    run: &mut CandleRun,
-    xc: f32,
-    scale: &PriceScale,
-    bar: &Bar,
-    paint: &ResolvedCandlePaint,
-) {
-    paint_pixels(painter, &run.place_bar(scale, bar, xc, paint), paint);
 }
 
 /// Paints one candle's whole-pixel rectangles, as the time chart does.

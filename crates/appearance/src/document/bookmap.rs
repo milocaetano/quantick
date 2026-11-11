@@ -40,6 +40,7 @@ impl BookmapOverride {
             orderflow: Default::default(),
             bookmap: None,
             title_strip: None,
+            lit_flow: None,
         }
         .resolve_with(Some(parent))
         .map_err(|error| ThemeError::new(format!("bookmap.{}", error.field), error.message))

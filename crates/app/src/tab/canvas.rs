@@ -455,6 +455,7 @@ impl Tab {
                 .orderflow
                 .as_ref()
                 .is_some_and(|tape| tape.settings_panel.is_open()),
+            lights_on: pane.surface() == quantick_appearance::ChartSurface::LitFlow,
         };
         let painted = &mut pane.frame.header_controls;
         let intent = crate::pane_header::draw_marked(ui, strip, &header, pane.id, row, painted);
