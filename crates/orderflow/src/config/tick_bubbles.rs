@@ -68,6 +68,20 @@ mod grouping_tests {
         assert_eq!(fixed.viewport_scale, None);
         assert!(!toml::to_string(&fixed).unwrap().contains("reference_mode"));
         assert!(!toml::to_string(&fixed).unwrap().contains("viewport_scale"));
+        assert!(
+            !fixed.peak_spheres,
+            "a saved style without the key reads as off"
+        );
+        assert!(!toml::to_string(&fixed).unwrap().contains("peak_spheres"));
+        let peaks = super::TickBubbleStyle {
+            peak_spheres: true,
+            ..fixed
+        };
+        assert_eq!(
+            toml::from_str::<super::TickBubbleStyle>(&toml::to_string(&peaks).unwrap()).unwrap(),
+            peaks
+        );
+        assert_ne!(peaks.fingerprint(), fixed.fingerprint());
         let visible = super::TickBubbleStyle {
             reference_mode: super::TickReferenceMode::VisibleMax,
             ..fixed
@@ -141,6 +155,37 @@ mod grouping_tests {
         assert!(!zoomed.same_tape_grouping(&config));
     }
 
+    /// A tuning changes only what it names, and an opacity out of range is
+    /// sanitized like a stored one.
+    #[test]
+    fn a_tuning_changes_only_what_it_names() {
+        let mut style: super::TickBubbleStyle = toml::from_str(
+            "reference_quantity = 1.0
+max_radius = 18.0
+label_min_radius = 8.0
+opacity = 0.9
+zoom_regions = true
+",
+        )
+        .unwrap();
+        style.sanitize();
+        assert_eq!(super::TickTuning::default().apply(style), style);
+        let tuned = super::TickTuning {
+            peak_spheres: Some(true),
+            opacity: Some(0.5),
+        }
+        .apply(style);
+        assert!(tuned.peak_spheres && tuned.zoom_regions);
+        assert_eq!(tuned.opacity, 0.5);
+        assert_eq!(super::TickTuning::worn(tuned).apply(style), tuned);
+        let clear = super::TickTuning {
+            opacity: Some(f32::NAN),
+            ..Default::default()
+        }
+        .apply(style);
+        assert!(clear.opacity.is_finite());
+    }
+
     /// Review #26: a reference that is not a positive number falls back to
     /// a named value, never an inline literal.
     #[test]
@@ -148,6 +193,7 @@ mod grouping_tests {
         for invalid in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
             let mut style = super::TickBubbleStyle {
                 zoom_regions: false,
+                peak_spheres: false,
                 viewport_scale: None,
                 reference_mode: crate::TickReferenceMode::Fixed,
                 reference_quantity: invalid,
@@ -202,6 +248,13 @@ pub struct TickBubbleStyle {
     /// Omitted values keep the one-second regions of saved appearances.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub zoom_regions: bool,
+    /// Each zoom region is divided at the valleys of its volume-by-price
+    /// profile instead: one sphere per peak, sized by its rank among the
+    /// spheres in view and filled by its buy/sell imbalance. Peak spheres
+    /// divide zoom regions, so they imply them. Omitted values keep the
+    /// proximity merge of saved appearances.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub peak_spheres: bool,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub max_radius: f32,
@@ -263,13 +316,45 @@ impl TickBubbleStyle {
             u64::from(self.max_radius.to_bits()),
             u64::from(self.label_min_radius.to_bits()),
             u64::from(self.opacity.to_bits()),
-            // The two enumerated policies share one word: the reference mode
-            // in its low bit, the region policy above it.
-            self.reference_mode as u64 | (u64::from(self.zoom_regions) << 1),
+            // The enumerated policies share one word: the reference mode in
+            // its low bit, the region policy above it, peak spheres above that.
+            self.reference_mode as u64
+                | (u64::from(self.zoom_regions) << 1)
+                | (u64::from(self.peak_spheres) << 2),
             u64::from(viewport.is_some()),
             density[0],
             density[1],
         ]
+    }
+}
+
+/// What a pane changes on the tick preset it wears, from the settings panel
+/// or `orderflow.bubbles.tick.set`: each `None` keeps the preset's own.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct TickTuning {
+    /// [`TickBubbleStyle::peak_spheres`].
+    pub peak_spheres: Option<bool>,
+    /// [`TickBubbleStyle::opacity`], sanitized like any stored opacity.
+    pub opacity: Option<f32>,
+}
+
+impl TickTuning {
+    /// The tuning `style` wears: every field it carries.
+    #[must_use]
+    pub fn worn(style: TickBubbleStyle) -> Self {
+        Self {
+            peak_spheres: Some(style.peak_spheres),
+            opacity: Some(style.opacity),
+        }
+    }
+
+    /// `style` with this tuning applied.
+    #[must_use]
+    pub fn apply(self, mut style: TickBubbleStyle) -> TickBubbleStyle {
+        style.peak_spheres = self.peak_spheres.unwrap_or(style.peak_spheres);
+        style.opacity = self.opacity.unwrap_or(style.opacity);
+        style.sanitize();
+        style
     }
 }
 

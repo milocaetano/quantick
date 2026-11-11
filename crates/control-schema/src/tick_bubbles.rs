@@ -1,5 +1,8 @@
 //! A scoped tick-chart appearance operation; the tape retains its own settings.
-use quantick_control::{registry::IdempotencyPolicy, wire::WireU64};
+use quantick_control::{
+    registry::IdempotencyPolicy,
+    wire::{CanonicalDecimal, WireU64},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +23,15 @@ pub struct TickBubblesInput {
     #[serde(deserialize_with = "Option::deserialize")]
     #[schemars(schema_with = "nullable_string")]
     pub preset: Option<String>,
+    /// Divide the preset's zoom regions at the peaks of their volume profile
+    /// (true) or not (false); omitted keeps the preset's own. Needs a preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_spheres: Option<bool>,
+    /// Sphere fill opacity, a canonical decimal from 0.05 to 1; omitted keeps
+    /// the preset's own. Needs a preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-unit" = "ratio"))]
+    pub opacity: Option<CanonicalDecimal>,
 }
 
 /// A string or null that has to be present: `Option<String>` alone reads
@@ -49,6 +61,10 @@ pub struct TickBubblesSnapshot {
     /// of market time; the frame's `region_candles` says how many.
     #[serde(default)]
     pub zoom_regions: bool,
+    /// Each zoom region is divided at the peaks of its volume-by-price
+    /// profile: one sphere per peak, sized by rank among the spheres in view.
+    #[serde(default)]
+    pub peak_spheres: bool,
     pub max_radius: String,
     pub label_min_radius: String,
     pub opacity: String,
@@ -74,6 +90,7 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
             },
             viewport_scale: style.viewport_scale.map(Into::into),
             zoom_regions: style.zoom_regions,
+            peak_spheres: style.peak_spheres,
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
             opacity: style.opacity.to_string(),
@@ -103,7 +120,7 @@ pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
         TICK_BUBBLES_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Set tick chart sphere preset",
-        "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+        "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Optional peak_spheres and opacity tune the named preset as the settings panel does (omitted keeps the preset's own; refused with a null preset). Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
         "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
@@ -162,6 +179,15 @@ mod tests {
         );
         let schema = quantick_control::schema::generated_schema::<TickBubblesInput>();
         assert_eq!(schema["required"], json!(["tab_id", "pane_id", "preset"]));
+        let mut tuned = json!({"tab_id": "1", "pane_id": "2", "preset": "p"});
+        tuned["peak_spheres"] = json!(true);
+        tuned["opacity"] = json!("0.6");
+        let tuned = serde_json::from_value::<TickBubblesInput>(tuned).unwrap();
+        assert_eq!(tuned.peak_spheres, Some(true));
+        assert_eq!(
+            tuned.opacity.as_ref().map(CanonicalDecimal::as_str),
+            Some("0.6")
+        );
         assert_eq!(
             schema["properties"]["preset"]["type"],
             json!(["string", "null"])

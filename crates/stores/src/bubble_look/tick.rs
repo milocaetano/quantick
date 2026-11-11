@@ -1,7 +1,7 @@
 //! Select the chart's sphere calibration without replacing the tape look.
 use super::BubbleLook;
 use crate::config::AssetMode;
-use quantick_orderflow::TickBubbleStyle;
+use quantick_orderflow::{TickBubbleStyle, TickTuning};
 
 impl BubbleLook {
     /// The mode the config switches on for the bound asset, if any.
@@ -52,12 +52,19 @@ impl BubbleLook {
             .and_then(|preset| preset.tick_bubbles))
     }
 
-    /// The offered sphere preset `current` is, if it is one.
+    /// The offered sphere preset `current` is, if it is one. A pane's own
+    /// tuning of a preset (peak spheres, opacity) still wears that preset.
     #[must_use]
     pub fn tick_preset_worn(&self, current: Option<TickBubbleStyle>) -> Option<String> {
+        let tuned = |style: Option<TickBubbleStyle>| {
+            style.map(|style| match current {
+                Some(current) => TickTuning::worn(current).apply(style),
+                None => style,
+            })
+        };
         self.tick_presets()
             .into_iter()
-            .find(|name| self.tick_style(Some(name)).ok() == Some(current))
+            .find(|name| self.tick_style(Some(name)).ok().map(tuned) == Some(current))
     }
 
     /// The settings line under the sphere picker: the unit the asset's mode

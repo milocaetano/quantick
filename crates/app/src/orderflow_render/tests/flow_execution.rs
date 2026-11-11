@@ -566,6 +566,7 @@ fn dense_production_flow_cache_benchmark() {
 /// labels from 8 px.
 const DENSE_TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
     zoom_regions: false,
+    peak_spheres: false,
     viewport_scale: None,
     reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
     reference_quantity: 2964.0,

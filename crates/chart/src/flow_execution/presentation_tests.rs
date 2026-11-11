@@ -520,3 +520,82 @@ fn a_regions_sectors_sweep_its_exact_sides_in_turn() {
     let sold: Vec<_> = region(1).unwrap().sectors(&frame, 1.0).collect();
     assert_eq!(sold, [(1, 1.0, tau as f32)], "the buy side draws nothing");
 }
+
+/// Peak spheres hold no mass back as context, however small against the
+/// largest, and label only the top fifth by rank, whatever fits.
+#[test]
+fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
+    let quantities = [4500_i64, 600, 90];
+    let trades: Vec<_> = quantities
+        .iter()
+        .enumerate()
+        .map(|(index, &quantity)| Trade {
+            agg_id: index as u64 + 1,
+            timestamp_ms: (index as i64 + 1) * 1000,
+            price: 100.into(),
+            quantity: quantity.into(),
+            side: Side::Buy,
+        })
+        .collect();
+    let frame = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal,
+                accepted_ordinal: 0,
+                ticks_per_bar: 1.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        3,
+        3,
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 3,
+            clip_left: 0.into(),
+            clip_right: 3.into(),
+            width_px: 400.0,
+            height_px: 300.0,
+            prices: PriceWindow::new(99.into(), 101.into()).unwrap(),
+            reference: FlowReference::VisibleRegions,
+            radius_limit: 32.0,
+            merge_support_radius: 6.0,
+            region: quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1),
+            exclude_opening: false,
+        },
+    );
+    assert_eq!(frame.large_region_threshold(), None);
+    let style = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        viewport_scale: None,
+        zoom_regions: true,
+        peak_spheres: true,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let centers = [[60.0, 100.0], [200.0, 100.0], [340.0, 100.0]];
+    let plan = FlowPresentation::styled(&frame, HISTORY, Some(style), |dot| {
+        Some(centers[dot.mark.agg_id as usize - 1])
+    });
+    assert_eq!(plan.regions.len(), 3);
+    assert!(
+        plan.regions
+            .iter()
+            .all(|region| region.role == FlowRegionRole::Peak),
+        "{plan:?}"
+    );
+    let fits = plan
+        .regions
+        .iter()
+        .filter(|region| region.disc.radius >= style.label_min_radius)
+        .count();
+    assert_eq!(fits, 2, "the middle mass would fit its label");
+    let labels = plan.quantity_labels(&frame, Some(style));
+    assert_eq!(labels.len(), 1, "only the top fifth carries one");
+    assert_eq!(labels[0].center, centers[0]);
+}

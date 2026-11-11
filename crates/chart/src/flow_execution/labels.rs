@@ -15,7 +15,9 @@ pub struct FlowQuantityLabel {
 }
 
 impl FlowPresentation {
-    /// Every sphere big enough to carry its quantity, largest first.
+    /// Every sphere big enough to carry its quantity, largest first; under
+    /// peak spheres, only the top fifth by rank
+    /// ([`FlowTapeFrame::peak_label_floor`]).
     #[must_use]
     pub fn quantity_labels(
         &self,
@@ -25,10 +27,14 @@ impl FlowPresentation {
         let Some(style) = tick.map(TickBubbleStyle::bubbles) else {
             return Vec::new();
         };
+        let floor = frame.peak_label_floor();
         let mut labels: Vec<_> = self
             .regions
             .iter()
             .filter(|region| region.disc.radius >= style.label_min_radius)
+            .filter(|region| {
+                floor.is_none_or(|floor| frame.dots[region.dot_index].mark.quantity >= floor)
+            })
             .map(|region| FlowQuantityLabel {
                 center: region.disc.center,
                 radius: region.disc.radius,

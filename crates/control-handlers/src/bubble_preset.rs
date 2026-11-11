@@ -4,6 +4,7 @@ use quantick_control::{error::ControlError, registry::RegistryError, wire::Actor
 use quantick_control_schema::bubble_preset::{
     ApplyInput, ApplyResult, ListInput, ListResult, ResetInput,
 };
+use quantick_orderflow::TickTuning;
 use serde_json::Value;
 
 /// What wearing a whole preset answers.
@@ -176,9 +177,14 @@ pub trait TickBubblePort {
         tab_id: u64,
         pane_id: u64,
     ) -> Result<TickSpherePane, ControlError>;
-    /// Wear `preset`'s spheres, or none.
-    fn wear_tick_spheres(&mut self, tab_id: u64, pane_id: u64, preset: Option<&str>)
-    -> WornSpheres;
+    /// Wear `preset`'s spheres with `tuning` applied, or none.
+    fn wear_tick_spheres(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+        preset: Option<&str>,
+        tuning: TickTuning,
+    ) -> WornSpheres;
 }
 pub fn register_tick<D: ActionDock<H, A>, H: TickBubblePort + ?Sized, A>(
     registry: &mut D,
@@ -198,8 +204,9 @@ fn tick<H: TickBubblePort + ?Sized, A>(
         input.pane_id.get(),
         input.preset.as_deref(),
     );
+    let tuning = tick_tuning(&input)?;
     host.tick_sphere_pane(tab, pane)?.admit(preset)?;
-    let (changed, tick_bubbles) = host.wear_tick_spheres(tab, pane, preset)?;
+    let (changed, tick_bubbles) = host.wear_tick_spheres(tab, pane, preset, tuning)?;
     serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
         tab_id: input.tab_id,
         pane_id: input.pane_id,
@@ -207,6 +214,42 @@ fn tick<H: TickBubblePort + ?Sized, A>(
         tick_bubbles,
     })
     .map_err(invalid)
+}
+
+/// The tuning `input` asks of its preset, validated before any edit: an
+/// opacity the panel's slider could set, and none without a preset.
+fn tick_tuning(
+    input: &quantick_control_schema::tick_bubbles::TickBubblesInput,
+) -> Result<TickTuning, ControlError> {
+    use quantick_orderflow::config::controls::OPACITY_RANGE;
+    let opacity = input
+        .opacity
+        .as_ref()
+        .map(|value| {
+            value
+                .as_str()
+                .parse::<f32>()
+                .ok()
+                .filter(|opacity| OPACITY_RANGE.contains(opacity))
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "opacity must be a decimal from {} to {}",
+                        OPACITY_RANGE.start(),
+                        OPACITY_RANGE.end()
+                    ))
+                })
+        })
+        .transpose()?;
+    let tuning = TickTuning {
+        peak_spheres: input.peak_spheres,
+        opacity,
+    };
+    if input.preset.is_none() && tuning != TickTuning::default() {
+        return Err(invalid(
+            "peak_spheres and opacity tune a named preset; a null preset takes neither",
+        ));
+    }
+    Ok(tuning)
 }
 
 #[cfg(test)]
@@ -252,6 +295,7 @@ mod tick_rule_tests {
     struct Pane {
         facts: TickSpherePane,
         worn: Option<Option<String>>,
+        tuning: TickTuning,
     }
     impl TickBubblePort for Pane {
         fn tick_sphere_pane(
@@ -266,8 +310,10 @@ mod tick_rule_tests {
             _tab_id: u64,
             _pane_id: u64,
             preset: Option<&str>,
+            tuning: TickTuning,
         ) -> WornSpheres {
             self.worn = Some(preset.map(str::to_owned));
+            self.tuning = tuning;
             Ok((true, None))
         }
     }
@@ -282,6 +328,7 @@ mod tick_rule_tests {
                 asset_mode: true,
             },
             worn: None,
+            tuning: TickTuning::default(),
         };
         let refused = tick(
             &mut volume_chart,
@@ -307,6 +354,7 @@ mod tick_rule_tests {
                 asset_mode: false,
             },
             worn: None,
+            tuning: TickTuning::default(),
         };
         let refused = tick(
             &mut no_mode,
@@ -325,6 +373,7 @@ mod tick_rule_tests {
                 asset_mode: false,
             },
             worn: None,
+            tuning: TickTuning::default(),
         };
         let dropped = tick(&mut plain_asset, &mut (), &actor, &input(Value::Null)).unwrap();
         assert_eq!(
@@ -339,6 +388,7 @@ mod tick_rule_tests {
                 asset_mode: true,
             },
             worn: None,
+            tuning: TickTuning::default(),
         };
         tick(
             &mut btc,
@@ -348,5 +398,41 @@ mod tick_rule_tests {
         )
         .unwrap();
         assert_eq!(btc.worn, Some(Some("Binance BTC Spot spheres".to_owned())));
+        assert_eq!(btc.tuning, TickTuning::default());
+        let tuned = |extra: Value| {
+            let mut request = input(json!("mini index regions"));
+            for (key, value) in extra.as_object().unwrap() {
+                request[key] = value.clone();
+            }
+            request
+        };
+        tick(
+            &mut btc,
+            &mut (),
+            &actor,
+            &tuned(json!({"peak_spheres": false, "opacity": "0.6"})),
+        )
+        .unwrap();
+        assert_eq!(
+            btc.tuning,
+            TickTuning {
+                peak_spheres: Some(false),
+                opacity: Some(0.6),
+            }
+        );
+        btc.worn = None;
+        for refused in [
+            json!({"opacity": "1.5"}),
+            json!({"opacity": "0"}),
+            json!({"opacity": 0.5}),
+            json!({"peak_spheres": "yes"}),
+        ] {
+            let error = tick(&mut btc, &mut (), &actor, &tuned(refused.clone()));
+            assert!(error.is_err(), "{refused}");
+        }
+        let mut strip = input(Value::Null);
+        strip["peak_spheres"] = json!(true);
+        assert!(tick(&mut btc, &mut (), &actor, &strip).is_err());
+        assert_eq!(btc.worn, None, "every refusal comes before any edit");
     }
 }

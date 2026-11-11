@@ -395,3 +395,84 @@ const GOLDEN_OFF_DIGESTS: [u64; 9] = [
     4_489_037_191_021_631_944,
     3_515_181_521_242_157_339,
 ];
+
+/// The prototype's measurement on a recorded WIN session: 60 candles of
+/// 2 000 prints, 70 from the end, in regions of two candles, at a 32 px
+/// full radius. Reads the `quantick-replay 1` CSV named by
+/// `PEAK_SPHERES_REPLAY_CSV`; run by name with `--ignored --nocapture`.
+#[test]
+#[ignore = "reads a local replay recording; run by name"]
+fn a_recorded_win_session_matches_the_prototype() {
+    const TICKS: usize = 2_000;
+    let path = std::env::var("PEAK_SPHERES_REPLAY_CSV").expect("PEAK_SPHERES_REPLAY_CSV");
+    let text = std::fs::read_to_string(path).expect("a readable recording");
+    let all: Vec<Trade> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("Date"))
+        .enumerate()
+        .map(|(n, line)| {
+            let fields: Vec<&str> = line.split(',').collect();
+            let side = if fields[6] == "B" {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
+            Trade {
+                agg_id: n as u64,
+                timestamp_ms: n as i64,
+                price: fields[2].parse().unwrap(),
+                quantity: fields[5].parse().unwrap(),
+                side,
+            }
+        })
+        .collect();
+    let first = (all.len() / TICKS - 70) * TICKS;
+    let trades = &all[first..first + 60 * TICKS];
+    let started = std::time::Instant::now();
+    let low = trades.iter().map(|trade| trade.price).min().unwrap();
+    let high = trades.iter().map(|trade| trade.price).max().unwrap();
+    let frame = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal / TICKS,
+                accepted_ordinal: ordinal % TICKS,
+                ticks_per_bar: TICKS.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        trades.len(),
+        trades.len(),
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 60,
+            clip_left: 0.into(),
+            clip_right: 60.into(),
+            width_px: 60.0 * 28.0,
+            height_px: 660.0,
+            prices: PriceWindow::new(low - Decimal::from(40), high + Decimal::from(40)).unwrap(),
+            reference: FlowReference::VisibleRegions,
+            radius_limit: 32.0,
+            merge_support_radius: 6.0,
+            region: FlowRegionSpan::Peaks(2),
+            exclude_opening: false,
+        },
+    );
+    let elapsed = started.elapsed();
+    let mut radii: Vec<f32> = frame.dots.iter().map(|dot| dot.radius).collect();
+    radii.sort_by(f32::total_cmp);
+    let floor = frame.peak_label_floor().unwrap();
+    let labelled = frame.dots.iter().filter(|dot| dot.mark.quantity >= floor);
+    println!(
+        "{} spheres over 60 candles; radius min / median / max {:.1} / {:.1} / {:.1}; {} labelled; whole cold projection {elapsed:?}",
+        radii.len(),
+        radii[0],
+        radii[radii.len() / 2],
+        radii[radii.len() - 1],
+        labelled.count()
+    );
+    assert!(!radii.is_empty());
+}

@@ -596,6 +596,7 @@ fn tick_spheres_keep_closed_and_forming_slot_facts_inside_a_long_tape_window() {
     };
     config.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: false,
         viewport_scale: None,
         reference_mode: crate::TickReferenceMode::Fixed,
         reference_quantity: 10.0,

@@ -6,9 +6,11 @@ use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 
 impl FlowTapeFrame {
     /// Inclusive ordinary-region placement threshold; brightness rises above it.
+    /// None under peak spheres, which hold no mass back however small.
     pub fn large_region_threshold(&self) -> Option<Decimal> {
         self.effective_reference
             .filter(|reference| *reference > Decimal::ZERO)
+            .filter(|_| !self.view.region.divides_at_peaks())
             .map(|reference| reference / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR))
     }
 

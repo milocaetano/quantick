@@ -3,8 +3,8 @@ use crate::state::ChartState;
 use quantick_orderflow::projection::{
     PriceWindow,
     flow_tape::{
-        FlowChunk, FlowReference, FlowRequest, FlowRunner, FlowSession, FlowTail, FlowTapeView,
-        OwnedFlowExecution,
+        FlowChunk, FlowReference, FlowRegionSpan, FlowRequest, FlowRunner, FlowSession, FlowTail,
+        FlowTapeView, OwnedFlowExecution,
     },
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive as _};
@@ -73,7 +73,7 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
 ) {
     let FlowChartView {
         slots,
-        pixels,
+        mut pixels,
         range,
         clip,
         tick_bubbles,
@@ -100,12 +100,31 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
     };
     let epoch = state.series_revision();
     carry_recut(state, session, epoch);
-    let keep = session.keep_for(
-        epoch,
-        slots.clone(),
-        state.bars().len() + usize::from(state.partial().is_some()),
-        span,
-    );
+    let region = session
+        .region_span(
+            tick_bubbles.is_some_and(|style| style.zoom_regions || style.peak_spheres),
+            f64::from(pixels.0) / slots.len() as f64,
+        )
+        .with_peaks(tick_bubbles.is_some_and(|style| style.peak_spheres));
+    let total = state.bars().len() + usize::from(state.partial().is_some());
+    // A peak region's profile reads all of its candles, so the request
+    // admits whole regions: the view's edge never cuts one, and a pan
+    // never regroups it.
+    let slots = match region {
+        FlowRegionSpan::Peaks(candles) => {
+            let candles = candles.max(1);
+            let start = slots.start - slots.start % candles;
+            let end = slots
+                .end
+                .next_multiple_of(candles)
+                .min(total)
+                .max(slots.end);
+            pixels.0 *= (end - start) as f32 / slots.len() as f32;
+            start..end
+        }
+        _ => slots,
+    };
+    let keep = session.keep_for(epoch, slots.clone(), total, span);
     // Tick spheres merge at a held price scale, so an axis fit does not
     // regroup them; the live window still decides what is on the axis.
     let merge_height = match tick_bubbles {
@@ -115,10 +134,6 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
         }
         _ => pixels.1,
     };
-    let region = session.region_span(
-        tick_bubbles.is_some_and(|style| style.zoom_regions),
-        f64::from(pixels.0) / slots.len() as f64,
-    );
     let request = FlowRequest {
         epoch,
         layout_revision: 0,

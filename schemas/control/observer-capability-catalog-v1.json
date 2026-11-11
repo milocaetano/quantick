@@ -19147,6 +19147,11 @@
               "opacity": {
                 "type": "string"
               },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
+              },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
                 "default": "fixed"
@@ -19512,6 +19517,11 @@
               },
               "opacity": {
                 "type": "string"
+              },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
               },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
@@ -19909,7 +19919,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Optional peak_spheres and opacity tune the named preset as the settings panel does (omitted keeps the preset's own; refused with a null preset). Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -19922,6 +19932,10 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -19930,8 +19944,27 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "opacity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sphere fill opacity, a canonical decimal from 0.05 to 1; omitted keeps\nthe preset's own. Needs a preset.",
+            "x-unit": "ratio"
+          },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "peak_spheres": {
+            "description": "Divide the preset's zoom regions at the peaks of their volume profile\n(true) or not (false); omitted keeps the preset's own. Needs a preset.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "preset": {
             "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.",
@@ -19972,6 +20005,11 @@
               },
               "opacity": {
                 "type": "string"
+              },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
               },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
@@ -29475,6 +29513,11 @@
               },
               "opacity": {
                 "type": "string"
+              },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
               },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",

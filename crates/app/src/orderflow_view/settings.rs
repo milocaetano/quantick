@@ -327,8 +327,12 @@ impl OrderflowView {
         changed
     }
 
-    pub(crate) fn apply_tick_preset(&mut self, name: Option<&str>) -> Result<bool, String> {
-        let style = self.look.tick_style(name)?;
+    pub(crate) fn apply_tick_preset(
+        &mut self,
+        name: Option<&str>,
+        tuning: quantick_orderflow::TickTuning,
+    ) -> Result<bool, String> {
+        let style = self.look.tick_style(name)?.map(|style| tuning.apply(style));
         Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
     }
 
@@ -351,17 +355,24 @@ impl OrderflowView {
                     .selectable_label(current.is_none(), "Regional FLOW")
                     .clicked()
                 {
-                    let _ = self.apply_tick_preset(None);
+                    let _ = self.apply_tick_preset(None, Default::default());
                 }
                 for name in &choices {
                     if ui
                         .selectable_label(selected.as_ref() == Some(name), name)
                         .clicked()
                     {
-                        let _ = self.apply_tick_preset(Some(name));
+                        let _ = self.apply_tick_preset(Some(name), Default::default());
                     }
                 }
             });
+        if let Some(style) = &mut self.config.volume_dots.tick_bubbles {
+            ui.checkbox(&mut style.peak_spheres, "Peak spheres").on_hover_text(
+                "one sphere per peak of each zoom region's volume by price,                  sized by rank among the spheres on screen; vivid when one-sided",
+            );
+            let range = quantick_orderflow::config::controls::OPACITY_RANGE;
+            ui.add(egui::Slider::new(&mut style.opacity, range).text("sphere opacity"));
+        }
         ui.small(self.look.tick_hint());
     }
 }
