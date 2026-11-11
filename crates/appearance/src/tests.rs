@@ -1023,6 +1023,14 @@ fn light_drawings_are_black_and_their_labels_have_no_plate() {
     }
     let ink = light.color(Token::DrawingDefault);
     assert_eq!(light.drawing_tag_paint(ink), (color::TRANSPARENT, ink));
+    // A pale pick still reads over paper: the bare ink is made legible.
+    let (_, pale) = light.drawing_tag_paint(WHITE);
+    assert_eq!(pale, light.legible_drawing(WHITE));
+    assert_ne!(pale, WHITE);
+    // The dark island keeps its plates, so a black drawing's tag stays seen.
+    let island = light.bookmap();
+    assert!(island.drawing_label_plates);
+    assert_eq!(island.drawing_tag_paint(ink), (ink, island.ink_on(ink)));
 
     let dark = ResolvedTheme::default();
     assert!(dark.drawing_label_plates);

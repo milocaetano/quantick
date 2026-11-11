@@ -153,8 +153,8 @@ impl crate::ResolvedTheme {
 
     /// The plate and ink of a drawing's price-axis tag in the drawing's own
     /// colour: the colour as a filled plate with computed ink on it, or —
-    /// where the theme turns label plates off — no plate and the colour as
-    /// the ink.
+    /// where the theme turns label plates off — no plate and the colour,
+    /// made legible on the canvas as the line is, as the ink.
     #[must_use]
     pub fn drawing_tag_paint(
         &self,
@@ -163,7 +163,7 @@ impl crate::ResolvedTheme {
         if self.drawing_label_plates {
             (color, self.ink_on(color))
         } else {
-            (crate::color::TRANSPARENT, color)
+            (crate::color::TRANSPARENT, self.legible_drawing(color))
         }
     }
 
@@ -191,13 +191,17 @@ impl crate::ResolvedTheme {
     }
 
     /// Readout text as it is painted on the readout plate, which sits over
-    /// the canvas; see [`legible`].
+    /// the canvas — or on the canvas itself where the theme paints no label
+    /// plates; see [`legible`].
     #[must_use]
     pub fn legible_readout(&self, color: PremultipliedRgba) -> PremultipliedRgba {
-        let plate = over(
-            self.color(crate::Token::DrawingReadoutPlate),
-            self.color(crate::Token::Canvas),
-        );
-        legible(color, plate)
+        let canvas = self.color(crate::Token::Canvas);
+        if !self.drawing_label_plates {
+            return legible(color, canvas);
+        }
+        legible(
+            color,
+            over(self.color(crate::Token::DrawingReadoutPlate), canvas),
+        )
     }
 }

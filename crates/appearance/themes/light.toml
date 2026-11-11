@@ -228,6 +228,8 @@ candle_fill_opacity = 0.20
 candle_outline_width = 1.25
 candle_outline_opacity = 0.96
 candle_wick_opacity = 0.90
+# The dark island keeps its label plates: paper's bare ink would vanish here.
+drawing_label_plates = true
 
 [bookmap.colors]
 drawing_default = "#E8ECF2"
