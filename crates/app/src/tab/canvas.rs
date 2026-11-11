@@ -798,9 +798,8 @@ impl Tab {
         } else {
             return;
         }
-        // A frame around the focused pane, flow or context, once there
-        // is another pane on screen to tell it from: the click that activates
-        // a pane has to show which one it activated.
+        // A frame around the focused pane once another pane is on screen: the
+        // click that activates a pane has to show which one it activated.
         if self.drawn_panes().count() < 2 {
             return;
         }
