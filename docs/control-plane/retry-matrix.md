@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 84 |
+| deduplicated per connection | 85 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **117** |
+| **Total** | **118** |
 
 ## Capabilities
 
@@ -210,6 +210,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `orderflow.bubbles.size.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.display_scale` | the addressed pane reports independent tape and candle bubble radius multipliers | `bubble_size_is_named_permission_checked_retry_safe_and_read_back`, `bubble_size_refuses_invalid_values_stale_targets_and_inactive_context`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.tick.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.tick_bubbles` | the addressed pane reports the selected tick sphere calibration independently of the tape | `tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.settings.close` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.settings` | `tabs[].open` | the tab's row no longer reads open | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `orderflow.settings.lights.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.settings` | `tabs[].lights_on` | the tab's row reads the value asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.settings.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.settings` | `tabs[].open` | the tab's row reads open, and the section asked for reads open too | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.settings.section.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.settings` | `tabs[].l2_open` | the tab's row reads the value asked for in l2_open or bubbles_open | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.tape.fold.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.tape_fold` | the addressed pane reports which side its view closes | `the_tape_fold_is_an_alias_over_the_view_retry_safe_and_read_back`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -240,4 +241,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-117 mutable capabilities registered, 117 with a readback.
+118 mutable capabilities registered, 118 with a readback.

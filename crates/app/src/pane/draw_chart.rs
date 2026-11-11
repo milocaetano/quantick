@@ -60,10 +60,8 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let _surface = self
-            .orderflow
-            .as_ref()
-            .map(|_| theme::bookmap_scope(painter.ctx()));
+        let flow = |_| theme::scope(painter.ctx(), theme::surface(painter.ctx(), self.surface()));
+        let _surface = self.orderflow.as_ref().map(flow);
         let renderers = self.layer_renderers;
         // A return to live asks this frame, laid out or not, and never a later one.
         let centre_live = self.model.take_live_centre();

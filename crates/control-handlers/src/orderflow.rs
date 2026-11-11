@@ -91,8 +91,9 @@ pub trait OrderflowPane {
     fn engine(&self) -> Option<&dyn OrderflowEngine>;
 }
 
-/// What sees each tab's panel: its id, its asset, its panel, the window's folds.
-pub type PanelVisit<'a> = dyn FnMut(u64, &str, &OrderFlowPanel, &AssetFolds) + 'a;
+/// What sees each tab's panel: its id, its asset, its panel with whether the
+/// theme offers the flow pane's lights, and the window's folds.
+pub type PanelVisit<'a> = dyn FnMut(u64, &str, (&OrderFlowPanel, bool), &AssetFolds) + 'a;
 
 /// One pane with the side it sits on.
 pub struct OrderflowPaneEntry<'a> {
@@ -472,7 +473,7 @@ mod tests {
             visit(1, &[OrderflowPaneEntry { side, pane: self }]);
         }
         fn visit_orderflow_panels(&self, visit: &mut PanelVisit<'_>) {
-            visit(1, "WIN", &self.panel, &self.folds);
+            visit(1, "WIN", (&self.panel, true), &self.folds);
         }
     }
 

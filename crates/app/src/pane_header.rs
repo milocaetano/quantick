@@ -13,18 +13,20 @@ use quantick_chart::flow_band::{
     side_fit, window_label, window_options,
 };
 use quantick_chart::pane_header::{
-    BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX,
+    BULB_END_PX, BULB_KEY_PX, BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide,
     FlowHeaderState, GEAR_END_PX, GEAR_KEY_PX, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk,
     HeaderControl, HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, KEY_DOT_PX,
     LayerGlyph, LayerToggle, MARK_RULE_HEIGHT_PX, MARK_RULE_PX, PaneHeader, SAMPLE_RESET_SCALE,
     SEGMENT_GAP_PX, SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX,
-    SegmentInk, SideSegment, dragged_scale, flow_fit, key_dot_inset, mark_px, sample_diameter_px,
-    sample_value_text, section_layer, segment_px, side_word, side_words_px,
+    SegmentInk, SideSegment, dragged_scale, flow_controls_px, flow_fit, key_dot_inset, mark_px,
+    sample_diameter_px, sample_value_text, section_layer, segment_px, side_word, side_words_px,
 };
 use quantick_chart::side_label::SIDE_LABEL_PADDING_PX;
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneSide;
-use quantick_workspace::orderflow_panel::{PanelControl, PanelSection};
+use quantick_workspace::orderflow_panel::{
+    LIGHTS_DESCRIPTION, LIGHTS_NAME, PanelControl, PanelSection,
+};
 use smallvec::SmallVec;
 
 use crate::chart_layers::shortcuts;
@@ -182,6 +184,8 @@ pub struct FlowRow {
     pub slot: Option<(String, bool)>,
     /// The tab's order-flow panel is open: the gear wears the pressed look.
     pub settings_open: bool,
+    /// The flow pane's lights; the bulb shows where the theme offers them.
+    pub lights_on: bool,
 }
 
 /// The flow pane's band; answers what a press on it asked for.
@@ -203,7 +207,9 @@ pub fn draw_marked(
     let inner = strip.shrink2(CONTENT_PADDING);
     let inner = inner.with_max_x(inner.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX);
     let inner = inner.with_min_x((inner.left() + FRAME_PX).min(inner.right()));
-    let bare_controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX);
+    let bulb = palette.resolved.has_lit_flow().then_some(row.lights_on);
+    let bare_controls_px = row.state.map_or(0.0, |_| flow_controls_px(bulb.is_some()));
+    let bulb_px = bulb.map_or(0.0, |_| BULB_END_PX);
     let word_widths = segment_word_widths(ui, row.state.as_ref());
     let side_words = row.state.map_or(0.0, |_| side_words_px(word_widths));
     let mark = header
@@ -247,7 +253,7 @@ pub fn draw_marked(
         ui.painter().vline(x, tall, (MARK_RULE_PX, ink));
         left += mark_px(mark_text_px) + GROUP_GAP_PX;
     }
-    let chip_right = inner.right() - row.state.map_or(0.0, |_| GEAR_END_PX);
+    let chip_right = inner.right() - row.state.map_or(0.0, |_| GEAR_END_PX + bulb_px);
     if let Some(dots) = row.chip.as_ref().filter(|_| fit.chip) {
         let ink = palette.flow_ink();
         loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words, ink);
@@ -269,8 +275,36 @@ pub fn draw_marked(
             palette.layout(SEGMENT_HEIGHT_PX),
         );
         settings_gear(&band, gear, salt, row.settings_open, painted, &mut intent);
+        if let Some(on) = bulb {
+            let height = palette.layout(SEGMENT_HEIGHT_PX);
+            let rect = key_rect(gear.left() - BULB_END_PX, BULB_KEY_PX, inner, height);
+            lights_bulb(&band, rect, (salt, on), painted, &mut intent);
+        }
     }
     intent
+}
+
+/// The bare bulb left of the gear, lit while the flow pane's lights are on.
+fn lights_bulb(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    (salt, on): (u64, bool),
+    painted: &mut PaintedControls,
+    intent: &mut Option<HeaderIntent>,
+) {
+    let id = ui.id().with(("pane_lights_bulb", salt));
+    let glyph = [icons::LIGHTBULB, icons::LIGHTBULB_FILAMENT][usize::from(on)];
+    let lit = on.then(|| theme::get(ui.ctx()).flow_bulb_lit());
+    let control = HeaderControl::Settings(PanelControl::Lights);
+    let response = bare_key(ui, (rect, id), (glyph, false, lit), control, painted);
+    if response.clicked() {
+        *intent = Some(HeaderIntent::SetLights(!on));
+    }
+    response.on_hover_ui(|ui| {
+        ui.set_max_width(TIP_WIDTH_PX);
+        ui.strong(LIGHTS_NAME);
+        ui.label(LIGHTS_DESCRIPTION);
+    });
 }
 
 /// The pane's bars control and what it reads; the row's first header carries it.
@@ -517,31 +551,12 @@ fn settings_gear(
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let palette = theme::get(ui.ctx());
     let id = ui.id().with(("pane_settings_gear", salt));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let control = HeaderControl::Settings(PanelControl::Gear);
+    let response = bare_key(ui, (rect, id), (icons::GEAR, open, None), control, painted);
     if response.clicked() {
         *intent = Some(HeaderIntent::ToggleSettings);
     }
-    let pressed = open || response.is_pointer_button_down_on();
-    let ink = if pressed || response.hovered() {
-        palette.flow_key_up_ink()
-    } else {
-        palette.flow_gear_ink()
-    };
-    if pressed {
-        let rounding = egui::Rounding::same(SEGMENT_ROUNDING);
-        ui.painter()
-            .rect_filled(rect, rounding, palette.flow_key_down());
-        let shade = (1.0, palette.flow_key_down_shade());
-        let lip = rect.x_range().shrink(SEGMENT_ROUNDING);
-        ui.painter().hline(lip, rect.top() + 1.5, shade);
-    }
-    let font = egui::FontId::new(SEGMENT_GLYPH_PX, palette.body_font(SEGMENT_GLYPH_PX).family);
-    let at = egui::Align2::CENTER_CENTER;
-    ui.painter().text(rect.center(), at, icons::GEAR, font, ink);
-    let control = HeaderControl::Settings(PanelControl::Gear);
-    record(ui, control, rect, painted);
     let key = Some(shortcuts::ORDERFLOW_SETTINGS_SHORTCUT);
     let response = response.on_hover_ui(|ui| {
         ui.label(with_key(ui.ctx(), "Order flow settings", key));
@@ -554,6 +569,44 @@ fn settings_gear(
             }
         }
     });
+}
+
+/// A bare key on the flow band, recorded as `control`: `glyph` in the gear's
+/// ink, the key-up ink while hovered or pressed, the pressed plate while
+/// `open` or held down; a `lit` key wears that colour over a glow instead.
+fn bare_key(
+    ui: &egui::Ui,
+    (rect, id): (egui::Rect, egui::Id),
+    (glyph, open, lit): (&str, bool, Option<egui::Color32>),
+    control: HeaderControl,
+    painted: &mut PaintedControls,
+) -> egui::Response {
+    let palette = theme::get(ui.ctx());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    let pressed = open || response.is_pointer_button_down_on();
+    let ink = lit.unwrap_or(if pressed || response.hovered() {
+        palette.flow_key_up_ink()
+    } else {
+        palette.flow_gear_ink()
+    });
+    if pressed {
+        let rounding = egui::Rounding::same(SEGMENT_ROUNDING);
+        ui.painter()
+            .rect_filled(rect, rounding, palette.flow_key_down());
+        let shade = (1.0, palette.flow_key_down_shade());
+        let lip = rect.x_range().shrink(SEGMENT_ROUNDING);
+        ui.painter().hline(lip, rect.top() + 1.5, shade);
+    }
+    for (past, strength) in DOT_GLOW.iter().filter(|_| lit.is_some()) {
+        let radius = SEGMENT_GLYPH_PX / 2.0 + past;
+        ui.painter()
+            .circle_filled(rect.center(), radius, ink.gamma_multiply(*strength));
+    }
+    let font = egui::FontId::new(SEGMENT_GLYPH_PX, palette.body_font(SEGMENT_GLYPH_PX).family);
+    let at = egui::Align2::CENTER_CENTER;
+    ui.painter().text(rect.center(), at, glyph, font, ink);
+    record(ui, control, rect, painted);
+    response
 }
 
 /// A child ui over `rect` whose paint stays inside `clip`, so what it draws is

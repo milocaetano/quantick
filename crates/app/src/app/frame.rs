@@ -847,10 +847,10 @@ pub(super) fn sync_appearance(
     }
     presets.sync_theme(&runtime.appearance);
     for pane in runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-        let bookmap = pane.orderflow.is_some();
+        let surface = pane.surface();
         pane.presentation
             .candles
-            .follow_theme(runtime.appearance.resolved(), bookmap);
+            .follow_theme(runtime.appearance.resolved(), surface);
     }
     if runtime
         .chart_theme

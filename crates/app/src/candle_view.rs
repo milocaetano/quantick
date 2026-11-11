@@ -10,7 +10,7 @@
 mod candles;
 mod style_window;
 
-pub use candles::{BarSlot, draw_candle, draw_pixel_candle, is_bullish};
+pub use candles::{BarSlot, draw_laid_candle, is_bullish};
 use candles::{color32, paint_pixels};
 pub use style_window::{StylePanelResponse, draw_presets, draw_style_contents};
 

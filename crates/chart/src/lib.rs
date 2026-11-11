@@ -16,6 +16,7 @@
 //! installed by each test binary.
 
 pub mod bar_progress;
+pub mod candle_casing;
 pub mod candle_pixels;
 pub mod connection_state;
 mod constants;

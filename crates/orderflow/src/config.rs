@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 
 mod bubble_colors;
 mod bubble_display_scale;
-pub use bubble_colors::BubbleColors;
+pub use bubble_colors::{BubbleColors, BubbleEdge, BubbleRing};
 mod bubbles;
 pub use bubble_display_scale::{
     BubbleDisplayScale, BubbleScaleTarget, DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE,

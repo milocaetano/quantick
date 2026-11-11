@@ -90,8 +90,8 @@ pub(crate) struct SurfaceEnv<'a> {
     /// reads this one and a surface holding a `&mut` to it would be holding a
     /// piece of the trunk.
     pub style: &'a crate::style::ChartStyle,
-    /// Whether the candle editor previews the Bookmap chart surface.
-    pub style_bookmap: bool,
+    /// The chart surface the candle editor previews.
+    pub style_surface: quantick_appearance::ChartSurface,
     /// The focused chart's effective footprint setup — its own override, or
     /// the window default it still follows. Read-only for the same reason
     /// the style is: every footprint frame is reading this one.
@@ -151,7 +151,7 @@ impl SurfaceEnv<'static> {
             indicator_preview_area: None,
             focused_chart_area: None,
             style: &QUIET_STYLE,
-            style_bookmap: false,
+            style_surface: quantick_appearance::ChartSurface::Paper,
             footprint: &QUIET_FOOTPRINT,
             footprint_customized: false,
             focused_side: crate::pane::PaneSide::Flow,

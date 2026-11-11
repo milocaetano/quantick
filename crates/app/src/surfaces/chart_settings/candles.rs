@@ -171,7 +171,7 @@ impl SettingsTab for CandlesTab {
         let mut edited = *env.style;
         let row = self.presets_row(ui, &mut edited);
         ui.separator();
-        let body = draw_style_contents(ui, &mut edited, env.style_bookmap);
+        let body = draw_style_contents(ui, &mut edited, env.style_surface);
         let changed = (row.changed || body.changed) && edited != *env.style;
         self.settle(changed);
         TabResponse {
