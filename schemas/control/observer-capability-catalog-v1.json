@@ -28997,6 +28997,11 @@
                 "const": "volume_weighted_with_dim_context",
                 "description": "Ordinary regions remain dim through one quarter of the reference, then\nbrighten gradually up to the reference. Display separation never promotes\na small region. Oversized opening regions keep their faint treatment.",
                 "type": "string"
+              },
+              {
+                "const": "ranked_peak_masses",
+                "description": "Peak spheres: every mass is drawn, its radius by rank among the\nvisible masses (`scale_basis` `ranked_visible_masses`), labels on the\ntop fifth; no mass is held back as dim context.",
+                "type": "string"
               }
             ]
           },
@@ -29064,7 +29069,7 @@
               },
               "radius_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Actual painted circle radius; gross quantity determines its area."
+                "description": "Actual painted circle radius: gross quantity determines its area, or\nunder `ranked_peak_masses` its rank among the visible masses does."
               },
               "sell_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal"
