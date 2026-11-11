@@ -125,6 +125,52 @@ pub fn format_quantity(quantity: Decimal) -> String {
     format!("{}{suffix}", trim_decimal_zeros(&formatted))
 }
 
+/// [`format_quantity`] at the short precision a sphere's label can afford:
+/// whole units of the suffix from 10 up (`86K` for 86,307), one decimal
+/// below (`8.6K`). Peak spheres label their masses so, the size a 15 px
+/// sphere holds where the longer `86.3K` does not.
+#[must_use]
+pub fn format_quantity_compact(quantity: Decimal) -> String {
+    if !quantity.is_zero() && quantity.abs() < Decimal::ONE {
+        return format_quantity(quantity);
+    }
+    let value = quantity.to_f64().unwrap_or(0.0);
+    let absolute = value.abs();
+    let (scaled, suffix) = if absolute >= 1_000_000_000.0 {
+        (value / 1_000_000_000.0, "B")
+    } else if absolute >= 1_000_000.0 {
+        (value / 1_000_000.0, "M")
+    } else if absolute >= 1_000.0 {
+        (value / 1_000.0, "K")
+    } else {
+        (value, "")
+    };
+    let decimals = usize::from(scaled.abs() < 10.0);
+    let formatted = format!("{scaled:.decimals$}");
+    format!("{}{suffix}", trim_decimal_zeros(&formatted))
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::format_quantity_compact;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn compact_quantities_drop_the_decimal_from_ten_up() {
+        for (quantity, text) in [
+            (86_307, "86K"),
+            (184_000, "184K"),
+            (12_000, "12K"),
+            (8_640, "8.6K"),
+            (999, "999"),
+            (7, "7"),
+            (2_500_000, "2.5M"),
+        ] {
+            assert_eq!(format_quantity_compact(Decimal::from(quantity)), text);
+        }
+    }
+}
+
 fn trim_decimal_zeros(value: &str) -> &str {
     if value.contains('.') {
         value.trim_end_matches('0').trim_end_matches('.')

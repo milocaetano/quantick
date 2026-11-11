@@ -38,9 +38,15 @@ impl FlowPresentation {
             .map(|region| FlowQuantityLabel {
                 center: region.disc.center,
                 radius: region.disc.radius,
-                text: quantick_orderflow::config::labels::format_quantity(
-                    frame.dots[region.dot_index].mark.quantity,
-                ),
+                text: if floor.is_some() {
+                    quantick_orderflow::config::labels::format_quantity_compact(
+                        frame.dots[region.dot_index].mark.quantity,
+                    )
+                } else {
+                    quantick_orderflow::config::labels::format_quantity(
+                        frame.dots[region.dot_index].mark.quantity,
+                    )
+                },
             })
             .collect();
         labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
@@ -62,10 +68,11 @@ pub fn place_quantity_labels(
     place_quantity_labels_until_miss(labels, history, fit, measure, false)
 }
 
-/// [`place_quantity_labels`], and when `stop_at_miss`, the first label on
-/// screen that does not fit or would cover another ends the placement: no
-/// larger sphere goes unlabelled beside a smaller labelled one. Peak spheres
-/// place their labels so.
+/// [`place_quantity_labels`], and when `stop_at_miss`, the first sphere too
+/// small for its text ends the placement, so no larger sphere goes
+/// unlabelled for want of room beside a smaller labelled one. A label off
+/// screen, or one that would cover a label already placed, is skipped alone:
+/// the one exception to that order. Peak spheres place their labels so.
 #[must_use]
 pub fn place_quantity_labels_until_miss(
     labels: Vec<FlowQuantityLabel>,
@@ -96,7 +103,7 @@ pub fn place_quantity_labels_until_miss(
                     other[0][axis] <= bounds[1][axis] && bounds[0][axis] <= other[1][axis]
                 })
             });
-        stopped |= stop_at_miss && on_screen && !free;
+        stopped |= stop_at_miss && !fits;
         free.then(|| {
             occupied.push(bounds);
             (at, label)
