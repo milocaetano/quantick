@@ -160,40 +160,11 @@ fn draw_preset_rows(
     (tool_id, salt): (&str, &str),
     payload: &mut dyn DrawingPayload,
 ) -> bool {
-    let mut edited = false;
-    let customs = host.custom_preset_names(tool_id);
-    ui.horizontal_wrapped(|ui| {
-        let selected_id = ui.id().with(format!("{salt}-preset"));
-        let mut selected: String =
-            ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
-        egui::ComboBox::from_id_salt(selected_id)
-            .selected_text(if selected.is_empty() {
-                "Custom presets"
-            } else {
-                selected.as_str()
-            })
-            .show_ui(ui, |ui| {
-                for name in &customs {
-                    ui.selectable_value(&mut selected, name.clone(), name);
-                }
-            });
-        ui.data_mut(|data| data.insert_temp(selected_id, selected.clone()));
-        let has_selection = customs.contains(&selected);
-        if ui
-            .add_enabled(has_selection, egui::Button::new("Apply").small())
-            .clicked()
-            && let Some(value) = host.load_custom_preset(tool_id, &selected)
-            && payload.import_preset(&value)
-        {
-            edited = true;
-        }
-        if ui
-            .add_enabled(has_selection, egui::Button::new("Delete").small())
-            .clicked()
-        {
-            host.delete_custom_preset(tool_id, &selected);
-        }
-    });
+    let edited = ui
+        .horizontal_wrapped(|ui| {
+            preset_picker(ui, format!("{salt}-preset"), host, tool_id, &mut *payload).1
+        })
+        .inner;
     ui.horizontal_wrapped(|ui| {
         let name_id = ui.id().with(format!("{salt}-preset-name"));
         let mut name: String = ui.data_mut(|data| data.get_temp(name_id).unwrap_or_default());
@@ -217,6 +188,51 @@ fn draw_preset_rows(
         ui.data_mut(|data| data.insert_temp(name_id, name));
     });
     edited
+}
+
+/// The saved-preset picker every preset row opens with — here and in the Fib
+/// Levels tab: a combo of the tool's named presets, its pick remembered under
+/// `salt`, then Apply and Delete. Returns the pick when it names a preset, and
+/// whether Apply changed `payload`.
+pub(super) fn preset_picker(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash,
+    host: &mut dyn PresetHost,
+    tool_id: &str,
+    payload: &mut dyn DrawingPayload,
+) -> (Option<String>, bool) {
+    let customs = host.custom_preset_names(tool_id);
+    let selected_id = ui.id().with(salt);
+    let mut selected: String = ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
+    egui::ComboBox::from_id_salt(selected_id)
+        .selected_text(if selected.is_empty() {
+            "Custom presets"
+        } else {
+            selected.as_str()
+        })
+        .show_ui(ui, |ui| {
+            for name in &customs {
+                ui.selectable_value(&mut selected, name.clone(), name);
+            }
+        });
+    ui.data_mut(|data| data.insert_temp(selected_id, selected.clone()));
+    let has_selection = customs.contains(&selected);
+    let mut edited = false;
+    if ui
+        .add_enabled(has_selection, egui::Button::new("Apply").small())
+        .clicked()
+        && let Some(value) = host.load_custom_preset(tool_id, &selected)
+        && payload.import_preset(&value)
+    {
+        edited = true;
+    }
+    if ui
+        .add_enabled(has_selection, egui::Button::new("Delete").small())
+        .clicked()
+    {
+        host.delete_custom_preset(tool_id, &selected);
+    }
+    (has_selection.then_some(selected), edited)
 }
 
 /// The Channel tab: the middle line and the two extensions.

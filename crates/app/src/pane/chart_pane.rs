@@ -887,6 +887,7 @@ impl ChartPane {
             capabilities,
             style,
             flow_opening,
+            flow_settings: self.orderflow.is_some(),
             tape,
         };
         (&mut self.context_menu, &mut self.model, view)
@@ -1030,6 +1031,7 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::OpenFootprintSettings => chrome.layers.open_footprint_settings = true,
+            PaneMenuIntent::OpenLayerSettings(layer) => chrome.layers.open_layer_tab = Some(layer),
             PaneMenuIntent::SetLaneWindow(window) => {
                 if let Some(orderflow) = self.orderflow.as_mut() {
                     orderflow.set_live_lane_window(window);

@@ -343,6 +343,7 @@ pub(super) fn handle_axis_gestures(
                     tape: false,
                     overlay: None,
                     canvas: None,
+                    repeat: None,
                 },
             );
         }

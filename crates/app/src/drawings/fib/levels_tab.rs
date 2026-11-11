@@ -13,6 +13,7 @@ use quantick_drawings::{
     MAX_LEVEL_LABEL_LEN, RATIO_DUPLICATE_TOLERANCE, builtin_presets, parse_ratio,
 };
 
+use super::super::tool_tabs::preset_picker;
 use super::super::{Drawing, PresetHost};
 use crate::drawings::DrawingPayload;
 
@@ -110,44 +111,19 @@ impl CustomPresetRows<'_> {
             tool_id,
         } = self;
         let mut edited = false;
-        let customs = host.custom_preset_names(tool_id);
         ui.horizontal_wrapped(|ui| {
-            let selected_id = ui.id().with("custom-preset");
-            let mut selected: String =
-                ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
-            egui::ComboBox::from_id_salt(selected_id)
-                .selected_text(if selected.is_empty() {
-                    "Custom presets"
-                } else {
-                    selected.as_str()
-                })
-                .show_ui(ui, |ui| {
-                    for name in &customs {
-                        ui.selectable_value(&mut selected, name.clone(), name);
-                    }
-                });
-            ui.data_mut(|data| data.insert_temp(selected_id, selected.clone()));
-            let has_selection = customs.contains(&selected);
+            let (selected, applied) =
+                preset_picker(ui, "custom-preset", host, tool_id, &mut *payload);
+            edited = applied;
             if ui
-                .add_enabled(has_selection, egui::Button::new("Apply").small())
-                .clicked()
-                && let Some(value) = host.load_custom_preset(tool_id, &selected)
-                && payload.import_preset(&value)
-            {
-                edited = true;
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Delete").small())
-                .clicked()
-            {
-                host.delete_custom_preset(tool_id, &selected);
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Set as default").small())
+                .add_enabled(
+                    selected.is_some(),
+                    egui::Button::new("Set as default").small(),
+                )
                 .on_hover_text("New objects of this tool start from this preset")
                 .clicked()
             {
-                host.set_default_preset(tool_id, Some(selected.clone()));
+                host.set_default_preset(tool_id, selected);
             }
         });
         ui.horizontal_wrapped(|ui| {

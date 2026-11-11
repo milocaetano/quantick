@@ -263,9 +263,16 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
     assert!(menu_frame(&mut pane, &ctx, Vec::new()).is_empty());
     assert_eq!(pane.model.menu.drawing, None);
     assert!(pane.model.menu.rename.is_empty());
-    assert!(
-        pane.context_menu.menu_rects.is_empty(),
-        "no section for a ghost"
+    let left: Vec<_> = pane
+        .context_menu
+        .menu_rects
+        .iter()
+        .map(|(label, _)| *label)
+        .collect();
+    assert_eq!(
+        left,
+        ["configure footprint", "configure L2", "configure bubbles"],
+        "no section for a ghost, only the chart's settings doors"
     );
 }
 

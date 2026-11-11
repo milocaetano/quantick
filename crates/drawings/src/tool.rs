@@ -142,6 +142,10 @@ pub trait MarkTool: Sync {
     fn freehand(&self) -> bool {
         false
     }
+    /// See [`crate::ToolCatalog::remembers_last_style`].
+    fn remembers_last_style(&self) -> bool {
+        false
+    }
     /// The rectangle this tool actually *paints*, given the box its anchors
     /// span and the pane it is drawn in.
     ///
@@ -900,6 +904,9 @@ impl crate::ToolCatalog for DrawingTool {
             style.color = theme.color(self.0.default_color_token());
         }
         style
+    }
+    fn remembers_last_style(self) -> bool {
+        self.0.remembers_last_style()
     }
     fn band_for(self, band: &DrawingBand) -> DrawingBand {
         Self::band_for(self, band)

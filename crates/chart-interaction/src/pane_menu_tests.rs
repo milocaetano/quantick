@@ -5,6 +5,7 @@ fn facts() -> Facts {
     Facts {
         layers: vec![],
         flow_opening: None,
+        flow_settings: false,
         tape: None,
         drawing: None,
         places: vec![],
@@ -405,4 +406,134 @@ fn window_lines(facts: &Facts) -> Vec<(bool, Option<MenuIntent>)> {
             _ => None,
         })
         .collect()
+}
+
+fn footprint_row(blocked: Option<LayerBlock>) -> LayerFact {
+    LayerFact {
+        layer: ChartLayer::Footprint,
+        blocked,
+        visible: false,
+    }
+}
+
+fn labels(entries: &[Entry]) -> Vec<&str> {
+    entries.iter().map(|e| e.label.as_str()).collect()
+}
+
+fn choice(entry: &Entry) -> Option<&MenuIntent> {
+    match &entry.kind {
+        Kind::Button {
+            event: Event::Choice(choice),
+            ..
+        } => Some(choice),
+        _ => None,
+    }
+}
+
+#[test]
+fn every_chart_offers_its_footprint_settings_beside_the_layers_not_inside() {
+    let mut facts = facts();
+    facts.layers = vec![footprint_row(None)];
+    let entries = describe(&Model::default(), &facts);
+    assert_eq!(
+        labels(&entries),
+        [
+            "chart layers",
+            "configure footprint\u{2026}",
+            "",
+            "objects (0)",
+            "clear objects\u{2026}",
+            "",
+        ]
+    );
+    assert_eq!(
+        choice(&entries[1]),
+        Some(&MenuIntent::OpenFootprintSettings)
+    );
+    assert_eq!(entries[1].disabled, None);
+    assert!(matches!(entries[2].kind, Kind::Separator));
+    let Kind::Submenu(layers) = &entries[0].kind else {
+        panic!("layers submenu")
+    };
+    assert_eq!(
+        labels(layers),
+        ["candle footprint"],
+        "the submenu keeps the switch only"
+    );
+}
+
+#[test]
+fn a_blocked_footprint_keeps_its_settings_door_disabled_with_the_reason() {
+    let mut facts = facts();
+    facts.layers = vec![footprint_row(Some(LayerBlock::new("bars", "no bars yet")))];
+    let entries = describe(&Model::default(), &facts);
+    assert_eq!(entries[1].label, "configure footprint\u{2026}");
+    assert_eq!(entries[1].disabled.as_deref(), Some("no bars yet"));
+}
+
+#[test]
+fn the_flow_pane_groups_footprint_l2_and_bubbles_settings_together() {
+    let mut facts = facts();
+    facts.layers = vec![footprint_row(None)];
+    facts.flow_settings = true;
+    let entries = describe(&Model::default(), &facts);
+    assert_eq!(
+        labels(&entries[..5]),
+        [
+            "chart layers",
+            "configure footprint\u{2026}",
+            "configure L2\u{2026}",
+            "configure bubbles\u{2026}",
+            "",
+        ]
+    );
+    assert_eq!(
+        choice(&entries[2]),
+        Some(&MenuIntent::OpenLayerSettings(ChartLayer::Heatmap))
+    );
+    assert_eq!(
+        choice(&entries[3]),
+        Some(&MenuIntent::OpenLayerSettings(ChartLayer::Bubbles))
+    );
+    assert!(matches!(entries[2].trace, Trace::Button("configure L2")));
+    assert!(matches!(
+        entries[3].trace,
+        Trace::Button("configure bubbles")
+    ));
+    assert_eq!(entries[5].label, "objects (0)");
+}
+
+#[test]
+fn a_blocked_flow_layer_greys_its_own_door_only() {
+    let mut facts = facts();
+    facts.flow_settings = true;
+    facts.layers = vec![
+        footprint_row(None),
+        LayerFact {
+            layer: ChartLayer::Heatmap,
+            blocked: Some(LayerBlock::new("book", "this feed has no book")),
+            visible: false,
+        },
+    ];
+    let entries = describe(&Model::default(), &facts);
+    assert_eq!(entries[2].label, "configure L2\u{2026}");
+    assert_eq!(
+        entries[2].disabled.as_deref(),
+        Some("this feed has no book")
+    );
+    assert_eq!(entries[3].label, "configure bubbles\u{2026}");
+    assert_eq!(entries[3].disabled, None);
+}
+
+#[test]
+fn a_chart_without_the_flow_panel_offers_no_l2_or_bubbles_door() {
+    let mut facts = facts();
+    facts.layers = vec![footprint_row(None)];
+    let entries = describe(&Model::default(), &facts);
+    assert!(
+        !entries
+            .iter()
+            .any(|e| matches!(choice(e), Some(MenuIntent::OpenLayerSettings(_)))),
+        "the gear's panel lives on the flow pane only"
+    );
 }

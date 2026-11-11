@@ -6,7 +6,7 @@
 //! the menus and the capture hooks each had to know which one they meant.
 //! They are tabs now. A double click on the candles, the toolbar's
 //! appearance button and the View menu open the Candles tab; the footprint
-//! toolbar button, the layer menu's "configure footprint…" and the footprint
+//! toolbar button, the chart menu's "configure footprint…" and the footprint
 //! capture hook open the same window on the Footprint tab.
 //!
 //! # A tab docks as a file and a line

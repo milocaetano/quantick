@@ -27,6 +27,16 @@
           "const": "live_overview",
           "description": "The candles only: back to the live edge at the overview spacing,\nthe recent move and its context across the candles' width, never a\nzoom-in.",
           "type": "string"
+        },
+        {
+          "const": "live_centre",
+          "description": "The candles only: back to the live edge at the spacing they have,\nthe last price framed at mid-height once the next frame fits the\nlive view — what a double-click on open canvas does.",
+          "type": "string"
+        },
+        {
+          "const": "live_centre_zoom_in",
+          "description": "`live_centre` with the candles twice as wide, up to the widest\na candle may be — what a triple-click on open canvas does. Each call\nzooms again: retry it under an idempotency key.",
+          "type": "string"
         }
       ]
     },

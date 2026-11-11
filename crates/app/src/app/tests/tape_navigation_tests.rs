@@ -5,6 +5,9 @@
 use super::*;
 use quantick_orderflow::tape_view::TapeEnd;
 
+#[path = "canvas_click_tests.rs"]
+mod canvas_click;
+
 const CAPABILITY: &str = "chart.tape_view.set";
 /// The first print the fixture's tape retains: `trade(201)`.
 const RETAINED_FROM: i64 = 21_100;
@@ -625,9 +628,10 @@ fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
 }
 
 /// A literal double click returns only the clicked side to live, preserving
-/// manual prices and orientation, and the tape's zoom; open canvas on the
-/// candles' side caps theirs at the live overview. The next vertical gesture must still
-/// follow the hand, including on a narrow Tape-only price window.
+/// orientation and the tape's zoom: on the tape the manual prices hold; open
+/// canvas on the candles' side keeps their spacing and centres the last price.
+/// The next vertical gesture must still follow the hand, including on a
+/// narrow Tape-only price window.
 #[test]
 fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
     for inverted in [false, true] {
@@ -675,12 +679,8 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     app.active_tab_mut().tape_mut().flush_for_test();
                     run_frame(&mut app, &ctx);
                     let candles_before = candles_view(&app);
-                    // Open canvas beside the tape returns to the live overview.
-                    let candles_px = if on_tape {
-                        candles_before.0
-                    } else {
-                        overview_px(&app.active_tab().flow_pane)
-                    };
+                    // Either side keeps the candles' spacing.
+                    let candles_px = candles_before.0;
                     let tape_before = app.active_tab().tape().tape_end();
                     let window = app.active_tab().tape().live_lane_window();
                     assert_eq!(
@@ -708,11 +708,15 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     assert!(!app.surfaces.chart_settings.is_open());
                     run_frame(&mut app, &ctx);
                     let pane = &app.active_tab().flow_pane;
-                    assert_eq!(
-                        pane.price_view.manual_range(),
-                        Some(manual),
-                        "the literal double click preserves exact price framing"
-                    );
+                    if on_tape {
+                        assert_eq!(
+                            pane.price_view.manual_range(),
+                            Some(manual),
+                            "the tape's double click preserves exact price framing"
+                        );
+                    } else {
+                        assert_last_price_centred(pane);
+                    }
                     assert_eq!(pane.price_view.is_inverted(), inverted);
                     assert_eq!(pane.model.viewport.px_per_bar(), candles_px);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
@@ -760,16 +764,23 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
     }
 }
 
-/// The spacing an empty-canvas double click will leave `pane` at: the live
-/// overview over the candles' width, read before the gesture.
-fn overview_px(pane: &crate::pane::ChartPane) -> f32 {
-    pane.model
-        .viewport
-        .overview_px_per_bar(pane.model.candles_px)
+/// The pane holds a manual price range centred on its last price, with
+/// every bar of the frame's auto-fit still on the axis.
+fn assert_last_price_centred(pane: &crate::pane::ChartPane) {
+    use rust_decimal::prelude::ToPrimitive as _;
+    let newest = pane.state.partial().or(pane.state.bars().last());
+    let last = newest.unwrap().close.to_f64().unwrap();
+    let (low, high) = pane.price_view.manual_range().expect("a held frame");
+    assert!(
+        (f64::midpoint(low, high) - last).abs() < 1e-9,
+        "{last} mid-axis in {low}..{high}"
+    );
+    let auto = pane.frame.auto_range.unwrap();
+    assert!(low <= auto.0 && high >= auto.1, "no bar clipped");
 }
 
 #[test]
-fn an_empty_canvas_double_click_returns_to_live_at_the_overview_zoom_and_price_range() {
+fn an_empty_canvas_double_click_returns_to_live_at_its_spacing_with_the_last_price_centred() {
     for inverted in [false, true] {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(200);
@@ -785,7 +796,6 @@ fn an_empty_canvas_double_click_returns_to_live_at_the_overview_zoom_and_price_r
         let pane = &app.active_tab().flow_pane;
         assert!(!pane.model.viewport.follows_live());
         let at = pane.frame.chart_rect.unwrap().center();
-        let overview = overview_px(pane);
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         run_frame(&mut app, &ctx);
@@ -795,8 +805,9 @@ fn an_empty_canvas_double_click_returns_to_live_at_the_overview_zoom_and_price_r
             pane.model.viewport.right_edge_bar(pane.slots()),
             pane.slots().saturating_sub(1) as f32
         );
-        assert_eq!(pane.model.viewport.px_per_bar(), overview);
-        assert_eq!(pane.price_view.manual_range(), Some(manual));
+        assert_eq!(pane.model.viewport.px_per_bar(), 23.0, "spacing kept");
+        assert_ne!(pane.price_view.manual_range(), Some(manual));
+        assert_last_price_centred(pane);
         assert_eq!(pane.price_view.is_inverted(), inverted);
     }
 }

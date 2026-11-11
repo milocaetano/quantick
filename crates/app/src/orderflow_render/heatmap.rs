@@ -228,15 +228,14 @@ pub(crate) fn draw_lane_boundary(
 
 /// Draw reductions after heat cells and before/around the candle layer.
 ///
-/// `AggressionAligned` draws a bright *consumption front* — the instant an
-/// aggression met a resting wall — with a short glow leaking into the consumed
-/// (later) side, where the heat cells have already darkened. `DepthOnly` draws
-/// a calm violet fade, intentionally avoiding the word "cancel": depth alone
-/// does not reveal why displayed liquidity decreased.
+/// `AggressionAligned` leaves a hole where an aggression met a resting wall;
+/// the bubble that took it wears the consumption mark. `DepthOnly` draws a
+/// calm violet front and fade, intentionally avoiding the word "cancel": depth
+/// alone does not reveal why displayed liquidity decreased.
 ///
 /// Three passes, painted in this order: the holes (every reduction's, then
 /// the carve behind each consuming bubble), the depth-only tails, and the
-/// fronts with their caps on top.
+/// depth-only fronts on top.
 pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderContext<'_>) {
     let pass = EventPass::new(context);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
@@ -361,19 +360,17 @@ impl<'c, 'a> EventPass<'c, 'a> {
                 );
             }
 
-            match event.evidence {
-                LiquidityEvidence::AggressionAligned => fronts.push(EventFront::Aligned {
-                    band: front,
-                    matched: finite_unit(event.matched_fraction),
-                    full,
-                    pane,
-                }),
-                LiquidityEvidence::DepthOnly => fronts.push(EventFront::DepthOnly {
+            // An aligned bite paints no line on the book: at the top of a busy
+            // book every print is one, and a front per print buried the map
+            // under strokes. Its hole and the crown on the bubble that took it
+            // already say where and who.
+            if matches!(event.evidence, LiquidityEvidence::DepthOnly) {
+                fronts.push(EventFront {
                     band: front,
                     reduction,
                     full,
                     pane,
-                }),
+                });
             }
         }
     }
@@ -422,37 +419,26 @@ impl<'c, 'a> EventPass<'c, 'a> {
     }
 }
 
+/// The line and fade an unattributed reduction paints on the book.
 #[derive(Debug, Clone, Copy)]
-enum EventFront {
-    Aligned {
-        band: EventBand,
-        matched: f32,
-        full: bool,
-        /// The pane this reduction happened in — the candles' or the tape's.
-        /// Every mark it draws is clipped to it, caps included.
-        pane: egui::Rect,
-    },
-    DepthOnly {
-        band: EventBand,
-        reduction: f32,
-        full: bool,
-        /// See [`EventFront::Aligned::pane`].
-        pane: egui::Rect,
-    },
+struct EventFront {
+    band: EventBand,
+    reduction: f32,
+    full: bool,
+    /// The pane this reduction happened in — the candles' or the tape's.
+    /// Every mark it draws is clipped to it.
+    pane: egui::Rect,
 }
 
 impl EventFront {
-    /// The violet fade a depth-only pull leaves; an aligned bite has none.
+    /// The violet fade a depth-only pull leaves.
     fn add_tail(&self, palette: &Palette, mesh: &mut egui::Mesh) {
-        let Self::DepthOnly {
+        let Self {
             band,
             reduction,
             full,
             pane,
-        } = *self
-        else {
-            return;
-        };
+        } = *self;
         let tail = if full { 22.0 } else { 10.0 + 10.0 * reduction };
         add_gradient_rect(
             mesh,
@@ -468,58 +454,19 @@ impl EventFront {
         );
     }
 
-    /// The front line itself, and a full aligned bite's end caps.
+    /// The front line itself.
     fn add_front(self, palette: &Palette, mesh: &mut egui::Mesh) {
-        match self {
-            Self::Aligned {
-                band,
-                matched,
-                full,
-                pane,
-            } => {
-                let strength = matched.max(0.25);
-                add_vline(
-                    mesh,
-                    band,
-                    if full { 2.0 } else { 1.3 },
-                    palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
-                    pane,
-                );
-                if full {
-                    // End caps read as "this band was fully taken here".
-                    for y in [band.top, band.bottom] {
-                        add_gradient_rect(
-                            mesh,
-                            egui::Rect::from_min_max(
-                                egui::pos2(band.x - 3.5, y - 0.75),
-                                egui::pos2(band.x + 3.5, y + 0.75),
-                            )
-                            .intersect(pane),
-                            palette.consumption.gamma_multiply(0.8),
-                            palette.consumption.gamma_multiply(0.8),
-                        );
-                    }
-                }
-            }
-            Self::DepthOnly {
-                band,
-                reduction,
-                full,
-                pane,
-            } => {
-                add_vline(
-                    mesh,
-                    band,
-                    if full { 1.6 } else { 1.1 },
-                    palette.depth_only.gamma_multiply(if full {
-                        0.9
-                    } else {
-                        0.55 + 0.3 * reduction
-                    }),
-                    pane,
-                );
-            }
-        }
+        add_vline(
+            mesh,
+            self.band,
+            if self.full { 1.6 } else { 1.1 },
+            palette.depth_only.gamma_multiply(if self.full {
+                0.9
+            } else {
+                0.55 + 0.3 * self.reduction
+            }),
+            self.pane,
+        );
     }
 }
 

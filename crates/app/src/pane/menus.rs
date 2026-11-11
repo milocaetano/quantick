@@ -54,6 +54,8 @@ pub(crate) struct PaneMenuView<'a> {
     pub(crate) style: &'a ChartStyle,
     /// FLOW's opening-scale preference, `Some` where the entry applies.
     pub(crate) flow_opening: Option<bool>,
+    /// The pane carries the order-flow settings panel.
+    pub(crate) flow_settings: bool,
     /// The tape's section, `Some` when the menu was opened on a tape.
     pub(crate) tape: Option<TapeMenuView>,
 }
@@ -162,6 +164,7 @@ impl PaneMenuView<'_> {
                 .map(Into::into)
                 .collect(),
             flow_opening: self.flow_opening,
+            flow_settings: self.flow_settings,
             tape: self.tape.as_ref().map(|tape| TapeFact {
                 window: tape.window,
                 reference_ms: tape.reference_ms,
