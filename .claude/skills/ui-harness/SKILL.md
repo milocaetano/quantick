@@ -9,7 +9,7 @@ description: Drive, observe and visually QA quantick without clicks: env hooks f
 > reachable from a fresh launch by environment hooks alone — zero clicks.**
 
 A missing surface hook is a Should-fix. `QUANTICK_<SURFACE>_AUTOSTART=1`
-reuses the manual toggle's exact path, never parallel activation; defaults off.
+defaults off and reuses the manual toggle path.
 
 ## Hooks
 
@@ -20,8 +20,8 @@ need; read it whole only for an inventory or coverage audit:
 grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-Rows come from `declare_hooks!` and `docs/ui-harness/hook-prose.md`; guards
-require both. Edit prose only; regenerate with
+Guards require `declare_hooks!` and `docs/ui-harness/hook-prose.md`. Edit
+prose only; regenerate with
 `cargo run -p quantick-app --features harness -- --dump-hook-registry`.
 *Declared in* locates hooks; `app/launch_hooks.rs` documents launch order.
 
@@ -34,7 +34,7 @@ Unregistered `QUANTICK_*` logs `UNKNOWN_HOOK` and disables session saving
 **Adding one** — a new surface gets its hook in the same commit: read the var,
 call the manual toggle's function, default off; add the name to that module's
 `crate::hooks::declare_hooks![…]` and a row to `hook-prose.md`; regenerate.
-Where the read lives:
+Read ownership:
 
 - a hook the window owns (menu opened, pointer parked, demo staged, history
   page asked, a frame budget) → `crates/app/src/harness.rs`: one `Harness`
@@ -46,8 +46,8 @@ Where the read lives:
   `app/launch_hooks.rs`; stateful hooks needing only their own parsed value
   belong in their owner.
 
-None calls `std::env::var`: `main` captures every declared name once and an
-owner asks `crate::hooks::captured::var`.
+`main` captures declared names once; owners use `crate::hooks::captured::var`,
+never `std::env::var`.
 
 Extend an existing hook with a defaulting struct field (`DrawingsDemo`,
 `FrvpDemo`, `DrawingDraft`), never a new enum variant.
@@ -57,13 +57,12 @@ Extend an existing hook with a defaulting struct field (`DrawingsDemo`,
 Raw captures stay outside Git; results and artifact links go in the PR.
 
 1. **Own target dir with free space**: `CARGO_TARGET_DIR=D:\quantick-agent-target`,
-   so the user's exe is never locked. Check `Get-PSDrive -PSProvider
-   FileSystem` first; ENOSPC reads like a compile error.
+   to avoid locking the user's exe. First check `Get-PSDrive -PSProvider FileSystem`
+   for space; ENOSPC resembles a compile error.
 2. **Fresh exe, proven**: run `cargo build -p quantick-app --features harness`
-   just before capture; compare exe `LastWriteTime` with the last edit.
-   Green tests do not rebuild it.
+   before capture; compare `LastWriteTime` to the last edit. Tests do not rebuild it.
 3. **Launch with PowerShell `Start-Process`**, hooks set, `RUST_LOG=quantick=info`,
-   stderr to a log. A bash background job never presents (white captures).
+   stderr logged. Bash background jobs produce white captures.
 4. **Capture by PID**, never window title: `tools/capture_window.ps1`
    (PrintWindow, PW_RENDERFULLCONTENT) filtered to your PID.
 5. **Gate on health**: `APP_HEALTH_SUMMARY` every 2 s. `fps≈59 /
@@ -80,8 +79,8 @@ Raw captures stay outside Git; results and artifact links go in the PR.
 
 ## Ask the app, then look
 
-Prefer structured answers when available: they survive colour, font and
-layout changes. Use screenshots for clipping, font, composition and readability. Launch a `--features harness` build with
+Prefer structured answers when available; screenshots assess clipping, font,
+composition and readability. Launch `--features harness` with
 `QUANTICK_CONTROL_ACCESS=1` and
 the scopes, then use `quantick_get_scene` (controls by name, `selected`, the
 coded reason one cannot be operated), `quantick_get_diagnostics` (frame and
@@ -90,34 +89,29 @@ health, market and image at one revision, with `control_regions` per control).
 For the manual client, PowerShell stdin trap and bundle fields, read
 `references/control-plane.md`.
 
-## The QA pass
+## QA
 
 1. **Scope** — every affected surface, including splitters moved by dock tabs
-   or tape covered by popups. In doubt, include it.
-2. **State matrix** — each in-scope surface in: default open (BTC dense tape
-   preset); feature on via its hook; popup/menu open over live data; empty
-   data (no session, fills or depth); dense data (fast replay, deep book);
-   narrow window (~1000 px) and the user's normal size; disabled state (e.g.
-   replay has no depth — is the *why* visible?). Prefer replay
-   (`QUANTICK_REPLAY_*`, WINJ26 sessions) for reproducibility; presets from
-   `config/bubbles.toml`, never bare defaults.
-3. **Read the scene, then each capture** — answer explicitly; "it renders"
-   is no verdict:
+   or popups covering tape; include uncertain surfaces.
+2. **State matrix** — each surface: default open (BTC dense tape preset);
+   hook-enabled; popup/menu over live data; empty session/fills/depth; dense
+   replay/book; narrow (~1000 px) and normal windows; disabled states with
+   visible reasons. Prefer replay (`QUANTICK_REPLAY_*`, WINJ26 sessions) for
+   reproducibility and `config/bubbles.toml` presets, never bare defaults.
+3. **Read scene, then captures** — answer each check; rendering alone is no verdict:
    - **Integrity** — nothing clipped, overlapping or off-window; splitters and
      neighbours intact.
    - **Readability** — text at the app's own readable size; contrast on the
      dark canvas; no truncated numbers (`1234…` on a price fails).
    - **Occlusion** — nothing covers live price, tape or forming bar.
-   - **State honesty** — disabled controls explain themselves; inferred data
-     labelled; an empty panel says why.
+   - **State honesty** — explain disabled/empty states; label inferred data.
    - **Motion** — two captures ~1.2 s apart in one PowerShell call: flow
      advanced, no layout jump, the live region never frozen.
    - **Consistency** — the existing chip/button language; no one-off widget.
    - **Performance** — dense data: fps ≥ ~59, no change-induced
      `APP_SLOW_FRAMES` bursts. After ruling out occlusion, feature fps in the
      50s against ~59 on `main` (same hooks and tape) is FAIL.
-   - A scene/image disagreement is a FAIL whichever half is wrong; say which
-     you believe.
+   - Scene/image disagreement is FAIL; identify the credible half.
 4. **Report** one verdict per surface × state, most severe first. **FAIL**:
    screenshot path, one-sentence defect, crop/coordinates and scene control ID
    where available. **PASS**: screenshot path and any structured reading

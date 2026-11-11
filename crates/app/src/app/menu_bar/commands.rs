@@ -26,6 +26,7 @@ use super::{
 #[derive(Debug)]
 pub(in crate::app) enum MenuCommand {
     OpenReplayBrowser,
+    OpenAlerts,
     CloseReplay,
     ToggleDock,
     ToggleLayer(crate::chart_layers::ChartLayer),

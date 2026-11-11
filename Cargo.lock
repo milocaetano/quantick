@@ -3125,6 +3125,7 @@ dependencies = [
 name = "quantick-drawings"
 version = "0.1.0"
 dependencies = [
+ "quantick-alerts",
  "quantick-anchored-studies",
  "quantick-appearance",
  "quantick-chart",

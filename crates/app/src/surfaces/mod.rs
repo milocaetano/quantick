@@ -71,6 +71,8 @@ pub(crate) use toast::ToastSurface;
 /// read so a surface cannot quietly acquire the whole app.
 pub(crate) struct SurfaceEnv<'a> {
     pub alerts: Option<&'a quantick_alerts::AlertBook>,
+    pub alert_error: Option<&'a quantick_alerts::AlertError>,
+    pub alert_context: Option<&'a alerts::Context>,
     pub picker_pane_id: u64,
     pub picker_indicators: &'a [crate::toolbar::IndicatorMenuEntry],
     pub picker_scripts: &'a [quantick_stores::script_library::ScriptEntry],
@@ -146,6 +148,8 @@ impl SurfaceEnv<'static> {
             std::sync::LazyLock::new(crate::footprint_config::FootprintConfig::default);
         Self {
             alerts: None,
+            alert_error: None,
+            alert_context: None,
             picker_pane_id: 0,
             picker_indicators: &[],
             picker_scripts: &[],

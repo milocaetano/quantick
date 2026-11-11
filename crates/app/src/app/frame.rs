@@ -13,7 +13,6 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
-use super::replay_and_history::play_pending;
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
@@ -456,10 +455,11 @@ impl QuantickApp {
                     &mut self.audio,
                     &mut self.surfaces.toast,
                     &mut self.surfaces.agent_popup,
+                    self.runtime
+                        .tabs
+                        .iter_mut()
+                        .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
                 );
-                if let Some(note) = play_pending(&mut self.audio, &mut self.runtime.tabs) {
-                    self.alerts().show_toast(note);
-                }
             }
             FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(
                 &mut self.runtime.tabs,
@@ -535,7 +535,8 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
-                alerts: &mut self.runtime.alerts.core.book,
+                alerts: &mut self.runtime.alerts,
+                display_offset_minutes: self.runtime.tz.minutes(),
                 indicators: &mut self.runtime.indicators,
                 store: self.runtime.workspace.layouts(),
                 alert_failure: self.audio.alert_failure.as_deref(),
@@ -545,6 +546,9 @@ impl QuantickApp {
                 markets: markets.as_ref(),
             },
         );
+        if let Some(request) = asks.alerts {
+            super::alerts_runtime::apply_alert_request(self, *request);
+        }
         for action in asks.indicator_actions {
             self.apply_toolbar_action(action);
         }
@@ -758,9 +762,8 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        if scratch.canvas.begin_text_edit {
-            self.drawings.chrome.request_text_edit();
-        }
+        let (chrome, open) = (&mut self.drawings.chrome, self.surfaces.alerts.is_open());
+        chrome.frame_facts(scratch.canvas.begin_text_edit, open);
         let ask = self.drawings.draw_drawing_chrome(
             ctx,
             &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),

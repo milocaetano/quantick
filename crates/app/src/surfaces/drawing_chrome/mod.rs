@@ -725,6 +725,8 @@ pub(crate) struct DrawingChromeSurface {
     /// *after* the new-selection reset, because the placement that made the
     /// request also made the selection change that clears it.
     pending_open_settings: bool,
+    /// A floating surface (Alerts) owns the pointer; the context bar stands down.
+    surface_over: bool,
     /// One window-level snapshot, kept here so copy/paste crosses panes and
     /// tabs without adding feature state to `QuantickApp`.
     clipboard: Option<Drawing>,
@@ -829,10 +831,10 @@ impl DrawingChromeSurface {
         self.pending_open_settings |= self.shared.open;
     }
 
-    /// Ask for the caret on the next frame — the placement that just happened
-    /// wants its note typed.
-    pub fn request_text_edit(&mut self) {
-        self.pending_text_edit = true;
+    /// The window's facts: a placed note wants the caret; Alerts owns the pointer.
+    pub fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
+        self.pending_text_edit |= text_edit;
+        self.surface_over = surface_over;
     }
 
     /// The host placed the note the `QUANTICK_TEXT_NOTE` hook asked for.

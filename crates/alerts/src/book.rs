@@ -172,6 +172,7 @@ pub struct EditorView {
 
 #[path = "book_editor.rs"]
 mod editor;
+pub use editor::summary_with;
 #[path = "book_lifecycle.rs"]
 mod lifecycle;
 #[path = "book_predicate.rs"]
@@ -240,6 +241,19 @@ impl Default for AlertBook {
     }
 }
 impl AlertBook {
+    pub(crate) fn drawing_targets<'a>(
+        &'a self,
+        market: &'a MarketRef,
+    ) -> impl Iterator<Item = &'a crate::DurableDrawingRef> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.saved.spec.market == *market)
+            .flat_map(|entry| &entry.saved.spec.conditions)
+            .filter_map(|condition| match &condition.target {
+                crate::TargetRef::Drawing(target) => Some(target),
+                crate::TargetRef::Value(_) => None,
+            })
+    }
     pub fn evaluate(&mut self, input: &AlertInput<'_>, out: &mut impl AlertEventSink) {
         self.utc_ms = input.utc_ms;
         for entry in &mut self.entries {
@@ -285,6 +299,9 @@ impl AlertBook {
                 entry.clear();
             }
             entry.status = AlertStatus::Monitoring;
+            if input.kind == ObservationKind::Lifecycle {
+                continue;
+            }
             // A restored/new epoch has no comparable monotonic timestamp. Wait
             // a fresh interval, anchored once, rather than trusting UTC jumps.
             if entry.saved.last_fired_utc_ms.is_some()

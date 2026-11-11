@@ -13,6 +13,8 @@ pub struct BarIdentity {
 pub enum ObservationKind {
     Trade,
     CommittedClose,
+    /// Refresh availability/geometry without advancing price or cadence state.
+    Lifecycle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

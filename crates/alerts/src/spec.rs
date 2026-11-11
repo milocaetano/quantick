@@ -75,6 +75,18 @@ pub enum Frequency {
     PerMinute,
 }
 
+impl Frequency {
+    /// The trader-facing name the editor and the summary both show.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Once => "Only once",
+            Self::PerBar => "Once per bar",
+            Self::PerBarClose => "Once per bar close",
+            Self::PerMinute => "Once per minute",
+        }
+    }
+}
+
 /// Absolute cutoff resolved at definition time using the supplied display
 /// offset. Persisting the cutoff prevents a restart from extending expiration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,4 +129,51 @@ pub struct AlertSpec {
     pub expiration: Expiration,
     pub message: String,
     pub notification: Notification,
+}
+
+impl AlertSpec {
+    /// What a toast says when this alert fires: always its name, then the
+    /// trader's message when there is one.
+    pub fn notice(&self) -> String {
+        match self.message.trim() {
+            "" => self.name.clone(),
+            message => format!("{}: {message}", self.name),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Native C11: an alert without a message raised an empty toast, so the
+    /// trader could not tell which alert fired. The notice always names it.
+    #[test]
+    fn the_notice_names_the_alert_even_without_a_message() {
+        let mut spec = AlertSpec {
+            version: FORMAT_VERSION,
+            id: AlertId(1),
+            name: "C11 value down 101".into(),
+            market: crate::MarketRef {
+                source: crate::SourceContext::Live {
+                    feed: "fixture".into(),
+                },
+                symbol: "TEST".into(),
+                aggregation: "tick:10".into(),
+            },
+            conditions: Vec::new(),
+            frequency: Frequency::Once,
+            expiration: Expiration::Never,
+            message: "  ".into(),
+            notification: Notification {
+                popup: false,
+                toast: true,
+                sound: None,
+                sound_seconds: None,
+            },
+        };
+        assert_eq!(spec.notice(), "C11 value down 101");
+        spec.message = "Price crossed".into();
+        assert_eq!(spec.notice(), "C11 value down 101: Price crossed");
+    }
 }

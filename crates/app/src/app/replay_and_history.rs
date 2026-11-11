@@ -27,17 +27,10 @@ use quantick_feed::ReplayControl;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach::ReachOutcome;
 
+#[cfg(any(feature = "scenario-harness", test))]
 use super::arrangement_host::ArrangementHost;
 
 pub(super) use quantick_alerts::delivery::AlertState;
-
-/// Drain app-owned queues through the headless sound delivery policy.
-pub(super) fn play_pending(audio: &mut AlertState, tabs: &mut ArrangementHost) -> Option<String> {
-    audio.play_pending(
-        tabs.iter_mut()
-            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
-    )
-}
 
 /// Carry out what the replay interface asked for, on the tab it addresses.
 /// Whether the action reached its destination. Only a transport control

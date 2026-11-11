@@ -1,0 +1,337 @@
+{
+  "additionalProperties": false,
+  "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+  "properties": {
+    "conditions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "operator": {
+            "enum": [
+              "Crossing",
+              "CrossingUp",
+              "CrossingDown",
+              "GreaterThan",
+              "LessThan",
+              "Entering",
+              "Exiting",
+              "Inside",
+              "Outside"
+            ]
+          },
+          "target": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "Value": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                    "title": "CanonicalDecimal",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "Value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "Drawing": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "drawing": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "incarnation": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "origin": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "pane": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "workspace": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "workspace",
+                      "origin",
+                      "pane",
+                      "drawing",
+                      "incarnation"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "Drawing"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "operator",
+          "target"
+        ],
+        "type": "object"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+    },
+    "expiration": {
+      "oneOf": [
+        {
+          "const": "Never"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "At": {
+              "additionalProperties": false,
+              "properties": {
+                "display_offset_minutes": {
+                  "maximum": 840,
+                  "minimum": -720,
+                  "type": "integer"
+                },
+                "utc_ms": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "utc_ms",
+                "display_offset_minutes"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "At"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "frequency": {
+      "enum": [
+        "Once",
+        "PerBar",
+        "PerBarClose",
+        "PerMinute"
+      ]
+    },
+    "id": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "market": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "Live": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "feed": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "feed"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "Live"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "Replay": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "recording": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "recording"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "Replay"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "symbol": {
+          "maxLength": 2048,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "symbol",
+        "aggregation"
+      ],
+      "type": "object"
+    },
+    "message": {
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "notification": {
+      "additionalProperties": false,
+      "properties": {
+        "popup": {
+          "type": "boolean"
+        },
+        "sound": {
+          "enum": [
+            null,
+            "information",
+            "question",
+            "exclamation",
+            "critical",
+            "beep",
+            "american-phone",
+            "business-phone",
+            "cuckoo",
+            "english-phone",
+            "high-pitched-beep",
+            "low-beep",
+            "short-beep",
+            "aviary",
+            "brook",
+            "city",
+            "dock",
+            "dockside",
+            "ebb-tide",
+            "everglades",
+            "foghorn",
+            "hail",
+            "northwoods",
+            "oceanside",
+            "rain",
+            "rainforest",
+            "steam-train",
+            "summer-night",
+            "surfs-up",
+            "thunderstorm",
+            "white-noise",
+            "wind-chimes",
+            "yosemite-falls"
+          ]
+        },
+        "sound_seconds": {
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "toast": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "popup",
+        "toast"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "version",
+    "id",
+    "name",
+    "market",
+    "conditions",
+    "frequency",
+    "expiration",
+    "message",
+    "notification"
+  ],
+  "type": "object",
+  "x-frequency-semantics": {
+    "Once": "Complete after the first qualifying event; rearm explicitly.",
+    "PerBar": "At most once per actual bar identity.",
+    "PerBarClose": "Only each distinct committed close.",
+    "PerMinute": "At most once per monotonic session minute."
+  },
+  "x-operator-targets": {
+    "Crossing": [
+      "Value",
+      "Line"
+    ],
+    "CrossingDown": [
+      "Value",
+      "Line"
+    ],
+    "CrossingUp": [
+      "Value",
+      "Line"
+    ],
+    "Entering": [
+      "Channel",
+      "Rectangle"
+    ],
+    "Exiting": [
+      "Channel",
+      "Rectangle"
+    ],
+    "GreaterThan": [
+      "Value",
+      "Line",
+      "Rectangle"
+    ],
+    "Inside": [
+      "Channel",
+      "Rectangle"
+    ],
+    "LessThan": [
+      "Value",
+      "Line",
+      "Rectangle"
+    ],
+    "Outside": [
+      "Channel",
+      "Rectangle"
+    ]
+  }
+}

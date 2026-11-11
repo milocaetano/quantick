@@ -91,6 +91,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "drawings",
         &[
+            "alerts",
             "appearance",
             "anchored-studies",
             "chart",
