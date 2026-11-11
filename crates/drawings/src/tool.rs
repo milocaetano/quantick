@@ -646,7 +646,7 @@ impl DrawingTool {
 
     /// The style an object is painted in on `surface`: its own, with a colour
     /// still its role's default taking the surface's colour for the role, and
-    /// a colour that has vanished there swapped for the surface's legible one.
+    /// a colour that has vanished there shaded, in its own hue, until legible.
     /// The saved style is untouched — see
     /// [`quantick_appearance::ResolvedTheme::legible_drawing_as`].
     #[must_use]

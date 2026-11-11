@@ -269,12 +269,12 @@ fn painted_colors(scene: &MarkScene) -> Vec<PremultipliedRgba> {
 }
 
 #[test]
-fn a_style_saved_on_dark_keeps_its_colour_on_dark_and_falls_back_on_light() {
+fn a_style_saved_on_dark_keeps_its_colour_on_dark_and_is_shaded_on_light() {
     // The trader's saved presets: every tool in #f3f7ff, chosen on Dark.
     let near_white = PremultipliedRgba::from_rgb(0xF3, 0xF7, 0xFF);
     let dark = ResolvedTheme::default();
     let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
-    let fallback = light.color(Token::DrawingDefault);
+    let shaded = light.legible_drawing(near_white);
     for tool in DRAWING_TOOLS {
         let payload = tool.default_payload();
         let on_dark = painted_colors(&scene_in(&dark, tool.id(), &*payload, false, near_white));
@@ -286,13 +286,13 @@ fn a_style_saved_on_dark_keeps_its_colour_on_dark_and_falls_back_on_light() {
         );
         assert_eq!(
             on_dark.contains(&near_white),
-            on_light.contains(&fallback),
+            on_light.contains(&shaded),
             "{} swaps exactly the authored colour",
             tool.id()
         );
     }
     let ruler = painted_colors(&scene_in(&light, "measure", &NoPayload, false, near_white));
-    assert!(ruler.contains(&fallback), "the ruler leg reads on Light");
+    assert!(ruler.contains(&shaded), "the ruler leg reads on Light");
     let dark_ruler = painted_colors(&scene_in(&dark, "measure", &NoPayload, false, near_white));
     assert!(
         dark_ruler.contains(&near_white),
@@ -321,6 +321,6 @@ fn a_flat_readout_reads_against_its_plate() {
     assert!(
         on_light
             .iter()
-            .all(|color| *color == light.color(Token::DrawingDefault))
+            .all(|color| *color == light.legible_readout(light.legible_drawing(near_white)))
     );
 }

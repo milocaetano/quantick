@@ -74,27 +74,70 @@ pub fn ink_on(
 pub const MIN_DRAWING_CONTRAST: f32 = 1.5;
 
 /// The colour a drawing is painted in over `background`: its authored `color`,
-/// unless its hue is all but invisible there and `fallback` reads better.
+/// or, when that has all but vanished there, the same hue shaded toward black
+/// (on a light background) or white (on a dark one) just far enough to reach
+/// [`MIN_DRAWING_CONTRAST`]. Yellow on white paints a deeper yellow, never a
+/// borrowed grey: the trader picked the hue, the canvas only moves its shade.
 ///
 /// The hue is graded, not the translucent paint: a faint stroke is a choice
-/// of faintness, so the fallback keeps the authored alpha. Display only - the
+/// of faintness, so the shade keeps the authored alpha. Display only - the
 /// saved style is never rewritten, so the colour returns as soon as the
 /// canvas it was chosen for does.
 #[must_use]
-pub fn legible(
-    color: PremultipliedRgba,
-    background: PremultipliedRgba,
-    fallback: PremultipliedRgba,
-) -> PremultipliedRgba {
-    let seen = |ink: PremultipliedRgba| contrast_ratio(opaque(ink), background);
-    let authored = seen(color);
-    if color.a() == 0 || authored >= MIN_DRAWING_CONTRAST || seen(fallback) <= authored {
-        color
-    } else if color.a() == u8::MAX {
-        fallback
-    } else {
-        with_opacity(fallback, color.a())
+pub fn legible(color: PremultipliedRgba, background: PremultipliedRgba) -> PremultipliedRgba {
+    let seen = |ink: PremultipliedRgba| contrast_ratio(ink, background);
+    let hue = opaque(color);
+    if color.a() == 0 || seen(hue) >= MIN_DRAWING_CONTRAST {
+        return color;
     }
+    let black = PremultipliedRgba::from_rgb(0, 0, 0);
+    let white = PremultipliedRgba::from_rgb(255, 255, 255);
+    let toward = if seen(black) >= seen(white) {
+        black
+    } else {
+        white
+    };
+    let shade = shade_until_seen(hue, toward, |ink| seen(ink) >= MIN_DRAWING_CONTRAST);
+    if color.a() == u8::MAX {
+        shade
+    } else {
+        with_opacity(shade, color.a())
+    }
+}
+
+/// Steps the binary search takes along the hue-to-`toward` mix: 2^-12 of the
+/// way is finer than one 8-bit channel step.
+const SHADE_SEARCH_STEPS: u32 = 12;
+
+/// The least mix of `hue` toward `toward` that `reaches`, found by a fixed
+/// binary search so the answer is deterministic; `toward` itself when no mix
+/// short of it does.
+fn shade_until_seen(
+    hue: PremultipliedRgba,
+    toward: PremultipliedRgba,
+    reaches: impl Fn(PremultipliedRgba) -> bool,
+) -> PremultipliedRgba {
+    let mix = |amount: f32| {
+        let channel = |from: u8, to: u8| -> u8 {
+            (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
+        };
+        PremultipliedRgba::from_rgb(
+            channel(hue.r(), toward.r()),
+            channel(hue.g(), toward.g()),
+            channel(hue.b(), toward.b()),
+        )
+    };
+    let (mut low, mut high) = (0.0_f32, 1.0_f32);
+    for _ in 0..SHADE_SEARCH_STEPS {
+        let middle = (low + high) / 2.0;
+        if reaches(mix(middle)) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    let shade = mix(high);
+    if reaches(shade) { shade } else { toward }
 }
 
 impl crate::ResolvedTheme {
@@ -112,11 +155,7 @@ impl crate::ResolvedTheme {
     /// see [`legible`].
     #[must_use]
     pub fn legible_drawing(&self, color: PremultipliedRgba) -> PremultipliedRgba {
-        legible(
-            color,
-            self.color(crate::Token::Canvas),
-            self.color(crate::Token::DrawingDefault),
-        )
+        legible(color, self.color(crate::Token::Canvas))
     }
 
     /// A drawing's colour as it is painted on this surface when its tool's
@@ -143,6 +182,6 @@ impl crate::ResolvedTheme {
             self.color(crate::Token::DrawingReadoutPlate),
             self.color(crate::Token::Canvas),
         );
-        legible(color, plate, self.color(crate::Token::DrawingDefault))
+        legible(color, plate)
     }
 }
