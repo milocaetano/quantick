@@ -27186,6 +27186,14 @@
               "merge_support_radius_px": {
                 "$ref": "#/$defs/CanonicalDecimal"
               },
+              "notes": {
+                "default": [],
+                "description": "What this frame leaves out or infers (volume updating or partial,\nexcluded records, first-daily-region scaling). The chart paints no\ncaption for them; this is where they are read.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "off_axis_executions": {
                 "$ref": "#/$defs/WireU64"
               },

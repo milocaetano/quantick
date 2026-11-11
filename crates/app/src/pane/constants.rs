@@ -1,5 +1,4 @@
-//! The chart pane's tunables: drag and zoom gains, the
-//! FLOW caption and candle overlays. One file, so retuning touches one place.
+//! The chart pane's tunables: drag and zoom gains and candle overlays. One file, so retuning touches one place.
 
 /// Half-height of the grab band over a pane's top edge, in pixels. The rule stays a hairline (a
 /// thick bar reads as a wall in the data); the handle around it makes it catchable and the resize

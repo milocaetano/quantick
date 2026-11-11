@@ -3,6 +3,7 @@ use quantick_control::wire::{CanonicalDecimal, WireU64};
 use quantick_control_host::wire::{canonical_decimal, wire_usize};
 use quantick_orderflow::projection::flow_tape::{
     FLOW_REGION_WINDOW_MS, FlowProgress, FlowReference, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
+    flow_notes,
 };
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
@@ -48,6 +49,11 @@ pub struct FlowExecutionSnapshot {
     pub mark_count: WireU64,
     pub marks_truncated: bool,
     pub marks: Vec<FlowExecutionMark>,
+    /// What this frame leaves out or infers (volume updating or partial,
+    /// excluded records, first-daily-region scaling). The chart paints no
+    /// caption for them; this is where they are read.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -223,6 +229,7 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
                 .take(MAX_FLOW_READBACK_MARKS)
                 .map(Into::into)
                 .collect(),
+            notes: flow_notes(Some(frame), progress),
         }
     }
 }

@@ -106,12 +106,12 @@ fn missing_reference_uses_ordinary_volume_and_extreme_ratios_stay_finite() {
 }
 
 #[test]
-fn oversized_region_caption_remains_visible_and_separates_total_from_opening() {
+fn oversized_region_note_separates_total_from_opening() {
     let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
     frame.view.reference = FlowReference::VisibleRegions;
     frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 31000.into();
-    let text = caption_qualifications(Some(&frame), FlowProgress::default()).unwrap();
+    let text = flow_notes(Some(&frame), FlowProgress::default()).join(" | ");
     assert!(text.contains("total 32100, recorded opening 31000"));
     assert!(text.contains("first daily regions"));
     assert!(text.contains("area proportional"));
@@ -152,7 +152,7 @@ fn an_oversized_openings_note_says_whether_its_area_was_capped() {
         );
         let opening = frame.dots.iter().find(|dot| dot.opening_anchor).unwrap();
         assert!(opening.opening_oversized);
-        let text = caption_qualifications(Some(&frame), FlowProgress::default()).unwrap();
+        let text = flow_notes(Some(&frame), FlowProgress::default()).join(" | ");
         (opening.radius, text)
     };
     let first_daily = "1 first daily regions: total 40, recorded opening 40";
@@ -176,39 +176,25 @@ fn an_oversized_openings_note_says_whether_its_area_was_capped() {
     assert!(!regions.contains("capped"), "{regions}");
 }
 
-/// Review #8: the notes a caption may never drop stand apart from its key,
-/// so a caption that cannot be placed can still show them.
+/// Review #8: partial volume and excluded records are always noted, and the
+/// notes carry no key.
 #[test]
-fn qualifications_stand_apart_from_the_key() {
+fn notes_name_partial_volume_and_excluded_records() {
     let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
     let quiet = FlowProgress::default();
-    assert!(caption_qualifications(Some(&frame), quiet).is_none());
-    assert!(caption_qualifications(None, quiet).is_none());
+    assert!(flow_notes(Some(&frame), quiet).is_empty());
+    assert!(flow_notes(None, quiet).is_empty());
     frame.cache_limit_reached = true;
     frame.ineligible_executions = 2;
     let pending = FlowProgress {
         pending: true,
         ..FlowProgress::default()
     };
-    let notes = caption_qualifications(Some(&frame), pending).unwrap();
+    let notes = flow_notes(Some(&frame), pending).join(" | ");
     assert!(notes.contains("Partial regional volume"), "{notes}");
     assert!(notes.contains("2 records excluded"), "{notes}");
     assert!(
         !notes.contains("area ="),
         "the key is not a qualification: {notes}"
-    );
-}
-
-/// The caption is the notes or nothing: no name on its own, no key.
-#[test]
-fn the_caption_is_its_notes_or_nothing() {
-    let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
-    let quiet = FlowProgress::default();
-    assert_eq!(notes_caption(Some(&frame), quiet), None);
-    assert_eq!(notes_caption(None, quiet), None);
-    frame.ineligible_executions = 4;
-    assert_eq!(
-        notes_caption(Some(&frame), quiet).as_deref(),
-        Some("FLOW | 4 records excluded")
     );
 }

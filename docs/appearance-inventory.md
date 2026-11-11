@@ -62,8 +62,8 @@ objects are not recolored by mutating saved styles.
   complete content. The calendar has a bounded two-axis scroll area.
 - Indicator titles and values have disjoint width budgets; collapsed strips and
   expanded header hit areas grow with the larger chart-label/axis role.
-- Side-label plates require their full measured height and width. Tape key and
-  FLOW caption clearances scale with their header; sample values clear the enlarged
+- Side-label plates require their full measured height and width. Tape key
+  clearances scale with their header; sample values clear the enlarged
   capsule reservation. Icons retain their geometric boxes.
 - Preview title/liquidity labels elide within available width; optional legend
   entries yield when they cannot fit. The synthetic scene's geometry lives in
