@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "CanvasDimension": {
+      "description": "Which way a docked chart is resized.",
+      "oneOf": [
+        {
+          "const": "width",
+          "description": "Along a split that lays charts left to right.",
+          "type": "string"
+        },
+        {
+          "const": "height",
+          "description": "Along a split that lays charts top to bottom.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Resize a docked chart by giving it a share of the layout around it.",
+  "properties": {
+    "dimension": {
+      "$ref": "#/$defs/CanvasDimension",
+      "description": "`width` resizes it within the nearest split laying charts left to\nright, `height` within the nearest laying them top to bottom."
+    },
+    "share": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "The share of that split the chart's branch takes, strictly between\n0 and 1, with at most six decimal places. Its neighbour gives or\ntakes the difference; both keep the minimum a drag keeps."
+    },
+    "slot": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "slot",
+    "dimension",
+    "share"
+  ],
+  "title": "ResizePaneInput",
+  "type": "object"
+}

@@ -33,6 +33,13 @@ pub(super) fn tab_area(canvas: &crate::tab::layout::TabCanvas) -> CanvasRect {
     }
 }
 
+/// `tab` as the window draws it: its area and whether the column painter
+/// draws it.
+pub(crate) fn drawn(tab: &crate::tab::layout::TabCanvas) -> canvas::Drawn {
+    let (area, columns) = (tab_area(tab), tab.column_painted());
+    canvas::Drawn { area, columns }
+}
+
 /// The active tab's workspace as last saved, if it has a save.
 fn saved_recipe(app: &QuantickApp) -> Option<&WorkspaceRecipe> {
     let book = &app.runtime.workspace.book;
@@ -78,11 +85,13 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
             .map_err(ControlError::invalid_request)?;
         (true, None)
     } else {
+        let drawn = drawn(&app.active_tab().canvas);
         let state = &mut app.active_tab_mut().canvas.state;
-        canvas::act(state, saved.as_ref(), area, act)?
+        canvas::act(state, saved.as_ref(), drawn, act)?
     };
-    let state = &app.active_tab().canvas.state;
-    Ok(canvas::result(state, changed, slot, unsaved(app)))
+    let (tab, unsaved) = (&app.active_tab().canvas, unsaved(app));
+    let drawn = drawn(tab);
+    Ok(canvas::result(&tab.state, changed, slot, unsaved, drawn))
 }
 
 /// After the canvas drew: open the indicator library a header asked for, and

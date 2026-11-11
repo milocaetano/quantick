@@ -8,7 +8,6 @@ pub mod color;
 pub use builtin::Builtin;
 mod cache;
 pub use cache::RenderCache;
-pub mod chip;
 pub mod contrast;
 mod document;
 mod error;

@@ -1,8 +1,23 @@
 {
   "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
     "CanvasPaneDto": {
       "description": "One pane of the canvas after the call.",
       "properties": {
+        "height_share": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The same along the nearest split laying them top to bottom."
+        },
         "kind": {
           "$ref": "#/$defs/CanvasPaneKind"
         },
@@ -13,6 +28,17 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "width_share": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
         }
       },
       "required": [

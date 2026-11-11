@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 127 |
+| Reachable by capability | 128 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **181** |
+| **Total** | **182** |
 
-99 of the 181 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 82 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+99 of the 182 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 83 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -105,6 +105,7 @@ The three exclusion classes are closed:
 | `canvas.pane.park` | Park a floating chart in a canvas corner | a floating chart's grip dropped in a canvas corner | `canvas.pane.park` | — |
 | `canvas.pane.pop_out` | Open a chart in its own OS window | a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge | `canvas.pane.pop_out` | — |
 | `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
+| `canvas.pane.resize` | Resize docked charts of a canvas layout | drag the divider between two docked charts of a layout the canvas tree lays out | `canvas.pane.resize` | — |
 | `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -257,7 +258,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 84 |
+| `authored` | 85 |
 
 ## Appendix: rows no registry stands behind
 
@@ -302,6 +303,7 @@ declares nothing here is a guard failure.
 | `canvas.pane.park` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
 | `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
+| `canvas.pane.resize` | a drag on a seam the canvas model's `tree_seams` lists |
 | `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |

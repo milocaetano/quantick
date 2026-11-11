@@ -55,7 +55,7 @@ const BOOK_DRAIN_BUDGET: usize = crate::live_envelope::BURST_DEPTH_UPDATES_PER_F
 /// two or more panes are on screen: a lone pane is focused by definition. The
 /// trader asked for it over the old 1 px header rule, which read as nothing
 /// and left no way to tell which chart a click had activated.
-const FOCUS_FRAME_PX: f32 = 2.0;
+pub(crate) const FOCUS_FRAME_PX: f32 = 2.0;
 /// Width of the grip bar on a collapsed column's rail.
 const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
 /// Height of that grip bar. Long enough to read as a handle at a glance,
@@ -205,8 +205,6 @@ pub struct Tab {
     pub focus: PaneSide,
 
     #[cfg(test)]
-    time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
-    #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
     #[cfg(test)]
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
@@ -254,8 +252,6 @@ impl Tab {
             canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,
-            #[cfg(test)]
-            time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
             #[cfg(test)]
@@ -437,11 +433,6 @@ impl Tab {
 
 #[cfg(test)]
 impl Tab {
-    /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
-    pub(crate) fn time_header_chip(&self, index: usize) -> Option<egui::Rect> {
-        self.time_header_chips.get(index).copied()
-    }
-
     /// Where the canvas divider landed, while the split is shown.
     pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
         self.canvas_divider

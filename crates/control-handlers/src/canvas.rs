@@ -5,21 +5,25 @@
 //! `quantick_workspace::canvas`) and answers the canvas as it stands after.
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use quantick_control_host::wire::canonical_f32;
+use quantick_control_schema::canvas::CanvasDimension;
 use quantick_control_schema::canvas::{
     ADD_WIDGET_CAPABILITY_ID, AddWidgetInput, CanvasCorner, CanvasEdge, CanvasRectDto,
     CanvasResult, DOCK_CAPABILITY_ID, DockPaneInput, FLOAT_CAPABILITY_ID, FloatPaneInput,
     MAXIMIZE_CAPABILITY_ID, MINIMIZE_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID,
     PARK_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID, PaneInput, ParkPaneInput,
-    PickLayoutInput, PopOutInput, REMOVE_CAPABILITY_ID, RESTORE_CAPABILITY_ID,
-    RETURN_CAPABILITY_ID, RemovePaneInput, WindowMenuInput, WindowMenuResult, descriptor,
+    PickLayoutInput, PopOutInput, REMOVE_CAPABILITY_ID, RESIZE_CAPABILITY_ID,
+    RESTORE_CAPABILITY_ID, RETURN_CAPABILITY_ID, RemovePaneInput, ResizePaneInput,
+    SHARE_DECIMAL_PLACES, WindowMenuInput, WindowMenuResult, descriptor,
 };
 use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
 };
 use quantick_workspace::canvas::{
     self, CanvasRect, CanvasRefusal, CanvasState, Corner, DropOutcome, Edge, FloatGesture,
-    FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer, WidgetSpec,
+    FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer, SplitAxis, WidgetSpec,
 };
+use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -67,6 +71,34 @@ pub enum CanvasAct {
     Return {
         slot: u32,
     },
+    /// `share` is already checked: finite and strictly between 0 and 1.
+    Resize {
+        slot: u32,
+        dimension: CanvasDimension,
+        share: f32,
+    },
+}
+
+/// A tab's canvas as the window draws it: its area, and whether the column
+/// painter draws its docked charts with its own dividers and split, which
+/// `layout.pane.resize` moves, rather than the tree whose seams
+/// `canvas.pane.resize` moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drawn {
+    pub area: CanvasRect,
+    pub columns: bool,
+}
+
+/// A tree resize on a column-painted tab: its dividers are not the tree's.
+fn column_layout() -> ControlError {
+    let mut error = ControlError::invalid_request(
+        "the column painter draws this layout with its own dividers: the tree resize moves nothing on screen",
+    );
+    error.context.details = Some(serde_json::json!({ "refusal": "canvas.column_layout" }));
+    error.context.next_steps = vec![
+        "Move the column divider with layout.pane.resize (layout.pane.resize_pair between stacked context charts).".to_owned(),
+    ];
+    error
 }
 
 fn unavailable() -> ControlError {
@@ -104,7 +136,8 @@ pub fn register<H: CanvasHost + ?Sized, A>(
     registry.register(described(DOCK_CAPABILITY_ID), dock)?;
     registry.register(described(PARK_CAPABILITY_ID), park)?;
     registry.register(described(POP_OUT_CAPABILITY_ID), pop_out)?;
-    registry.register(described(RETURN_CAPABILITY_ID), return_to_canvas)
+    registry.register(described(RETURN_CAPABILITY_ID), return_to_canvas)?;
+    registry.register(described(RESIZE_CAPABILITY_ID), resize)
 }
 
 fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, ControlError> {
@@ -262,6 +295,44 @@ fn return_to_canvas<H: CanvasHost + ?Sized, A>(
     answer(app, CanvasAct::Return { slot })
 }
 
+fn resize<H: CanvasHost + ?Sized, A>(
+    app: &mut H,
+    _: &mut A,
+    _: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let ResizePaneInput {
+        slot,
+        dimension,
+        share,
+    } = parse(value)?;
+    let share = share_of(share.as_str())?;
+    answer(
+        app,
+        CanvasAct::Resize {
+            slot,
+            dimension,
+            share,
+        },
+    )
+}
+
+/// A share a resize can take: strictly between 0 and 1, at most
+/// [`SHARE_DECIMAL_PLACES`] places, so what is sent is what reads back.
+fn share_of(text: &str) -> Result<f32, ControlError> {
+    let share: Decimal = text
+        .parse()
+        .map_err(|error| ControlError::invalid_request(format!("share: {error}")))?;
+    if share.scale() > SHARE_DECIMAL_PLACES || share <= Decimal::ZERO || share >= Decimal::ONE {
+        return Err(ControlError::invalid_request(
+            "share must be strictly between 0 and 1 with at most six decimal places",
+        ));
+    }
+    share
+        .to_f32()
+        .ok_or_else(|| ControlError::invalid_request("share is out of range"))
+}
+
 /// A rectangle a pane can be shown in: finite, with a positive size.
 fn check_rect(rect: CanvasRectDto) -> Result<(), ControlError> {
     let finite = [rect.x, rect.y, rect.w, rect.h]
@@ -292,17 +363,22 @@ pub fn picked(preset_id: &str) -> Result<&'static LayoutPreset, ControlError> {
         .ok_or_else(|| refused(&CanvasRefusal::UnknownPreset(preset_id.to_owned())))
 }
 
-/// Apply `act` to `state`, a canvas of `area`. An unconfirmed removal of a
-/// pane the `saved` workspace holds is refused, as the trader's dialog asks
-/// first. Answers whether the canvas changed and the slot acted on. A window
-/// whose pick lays out more than the model (a split, its painter) applies
-/// [`CanvasAct::PickLayout`] itself.
+/// Apply `act` to `state`, a canvas `drawn` as the window draws it. An
+/// unconfirmed removal of a pane the `saved` workspace holds is refused, as
+/// the trader's dialog asks first, and so is a resize of a column-painted
+/// tab, whose dividers are not the tree's. Answers whether the canvas changed
+/// and the slot acted on. A window whose pick lays out more than the model (a
+/// split, its painter) applies [`CanvasAct::PickLayout`] itself.
 pub fn act(
     state: &mut CanvasState,
     saved: Option<&CanvasState>,
-    area: CanvasRect,
+    drawn: Drawn,
     act: CanvasAct,
 ) -> Result<(bool, Option<u32>), ControlError> {
+    if drawn.columns && matches!(act, CanvasAct::Resize { .. }) {
+        return Err(column_layout());
+    }
+    let area = drawn.area;
     if let CanvasAct::Remove {
         slot,
         confirm: false,
@@ -371,8 +447,22 @@ pub fn act(
             state.pop_out(slot, monitor, rect).map(on(slot))
         }
         CanvasAct::Return { slot } => state.return_to_canvas(slot, area).map(on(slot)),
+        CanvasAct::Resize {
+            slot,
+            dimension,
+            share,
+        } => state
+            .resize_pane(slot, axis_of(dimension), share, area)
+            .map(on(slot)),
     };
     acted.map_err(|refusal| refused(&refusal))
+}
+
+const fn axis_of(dimension: CanvasDimension) -> SplitAxis {
+    match dimension {
+        CanvasDimension::Width => SplitAxis::Row,
+        CanvasDimension::Height => SplitAxis::Column,
+    }
 }
 
 /// What the window does after its canvas drew: the act `picked`, a ⋯ row
@@ -657,8 +747,9 @@ pub fn result(
     changed: bool,
     slot: Option<u32>,
     unsaved: bool,
+    drawn: Drawn,
 ) -> CanvasResult {
-    let view = view(state);
+    let view = view(state, drawn);
     CanvasResult {
         changed,
         slot,
@@ -668,11 +759,14 @@ pub fn result(
     }
 }
 
-/// One tab's canvas as the wire reads it.
+/// One tab's canvas as the wire reads it, `drawn` as the window draws it:
+/// tree shares only where the tree painter shows them.
 #[must_use]
-pub fn view(state: &CanvasState) -> CanvasView {
+pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
     let panes = (state.panes().into_iter())
         .map(|(slot, kind, mode)| CanvasPaneDto {
+            width_share: share_on(state, slot, CanvasDimension::Width, drawn),
+            height_share: share_on(state, slot, CanvasDimension::Height, drawn),
             slot,
             kind: match kind {
                 PaneKind::Time => CanvasPaneKind::Time,
@@ -711,12 +805,27 @@ pub fn view(state: &CanvasState) -> CanvasView {
     }
 }
 
+/// `slot`'s share along `dimension` as the screen shows it, as the wire
+/// writes it; none on a column-painted tab, whose split is not the tree's.
+fn share_on(
+    state: &CanvasState,
+    slot: u32,
+    dimension: CanvasDimension,
+    drawn: Drawn,
+) -> Option<quantick_control::wire::CanonicalDecimal> {
+    if drawn.columns {
+        return None;
+    }
+    let share = state.pane_share(slot, axis_of(dimension), drawn.area)?;
+    canonical_f32(share, SHARE_DECIMAL_PLACES)
+}
+
 /// A `QUANTICK_CANVAS_ACTS` value: canvas acts split by `;`, each
 /// `add:<widget>`, `float:<slot>`, `dock:<slot>:<edge>`,
 /// `park:<slot>:<corner>`, `pop_out:<slot>`, `return:<slot>`,
-/// `minimize:<slot>`, `maximize:<slot>`, `restore:<slot>` or
-/// `remove:<slot>`, edges and corners as the wire names them. An act that
-/// does not parse is left out.
+/// `minimize:<slot>`, `maximize:<slot>`, `restore:<slot>`, `remove:<slot>`
+/// or `resize:<slot>:<dimension>:<share>`, edges, corners and dimensions
+/// as the wire names them. An act that does not parse is left out.
 #[must_use]
 pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
     fn named<T: DeserializeOwned>(word: &str) -> Option<T> {
@@ -752,6 +861,11 @@ pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
             ("remove", None) => CanvasAct::Remove {
                 slot,
                 confirm: true,
+            },
+            ("resize", Some(dimension)) => CanvasAct::Resize {
+                slot,
+                dimension: named(dimension)?,
+                share: share_of(words.next()?.trim()).ok()?,
             },
             _ => return None,
         })

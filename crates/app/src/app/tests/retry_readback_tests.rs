@@ -924,7 +924,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         // The canvas, in an order where each call has something to do: a
-        // layout, one chart folded, maximized and restored, a widget added,
+        // layout, one chart folded, maximized, restored and widened, a widget added,
         // a chart floated and docked back, the widget parked, popped out,
         // returned and removed.
         ("canvas.window_menu.open", 1, json!({}), Readback::Moves),
@@ -937,6 +937,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.minimize", 1, Value::Null, Readback::Moves),
         ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
         ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
+        ("canvas.pane.resize", 1, Value::Null, Readback::Moves),
         (
             "canvas.widget.add",
             1,
@@ -1293,6 +1294,12 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 // The first docked chart; the float leaves the layout.
                 let state = &app.active_tab().canvas.state;
                 json!({ "slot": state.tree().panes()[0].0 })
+            }
+            "canvas.pane.resize" => {
+                // The first docked chart, wider within its row.
+                let state = &app.active_tab().canvas.state;
+                let slot = state.tree().panes()[0].0;
+                json!({ "slot": slot, "dimension": "width", "share": "0.6" })
             }
             "canvas.pane.dock" => {
                 // The chart the float row took out of the layout.

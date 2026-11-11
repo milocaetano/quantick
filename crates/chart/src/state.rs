@@ -63,7 +63,7 @@ pub use quantick_engine::bar_selection::BarSelection as SpecSelector;
 ///
 /// Kept at the fine end of the domain — the BARS group's existing feel —
 /// because that is where dragging is the right gesture. Crossing to the
-/// coarse end is what the time pane's presets and click-to-type are for, and
+/// coarse end is what the bars menu's presets and click-to-type are for, and
 /// a speed that made an hour a short drag would make a second unreachable.
 pub use quantick_engine::bar_registry::TIME_INTERVAL_DRAG_SPEED;
 

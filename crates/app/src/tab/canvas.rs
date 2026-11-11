@@ -21,7 +21,6 @@ use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
     SharedPick, clamp_pane_fraction, split_flow_pane, split_pane_header, split_pane_layout_strip,
 };
-use crate::state::BarKind;
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -502,8 +501,8 @@ impl Tab {
         }
     }
 
-    /// Each context chart carries its own bars control, timeframe selector
-    /// (§11) and indicators button, read and changed here wherever focus sits.
+    /// Each context chart carries its own bars control (§11) and indicators
+    /// button, read and changed here wherever focus sits.
     fn draw_time_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -528,24 +527,11 @@ impl Tab {
             });
         let pane = &mut self.time_panes[slot];
         let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
-        let mut interval_ms = pane
-            .spec
-            .retained(BarKind::Time)
-            .time_interval_ms()
-            .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
         let spec = &mut pane.spec;
         pane.frame.header_controls.clear();
-        let header_layout = crate::time_header::draw(
-            ui,
-            strip,
-            &mut interval_ms,
-            pane.id,
-            header.presets,
-            reserve_px,
-            |ui| {
-                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
-            },
-        );
+        let indicators = crate::time_header::draw(ui, strip, pane.id, reserve_px, |ui| {
+            crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
+        });
         if let Some(job_slot) = &job_slot {
             let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right()
                 - capsule_px
@@ -553,23 +539,8 @@ impl Tab {
             crate::loading::draw_slot(ui, right, strip, job_slot, None);
         }
         self.menu_button(ui, strip, Some(slot), theme::get(ui.ctx()).text_muted());
-        #[cfg(test)]
-        if slot == 0 {
-            self.time_header_chips = header_layout.chips();
-        }
-        if header_layout.indicators {
+        if indicators {
             self.time_panes[slot].request_indicator_picker();
-        }
-        if header_layout.changed {
-            let pane = &mut self.time_panes[slot];
-            pane.spec
-                .update(
-                    quantick_engine::bar_selection::SelectionCommand::Replace(
-                        crate::state::BarSpec::Time(interval_ms).into(),
-                    ),
-                    quantick_engine::bar_selection::BarInputAvailability::PRINTS,
-                )
-                .expect("time control stays in the interval domain");
         }
     }
 
@@ -793,12 +764,13 @@ impl Tab {
             if frame.flow_rail.is_none() {
                 self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
             }
-        } else if !frame.tree {
+        } else if frame.tree {
+            self.draw_tree_seams(tab_id, ui, area);
+        } else {
             return;
         }
-        // An accent frame around the focused pane, flow or context, once there
-        // is another pane on screen to tell it from: the click that activates
-        // a pane has to show which one it activated.
+        // A frame around the focused pane once another pane is on screen: the
+        // click that activates a pane has to show which one it activated.
         if self.drawn_panes().count() < 2 {
             return;
         }
@@ -807,7 +779,7 @@ impl Tab {
             ui.painter().rect_stroke(
                 band.shrink(FOCUS_FRAME_PX / 2.0),
                 0.0,
-                egui::Stroke::new(FOCUS_FRAME_PX, palette.accent()),
+                egui::Stroke::new(FOCUS_FRAME_PX, palette.widget_active_border()),
             );
         }
     }

@@ -5330,9 +5330,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -5343,6 +5358,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -5481,9 +5507,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -5494,6 +5535,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -5659,9 +5711,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -5672,6 +5739,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -5795,9 +5873,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -5808,6 +5901,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -5931,9 +6035,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -5944,6 +6063,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6082,9 +6212,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6095,6 +6240,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6268,9 +6424,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6281,6 +6452,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6408,9 +6590,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6421,6 +6618,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6513,6 +6721,199 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Moves the seam between a docked chart and its neighbour, as dragging the divider between them does: the chart's branch takes share (0..1, six places) of the nearest split along dimension, held to the minimum a drag keeps. The result's panes carry each chart's width_share and height_share.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "canvas.pane.resize",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "CanvasDimension": {
+            "description": "Which way a docked chart is resized.",
+            "oneOf": [
+              {
+                "const": "width",
+                "description": "Along a split that lays charts left to right.",
+                "type": "string"
+              },
+              {
+                "const": "height",
+                "description": "Along a split that lays charts top to bottom.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Resize a docked chart by giving it a share of the layout around it.",
+        "properties": {
+          "dimension": {
+            "$ref": "#/$defs/CanvasDimension",
+            "description": "`width` resizes it within the nearest split laying charts left to\nright, `height` within the nearest laying them top to bottom."
+          },
+          "share": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The share of that split the chart's branch takes, strictly between\n0 and 1, with at most six decimal places. Its neighbour gives or\ntakes the difference; both keep the minimum a drag keeps."
+          },
+          "slot": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot",
+          "dimension",
+          "share"
+        ],
+        "title": "ResizePaneInput",
+        "type": "object"
+      },
+      "module": "canvas",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "CanvasPaneDto": {
+            "description": "One pane of the canvas after the call.",
+            "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
+              "kind": {
+                "$ref": "#/$defs/CanvasPaneKind"
+              },
+              "mode": {
+                "$ref": "#/$defs/CanvasPaneMode"
+              },
+              "slot": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
+              }
+            },
+            "required": [
+              "slot",
+              "kind",
+              "mode"
+            ],
+            "type": "object"
+          },
+          "CanvasPaneKind": {
+            "description": "What a pane is for.",
+            "enum": [
+              "time",
+              "flow"
+            ],
+            "type": "string"
+          },
+          "CanvasPaneMode": {
+            "description": "How a pane is shown.",
+            "enum": [
+              "docked",
+              "minimized",
+              "maximized",
+              "floating",
+              "os_window"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The canvas as it stands after a canvas call.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed the canvas; a repeat answers false.",
+            "type": "boolean"
+          },
+          "panes": {
+            "description": "Every pane, in slot order.",
+            "items": {
+              "$ref": "#/$defs/CanvasPaneDto"
+            },
+            "type": "array"
+          },
+          "preset_id": {
+            "description": "The preset the docked panes match; absent for a custom arrangement.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slot": {
+            "description": "The pane the call acted on, or the one it added.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unsaved": {
+            "description": "Whether the workspace now differs from its save.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed",
+          "unsaved",
+          "panes"
+        ],
+        "title": "CanvasResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Resize a docked chart",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Unfolds a minimized chart, or brings a maximized one back to its place.",
       "destructive": false,
       "dry_run_supported": false,
@@ -6544,9 +6945,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6557,6 +6973,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6680,9 +7107,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6693,6 +7135,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -6814,9 +7267,24 @@
       "module": "canvas",
       "output_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -6827,6 +7295,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [
@@ -31519,6 +31998,17 @@
           "CanvasPaneDto": {
             "description": "One pane of the canvas after the call.",
             "properties": {
+              "height_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same along the nearest split laying them top to bottom."
+              },
               "kind": {
                 "$ref": "#/$defs/CanvasPaneKind"
               },
@@ -31529,6 +32019,17 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width_share": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "A docked chart's share of the nearest split laying charts left to\nright, to six places; absent when none holds it."
               }
             },
             "required": [

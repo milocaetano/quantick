@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 85 |
+| deduplicated per connection | 86 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **118** |
+| **Total** | **119** |
 
 ## Capabilities
 
@@ -146,6 +146,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `canvas.pane.park` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane still reads floating; its place moved | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.pane.pop_out` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads os_window | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.pane.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane is no longer listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `canvas.pane.resize` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane's width_share or height_share reads the applied share | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.pane.restore` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads docked | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.pane.return` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | the pane reads floating | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `canvas.widget.add` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].canvas` | a new floating pane is listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -241,4 +242,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-118 mutable capabilities registered, 118 with a readback.
+119 mutable capabilities registered, 119 with a readback.

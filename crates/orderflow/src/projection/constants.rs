@@ -2,6 +2,13 @@
 //! candle marks, the tape's merge, geometry and work pricing. One place for
 //! later config wiring; the FLOW tape keeps its own in `flow_tape/constants.rs`.
 
+// Bar-slot heat (`projection.rs`).
+
+/// How long, in exchange milliseconds, a level must hold a size inside a bar
+/// for the bar's slot band to read at that size rather than at the bar's
+/// time-weighted mean.
+pub const SLOT_WALL_STANDING_MS: i64 = 1_000;
+
 // Volume dots (`dots.rs`).
 
 /// The windows of market time a tape dot may cover, in exchange

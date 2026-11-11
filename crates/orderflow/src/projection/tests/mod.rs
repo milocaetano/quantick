@@ -995,8 +995,8 @@ fn a_bar_slot_summarizes_the_book_while_the_tape_keeps_the_runs() {
     assert_eq!(of_bucket(&alone), vec![(0.0, 0.25, dec("3"))]);
 
     // With a tape, that same run becomes one summary band per bar: the
-    // whole slot wide, carrying what was typically resting there — three
-    // for half the bar reads as one and a half.
+    // whole slot wide, carrying the size that stood there — three for half
+    // the bar is still a wall of three, as the tape drew it.
     let summarized = project(
         &history,
         &BarTimeline::from_bars(
@@ -1016,9 +1016,88 @@ fn a_bar_slot_summarizes_the_book_while_the_tape_keeps_the_runs() {
     // first bar, and it is long gone by the time the tape's window opens.
     assert_eq!(
         of_bucket(&summarized),
-        vec![(0.0, 1.0 / 3.0, dec("1.5"))],
-        "one band per bar, weighted by how much of it the wall was there"
+        vec![(0.0, 1.0 / 3.0, dec("3"))],
+        "one band per bar, at the size that stood there"
     );
+}
+
+/// The 100 bid of one ten-second bar under a tape: three, then `steps` as
+/// `(at_ms, quantity)`. Returns the slot band's quantity.
+fn slot_band_after(steps: &[(i64, &str)]) -> Decimal {
+    let mut history = LiquidityHistory::new(config());
+    history.install_snapshot(0, 1, snapshot(10)).unwrap();
+    let mut update_id = 10;
+    for (at_ms, quantity) in steps {
+        update_id += 1;
+        history
+            .apply_delta(
+                *at_ms,
+                &BookDelta::new(update_id, update_id, vec![level("100", quantity)], vec![]),
+            )
+            .unwrap();
+    }
+    history
+        .apply_delta(
+            20_000,
+            &BookDelta::new(update_id + 1, update_id + 1, vec![], vec![]),
+        )
+        .unwrap();
+    let closed = [bar(0, 10_000), bar(10_000, 20_000)];
+    let projection = project(
+        &history,
+        &BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::LiveEdge {
+                now_ms: 20_000,
+                window_ms: 5_000,
+                reference_ms: 5_000,
+                on_newest_bar: true,
+            }),
+        ),
+        PriceWindow::new(dec("99.5"), dec("100.5")).unwrap(),
+    );
+    projection
+        .cells
+        .iter()
+        .find(|cell| cell.price_bucket == dec("100") && cell.x0 == 0.0)
+        .map(|cell| cell.quantity)
+        .unwrap()
+}
+
+/// A wall the tape drew at its own size for seconds must not dissolve into the
+/// bar's average: a long tick bar would paint a 30-second wall as ordinary
+/// book. The slot carries the largest size that stood for a second.
+#[test]
+fn a_wall_that_stood_for_a_second_keeps_its_size_in_the_bar_slot() {
+    // Three for four seconds, a wall of thirty for two, three again: the mean
+    // would read 8.4.
+    assert_eq!(slot_band_after(&[(4_000, "30"), (6_000, "3")]), dec("30"));
+    // The second need not be one unbroken run: thirty, a dip, thirty again.
+    assert_eq!(
+        slot_band_after(&[(4_000, "30"), (4_600, "20"), (5_000, "30"), (5_400, "3")]),
+        dec("30")
+    );
+    // Thirty stood 0.6 s and twenty 0.4 s: twenty or more stood the second.
+    assert_eq!(
+        slot_band_after(&[(4_000, "30"), (4_600, "20"), (5_000, "3")]),
+        dec("20")
+    );
+}
+
+/// A flicker shorter than the standing second is not a wall: it must not
+/// paint the whole bar at its size.
+#[test]
+fn a_flicker_shorter_than_a_second_does_not_paint_the_bar_slot() {
+    assert_eq!(
+        slot_band_after(&[(4_000, "30"), (4_300, "3")]),
+        dec("3"),
+        "thirty stood 0.3 s; three stood the rest"
+    );
+    // A level gone before it stood a second still reads by presence, so a
+    // brief touch stays faint: three for half a second of ten.
+    assert_eq!(slot_band_after(&[(500, "0")]), dec("0.15"));
 }
 
 #[test]

@@ -49,6 +49,7 @@ capability that cannot change application state.
 | `canvas.pane.park` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.pop_out` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.remove` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
+| `canvas.pane.resize` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.restore` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.pane.return` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
 | `canvas.widget.add` | 1 | `canvas` | no | `cockpit`, `cockpit.layout` |
@@ -166,4 +167,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-141 capabilities registered.
+142 capabilities registered.
