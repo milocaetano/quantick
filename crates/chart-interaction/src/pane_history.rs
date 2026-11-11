@@ -1,4 +1,15 @@
 //! Series revision and deferred drawing-anchor bookkeeping owned by a pane.
+mod install_effects;
+
+/// A pane-side effect of installing a classified history prefix change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefixInstallEffect {
+    ShiftViewport(isize),
+    ShiftDrawings(isize),
+    ShiftIndicatorRows(usize),
+    RebuildIndicators,
+}
+
 #[derive(Debug, Default)]
 pub struct HistoryState {
     revision: u64,
