@@ -3176,3 +3176,164 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
             .all(|(clip, _)| *clip == drawings::egui_rect(band.rect))
     );
 }
+
+fn finish_prefix_indicators(pane: &mut ChartPane) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    pane.indicator_worker
+        .send(crate::indicator_worker::WorkerCommand::Flush(tx));
+    assert_eq!(pane.indicator_worker.await_reply(&rx), Some(()));
+    pane.apply_indicator_events();
+}
+
+#[test]
+fn prefix_install_preserves_composed_series_effects() {
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
+    shared_mark_at(&mut pane, 4, 100.0);
+    pane.model.viewport.pan_pixels(20.0, pane.slots());
+    pane.add_indicator(crate::indicator_worker::IndicatorSource::Script {
+        name: "Close".to_owned(),
+        text: "indicator(\"Close\")\nplot(close)".to_owned(),
+    });
+    finish_prefix_indicators(&mut pane);
+    let edge = pane.model.viewport.right_edge_bar(pane.slots());
+    let point = pane.drawings.items()[0].points[0];
+    let mut prefix = pane_of_prints(4, 1).series_read().closed_bars();
+    for (index, bar) in prefix.iter_mut().enumerate() {
+        let price = Decimal::from(101 + index as u64);
+        bar.open = price;
+        bar.high = price;
+        bar.low = price;
+        bar.close = price;
+    }
+    // Growth, unchanged, equal-length replacement, shrink, then lead-only.
+    for (bars, lead, changed, count) in [
+        (prefix.clone(), None, true, 4),
+        (prefix.clone(), None, false, 4),
+        (
+            prefix[1..]
+                .iter()
+                .cloned()
+                .chain(prefix.last().cloned())
+                .collect(),
+            None,
+            true,
+            4,
+        ),
+        (prefix[..2].to_vec(), None, true, 2),
+        (prefix[..2].to_vec(), Some(prefix[0].clone()), true, 2),
+    ] {
+        let old_count = pane.history_prefix.len();
+        let old_column = pane.indicators.all()[0].columns[0].clone();
+        assert_eq!(pane.install_venue_history(bars, lead, false), changed);
+        let aligned = &pane.indicators.all()[0].columns[0];
+        let added = (count as usize).saturating_sub(old_count);
+        assert_eq!(aligned.len(), old_column.len() + added);
+        assert!(aligned[..added].iter().all(|value| value.is_nan()));
+        assert_eq!(&aligned[added..], old_column.as_slice());
+        assert_eq!(
+            pane.model.viewport.right_edge_bar(pane.slots()),
+            edge + count as f32
+        );
+        let shifted = pane.drawings.items()[0].points[0];
+        assert_eq!(shifted.bar, point.bar + count as f32);
+        assert_eq!(shifted.time_ms, point.time_ms);
+        finish_prefix_indicators(&mut pane);
+        let expected: Vec<_> = pane
+            .series_read()
+            .closed_bars()
+            .iter()
+            .map(|bar| {
+                use rust_decimal::prelude::ToPrimitive;
+                bar.close.to_f64().unwrap()
+            })
+            .collect();
+        assert_eq!(pane.indicators.all()[0].rows, expected.len());
+        assert_eq!(pane.indicators.all()[0].columns[0], expected);
+    }
+}
+
+#[test]
+fn prefix_install_rejects_history_from_before_reset_or_recut() {
+    for reset in [true, false] {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
+        pane.install_history_prefix(pane_of_prints(2, 1).series_read().closed_bars());
+        pane.receive_history(std::sync::Arc::new((2..10).map(print_at).collect()), true);
+        // Produce a candidate but leave it unpublished across the change.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !pane.prepare_history() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        if reset {
+            pane.reset_series();
+            pane.ingest_backfill(&(30..34).map(print_at).collect::<Vec<_>>());
+            assert!(pane.prepare_history());
+            assert!(!pane.install_history());
+            assert_eq!(pane.state.trades().len(), 4);
+            assert_eq!(pane.slot_open_time(0), Some(TAPE_START_MS + 30_000));
+            assert!(pane.history_prefix.is_empty());
+        } else {
+            pane.set_spec(BarSpec::Tick(2));
+            assert!(
+                !pane.prepare_history(),
+                "the old candidate must be rejected"
+            );
+            assert!(!pane.install_history());
+            while !pane.prepare_history() {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert!(pane.install_history());
+            assert_eq!(pane.state.spec(), &BarSpec::Tick(2));
+            assert_eq!(pane.state.trades().len(), 18);
+            assert_eq!(pane.state.bars().len(), 9);
+        }
+    }
+}
+
+#[test]
+fn prefix_install_preserves_live_and_replay_results() {
+    let trades: Vec<_> = (10..20).map(print_at).collect();
+    let mut live = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    let mut replay = ChartPane::flow(2, BarSpec::Tick(1), "TESTUSDT".to_owned());
+    for trade in &trades {
+        live.ingest_live_trade(trade);
+    }
+    // Replay seek restores recorded history before subsequent streamed prints.
+    replay.ingest_backfill(&trades[..5]);
+    for trade in &trades[5..] {
+        replay.ingest_live_trade(trade);
+    }
+    let baseline = live.series_read().closed_bars();
+    for pane in [&mut live, &mut replay] {
+        shared_mark_at(pane, 4, 100.0);
+        pane.model.viewport.pan_pixels(20.0, pane.slots());
+        let edge = pane.model.viewport.right_edge_bar(pane.slots());
+        let point = pane.drawings.items()[0].points[0];
+        let prefix = pane_of_prints(4, 1).series_read().closed_bars();
+        assert!(pane.install_history_prefix(prefix.clone()));
+        assert_eq!(&pane.series_read().closed_bars()[4..], baseline.as_slice());
+        assert_eq!(pane.model.viewport.right_edge_bar(pane.slots()), edge + 4.0);
+        assert_eq!(pane.drawings.items()[0].points[0].bar, point.bar + 4.0);
+        assert_eq!(pane.drawings.items()[0].points[0].time_ms, point.time_ms);
+        assert!(
+            pane.strategies.pending.is_empty(),
+            "history cannot introduce strategy closes"
+        );
+        assert!(
+            pane.strategies.cleanup.is_empty(),
+            "history cannot send paper cleanup commands"
+        );
+        assert!(!pane.install_history_prefix(prefix));
+        assert!(pane.install_history_prefix(Vec::new()));
+        assert_eq!(pane.series_read().closed_bars(), baseline);
+        assert_eq!(pane.model.viewport.right_edge_bar(pane.slots()), edge);
+        assert_eq!(pane.drawings.items()[0].points[0], point);
+    }
+    assert_eq!(
+        live.series_read().closed_bars(),
+        replay.series_read().closed_bars()
+    );
+}
