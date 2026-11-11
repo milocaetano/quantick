@@ -87,6 +87,20 @@ pub fn flow_notes(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) 
                 area
             ));
         }
+        let floored = frame
+            .dots
+            .iter()
+            .filter(|dot| {
+                frame.view.region.divides_at_peaks()
+                    && frame.view.radius_limit * dot.mark.size < dot.radius
+                    && !dot.opening_oversized
+            })
+            .count();
+        if floored > 0 {
+            hints.push(format!(
+                "{floored} peak masses drawn at the minimum radius, larger than their area"
+            ));
+        }
         if frame.opening_exclusion_effective {
             hints.push("First daily region excluded from scale".to_owned());
         } else if frame.scale_basis == FlowScaleBasis::OpeningOnlyFallback {

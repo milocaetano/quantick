@@ -1,49 +1,124 @@
 //! Peak spheres: a zoom region's volume-by-price profile, smoothed, divided
 //! at the valleys between its significant peaks, one sphere per peak.
 //!
-//! The profile is read on the native price grid the region's own prints
-//! name (the greatest common step between their prices), smoothed by an
-//! exact integer Gaussian ([`PEAK_SMOOTHING_KERNEL`]). A peak counts when its
-//! prominence — how far it rises above the higher of its two saddles — is at
-//! least [`PEAK_PROMINENCE_PERCENT`] of the region's highest smoothed row.
-//! Neighbouring peaks are cut apart at the lowest row between them; each
-//! segment's prints become one sphere at their volume-weighted price and
-//! place. Nothing here reads the camera, so a pan or an axis fit never
-//! regroups a mass: only the zoom rung that chooses the region does.
+//! The profile's rows are the smallest power-of-two multiple of the tape's
+//! tick (the engine's [`PriceGrid`](quantick_engine::PriceGrid)) at least
+//! [`PEAK_SIGMA_RADIUS_SHARE`] of the look's full-size radius tall at the
+//! held price scale, and it is smoothed by an exact integer Gaussian of one
+//! row ([`PEAK_SMOOTHING_KERNEL`]). Two peaks closer on screen than about one
+//! largest sphere's diameter therefore read as one mass. A peak counts when
+//! its prominence is at least [`PEAK_PROMINENCE_PERCENT`] of the region's
+//! highest smoothed ordinary row (the opening burst stays out of that
+//! reference). Neighbouring peaks are cut apart at the lowest row between
+//! them; each segment's prints become one sphere at their volume-weighted
+//! price and place, sized like any sphere by area against the frame's
+//! reference. The cuts read the held price scale and the data, never the
+//! clip or the axis' offset, so a pan never regroups a mass.
 use super::constants::{
-    PEAK_BALANCED_STRENGTH, PEAK_LABEL_RANK, PEAK_PROFILE_MAX_ROWS, PEAK_PROMINENCE_PERCENT,
-    PEAK_RADIUS_SHARES, PEAK_RANK_STOPS, PEAK_SMOOTHING_KERNEL,
+    PEAK_BALANCED_STRENGTH, PEAK_LABEL_REFERENCE_DIVISOR, PEAK_PROFILE_MAX_ROWS,
+    PEAK_PROMINENCE_PERCENT, PEAK_ROW_MAX_DOUBLINGS, PEAK_SIGMA_RADIUS_SHARE,
+    PEAK_SMOOTHING_KERNEL,
 };
 use super::{FlowTapeDot, FlowTapeFrame, FlowTapeView, Group, MergeDisc as _};
 use rust_decimal::{Decimal, prelude::ToPrimitive as _};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 /// Empty rows kept on each side of a profile, so the smoothing's tails stay
 /// whole and a hill at the region's highest or lowest price is still a hill.
 const PAD_ROWS: usize = PEAK_SMOOTHING_KERNEL.len() - 1;
 
-/// One region window's native cells divided at the valleys of their
-/// volume-by-price profile: one group per peak, lowest price first.
-pub(super) fn divide_at_peaks(window: Vec<Group>) -> Vec<Group> {
-    if window.len() < 2 {
-        return window;
+/// Each region window's cuts: the lowest price of every segment after the
+/// first.
+pub(super) type PeakCutsByWindow = BTreeMap<i64, Vec<Decimal>>;
+
+/// How a view's peak regions are cut: the tape's tick, and the cuts a worker
+/// kept per region window for the view's price step.
+#[derive(Clone, Copy, Default)]
+pub(super) struct PeakDivision<'a> {
+    pub(super) tick: Option<Decimal>,
+    pub(super) kept: Option<&'a PeakCutsByWindow>,
+}
+
+impl PeakDivision<'_> {
+    /// Region window `key`'s cells divided at the valleys of their profile:
+    /// one group per peak, lowest price first.
+    pub(super) fn divide(&self, key: i64, window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+        let cuts = match self.kept.and_then(|kept| kept.get(&key)) {
+            Some(cuts) => Cow::Borrowed(cuts.as_slice()),
+            None => Cow::Owned(peak_cuts(&window, view, self.tick)),
+        };
+        let mut segments: Vec<Option<Group>> = (0..=cuts.len()).map(|_| None).collect();
+        for group in window {
+            let at = price(&group).map_or(0, |price| cuts.partition_point(|cut| *cut <= price));
+            let segment = &mut segments[at];
+            match segment {
+                Some(held) => held.absorb(group, f64::INFINITY),
+                None => *segment = Some(group),
+            }
+        }
+        segments.into_iter().flatten().collect()
     }
-    let prices: Vec<Decimal> = window.iter().map(price).collect();
-    let grid = Grid::of(&prices);
-    let rows: Vec<usize> = prices.iter().map(|price| grid.row(*price)).collect();
-    let mut raw = vec![Decimal::ZERO; grid.rows];
-    for (group, &row) in window.iter().zip(&rows) {
-        raw[row] += group.quantity();
-    }
-    let cuts = valleys(&smooth(&raw));
-    let mut segments: Vec<Option<Group>> = (0..=cuts.len()).map(|_| None).collect();
-    for (group, row) in window.into_iter().zip(rows) {
-        let segment = &mut segments[cuts.partition_point(|cut| *cut <= row)];
-        match segment {
-            Some(held) => held.absorb(group, f64::INFINITY),
-            None => *segment = Some(group),
+}
+
+/// The key a worker's kept cuts hold for: the region, the tape's tick, the
+/// row height the view asks for, and the opening windows kept out of the
+/// prominence reference.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PeakKey {
+    region: super::FlowRegionSpan,
+    tick: Option<Decimal>,
+    row_target: u64,
+    opening_windows: Vec<i64>,
+}
+
+impl PeakKey {
+    pub(super) fn of(view: FlowTapeView, tick: Option<Decimal>, opening_windows: &[i64]) -> Self {
+        Self {
+            region: view.region,
+            tick,
+            row_target: row_target(view).to_bits(),
+            opening_windows: opening_windows.to_vec(),
         }
     }
-    segments.into_iter().flatten().collect()
+}
+
+/// Where a window's cells are cut apart: the lowest price of each segment
+/// after the first.
+pub(super) fn peak_cuts(
+    window: &[Group],
+    view: FlowTapeView,
+    tick: Option<Decimal>,
+) -> Vec<Decimal> {
+    let prices: Vec<Option<Decimal>> = window.iter().map(price).collect();
+    let known = || prices.iter().flatten().copied();
+    let (Some(low), Some(high)) = (known().min(), known().max()) else {
+        return Vec::new();
+    };
+    let tick = tick
+        .filter(|tick| *tick > Decimal::ZERO)
+        .unwrap_or_else(|| finest_unit(known()));
+    let Some(grid) = Grid::of(low, high, row_step(tick, row_target(view))) else {
+        return Vec::new();
+    };
+    let mut raw = vec![Decimal::ZERO; grid.rows];
+    let mut ordinary = vec![Decimal::ZERO; grid.rows];
+    for (group, price) in window.iter().zip(&prices) {
+        let row = price.map_or(PAD_ROWS, |price| grid.row(price));
+        raw[row] = raw[row].saturating_add(group.quantity());
+        let plain = group.quantity() - group.opening.min(group.quantity());
+        ordinary[row] = ordinary[row].saturating_add(plain);
+    }
+    let smoothed = smooth(&raw);
+    let reference = smooth(&ordinary)
+        .into_iter()
+        .max()
+        .filter(|poc| *poc > Decimal::ZERO)
+        .unwrap_or_else(|| smoothed.iter().copied().max().unwrap_or_default());
+    valleys(&smoothed, reference)
+        .into_iter()
+        .filter_map(|row| grid.price_of(row))
+        .collect()
 }
 
 /// Drop the divided masses the price axis does not show, answering their
@@ -65,92 +140,118 @@ pub(super) fn drop_off_axis(groups: &mut Vec<Group>, view: FlowTapeView) -> usiz
 }
 
 /// A native cell's price: every print of a cell is at one price.
-fn price(group: &Group) -> Decimal {
-    group.moment.price_quantity() / group.quantity()
+fn price(group: &Group) -> Option<Decimal> {
+    group.moment.price_quantity().checked_div(group.quantity())
 }
 
-/// The rows a region's prices fall on.
+/// The finest step the prices' own digits can name, for a tape whose grid is
+/// not known yet.
+fn finest_unit(prices: impl Iterator<Item = Decimal>) -> Decimal {
+    Decimal::new(1, prices.map(|price| price.scale()).max().unwrap_or(0))
+}
+
+/// The row height, in price units, the view asks for: a smoothing sigma of
+/// [`PEAK_SIGMA_RADIUS_SHARE`] of the full-size radius at the view's held
+/// price scale (`height_px` over the axis' span). Zero when unmeasurable.
+fn row_target(view: FlowTapeView) -> f64 {
+    let span = (view.prices.high - view.prices.low).to_f64().unwrap_or(0.0);
+    let px_per_price = f64::from(view.height_px) / span;
+    let target = PEAK_SIGMA_RADIUS_SHARE * f64::from(view.radius_limit) / px_per_price;
+    if target.is_finite() && target > 0.0 {
+        target
+    } else {
+        0.0
+    }
+}
+
+/// The smallest power-of-two multiple of `tick` at least `target` tall.
+fn row_step(tick: Decimal, target: f64) -> Decimal {
+    let mut step = tick;
+    for _ in 0..PEAK_ROW_MAX_DOUBLINGS {
+        if step.to_f64().is_some_and(|step| step >= target) {
+            break;
+        }
+        match step.checked_mul(Decimal::TWO) {
+            Some(wider) => step = wider,
+            None => break,
+        }
+    }
+    step
+}
+
+/// The rows a region's prices fall on, anchored at whole multiples of the
+/// step so the same price always lands in the same row.
 struct Grid {
-    low: Decimal,
+    /// The first row's index on the absolute grid.
+    base: Decimal,
     step: Decimal,
     /// Rows including [`PAD_ROWS`] on each side.
     rows: usize,
 }
 
 impl Grid {
-    /// The finest grid every price lies on: the greatest common step of the
-    /// prices above the lowest, coarsened by a whole factor when the span
+    /// The grid of `step` over `low..=high`, the step doubled while the span
     /// would need more than [`PEAK_PROFILE_MAX_ROWS`] rows.
-    fn of(prices: &[Decimal]) -> Self {
-        let low = prices.iter().copied().min().unwrap_or_default();
-        let high = prices.iter().copied().max().unwrap_or_default();
-        let gcd = prices
-            .iter()
-            .fold(Decimal::ZERO, |step, price| gcd(step, *price - low));
-        let mut step = if gcd > Decimal::ZERO {
-            gcd
-        } else {
-            Decimal::ONE
-        };
-        let span = |step: Decimal| {
-            ((high - low) / step)
-                .floor()
-                .to_usize()
-                .unwrap_or(usize::MAX)
-        };
-        let needed = span(step).saturating_add(1);
-        if needed > PEAK_PROFILE_MAX_ROWS {
-            step *= Decimal::from(needed.div_ceil(PEAK_PROFILE_MAX_ROWS));
-        }
-        Self {
-            low,
-            step,
-            rows: span(step).min(PEAK_PROFILE_MAX_ROWS - 1) + 1 + 2 * PAD_ROWS,
+    fn of(low: Decimal, high: Decimal, mut step: Decimal) -> Option<Self> {
+        loop {
+            let index = |price: Decimal| Some(price.checked_div(step)?.floor());
+            let (base, top) = (index(low)?, index(high)?);
+            let span = top.checked_sub(base)?.to_usize()?;
+            if span < PEAK_PROFILE_MAX_ROWS {
+                return Some(Self {
+                    base,
+                    step,
+                    rows: span + 1 + 2 * PAD_ROWS,
+                });
+            }
+            step = step.checked_mul(Decimal::TWO)?;
         }
     }
 
     fn row(&self, price: Decimal) -> usize {
-        let row = ((price - self.low) / self.step).floor().to_usize();
-        PAD_ROWS + row.unwrap_or_default().min(self.rows - 1 - 2 * PAD_ROWS)
+        let row = price
+            .checked_div(self.step)
+            .and_then(|index| index.floor().checked_sub(self.base))
+            .and_then(|row| row.to_usize())
+            .unwrap_or(0);
+        PAD_ROWS + row.min(self.rows - 1 - 2 * PAD_ROWS)
+    }
+
+    /// The lowest price of `row`.
+    fn price_of(&self, row: usize) -> Option<Decimal> {
+        let offset = Decimal::from(row.checked_sub(PAD_ROWS)?);
+        self.base.checked_add(offset)?.checked_mul(self.step)
     }
 }
 
-/// Euclid's greatest common divisor, exact on decimals.
-fn gcd(mut a: Decimal, mut b: Decimal) -> Decimal {
-    while b > Decimal::ZERO {
-        (a, b) = (b, a % b);
-    }
-    a
-}
-
-/// `raw` convolved with the kernel, out of range read as empty. The weights
-/// are integers, so every row is exact whatever order it is summed in.
+/// `raw` convolved with the kernel, out of range read as empty: each occupied
+/// row adds its weighted share to the rows within reach, so empty stretches
+/// cost nothing. The weights are integers, so every row is exact.
 fn smooth(raw: &[Decimal]) -> Vec<Decimal> {
     let weights = PEAK_SMOOTHING_KERNEL.map(Decimal::from);
-    (0..raw.len())
-        .map(|row| {
-            let mut sum = weights[0] * raw[row];
-            for (distance, weight) in weights.iter().enumerate().skip(1) {
-                if let Some(below) = row.checked_sub(distance) {
-                    sum += *weight * raw[below];
-                }
-                if let Some(above) = raw.get(row + distance) {
-                    sum += *weight * *above;
-                }
-            }
-            sum
-        })
-        .collect()
+    let reach = weights.len() - 1;
+    let mut smoothed = vec![Decimal::ZERO; raw.len()];
+    for (row, quantity) in raw.iter().enumerate() {
+        if quantity.is_zero() {
+            continue;
+        }
+        for target in row.saturating_sub(reach)..(row + reach + 1).min(raw.len()) {
+            let weight = weights[target.abs_diff(row)];
+            smoothed[target] = smoothed[target].saturating_add(weight.saturating_mul(*quantity));
+        }
+    }
+    smoothed
 }
 
 /// Where neighbouring significant peaks of `smoothed` are cut apart: the
 /// first lowest row between each pair, as the first row of the upper part.
-fn valleys(smoothed: &[Decimal]) -> Vec<usize> {
-    let poc = smoothed.iter().copied().max().unwrap_or_default();
-    let floor = poc * Decimal::from(PEAK_PROMINENCE_PERCENT);
+/// A peak is significant when its prominence reaches
+/// [`PEAK_PROMINENCE_PERCENT`] of `reference`.
+fn valleys(smoothed: &[Decimal], reference: Decimal) -> Vec<usize> {
+    let floor = reference.saturating_mul(Decimal::from(PEAK_PROMINENCE_PERCENT));
     let peaks: Vec<usize> = local_maxima(smoothed)
         .into_iter()
-        .filter(|&peak| prominence(smoothed, peak) * Decimal::ONE_HUNDRED >= floor)
+        .filter(|&peak| prominence(smoothed, peak).saturating_mul(Decimal::ONE_HUNDRED) >= floor)
         .collect();
     peaks
         .windows(2)
@@ -220,65 +321,16 @@ fn prominence(values: &[Decimal], peak: usize) -> Decimal {
     height - left.max(right)
 }
 
-/// The share of `sorted` at or below `quantity`.
-fn rank(sorted: &[Decimal], quantity: Decimal) -> f32 {
-    sorted.partition_point(|held| *held <= quantity) as f32 / sorted.len().max(1) as f32
-}
-
-/// The radius share [`PEAK_RANK_STOPS`] and [`PEAK_RADIUS_SHARES`] give `rank`.
-fn radius_share(rank: f32) -> f32 {
-    let last = PEAK_RANK_STOPS.len() - 1;
-    if rank >= PEAK_RANK_STOPS[last] {
-        return PEAK_RADIUS_SHARES[last];
-    }
-    let at = PEAK_RANK_STOPS[1..]
-        .iter()
-        .position(|stop| rank <= *stop)
-        .unwrap_or(last - 1);
-    let (from, to) = (PEAK_RANK_STOPS[at], PEAK_RANK_STOPS[at + 1]);
-    let t = ((rank - from) / (to - from)).clamp(0.0, 1.0);
-    PEAK_RADIUS_SHARES[at] + t * (PEAK_RADIUS_SHARES[at + 1] - PEAK_RADIUS_SHARES[at])
-}
-
 impl FlowTapeFrame {
-    /// The frame's quantities, smallest first.
-    fn sorted_quantities(&self) -> Vec<Decimal> {
-        let mut sorted: Vec<_> = self.dots.iter().map(|dot| dot.mark.quantity).collect();
-        sorted.sort_unstable();
-        sorted
-    }
-
-    /// Under peak spheres, size every mass by its rank among the masses of
-    /// the frame (those whose centres the painted clip and the axis hold),
-    /// not by area against a reference: the median small, the rarest large,
-    /// and a mass under a quarter of the largest still a dot. Ties share a
-    /// rank, so equal masses draw equal.
-    pub(super) fn size_peaks_by_rank(&mut self) {
-        if !self.view.region.divides_at_peaks() {
-            return;
-        }
-        let sorted = self.sorted_quantities();
-        for dot in &mut self.dots {
-            let share = radius_share(rank(&sorted, dot.mark.quantity));
-            dot.mark.size = share;
-            dot.radius = self.view.radius_limit * share;
-            dot.opening_oversized = false;
-        }
-    }
-
-    /// The least quantity that carries a label under peak spheres: the top
-    /// fifth by rank ([`PEAK_LABEL_RANK`]). `None` when the frame does not
-    /// divide its regions at peaks, or holds no mass.
+    /// The least quantity that carries a label under peak spheres: the
+    /// frame's reference divided by [`PEAK_LABEL_REFERENCE_DIVISOR`], so only
+    /// the largest masses do. `None` when the frame does not divide its
+    /// regions at peaks, or has no reference.
     #[must_use]
     pub fn peak_label_floor(&self) -> Option<Decimal> {
-        if !self.view.region.divides_at_peaks() {
-            return None;
-        }
-        let sorted = self.sorted_quantities();
-        sorted
-            .iter()
-            .copied()
-            .find(|quantity| rank(&sorted, *quantity) >= PEAK_LABEL_RANK)
+        self.effective_reference
+            .filter(|_| self.view.region.divides_at_peaks())
+            .map(|reference| reference / Decimal::from(PEAK_LABEL_REFERENCE_DIVISOR))
     }
 
     /// How strongly a peak sphere's fill is drawn: a balanced mass at

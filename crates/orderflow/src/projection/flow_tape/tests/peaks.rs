@@ -380,6 +380,11 @@ fn a_hundredth_of_the_reference_draws_at_the_minimum_radius() {
         .find(|dot| dot.mark.quantity == Decimal::ONE)
         .unwrap();
     assert_eq!(small.radius, PEAK_MIN_RADIUS_PX);
+    assert_eq!(
+        flow_notes(Some(&frame), FlowProgress::default()),
+        ["1 peak masses drawn at the minimum radius, larger than their area"],
+        "the readback says the dot is larger than its area"
+    );
 }
 
 /// Six hills of one candle, 15 points apart on a 5-point tick, with a lot in

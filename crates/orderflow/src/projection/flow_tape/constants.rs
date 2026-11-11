@@ -121,12 +121,3 @@ pub const PEAK_MIN_RADIUS_PX: f32 = crate::config::DEFAULT_BUBBLE_MIN_RADIUS;
 /// The fill strength of a perfectly balanced mass; a one-sided mass is drawn
 /// at full strength, and strength is linear in `|buy - sell| / (buy + sell)`.
 pub const PEAK_BALANCED_STRENGTH: f32 = 0.45;
-
-/// Rank fractions at which [`PEAK_RADIUS_SHARES`] are reached.
-pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
-
-/// A mass's radius share at each of [`PEAK_RANK_STOPS`].
-pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
-
-/// Masses at or above this rank fraction carry their quantity.
-pub const PEAK_LABEL_RANK: f32 = 0.8;

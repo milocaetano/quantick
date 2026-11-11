@@ -228,9 +228,6 @@ impl FlowTapeFrame {
     }
 
     fn order_for_paint(&mut self) {
-        // Peak spheres are sized by rank among the frame's own masses, so
-        // every finished frame ranks them once, here, before it is ordered.
-        self.size_peaks_by_rank();
         self.paint_order = (0..self.dots.len()).collect();
         self.paint_order.sort_by_key(|&index| {
             let dot = &self.dots[index];
@@ -444,9 +441,14 @@ fn region_window(group: &Group, view: FlowTapeView) -> i64 {
 
 /// One region window's mergeable groups, merged: divided at the peaks of
 /// their volume profile, or pooled by proximity.
-fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+fn merge_window(
+    window: Vec<Group>,
+    view: FlowTapeView,
+    key: i64,
+    peaks: peaks::PeakDivision<'_>,
+) -> Vec<Group> {
     if view.region.divides_at_peaks() {
-        return peaks::divide_at_peaks(window);
+        return peaks.divide(key, window, view);
     }
     let (bubbles, sizing, geometry) = merge_frame(view);
     collide(
@@ -509,6 +511,10 @@ fn resize_dot(dot: &mut FlowTapeDot, view: FlowTapeView, reference: Decimal, exc
         } else {
             dot.mark.size
         };
+    if view.region.divides_at_peaks() {
+        // A mass too small for its earned area is still a dot.
+        dot.radius = dot.radius.max(PEAK_MIN_RADIUS_PX);
+    }
 }
 
 impl FlowTapeFrame {
@@ -618,6 +624,7 @@ impl FlowTapeFrame {
 fn finish_groups(
     groups: Vec<Group>,
     view: FlowTapeView,
+    peaks: peaks::PeakDivision<'_>,
 ) -> (
     Vec<FlowTapeDot>,
     Option<Decimal>,
@@ -645,8 +652,8 @@ fn finish_groups(
         }
     }
     let mut groups = Vec::new();
-    for window in windows.into_values() {
-        groups.extend(merge_window(window, view));
+    for (key, window) in windows {
+        groups.extend(merge_window(window, view, key, peaks));
     }
     groups.append(&mut standalone);
     off_axis_executions += peaks::drop_off_axis(&mut groups, view);
