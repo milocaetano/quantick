@@ -24,7 +24,11 @@
 //! The goldens are what main ef882174 painted through this harness, its glue
 //! mirrored as it stood there: no native inset on the lane's book and no
 //! lane-only opening in `band`, which paint the same as here while the
-//! candles follow the live edge.
+//! candles follow the live edge. One thing has been taken out of them since:
+//! the fronts drawn where a level only slid off the far end of the ladder
+//! (106 of 452 beside the candles, 106 of 455 tape-only), which the history
+//! now labels as leaving the view. Every cell and every other front is as
+//! ef882174 painted it.
 //!
 //! When this fails, the depth the WIN tape paints changed. The same rule as
 //! the marks golden applies: do not edit the golden to match.
@@ -83,7 +87,7 @@ struct Book {
 impl Book {
     fn new() -> Self {
         Self {
-            differ: SnapshotDiffer::new(BookCoverage::Limited {
+            differ: SnapshotDiffer::new(BookCoverage::Window {
                 levels_per_side: BOOK_LEVELS as usize,
             }),
         }

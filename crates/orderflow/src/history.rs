@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::mem::size_of;
 
 use quantick_engine::{Side, Trade};
-use quantick_orderbook::{ApplyOutcome, BookDelta, BookError, BookSide, BookSnapshot, OrderBook};
+use quantick_orderbook::{
+    ApplyOutcome, BookCoverage, BookDelta, BookError, BookSide, BookSnapshot, OrderBook,
+};
 use rust_decimal::Decimal;
 
 use super::config::{BubbleSizeReference, HeatmapConfig};
@@ -41,6 +43,11 @@ pub struct LiquidityRun {
     pub start_ms: i64,
     /// Timestamp at which it changed; `None` while this is the current value.
     pub end_ms: Option<i64>,
+    /// The run ended because its level slid off the far end of a ladder that
+    /// shows a fixed number of levels ([`BookCoverage::Window`]). That is the
+    /// end of the observation, not a reduction: the venue stopped reporting
+    /// the level, and what rests there afterwards is unknown.
+    pub left_view: bool,
 }
 
 /// How old the newest mark on the tape is — or that there is no mark at all.
@@ -280,6 +287,9 @@ pub struct LiquidityHistory {
     evicted_through_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
+    /// Levels the book held on each side (bids, asks) when it was last
+    /// reconciled: what tells a ladder that slid from one that thinned.
+    side_levels: (usize, usize),
     aggressions: VecDeque<Aggression>,
     /// Index-aligned with `aggressions`: the newest timestamp among that
     /// print and every print recorded before it. Non-decreasing even where
@@ -322,6 +332,7 @@ impl LiquidityHistory {
             evicted_through_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
+            side_levels: (0, 0),
             aggressions: VecDeque::new(),
             aggression_max_ms: VecDeque::new(),
             coverage: VecDeque::new(),
@@ -961,6 +972,7 @@ impl LiquidityHistory {
 
     fn start_from_current_book(&mut self, timestamp_ms: i64, generation: u64) {
         debug_assert!(self.active.is_empty());
+        self.side_levels = (self.book.bids().len(), self.book.asks().len());
         for (key, quantity) in aggregate_book(&self.book, self.config.price_grouping) {
             self.active.insert(
                 key,
@@ -971,6 +983,7 @@ impl LiquidityHistory {
                     quantity,
                     start_ms: timestamp_ms,
                     end_ms: None,
+                    left_view: false,
                 },
             );
             self.counters.runs_created += 1;
@@ -980,6 +993,8 @@ impl LiquidityHistory {
     fn reconcile_current_book(&mut self, timestamp_ms: i64, generation: u64) {
         let next = aggregate_book(&self.book, self.config.price_grouping);
         let existing: Vec<LevelKey> = self.active.keys().copied().collect();
+        let view = ViewEdge::of(&self.book, self.side_levels, self.config.price_grouping);
+        self.side_levels = (self.book.bids().len(), self.book.asks().len());
 
         for key in existing {
             let changed = next
@@ -988,6 +1003,7 @@ impl LiquidityHistory {
             if changed {
                 let mut run = self.active.remove(&key).expect("key came from active");
                 run.end_ms = Some(timestamp_ms);
+                run.left_view = !next.contains_key(&key) && view.is_past(key);
                 self.archive_run(run);
             }
         }
@@ -1005,6 +1021,7 @@ impl LiquidityHistory {
                     quantity,
                     start_ms: timestamp_ms,
                     end_ms: None,
+                    left_view: false,
                 },
             );
             self.counters.runs_created += 1;
@@ -1115,6 +1132,54 @@ fn quantity_diverged(run_quantity: Decimal, book_quantity: Decimal) -> bool {
     let hi = run_quantity.max(book_quantity);
     let lo = run_quantity.min(book_quantity);
     (hi - lo) * Decimal::from(10) > hi // > ~10% relative change
+}
+
+/// Where a sliding ladder's view ends on each side after an update, when a
+/// level missing past that end left the view rather than the book.
+///
+/// Only a [`BookCoverage::Window`] source has such an end: it republishes
+/// the levels nearest the price and says nothing of the rest. A side that
+/// holds as many levels as before the update is still a full ladder, so a
+/// bucket lying wholly past its outermost level was pushed out by a level
+/// entering nearer the price. A side that got shallower had room, and a pull
+/// at the far edge is followed by the next level out, which moves the edge
+/// away from the price: both stay observed reductions. The edge is read off
+/// the whole book, never off a visible slice of it.
+#[derive(Debug, Clone, Copy, Default)]
+struct ViewEdge {
+    /// Buckets ending at or below this price hold no bid still in view.
+    bid_floor: Option<Decimal>,
+    /// Buckets starting above this price hold no ask still in view.
+    ask_ceiling: Option<Decimal>,
+    grouping: Decimal,
+}
+
+impl ViewEdge {
+    fn of(book: &OrderBook, previous_levels: (usize, usize), grouping: Decimal) -> Self {
+        if !matches!(book.coverage(), Some(BookCoverage::Window { .. })) {
+            return Self::default();
+        }
+        let (bids, asks) = (book.bids(), book.asks());
+        Self {
+            bid_floor: (bids.len() >= previous_levels.0)
+                .then(|| bids.keys().next().copied())
+                .flatten(),
+            ask_ceiling: (asks.len() >= previous_levels.1)
+                .then(|| asks.keys().next_back().copied())
+                .flatten(),
+            grouping,
+        }
+    }
+
+    /// Whether every price of the bucket at `key` lies past the view's end.
+    fn is_past(self, (side, bucket): LevelKey) -> bool {
+        match side {
+            SideKey::Bid => self
+                .bid_floor
+                .is_some_and(|floor| bucket + self.grouping <= floor),
+            SideKey::Ask => self.ask_ceiling.is_some_and(|ceiling| bucket > ceiling),
+        }
+    }
 }
 
 fn aggregate_book(book: &OrderBook, grouping: Decimal) -> BTreeMap<LevelKey, Decimal> {
@@ -1899,5 +1964,181 @@ mod tests {
             );
         }
         assert!(history.aggressions_since(55).count() <= 2);
+    }
+
+    /// Levels a side the fixture's ladder shows, one tick apart: MetaTrader's
+    /// DOM, differed into a snapshot and deltas as the bridge's is.
+    const LADDER: i64 = 10;
+
+    fn ladder(best_bid: i64) -> (Vec<BookLevel>, Vec<BookLevel>) {
+        let rung = |price: i64| level(&price.to_string(), "7");
+        (
+            (0..LADDER).map(|k| rung(best_bid - k)).collect(),
+            (0..LADDER).map(|k| rung(best_bid + 1 + k)).collect(),
+        )
+    }
+
+    /// Feed `images` through the differ a full-image venue is read with.
+    fn observe_images(
+        coverage: BookCoverage,
+        images: &[(i64, Vec<BookLevel>, Vec<BookLevel>)],
+    ) -> LiquidityHistory {
+        use quantick_orderbook::{ImageOutcome, SnapshotDiffer};
+        let mut differ = SnapshotDiffer::new(coverage);
+        let mut history = LiquidityHistory::new(enabled_config());
+        for (at_ms, bids, asks) in images {
+            match differ.observe(bids, asks) {
+                ImageOutcome::Snapshot(snapshot) => {
+                    history.install_snapshot(*at_ms, 1, snapshot).unwrap();
+                }
+                ImageOutcome::Delta(delta) => {
+                    history.apply_delta(*at_ms, &delta).unwrap();
+                }
+                ImageOutcome::Unchanged => {}
+                ImageOutcome::Crossed { .. } => panic!("the fixture never crosses"),
+            }
+        }
+        history
+    }
+
+    /// The reductions a native-row projection would turn into marks.
+    fn drawn_reductions(history: &LiquidityHistory) -> Vec<(BookSide, Decimal, bool)> {
+        use crate::config::DisplayGrouping;
+        use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
+        let grouping =
+            EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, dec("100"));
+        let grouped = sweep_grouped_runs(
+            history.runs(),
+            history.coverage_segments(),
+            grouping,
+            GroupingWindow {
+                start_ms: 0,
+                end_ms: 10_000,
+                open_run_end_ms: history.latest_book_ms().unwrap(),
+                price_low: dec("0"),
+                price_high: dec("1000"),
+            },
+        );
+        crate::interaction::liquidity_events(&grouped.transitions)
+            .into_iter()
+            .map(|event| (event.side, event.price_bucket, event.full_removal))
+            .collect()
+    }
+
+    fn window() -> BookCoverage {
+        BookCoverage::Window {
+            levels_per_side: LADDER as usize,
+        }
+    }
+
+    #[test]
+    fn a_level_sliding_off_a_depth_window_is_not_a_reduction() {
+        // The price climbs three ticks. Each step the ladder gains a bid at
+        // the top and stops showing its lowest one; the asks lose their best
+        // (lifted) and show one more at the far end.
+        let images: Vec<_> = (0..4)
+            .map(|step| {
+                let (bids, asks) = ladder(500 + step);
+                (100 + step * 100, bids, asks)
+            })
+            .collect();
+        let history = observe_images(window(), &images);
+
+        let left: Vec<_> = history
+            .runs()
+            .filter(|run| run.left_view)
+            .map(|run| (run.side, run.price_bucket, run.end_ms))
+            .collect();
+        assert_eq!(
+            left,
+            [
+                (BookSide::Bid, dec("491"), Some(200)),
+                (BookSide::Bid, dec("492"), Some(300)),
+                (BookSide::Bid, dec("493"), Some(400)),
+            ],
+            "the three bids that slid off the far end, and nothing else"
+        );
+        assert_eq!(
+            drawn_reductions(&history),
+            [
+                (BookSide::Ask, dec("501"), true),
+                (BookSide::Ask, dec("502"), true),
+                (BookSide::Ask, dec("503"), true),
+            ],
+            "only the asks the price went through are reductions"
+        );
+    }
+
+    #[test]
+    fn a_jump_takes_every_level_it_leaves_behind_out_of_view() {
+        let (bids, asks) = ladder(500);
+        let (jumped_bids, jumped_asks) = ladder(506);
+        let history = observe_images(
+            window(),
+            &[(100, bids, asks), (200, jumped_bids, jumped_asks)],
+        );
+        let left = history.runs().filter(|run| run.left_view).count();
+        assert_eq!(left, 6, "bids 491..=496 left the ten-level view");
+        let reductions = drawn_reductions(&history);
+        assert!(
+            reductions.iter().all(|(side, _, _)| *side == BookSide::Ask),
+            "no bid was reported gone: {reductions:?}"
+        );
+    }
+
+    #[test]
+    fn a_pull_at_the_far_edge_of_a_depth_window_stays_a_reduction() {
+        // The outermost bid is cancelled. The ladder then shows the next
+        // level out, so the far edge moves away from the price, not towards.
+        let (bids, asks) = ladder(500);
+        let mut pulled = bids.clone();
+        pulled.pop();
+        pulled.push(level("490", "7"));
+        let history = observe_images(window(), &[(100, bids, asks.clone()), (200, pulled, asks)]);
+        assert!(history.runs().all(|run| !run.left_view));
+        assert_eq!(
+            drawn_reductions(&history),
+            [(BookSide::Bid, dec("491"), true)]
+        );
+    }
+
+    #[test]
+    fn a_pull_from_a_ladder_with_room_stays_a_reduction() {
+        // Nine bids remain: the view was not what removed the tenth.
+        let (bids, asks) = ladder(500);
+        let mut thinner = bids.clone();
+        thinner.pop();
+        let history = observe_images(window(), &[(100, bids, asks.clone()), (200, thinner, asks)]);
+        assert!(history.runs().all(|run| !run.left_view));
+        assert_eq!(
+            drawn_reductions(&history),
+            [(BookSide::Bid, dec("491"), true)]
+        );
+    }
+
+    #[test]
+    fn a_diff_stream_reports_its_far_edge_removals() {
+        // Binance's book is a starting image plus the exchange's own updates:
+        // a level it zeroes was reported gone, wherever it sits.
+        let images: Vec<_> = (0..2)
+            .map(|step| {
+                let (bids, asks) = ladder(500 + step);
+                (100 + step * 100, bids, asks)
+            })
+            .collect();
+        let history = observe_images(
+            BookCoverage::Limited {
+                levels_per_side: LADDER as usize,
+            },
+            &images,
+        );
+        assert!(history.runs().all(|run| !run.left_view));
+        assert_eq!(
+            drawn_reductions(&history),
+            [
+                (BookSide::Bid, dec("491"), true),
+                (BookSide::Ask, dec("501"), true),
+            ]
+        );
     }
 }

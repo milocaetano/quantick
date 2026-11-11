@@ -113,8 +113,9 @@ pub struct VisualLiquidityRun {
 
 /// One factual change between two visual-range quantities.
 ///
-/// Window clipping, retention clipping, snapshot starts, coverage ends and gap
-/// boundaries are excluded. Consumers may therefore turn reductions into
+/// Window clipping, retention clipping, snapshot starts, coverage ends, gap
+/// boundaries and levels that left a sliding depth view
+/// ([`LiquidityRun::left_view`]) are excluded. Consumers may therefore turn reductions into
 /// neutral "displayed liquidity decreased" events without inventing causes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityTransition {
@@ -170,6 +171,9 @@ impl GroupKey {
 struct Change {
     starts: Decimal,
     ends: Decimal,
+    /// Quantity whose observation ended here: it stops being drawn, and
+    /// nothing is said about where it went.
+    left_view: Decimal,
     observed: bool,
 }
 
@@ -233,8 +237,12 @@ pub fn sweep_grouped_runs<'a>(
             && end_ms <= render_end
         {
             let end = changes.entry(end_ms).or_default();
-            end.ends += run.quantity;
-            end.observed = true;
+            if run.left_view {
+                end.left_view += run.quantity;
+            } else {
+                end.ends += run.quantity;
+                end.observed = true;
+            }
         }
     }
 
@@ -246,7 +254,7 @@ pub fn sweep_grouped_runs<'a>(
 
         for (timestamp_ms, change) in changes {
             let before = quantity;
-            let after = before - change.ends + change.starts;
+            let after = before - change.ends - change.left_view + change.starts;
             debug_assert!(after >= Decimal::ZERO, "grouped liquidity became negative");
             if after == before {
                 continue;
@@ -273,7 +281,7 @@ pub fn sweep_grouped_runs<'a>(
                     side,
                     price_bucket: key.price_bucket,
                     timestamp_ms,
-                    before,
+                    before: before - change.left_view,
                     after,
                 });
             }
@@ -352,6 +360,7 @@ mod tests {
             quantity: dec(quantity),
             start_ms,
             end_ms,
+            left_view: false,
         }
     }
 
@@ -479,5 +488,48 @@ mod tests {
         assert!(grouped.transitions.is_empty());
         assert_eq!(grouped.runs[0].start_ms, 0);
         assert_eq!(grouped.runs[0].quantity, dec("8"));
+    }
+
+    #[test]
+    fn a_run_that_left_the_view_is_not_a_transition() {
+        let left = LiquidityRun {
+            left_view: true,
+            ..run(BookSide::Bid, "100", "4", 100, Some(500))
+        };
+        let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, dec("5"));
+        let grouped = sweep_grouped_runs([&left], [&coverage(100, None)], grouping, window());
+        assert!(grouped.transitions.is_empty());
+        assert_eq!(grouped.runs.len(), 1, "the band still ends where it did");
+        assert_eq!(grouped.runs[0].end_ms, 500);
+    }
+
+    #[test]
+    fn a_range_reports_only_the_reduction_it_observed() {
+        // One visual range, two base levels: 101 slides out of view while 100
+        // really drops from eight to four.
+        let runs = [
+            LiquidityRun {
+                left_view: true,
+                ..run(BookSide::Bid, "101", "10", 100, Some(500))
+            },
+            run(BookSide::Bid, "100", "8", 100, Some(500)),
+            run(BookSide::Bid, "100", "4", 500, None),
+        ];
+        let grouping =
+            EffectiveGrouping::resolve(DisplayGrouping::Multiple(2), Decimal::ONE, dec("5"));
+        let grouped = sweep_grouped_runs(&runs, [&coverage(100, None)], grouping, window());
+        assert_eq!(
+            grouped.transitions,
+            [LiquidityTransition {
+                generation: 7,
+                side: BookSide::Bid,
+                price_bucket: dec("100"),
+                timestamp_ms: 500,
+                before: dec("8"),
+                after: dec("4"),
+            }]
+        );
+        let quantities: Vec<_> = grouped.runs.iter().map(|run| run.quantity).collect();
+        assert_eq!(quantities, [dec("18"), dec("4")]);
     }
 }

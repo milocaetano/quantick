@@ -115,7 +115,7 @@ impl BookMapper {
         Self {
             symbol: symbol.into().to_uppercase(),
             generation,
-            differ: SnapshotDiffer::new(BookCoverage::Limited {
+            differ: SnapshotDiffer::new(BookCoverage::Window {
                 levels_per_side: HYPERLIQUID_LEVELS_PER_SIDE,
             }),
             last_event_ms: None,
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(price_step, None);
         assert_eq!(
             snapshot.coverage(),
-            BookCoverage::Limited {
+            BookCoverage::Window {
                 levels_per_side: HYPERLIQUID_LEVELS_PER_SIDE
             }
         );

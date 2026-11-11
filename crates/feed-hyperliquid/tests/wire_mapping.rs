@@ -65,7 +65,7 @@ fn recorded_l2_image_becomes_a_limited_neutral_snapshot() {
     assert_eq!(snapshot.asks().len(), 3);
     assert_eq!(
         snapshot.coverage(),
-        BookCoverage::Limited {
+        BookCoverage::Window {
             levels_per_side: HYPERLIQUID_LEVELS_PER_SIDE
         }
     );
