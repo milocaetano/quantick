@@ -3,6 +3,7 @@
 //! flight, and what the context panes not built yet will open with.
 
 use eframe::egui;
+use quantick_workspace::canvas::{fold_column, revealed};
 use smallvec::SmallVec;
 
 use super::CanvasLayout;
@@ -129,27 +130,16 @@ impl TabCanvas {
             return None;
         }
         self.layout = layout;
-        let wanted = layout
-            .kinds()
-            .iter()
-            .filter(|kind| matches!(kind, PaneKind::Time))
-            .count();
         // Set, never raised: switching to a three-pane layout and back before
         // the next frame used to leave the count where the wider layout put
         // it, and the tab then built a pane no layout had asked for — seeded
         // from the whole retained tape and fed every trade thereafter.
+        let wanted = preset.count(PaneKind::Time);
         self.pending_context_panes = wanted.saturating_sub(built_context_panes);
-        Some(match layout {
-            CanvasLayout::Single => PaneSide::Flow,
-            CanvasLayout::Time => PaneSide::Time(0),
-            // The split reveals whichever pane the previous layout was not
-            // showing: the time pane coming from Single, the flow pane coming
-            // from Time.
-            _ if !layout.shows_flow() => PaneSide::Time(0),
-            _ if !layout.shows_time() => PaneSide::Flow,
-            _ if !previous.shows_time() => PaneSide::Time(0),
-            _ if !previous.shows_flow() => PaneSide::Flow,
-            _ => focus,
+        Some(match revealed(previous.preset(), preset) {
+            Some(PaneKind::Time) => PaneSide::Time(0),
+            Some(_) => PaneSide::Flow,
+            None => focus,
         })
     }
 
@@ -237,41 +227,17 @@ impl TabCanvas {
         self.context_opening_intervals_ms = intervals.take(MAX_CONTEXT_PANES).collect();
     }
 
-    /// Put the context column away, or bring it back.
-    ///
-    /// **The one collapse path.** The divider drag, the rail, the View menu,
-    /// `Ctrl+0` and `layout.pane.collapse` all arrive here. Before this
-    /// existed the only way a *trader* could collapse the column was a mouse
-    /// drag, while an assistant had a named call for it — the second operator
-    /// holding a capability the first could not reach from the keyboard,
-    /// which is the rule inverted.
-    ///
-    /// `split_fraction` is deliberately untouched: it is the width the column
-    /// springs back to, and spending it here would hand back a different chart
-    /// from the one that was put away.
-    ///
-    /// Returns whether anything changed.
+    /// Put the context column away, or bring it back, through the one
+    /// collapse path ([`fold_column`]). Answers whether anything changed.
     pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
-        if self.context_collapsed == collapsed && (!collapsed || !self.flow_collapsed) {
-            return false;
-        }
-        self.context_collapsed = collapsed;
-        if collapsed {
-            self.flow_collapsed = false;
-        }
-        true
+        let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
+        fold_column(context, flow, collapsed)
     }
 
-    /// Whether the column painter draws this frame: a layout it knows, laid
-    /// out as its preset, nothing floating, folded or maximized by the
-    /// canvas model.
-    /// Anything else is painted from [`Self::state`]'s tree.
+    /// Whether the column painter draws this frame; anything else is painted
+    /// from [`Self::state`]'s tree.
     pub(crate) fn column_painted(&self) -> bool {
-        self.layout.is_column()
-            && self.state.floating().is_empty()
-            && self.state.maximized().is_none()
-            && self.state.minimized().is_empty()
-            && self.state.preset() == Some(self.layout.preset())
+        (self.state).column_painted(self.layout.preset(), self.layout.is_column())
     }
 
     /// One split on a column layout, owned by the painter drawing: see
@@ -291,14 +257,8 @@ impl TabCanvas {
 
     /// Fold or restore the flow pane while retaining the split's open width.
     pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
-        if self.flow_collapsed == collapsed && (!collapsed || !self.context_collapsed) {
-            return false;
-        }
-        self.flow_collapsed = collapsed;
-        if collapsed {
-            self.context_collapsed = false;
-        }
-        true
+        let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
+        fold_column(flow, context, collapsed)
     }
 }
 
