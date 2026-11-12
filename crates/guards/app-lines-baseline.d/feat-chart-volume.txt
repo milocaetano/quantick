@@ -1,4 +1,6 @@
 # Volume painting and native control adapters require app-owned panes, workers and layout edits.
 # Indicator evaluation, scale calculation and control decisions remain headless.
-crates/app +99
-!budget +99
+# R1 adds 16 lines mapping the painted pane/input to the chart-owned column picker.
+# Column geometry, plot dispatch and preview/visibility policy remain in chart.
+crates/app +115
+!budget +115

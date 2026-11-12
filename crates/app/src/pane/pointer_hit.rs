@@ -237,10 +237,10 @@ impl PaneHitTest<'_> {
             .canvas_hit(self.drawings, px(pos), band, right, total)
     }
 
-    /// Which overlay indicator's plotted line a pointer at `pos` is sitting
+    /// Which overlay indicator's plotted geometry a pointer at `pos` is sitting
     /// on, if any — the fourth place a double click opens settings from, and
     /// the most direct one: the thing the trader wants to change is the line
-    /// they are looking at.
+    /// they are looking at. Columns instead pick their painted rectangle bodies.
     ///
     /// Measured against the projection the *last* frame drew (§D8: no gesture
     /// re-measures a world it moved), and against the resolved style rather
@@ -254,17 +254,35 @@ impl PaneHitTest<'_> {
         let (chart, right, total, scale) = self.last_projection()?;
         let viewport = self.projection.viewport;
         let (start, end) = viewport.visible_range(chart.width(), total);
+        let column_pick = quantick_chart::indicator_views::ColumnPick {
+            visible: start..end,
+            partial_slot: (self.projection.series.closed_slots() < total)
+                .then_some(self.projection.series.closed_slots()),
+            candle_width: viewport.candle_width(),
+            pointer: (pos.x, pos.y),
+        };
         let mut best: Option<(f32, SlotId)> = None;
         for view in self.projection.indicators.visible_overlays() {
             let independent = view.bottom_scale(
                 start,
                 end,
-                total.checked_sub(1),
+                column_pick.partial_slot,
                 chart.top(),
                 chart.bottom(),
             );
             let y = |value| independent.map_or_else(|| scale.y(value), |scale| scale.y(value));
             for index in 0..view.descriptor.plots.len() {
+                if let Some(hit) = view.column_hit(
+                    index,
+                    &column_pick,
+                    |row| viewport.x_center(row, right, total),
+                    y,
+                ) {
+                    if hit && best.is_none_or(|(distance, _)| distance > 0.0) {
+                        best = Some((0.0, view.slot));
+                    }
+                    continue;
+                }
                 let Some(resolved) = view.plot_style(index) else {
                     continue;
                 };

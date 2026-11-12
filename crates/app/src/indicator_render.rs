@@ -18,15 +18,13 @@ use crate::chart::PriceScale;
 use crate::indicators::IndicatorView;
 use crate::theme;
 use crate::viewport::Viewport;
-use quantick_chart::indicator_views::format_value;
+use quantick_chart::indicator_views::{COLUMNS_WIDTH_FRAC, format_value};
 
 /// Marker radius for [`PlotStyle::Circles`] / arm length for
 /// [`PlotStyle::Cross`], in pixels.
 const MARKER_RADIUS_PX: f32 = 2.5;
 /// Bar body fraction of one slot for [`PlotStyle::Histogram`] (thin bars).
 const HISTOGRAM_WIDTH_FRAC: f32 = 0.3;
-/// Bar body fraction of one slot for [`PlotStyle::Columns`] (wide bars).
-const COLUMNS_WIDTH_FRAC: f32 = 0.8;
 /// Fill opacity of the [`PlotStyle::Area`] body under its outline.
 const AREA_FILL_ALPHA: u8 = 48;
 /// Vertical padding inside a pane, as a fraction of the value range.
