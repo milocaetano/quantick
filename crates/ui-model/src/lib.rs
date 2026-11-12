@@ -10,6 +10,48 @@ pub trait Model {
     fn update(state: &mut Self::State, intent: Self::Intent) -> Self::Effects;
 }
 
+/// Scoped model storage shared by every host. `V` contains host-only mechanics;
+/// this crate never paints it or gives it authority over a domain owner.
+pub struct Adapter<M: Model, V, E> {
+    pub model_state: M::State,
+    pub view: V,
+    effects: fn(M::Effects) -> E,
+    scopes: std::collections::BTreeMap<u64, (M::State, V)>,
+}
+impl<M: Model, V, E> Adapter<M, V, E> {
+    pub fn new(view: V, effects: fn(M::Effects) -> E) -> Self
+    where
+        M::State: Default,
+    {
+        Self {
+            model_state: Default::default(),
+            view,
+            effects,
+            scopes: Default::default(),
+        }
+    }
+    pub fn update(&mut self, intent: M::Intent) -> E {
+        (self.effects)(M::update(&mut self.model_state, intent))
+    }
+    pub fn retain_scopes(&mut self, keep: impl Fn(u64) -> bool) {
+        self.scopes.retain(|scope, _| keep(*scope));
+    }
+}
+impl<M: Model, V: Default, E> Adapter<M, V, E>
+where
+    M::State: Default,
+{
+    pub fn scoped(&mut self, scope: u64) -> (&mut M::State, &mut V) {
+        let (state, view) = self.scopes.entry(scope).or_default();
+        (state, view)
+    }
+    pub fn update_scoped(&mut self, scope: u64, intent: M::Intent) -> E {
+        let effects = self.effects;
+        let (state, _) = self.scoped(scope);
+        effects(M::update(state, intent))
+    }
+}
+
 /// Compatibility transition while a view still owns its legacy state.
 pub struct Legacy<E>(std::marker::PhantomData<E>);
 impl<E> Model for Legacy<E> {
@@ -36,9 +78,17 @@ pub enum Slot {
 macro_rules! models {
     (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
-        $field:ident: $model:ident = $model_file:literal, $view:ident = $view_file:literal,
+        $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident; )* }) => {
         $($(#[$model_attr])* #[path = $model_file] pub mod $model;)*
+        /// Typed host effects can grow when a new catalog row docks.
+        #[non_exhaustive]
+        #[derive(Debug, PartialEq)]
+        pub enum HostEffect {
+            $($(#[$model_attr])* $tag(<$model::Model as Model>::Effects),)*
+        }
+
+
     };
 }
 surface_catalog!(models);

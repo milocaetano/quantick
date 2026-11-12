@@ -375,6 +375,26 @@ at `85b7f57d3c39637977211aa950a937de84748647` measured the representative
 The app and orderflow ceilings, host, toolchain, jobs, profile and protocol
 remain unchanged. A separate ordinary run on the final commit must pass.
 
+#### Scoped 2026-11-12 app representative amendment
+
+The #923 pane-header extraction makes `crates/app/src/pane_header.rs` the
+frozen app representative at 1,097 production lines, replacing
+`crates/app/src/control/gateway/server.rs`. The coordinator authorized this
+source-only amendment in [#923](https://github.com/milocaetano/quantick/issues/923).
+The [retained reference run](https://github.com/milocaetano/quantick/actions/runs/43162580947)
+at `4701dbd8fa0f0369e0469f8768d0e1b8e6d9790b` failed the source identity check.
+All five samples and package tests completed: maximum loops were app
+51.189645685 s, orderflow 38.025611858 s and Pine 2.277488648 s.
+
+Only the app representative changes. The fixed ceilings remain **82.126**,
+**38.703** and **2.653 seconds**; the selected packages, other representatives,
+historical calibration SHA/time, host, toolchain, jobs, profile and protocol
+remain unchanged. This does not establish performance comparability with the
+old representative or permit future automatic source refreshes. The failed
+run remains diagnostic evidence. Independent scoped review verifies its raw
+series and frozen ranking; a separate ordinary final-head run must pass all
+unchanged limits before delivery.
+
 ### Rules for every calibration
 
 Do not replace these reviewed limits with automatic proposal output,

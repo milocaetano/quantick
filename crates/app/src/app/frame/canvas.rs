@@ -12,6 +12,28 @@ use crate::feed_notice;
 use crate::loading;
 use crate::tab::Tab;
 
+/// Synchronize the existing canvas owners before painting or accepting input.
+pub(super) fn prepare(
+    drawings: &mut crate::app::drawing_controller::DrawingController,
+    tabs: &mut crate::app::ArrangementHost,
+    surfaces: &mut crate::surfaces::Surfaces,
+    config: &crate::config::AppConfig,
+    style: &crate::style::ChartStyle,
+    background: Option<egui::Color32>,
+) -> (egui::Color32, crate::config::FeedCapabilities, bool) {
+    drawings.chrome.sync_content_editing(tabs);
+    surfaces.retain_scopes(|scope| {
+        tabs.iter()
+            .any(|tab| tab.panes().any(|(pane, _)| pane.id == scope))
+    });
+    let tab = &tabs[tabs.active_index()];
+    (
+        background.unwrap_or_else(|| crate::pane::background_color(style)),
+        tab.capabilities(config),
+        tab.side_note(config).is_some(),
+    )
+}
+
 /// What the canvas answers for the stages after it: the feed chip and popup
 /// the tail publishes, and whether a placement asked for its note typed.
 #[derive(Debug, Default)]

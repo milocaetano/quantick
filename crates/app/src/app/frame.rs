@@ -643,9 +643,6 @@ impl QuantickApp {
 
     /// The chart takes whatever the panels left.
     fn draw_canvas_stage(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
-        let background = scratch
-            .background
-            .unwrap_or_else(|| pane::background_color(&self.runtime.style));
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
@@ -654,25 +651,28 @@ impl QuantickApp {
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
-        let capabilities = self.active_tab().capabilities(&self.config);
-        let side_inferred = self.active_tab().side_note(&self.config).is_some();
         let bar_progress = self.layout_state().bar_progress_on(popup_tab);
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
-        self.drawings
-            .chrome
-            .sync_content_editing(&mut self.runtime.tabs);
+        let (background, capabilities, side_inferred) = canvas::prepare(
+            &mut self.drawings,
+            &mut self.runtime.tabs,
+            &mut self.surfaces,
+            &self.config,
+            &self.runtime.style,
+            scratch.background,
+        );
         let (stall, now_ms) = (scratch.stall.as_ref(), scratch.now_ms);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(background))
             .show(ctx, |ui| {
                 let area = ui.available_rect_before_wrap();
-                let tab_id = self.runtime.tabs.active_id();
                 let active = self.runtime.tabs.active_index();
                 let (tab, panel_folds) =
                     self.runtime.tabs.with_panel_folds(active).expect("active");
                 let mut chrome = CanvasChrome {
+                    surfaces: &mut self.surfaces,
                     toolrail: &mut self.toolrail,
                     presets: &self.drawings.presets,
                     drawing_chrome: &mut self.drawings.chrome,
@@ -686,7 +686,7 @@ impl QuantickApp {
                     layers: &mut self.runtime.workspace.layers_mut().actions,
                     panel_folds,
                 };
-                tab.draw_canvas(tab_id, ui, area, &mut chrome);
+                tab.draw_canvas(popup_tab, ui, area, &mut chrome);
                 super::canvas_wiring::settle_canvas(self, ui.ctx());
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one

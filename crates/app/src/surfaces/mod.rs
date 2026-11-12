@@ -10,6 +10,7 @@ pub(crate) use bar_switch::BarSwitchRequest;
 pub(crate) use chart_settings::{ChartSettingsSurface, ChartSettingsTab};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
 pub(crate) use market_palette::MarketPaletteSurface;
+pub(crate) use quantick_ui_model::HostEffect;
 pub(crate) use strategy_popup::StrategyPopupSurface;
 pub(crate) use toast::ToastSurface;
 
@@ -120,6 +121,8 @@ impl SurfaceEnv<'static> {
 /// the tests compare with, and it is the honest one.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
+    /// Typed effects belonging to the host that drew a scoped catalog entry.
+    pub model_effects: Vec<HostEffect>,
     pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
     pub script_editor_actions: Vec<quantick_stores::script_library::ScriptEditorAction>,
     /// The toast's Undo button was pressed — the host owns the drawing stack,
@@ -209,6 +212,7 @@ impl SurfaceResponse {
     /// rule is pinned by a test so a second producer meets a documented answer
     /// rather than a surprise.
     fn merge(&mut self, other: Self) {
+        self.model_effects.extend(other.model_effects);
         self.indicator_actions.extend(other.indicator_actions);
         self.script_editor_actions
             .extend(other.script_editor_actions);
@@ -283,22 +287,12 @@ pub(crate) trait View<M: quantick_ui_model::Model> {
         &mut self,
         state: &M::State,
         target: &mut ViewContext<'_>,
-        env: &SurfaceEnv<'_>,
+        env: Option<&SurfaceEnv<'_>>,
     ) -> Option<M::Intent>;
 }
 
-/// The same adapter drives migrated views and compatibility views.
-pub(crate) struct Adapter<M: quantick_ui_model::Model, V> {
-    pub model_state: M::State,
-    pub view: V,
-    pub effects: fn(M::Effects) -> SurfaceResponse,
-}
-impl<M: quantick_ui_model::Model, V> Adapter<M, V> {
-    /// Host/agent intents use the same transition and effect conversion as UI input.
-    pub fn update(&mut self, intent: M::Intent) -> SurfaceResponse {
-        (self.effects)(M::update(&mut self.model_state, intent))
-    }
-}
+/// Host conversion around the headless scoped adapter; storage is UI-independent.
+pub(crate) type Adapter<M, V> = quantick_ui_model::Adapter<M, V, SurfaceResponse>;
 impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
         self.view.capture_keyboard(ctx);
@@ -314,7 +308,7 @@ impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
         self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
     fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        let Some(intent) = self.view.paint(&self.model_state, target, env) else {
+        let Some(intent) = self.view.paint(&self.model_state, target, Some(env)) else {
             return SurfaceResponse::default();
         };
         self.update(intent)
@@ -339,9 +333,9 @@ impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView
         &mut self,
         _: &(),
         target: &mut ViewContext<'_>,
-        env: &SurfaceEnv<'_>,
+        env: Option<&SurfaceEnv<'_>>,
     ) -> Option<SurfaceResponse> {
-        Some((self.draw)(self.surface, target.context(), env))
+        env.map(|env| (self.draw)(self.surface, target.context(), env))
     }
 }
 
@@ -349,8 +343,12 @@ macro_rules! register_surfaces {
     (legacy { $( $legacy:ident: $ty:ident => $draw:path, $keyboard:path; )* }
      modules { $($module:ident;)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
-        $field:ident: $model:ident = $model_file:literal, $view:ident = $view_file:literal,
+        $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident; )* }) => {
+        /// Host routing is generated with exactly the views this host compiles.
+        pub(crate) enum HostIntent {
+            $($(#[$view_attr])* $tag(Box<<quantick_ui_model::$model::Model as quantick_ui_model::Model>::Intent>),)*
+        }
         $(pub(crate) mod $legacy;)*
         $(pub(crate) mod $module;)*
         $($(#[$view_attr])* #[path = $view_file] pub(crate) mod $view;)*
@@ -365,7 +363,7 @@ macro_rules! register_surfaces {
             fn default() -> Self {
                 Self {
                     $($legacy: Default::default(),)*
-                    $($(#[$view_attr])* $field: Adapter { model_state: Default::default(), view: Default::default(), effects: $effects },)*
+                    $($(#[$view_attr])* $field: Adapter::new(Default::default(), $effects),)*
                     widgets: Default::default(),
                     #[cfg(any(feature = "scenario-harness", test))]
                     hooks_applied: false,
@@ -373,11 +371,26 @@ macro_rules! register_surfaces {
             }
         }
         impl Surfaces {
+            pub fn update_scoped(&mut self, scope: u64, intent: HostIntent) -> SurfaceResponse {
+                match intent {
+                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, *intent),)*
+                }
+            }
+
+            pub fn retain_scopes(&mut self, keep: impl Fn(u64) -> bool) {
+                $($(#[$view_attr])* self.$field.retain_scopes(&keep);)*
+            }
+
+            pub fn draw_slot_scoped(&mut self, scope: u64, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
+                let mut response = SurfaceResponse::default();
+                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { let (state, view) = self.$field.scoped(scope);
+                    if let Some(intent) = view.paint(state, target, None) { response.merge(self.$field.update_scoped(scope, intent)); } })*
+                response
+            }
+
             /// Modal input follows the catalog before host hotkeys.
             pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
-                $(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
-                    model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
-                }.capture_keyboard(ctx);)*
+                $(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).capture_keyboard(ctx);)*
                 $($(#[$view_attr])* self.$field.capture_keyboard(ctx);)*
             }
             /// Route only entries belonging to this existing frame location.
@@ -390,9 +403,7 @@ macro_rules! register_surfaces {
                         $(self.$legacy.apply_env_hook(env);)*
                         $($(#[$view_attr])* self.$field.apply_env_hook(env);)*
                     }
-                    $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
-                        model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
-                    }.draw_in(target, env));)*
+                    $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
                 }
                 $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { response.merge(self.$field.draw_in(target, env)); })*
                 response
@@ -438,6 +449,39 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
+
+    #[test]
+    fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {
+        let mut registry = Surfaces::default();
+        registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
+        registry.update_scoped(10, HostIntent::Second(Box::new((0, 17))));
+        registry.update_scoped(20, HostIntent::First(Box::new((8, 17))));
+        assert_eq!(*registry.first.scoped(10).0, 3);
+        assert_eq!(*registry.first.scoped(20).0, 8);
+        let ctx = egui::Context::default();
+        registry.first.scoped(10).1.enabled = true;
+        registry.first.scoped(10).1.intent = Some((5, 17));
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let target = &mut ViewContext { ctx, ui: Some(ui) };
+                assert!(
+                    !registry
+                        .draw_slot_scoped(10, quantick_ui_model::Slot::Toolbar, target)
+                        .undo_drawing
+                );
+                assert!(
+                    registry
+                        .draw_slot_scoped(10, quantick_ui_model::Slot::Overlay, target)
+                        .undo_drawing
+                );
+            });
+        });
+        assert_eq!(*registry.first.scoped(10).0, 8);
+        assert_eq!(registry.first.model_state, 0);
+        registry.retain_scopes(|scope| scope == 20);
+        assert_eq!(*registry.first.scoped(10).0, 0);
+        assert_eq!(*registry.first.scoped(20).0, 8);
+    }
 
     #[test]
     fn registered_view_routes_intents() {
@@ -619,6 +663,7 @@ mod tests {
         let mut contested = crate::style::ChartStyle::default();
         contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
+            model_effects: Vec::new(),
             indicator_actions: Vec::new(),
             script_editor_actions: Vec::new(),
             style: Some(contested),

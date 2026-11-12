@@ -9,5 +9,10 @@ publish.workspace = true
 [features]
 test-support = []
 
+[dependencies]
+quantick-chart = { path = "../chart" }
+quantick-engine = { path = "../engine" }
+quantick-orderflow = { path = "../orderflow" }
+
 [lints]
 workspace = true
