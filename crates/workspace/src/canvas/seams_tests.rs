@@ -317,9 +317,38 @@ fn a_resize_trades_with_the_neighbour_whose_seam_moves_as_a_drag_does() {
     first.minimize(1).unwrap();
     assert_eq!(
         first.resize_pane(0, SplitAxis::Row, 0.5, AREA),
-        Err(CanvasRefusal::NoSeam),
-        "its only neighbour is folded"
+        Ok(true),
+        "it trades across the folded strip with the next open chart"
     );
+    assert!((rect_of(&first, 0).w - 800.0).abs() < EPS, "half the row");
+    assert_eq!(rect_of(&first, 1).w, MINIMIZED_STRIP_PX, "the strip held");
+    assert_eq!(
+        first.resize_pane(1, SplitAxis::Row, 0.5, AREA),
+        Err(CanvasRefusal::NoSeam),
+        "a folded chart is still pinned"
+    );
+}
+
+#[test]
+fn a_seam_beside_a_middle_strip_still_resizes_its_open_neighbours() {
+    let mut state = canvas("charts-3");
+    state.minimize(1).unwrap();
+    let (first, strip, last) = (rect_of(&state, 0), rect_of(&state, 1), rect_of(&state, 2));
+    let seams = tree_seams(&state, AREA, DIVIDER);
+    assert!(
+        seams.iter().all(|seam| seam.resizable),
+        "each seam pairs across the strip"
+    );
+    assert_eq!(state.move_seam(&root(0), 50.0, AREA), Ok(true));
+    assert!((rect_of(&state, 0).w - (first.w + 50.0)).abs() < EPS);
+    assert!((rect_of(&state, 2).w - (last.w - 50.0)).abs() < EPS);
+    assert_eq!(rect_of(&state, 1).w, MINIMIZED_STRIP_PX, "the strip held");
+    assert!(
+        (rect_of(&state, 1).x - (strip.x + 50.0)).abs() < EPS,
+        "and slid along"
+    );
+    assert_eq!(state.move_seam(&root(1), -50.0, AREA), Ok(true));
+    assert!((rect_of(&state, 0).w - first.w).abs() < EPS, "back again");
 }
 
 #[test]
@@ -346,4 +375,64 @@ fn a_drag_and_a_call_to_the_same_boundary_store_the_same_shares() {
     called.resize_pane(0, SplitAxis::Row, 0.6, AREA).unwrap();
     let (one, two) = (root_shares(&dragged), root_shares(&called));
     assert!((one[0] - two[0]).abs() < 1e-6 && (one[1] - two[1]).abs() < 1e-6);
+}
+
+/// The column painter's split and the tree's row share are one number: the
+/// painter drawing writes it, the other reads it, a fold or a float keeps it,
+/// and a tree no longer laid out as the layout is left alone.
+#[test]
+fn the_column_split_mirrors_the_tree_share() {
+    let time_flow = preset("time+flow").unwrap();
+    let mut state = CanvasState::from_preset(time_flow);
+    let mut split = 0.4;
+    assert!(
+        !state.mirror_split(time_flow, &mut split, true),
+        "already one"
+    );
+    split = 0.25;
+    assert!(state.mirror_split(time_flow, &mut split, true));
+    assert_eq!(state.preset(), Some(time_flow), "still the layout");
+    assert!((state.pane_share(0, SplitAxis::Row, AREA).unwrap() - 0.25).abs() < 1e-4);
+    state.minimize(0).unwrap();
+    let mut read = 0.9;
+    assert!(state.mirror_split(time_flow, &mut read, false));
+    assert!(
+        (read - 0.25).abs() < 1e-6,
+        "a fold keeps the stored share: {read}"
+    );
+    state.restore(0).unwrap();
+    assert_eq!(
+        CanvasState::from_preset_split(time_flow, Some(0.25)),
+        state,
+        "a save keeping the name and the split rebuilds the tree"
+    );
+    assert_eq!(
+        CanvasState::from_preset_split(time_flow, None),
+        CanvasState::from_preset(time_flow)
+    );
+    let fresh = CanvasState::from_preset(time_flow);
+    assert_eq!(
+        fresh.saved_form(time_flow, 0.35, true),
+        None,
+        "rebuilt from name and split"
+    );
+    assert_eq!(state.saved_form(time_flow, 0.25, true), None);
+    let mut folded = state.clone();
+    folded.minimize(0).unwrap();
+    assert_eq!(
+        folded.saved_form(time_flow, 0.25, false),
+        Some(folded.clone())
+    );
+
+    let stacked = preset("stack2+flow").unwrap();
+    let mut state = CanvasState::from_preset(stacked);
+    let mut split = 0.3;
+    assert!(state.mirror_split(stacked, &mut split, true));
+    assert!((state.pane_share(1, SplitAxis::Row, AREA).unwrap() - 0.3).abs() < 1e-4);
+    let mut other = 0.5;
+    assert!(
+        !state.mirror_split(time_flow, &mut other, false),
+        "another layout's tree is not this split"
+    );
+    assert_eq!(other, 0.5);
 }

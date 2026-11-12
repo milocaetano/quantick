@@ -82,7 +82,9 @@ impl Tab {
         for &(side, rect, minimized, slot) in &bands {
             if minimized {
                 let name = self.strip_name(side);
-                crate::pane_menu::strip(ui, rect, &name, slot, &mut self.canvas.menus);
+                let door = crate::pane_menu::strip(ui, rect, &name, slot, &mut self.canvas.menus);
+                let (at, menus) = ((slot, &self.canvas.state), &mut self.canvas.menus);
+                crate::pane_menu::button(ui, door, at, menus, palette.text_muted());
                 continue;
             }
             let PaneSide::Time(slot) = side else {

@@ -77,6 +77,8 @@ impl ChartPane {
         let surface = theme::get(painter.ctx());
         self.frame.axis_metrics = surface.resolved.axis_metrics();
         self.indicators.paint_on(&surface.resolved);
+        self.indicators
+            .label_volume(chrome.capabilities.traded_volume);
         let layout = self.lay_out(area, chrome);
         let axes = theme::axes(painter.ctx());
         let light_flow = self.orderflow.is_some() && !axes.resolved.dark;

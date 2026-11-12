@@ -7,7 +7,7 @@
 use eframe::egui::{self, Align2, Color32, Rect, Sense, Stroke, vec2};
 use egui_phosphor::regular as icons;
 use quantick_control_handlers::canvas::add_act;
-use quantick_workspace::canvas::WidgetSpec;
+use quantick_workspace::canvas::{AddRow, WidgetSpec};
 
 use crate::theme;
 use crate::toolbar::DrawnControl;
@@ -62,9 +62,9 @@ pub(crate) fn button(ui: &mut egui::Ui, open: bool) -> egui::Response {
 }
 
 /// The menu under the + at `door`, its right edge on the door's; `rows` say
-/// what each entry is and whether it can be added now. A press outside, Esc
-/// or a row closes it.
-pub(crate) fn hang(ctx: &egui::Context, rows: &[(&'static WidgetSpec, bool)], menu: &mut AddMenu) {
+/// what each entry is and whether it can be added now, or why not. A press
+/// outside, Esc or a row closes it.
+pub(crate) fn hang(ctx: &egui::Context, rows: &[AddRow], menu: &mut AddMenu) {
     menu.drawn.clear();
     let Some(door) = menu.door.filter(|_| menu.open) else {
         return;
@@ -82,7 +82,7 @@ pub(crate) fn hang(ctx: &egui::Context, rows: &[(&'static WidgetSpec, bool)], me
                     let font = egui::FontId::proportional(11.0);
                     ui.label(egui::RichText::new(HEADING).font(font).color(muted));
                     for (widget, ready) in rows {
-                        row(ui, widget, *ready, menu);
+                        row(ui, widget, ready.as_ref().err(), menu);
                     }
                 });
         });
@@ -93,15 +93,19 @@ pub(crate) fn hang(ctx: &egui::Context, rows: &[(&'static WidgetSpec, bool)], me
     menu.open &= !((pressed && outside) || escape || menu.picked.is_some());
 }
 
-/// One row: its miniature, title and line; greyed and inert when it cannot
-/// be added now.
-fn row(ui: &mut egui::Ui, widget: &'static WidgetSpec, ready: bool, menu: &mut AddMenu) {
+/// One row: its miniature, title and line; greyed and inert, saying `why`
+/// on hover, when it cannot be added now.
+fn row(ui: &mut egui::Ui, widget: &'static WidgetSpec, why: Option<&String>, menu: &mut AddMenu) {
+    let ready = why.is_none();
     let palette = theme::get(ui.ctx());
     let sense = Sense {
         click: ready,
         ..Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(vec2(MENU_PX, ROW_PX), sense);
+    let response = why
+        .into_iter()
+        .fold(response, |row, why| row.on_hover_text(why));
     if ready && response.hovered() {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());
     }

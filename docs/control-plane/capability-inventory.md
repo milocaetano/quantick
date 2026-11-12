@@ -83,6 +83,8 @@ capability that cannot change application state.
 | `home.show` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
 | `indicator.library.edit` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
+| `indicator.native.edit` | 1 | `indicator` | no | `cockpit`, `cockpit.indicators` |
+| `indicator.native.list` | 1 | `indicator` | yes | `observe`, `observe.indicators` |
 | `indicator.picker.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -167,4 +169,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-142 capabilities registered.
+144 capabilities registered.

@@ -38,6 +38,7 @@ pub fn registration_command(
     executable: &Path,
     profile: &str,
     allow_recovery: bool,
+    allow_indicators: bool,
 ) -> String {
     let executable = executable.display();
     let recovery = if allow_recovery {
@@ -45,12 +46,19 @@ pub fn registration_command(
     } else {
         ""
     };
+    let indicators = if allow_indicators {
+        " --allow-indicators"
+    } else {
+        ""
+    };
     match client {
         SetupClient::Codex => {
-            format!("codex mcp add quantick -- \"{executable}\" --profile {profile}{recovery}")
+            format!(
+                "codex mcp add quantick -- \"{executable}\" --profile {profile}{recovery}{indicators}"
+            )
         }
         SetupClient::Claude => format!(
-            "claude mcp add --transport stdio --scope local quantick -- \"{executable}\" --profile {profile}{recovery}"
+            "claude mcp add --transport stdio --scope local quantick -- \"{executable}\" --profile {profile}{recovery}{indicators}"
         ),
     }
 }
@@ -61,10 +69,22 @@ pub fn walkthrough(
     executable: &Path,
     profile: &str,
     allow_recovery: bool,
+    allow_indicators: bool,
 ) -> String {
-    let command = registration_command(client, executable, profile, allow_recovery);
+    let command = registration_command(
+        client,
+        executable,
+        profile,
+        allow_recovery,
+        allow_indicators,
+    );
     let recovery = if allow_recovery {
         "Recovery was requested explicitly. In Local agent access, grant cockpit.recover\nonly when timeline rebuilds, paper-position closure and strategy disarming are intended.\nThe flag does not grant access; quantick_describe reports the effective scopes.\n"
+    } else {
+        ""
+    };
+    let indicators = if allow_indicators {
+        "Native indicator changes were requested explicitly. Grant cockpit.indicators in Local agent access only when additions, settings changes, hiding and removal of saved indicators (including layout mirrors) are intended. Removed entries and overwritten settings have no undo. The flag does not grant access.\n"
     } else {
         ""
     };
@@ -87,7 +107,7 @@ pub fn walkthrough(
          \n\
          The adapter never starts Quantick and never stores a token: it discovers\n\
          the instance you opened through its private descriptor and connects with\n\
-         the {profile} profile.\n{recovery}",
+         the {profile} profile.\n{recovery}{indicators}",
         label = client.label(),
     )
 }
@@ -97,19 +117,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn indicator_opt_in_survives_setup_and_names_its_required_grant() {
+        for client in [SetupClient::Codex, SetupClient::Claude] {
+            let text = walkthrough(client, Path::new("quantick-mcp"), "cockpit", false, true);
+            assert!(text.contains("--profile cockpit --allow-indicators"));
+            assert!(text.contains("cockpit.indicators"));
+            assert!(text.contains("no undo"));
+            assert!(!text.contains("--allow-recovery"));
+        }
+    }
+
+    #[test]
     fn the_commands_match_the_contract_and_carry_no_secret() {
         let exe = Path::new("C:\\tools\\quantick-mcp.exe");
-        let codex = registration_command(SetupClient::Codex, exe, "observer", false);
+        let codex = registration_command(SetupClient::Codex, exe, "observer", false, false);
         assert_eq!(
             codex,
             "codex mcp add quantick -- \"C:\\tools\\quantick-mcp.exe\" --profile observer"
         );
-        let claude = registration_command(SetupClient::Claude, exe, "observer", false);
+        let claude = registration_command(SetupClient::Claude, exe, "observer", false, false);
         assert!(claude.starts_with("claude mcp add --transport stdio --scope local quantick -- "));
         for text in [
             codex,
             claude,
-            walkthrough(SetupClient::Claude, exe, "observer", false),
+            walkthrough(SetupClient::Claude, exe, "observer", false, false),
         ] {
             assert!(!text.contains("bearer"));
             assert!(!text.contains("token="));

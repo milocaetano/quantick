@@ -5461,7 +5461,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Inserts a floating chart into the layout at a canvas edge, as a drop on that edge does. The result names the preset the layout now matches, if any.",
+      "description": "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: it joins that chart's split along that side for a fair share, or that chart splits in half), or in a docked chart's place (swap_with: that chart floats where this one stood over the canvas; a chart in its own window cannot swap). A docked chart named in slot moves there instead, and swapping two docked charts trades their places. Name exactly one. The result names the preset the layout now matches, if any.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5475,7 +5475,7 @@
       "input_schema": {
         "$defs": {
           "CanvasEdge": {
-            "description": "A canvas edge a floating chart docks at.",
+            "description": "A side of the canvas, or of a docked chart, a floating chart docks at.",
             "enum": [
               "left",
               "right",
@@ -5487,19 +5487,56 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
+        "description": "Where a chart docks: exactly one of `edge`, `beside` with `side`, or\n`swap_with`. A floating chart docks there; a docked chart moves there.",
         "properties": {
+          "beside": {
+            "description": "A docked chart's slot: this chart docks on its `side`. When that\nchart's split already lays charts that way, this one joins the split\nbeside it and every chart in it gives a fair share; otherwise that\nchart splits in half with this one.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "edge": {
-            "$ref": "#/$defs/CanvasEdge"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanvasEdge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A canvas edge: the chart takes a fair share of the canvas there."
+          },
+          "side": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanvasEdge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The side of `beside` the chart docks on."
           },
           "slot": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "swap_with": {
+            "description": "A docked chart's slot: this chart takes its place. A floating chart\nleaves it floating where this one stood; two docked charts trade\nplaces, both staying docked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
-          "slot",
-          "edge"
+          "slot"
         ],
         "title": "DockPaneInput",
         "type": "object"
@@ -14261,6 +14298,758 @@
       "risk_reducing": false,
       "stale_input_safety": "The call names the exact tab, pane and live indicator slot; repeating the same state is harmless and the result reads it back.",
       "title": "Set an indicator's mouse vertical line",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Add, configure inputs or plot style, hide or remove native indicators on an exact tab and pane. Add creates a new instance. Slot IDs come from indicator.native.list. Input patches use declared names and typed values. Float values and plot widths use canonical decimal strings (for example \"2.5\"). Plot style replaces one plot override; null fields restore defaults, color is RGBA (alpha is opacity). Requires explicit cockpit.indicators consent, including changes to user-created indicators; removal and overwritten settings have no undo. Uses the same layout persistence and mirroring as UI edits. Close settings before control edits. Read committed settings with indicator.native.list.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.indicators",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "indicator.native.edit",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "Operation": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "add",
+                    "type": "string"
+                  },
+                  "native_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "native_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "set_inputs",
+                    "type": "string"
+                  },
+                  "slot_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "values": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/Value"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "action",
+                  "slot_id",
+                  "values"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "set_plot_style",
+                    "type": "string"
+                  },
+                  "plot": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "slot_id": {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  "style": {
+                    "$ref": "#/$defs/PlotStyle"
+                  }
+                },
+                "required": [
+                  "action",
+                  "slot_id",
+                  "plot",
+                  "style"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "set_hidden",
+                    "type": "string"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "slot_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "action",
+                  "slot_id",
+                  "hidden"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "remove",
+                    "type": "string"
+                  },
+                  "slot_id": {
+                    "$ref": "#/$defs/WireU64"
+                  }
+                },
+                "required": [
+                  "action",
+                  "slot_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PlotStyle": {
+            "additionalProperties": false,
+            "properties": {
+              "color": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "visible": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "width": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "type": "object"
+          },
+          "Target": {
+            "additionalProperties": false,
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "Value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "int",
+                    "type": "string"
+                  },
+                  "value": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "float",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "bool",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "color",
+                    "type": "string"
+                  },
+                  "value": {
+                    "items": {
+                      "format": "uint8",
+                      "maximum": 255,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "str",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "source",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "$ref": "#/$defs/Operation"
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          }
+        },
+        "required": [
+          "target",
+          "operation"
+        ],
+        "title": "EditInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "Target": {
+            "additionalProperties": false,
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "removed": {
+            "type": "boolean"
+          },
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          }
+        },
+        "required": [
+          "target",
+          "slot_id",
+          "removed"
+        ],
+        "title": "EditResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.indicators"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "saved_indicators_changed"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "Exact pane and slot identities are validated. A required idempotency key replays the original answer within the connection; a different key permits another instance.",
+      "title": "Edit a native indicator",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Lists the native catalog and a bounded page (1..64) of attached native slots on an exact pane, including committed inputs, hidden state, plot overrides and worker readiness. Does not open settings or modify the chart.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.native.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "Target": {
+            "additionalProperties": false,
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 64,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "ListInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "CatalogEntry": {
+            "properties": {
+              "defaults": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/Value"
+                },
+                "type": "object"
+              },
+              "native_id": {
+                "type": "string"
+              },
+              "plot_count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source_note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "native_id",
+              "title",
+              "defaults",
+              "plot_count"
+            ],
+            "type": "object"
+          },
+          "Entry": {
+            "properties": {
+              "hidden": {
+                "type": "boolean"
+              },
+              "inputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/Value"
+                },
+                "type": "object"
+              },
+              "loaded": {
+                "type": "boolean"
+              },
+              "native_id": {
+                "type": "string"
+              },
+              "plot_styles": {
+                "items": {
+                  "$ref": "#/$defs/PlotStyle"
+                },
+                "type": "array"
+              },
+              "slot_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "slot_id",
+              "native_id",
+              "hidden",
+              "inputs",
+              "plot_styles",
+              "loaded"
+            ],
+            "type": "object"
+          },
+          "PlotStyle": {
+            "additionalProperties": false,
+            "properties": {
+              "color": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "visible": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "width": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "type": "object"
+          },
+          "Target": {
+            "additionalProperties": false,
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "Value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "int",
+                    "type": "string"
+                  },
+                  "value": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "float",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "bool",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "color",
+                    "type": "string"
+                  },
+                  "value": {
+                    "items": {
+                      "format": "uint8",
+                      "maximum": 255,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "str",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "source",
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "catalog": {
+            "items": {
+              "$ref": "#/$defs/CatalogEntry"
+            },
+            "type": "array"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/Entry"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target",
+          "catalog",
+          "entries",
+          "total"
+        ],
+        "title": "ListResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.indicators"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List native indicators and committed settings",
       "version": 1
     },
     {
@@ -25786,6 +26575,16 @@
       "description": "Overwrite or forget the desk quantick opens on, bring up the file dialogs that export or replace it, and overwrite, rename or delete a saved workspace. What is overwritten or forgotten this way does not come back.",
       "id": "cockpit.desk",
       "label": "Change your saved desk",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": true
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Add, configure, hide or remove native indicators, including indicators you created and their saved settings. Changes also affect panes that mirror this layout. Removed indicators and overwritten settings have no undo through this interface. Does not place orders or change positions.",
+      "id": "cockpit.indicators",
+      "label": "Change saved native indicators",
       "profile_ceilings": [
         "cockpit"
       ],
