@@ -87,8 +87,8 @@ const ANALYST_SCOPES: &[&str] = &[
 ];
 
 const USAGE: &str = "usage:
-  quantick-mcp [serve] [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery] [--allow-alert-delete] [--instance <instance_id>] [--instances-dir <path>]
-  quantick-mcp setup --client <codex|claude> [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery] [--allow-alert-delete]
+  quantick-mcp [serve] [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery] [--allow-alert-delete] [--allow-indicators] [--instance <instance_id>] [--instances-dir <path>]
+  quantick-mcp setup --client <codex|claude> [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery] [--allow-alert-delete] [--allow-indicators]
   quantick-mcp --help
 
 serve (default)  run the MCP server over standard input/output; stdout carries
@@ -105,6 +105,9 @@ serve (default)  run the MCP server over standard input/output; stdout carries
   --allow-alert-delete
                  opt in to requesting cockpit.alert.delete (cockpit profile only).
                  The window must separately grant deletion of alerts and history.
+  --allow-indicators
+                 request cockpit.indicators (cockpit only); the window must grant it.
+                 Add, change, hide or remove saved native indicators and layout mirrors.
   --instance     pin every call to one running instance by its instance_id.
   --instances-dir
                  read descriptors from this directory instead of the platform's
@@ -116,6 +119,7 @@ enum Command {
         profile: String,
         allow_recovery: bool,
         allow_alert_delete: bool,
+        allow_indicators: bool,
         instance: Option<InstanceId>,
         instances_dir: Option<PathBuf>,
     },
@@ -124,6 +128,7 @@ enum Command {
         profile: String,
         allow_recovery: bool,
         allow_alert_delete: bool,
+        allow_indicators: bool,
     },
     Help,
 }
@@ -148,6 +153,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     let mut client = None;
     let mut allow_recovery = false;
     let mut allow_alert_delete = false;
+    let mut allow_indicators = false;
     while let Some(flag) = rest.next() {
         let value = |rest: &mut std::iter::Peekable<_>| -> Result<String, String> {
             rest.next()
@@ -158,6 +164,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             "--profile" => profile = value(&mut rest)?,
             "--allow-recovery" => allow_recovery = true,
             "--allow-alert-delete" => allow_alert_delete = true,
+            "--allow-indicators" => allow_indicators = true,
             "--instance" => {
                 let raw = value(&mut rest)?;
                 instance = Some(
@@ -181,7 +188,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     match mode {
         "setup" if instance.is_some() || instances_dir.is_some() => {
             return Err(
-                "setup takes --client, --profile, --allow-recovery and --allow-alert-delete only"
+                "setup takes --client, --profile, --allow-recovery, --allow-alert-delete and --allow-indicators only"
                     .to_owned(),
             );
         }
@@ -202,17 +209,22 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     if allow_alert_delete && profile != quantick_control_local::client::COCKPIT_PROFILE_ID {
         return Err("--allow-alert-delete requires --profile cockpit".to_owned());
     }
+    if allow_indicators && profile != quantick_control_local::client::COCKPIT_PROFILE_ID {
+        return Err("--allow-indicators requires --profile cockpit".to_owned());
+    }
     match mode {
         "setup" => Ok(Command::Setup {
             client: client.ok_or_else(|| "setup needs --client codex|claude".to_owned())?,
             profile,
             allow_recovery,
             allow_alert_delete,
+            allow_indicators,
         }),
         _ => Ok(Command::Serve {
             profile,
             allow_recovery,
             allow_alert_delete,
+            allow_indicators,
             instance,
             instances_dir,
         }),
@@ -247,6 +259,7 @@ fn main() -> ExitCode {
             profile,
             allow_recovery,
             allow_alert_delete,
+            allow_indicators,
         } => {
             let executable =
                 std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quantick-mcp"));
@@ -257,7 +270,8 @@ fn main() -> ExitCode {
                     &executable,
                     &profile,
                     allow_recovery,
-                    allow_alert_delete
+                    allow_alert_delete,
+                    allow_indicators
                 )
             );
             ExitCode::SUCCESS
@@ -266,12 +280,14 @@ fn main() -> ExitCode {
             profile,
             allow_recovery,
             allow_alert_delete,
+            allow_indicators,
             instance,
             instances_dir,
         } => serve(
             &profile,
             allow_recovery,
             allow_alert_delete,
+            allow_indicators,
             instance,
             instances_dir,
         ),
@@ -282,6 +298,7 @@ fn connect_options(
     profile: &str,
     allow_recovery: bool,
     allow_alert_delete: bool,
+    allow_indicators: bool,
 ) -> ConnectOptions {
     // The profiles are a chain, so each ceiling asks for the scopes of the one
     // below it as well. Asking is not granting: the instance intersects this
@@ -305,6 +322,11 @@ fn connect_options(
         } else {
             &[]
         })
+        .chain(if cockpit && allow_indicators {
+            &["cockpit.indicators"][..]
+        } else {
+            &[]
+        })
         .map(|id| PermissionId::new(*id).expect("static scope IDs are valid"))
         .collect();
     ConnectOptions::for_profile(
@@ -319,12 +341,24 @@ fn serve(
     profile: &str,
     allow_recovery: bool,
     allow_alert_delete: bool,
+    allow_indicators: bool,
     instance: Option<InstanceId>,
     instances_dir: Option<PathBuf>,
 ) -> ExitCode {
-    let options = connect_options(profile, allow_recovery, allow_alert_delete);
+    let options = connect_options(
+        profile,
+        allow_recovery,
+        allow_alert_delete,
+        allow_indicators,
+    );
     let link = LocalLink::new(options, instances_dir, instance);
-    let mut server = McpServer::new_with_recovery(Box::new(link), profile, allow_recovery);
+    let mut server = McpServer::new_with_opt_ins(
+        Box::new(link),
+        profile,
+        allow_recovery,
+        allow_alert_delete,
+        allow_indicators,
+    );
     eprintln!(
         "quantick-mcp {} serving over stdio (profile {profile}); it never starts Quantick",
         env!("CARGO_PKG_VERSION")

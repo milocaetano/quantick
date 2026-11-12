@@ -97,8 +97,8 @@ selected; with several and no choice the call fails with
 ## Running
 
 ```text
-quantick-mcp [serve] [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete] [--instance <id>] [--instances-dir <path>]
-quantick-mcp setup --client codex|claude [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete]
+quantick-mcp [serve] [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete] [--allow-indicators] [--instance <id>] [--instances-dir <path>]
+quantick-mcp setup --client codex|claude [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete] [--allow-indicators]
 ```
 
 `stdout` carries MCP frames only; diagnostics go to `stderr`. `setup` prints
@@ -191,3 +191,13 @@ instance validates.
 The profiles are a chain, so a client that moves up a tier must never lose a
 tool it had — a regression the cockpit ceiling once caused, and which
 `tools.rs` now covers with its own test.
+
+Native indicator changes require a separate explicit opt-in:
+`quantick-mcp --profile cockpit --allow-indicators` requests
+`cockpit.indicators`, which the window must separately grant in Local agent
+access. Default cockpit connections cannot add, configure, hide or remove
+native indicators. The sensitive grant permits changes to user-created entries
+and their saved layout mirrors; removal and overwritten settings have no undo.
+`indicator.native.list` remains available with `observe.indicators`.
+`indicator.native.edit` requires an idempotency key: reuse the key for a retry,
+and use a new key only for a new intended operation.

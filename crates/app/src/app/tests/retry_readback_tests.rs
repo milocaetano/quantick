@@ -2214,3 +2214,6 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+#[path = "native_indicator_control_tests.rs"]
+mod native_indicator_control;

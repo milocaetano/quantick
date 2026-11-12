@@ -61,6 +61,12 @@ pub const COCKPIT_PERMISSION_ID: &str = "cockpit";
 pub const COCKPIT_LAYOUT_PERMISSION_ID: &str = "cockpit.layout";
 /// The effect every cockpit capability declares.
 pub const COCKPIT_EFFECT_ID: &str = "cockpit";
+/// Explicit consent to add, change or remove saved native indicators.
+pub const COCKPIT_INDICATORS_PERMISSION_ID: &str = "cockpit.indicators";
+/// Native indicator changes, including removal and layout mirrors.
+pub const INDICATORS_EFFECT_ID: &str = "cockpit.indicators";
+/// Saved indicator settings may be overwritten or removed without undo.
+pub const INDICATORS_CHANGED_RISK_FLAG: &str = "saved_indicators_changed";
 /// Permission for the one cockpit act that can remove the trader's work.
 ///
 /// Separate from `cockpit.layout` on purpose, and marked sensitive: a grant
@@ -410,6 +416,14 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             label: "Change the chart layout".to_owned(),
             description: "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, move focus between charts, and apply appearance configuration.".to_owned(),
             sensitive: false,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
+            id: permission(COCKPIT_INDICATORS_PERMISSION_ID),
+            label: "Change saved native indicators".to_owned(),
+            description: "Add, configure, hide or remove native indicators, including indicators you created and their saved settings. Changes also affect panes that mirror this layout. Removed indicators and overwritten settings have no undo through this interface. Does not place orders or change positions.".to_owned(),
+            sensitive: true,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
         },
@@ -768,6 +782,31 @@ pub fn effects() -> Vec<EffectPolicy> {
                 // off the screen.
                 allows_destructive: false,
                 durable_requires_reversible: true,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        },
+        EffectPolicy {
+            id: effect(INDICATORS_EFFECT_ID),
+            permission_floor: permission(COCKPIT_INDICATORS_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // Like recovery, loss is declared through consent and risk:
+                // destructive requires a revision guard this host cannot supply.
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(INDICATORS_CHANGED_RISK_FLAG).expect("static risk flag is valid")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: true,
+                durable_requires_reversible: false,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,
             },
