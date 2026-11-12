@@ -3797,7 +3797,7 @@ fn the_tab_shortcuts_open_and_close() {
         egui::Modifiers::CTRL,
     );
     assert!(
-        app.surfaces.market_palette.is_open(),
+        app.surfaces.market_palette.model_state.is_open(),
         "Ctrl+T opens the picker"
     );
 }

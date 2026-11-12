@@ -73,9 +73,12 @@ fn layout_readability_combined() {
                     .account()
                     .open_pnl_text()
                     .expect("simulated open position");
-                app.surfaces
-                    .market_palette
-                    .open("no-market-match-with-a-long-symbol-name", None);
+                app.surfaces.market_palette.update(
+                    quantick_ui_model::market_palette::Intent::Open {
+                        query: "no-market-match-with-a-long-symbol-name".into(),
+                        switching: None,
+                    },
+                );
                 let mut output = None;
                 for _ in 0..4 {
                     let mut input = egui::RawInput {

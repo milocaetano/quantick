@@ -14,6 +14,7 @@ use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface}
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
+use quantick_ui_model::market_palette::Intent as PaletteIntent;
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
@@ -171,10 +172,10 @@ pub(super) fn settle_strip(
             bar: tab.flow_pane.state.spec().to_config_string(),
             context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
         };
-        palette.recent.closed(closed);
+        palette.update(PaletteIntent::Remember(closed));
     }
     if open {
-        palette.open("", None);
+        palette.update(PaletteIntent::open("", None));
     }
 }
 
@@ -214,7 +215,7 @@ impl QuantickApp {
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
         let mut keys = super::home_wiring::read_tab_keys(ctx);
-        if !self.surfaces.market_palette.is_open() {
+        if !self.surfaces.market_palette.model_state.is_open() {
             if std::mem::take(&mut keys.close_tab) && !self.chrome.title_bar.surface.is_home() {
                 self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
             }

@@ -49,7 +49,7 @@ pub(super) struct SurfaceOwners<'a> {
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
     pub tabs: &'a mut ArrangementHost,
-    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
+    pub markets: Option<&'a std::sync::Arc<quantick_workspace::market_list::MarketSnapshot>>,
 }
 
 /// Draw every registered surface against this frame's environment and

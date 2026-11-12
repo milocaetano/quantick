@@ -70,7 +70,7 @@ fn a_switch_with_a_picked_bar_puts_the_flow_pane_on_it() {
         app.active_tab().flow_pane.spec.spec().to_config_string(),
         "tick:7"
     );
-    assert!(!app.surfaces.market_palette.is_open());
+    assert!(!app.surfaces.market_palette.model_state.is_open());
 }
 
 /// The market button opens the palette in switch mode on the active tab,
@@ -84,7 +84,13 @@ fn the_market_button_opens_the_palette_in_switch_mode_with_the_roll() {
         std::collections::BTreeMap::from([("TESTUSDT".to_owned(), "ETHUSDT".to_owned())]);
     run_frame(&mut app, &ctx);
     app.apply_toolbar_action(ToolbarAction::SwitchMarket);
-    let palette = app.surfaces.market_palette.open.as_ref().expect("open");
+    let palette = app
+        .surfaces
+        .market_palette
+        .model_state
+        .open
+        .as_ref()
+        .expect("open");
     let target = palette.switch_target().expect("switch mode");
     assert_eq!(target.tab_id, app.runtime.tabs.active_id());
     assert_eq!(target.symbol, "TESTUSDT");
@@ -94,7 +100,7 @@ fn the_market_button_opens_the_palette_in_switch_mode_with_the_roll() {
     );
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
-    assert!(app.surfaces.market_palette.is_open());
+    assert!(app.surfaces.market_palette.model_state.is_open());
     assert!(
         !painted_starting(&output, "Switching TESTUSDT \u{b7} Binance on this tab").is_empty(),
         "the caption names the tab's market: {:?}",
@@ -131,7 +137,7 @@ fn the_palette_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
     app.apply_toolbar_action(ToolbarAction::SwitchMarket);
     super::super::frame::apply_palette_intent(&mut app, roll());
     assert_eq!(app.active_tab().active.1, "TESTUSDT", "the roll refused");
-    let refusal = (app.surfaces.market_palette.open.as_ref())
+    let refusal = (app.surfaces.market_palette.model_state.open.as_ref())
         .and_then(|palette| palette.refusal().map(str::to_owned));
     assert!(
         refusal
@@ -147,7 +153,7 @@ fn the_palette_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
     super::super::frame::apply_palette_intent(&mut app, roll());
     assert_eq!(app.active_tab().active.1, "ETHUSDT", "flat, it rolled");
     assert!(
-        !app.surfaces.market_palette.is_open(),
+        !app.surfaces.market_palette.model_state.is_open(),
         "a roll closes the palette"
     );
     run_frame(&mut app, &ctx);

@@ -655,7 +655,7 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
         WINDOW,
         vec![egui::Event::PointerMoved(open), pointer_button(open, false)],
     );
-    assert!(app.surfaces.market_palette.is_open());
+    assert!(app.surfaces.market_palette.model_state.is_open());
     frame(&mut app, &ctx);
     let query = egui::Id::new("market_palette").with("query");
     assert!(
@@ -665,11 +665,11 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
     assert!(on_home(&app), "the picker alone does not leave Home");
 
     press(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
-    assert!(!app.surfaces.market_palette.is_open());
+    assert!(!app.surfaces.market_palette.model_state.is_open());
     assert!(on_home(&app), "cancelling the picker keeps Home visible");
     click_sized(&mut app, &ctx, WINDOW, open);
     assert!(
-        app.surfaces.market_palette.is_open(),
+        app.surfaces.market_palette.model_state.is_open(),
         "the page can reopen it"
     );
 
@@ -900,7 +900,12 @@ fn a_text_field_keeps_both_home_shortcuts() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.surfaces.market_palette.open("", None);
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Open {
+            query: String::new(),
+            switching: None,
+        });
     frame(&mut app, &ctx);
     frame(&mut app, &ctx);
     assert!(ctx.memory(|memory| memory.focused().is_some()), "the field");
