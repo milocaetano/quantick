@@ -81,24 +81,23 @@ pub enum CanvasAct {
 }
 
 /// A tab's canvas as the window draws it: its area, and whether the column
-/// painter draws its docked charts with its own dividers and split, which
-/// `layout.pane.resize` moves, rather than the tree whose seams
-/// `canvas.pane.resize` moves.
+/// painter draws it. The tree's row share is the column painter's split, so
+/// a width resize moves it; the stacked charts' heights are the painter's own.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Drawn {
     pub area: CanvasRect,
     pub columns: bool,
 }
 
-/// A tree resize on a column-painted tab: its dividers are not the tree's.
-fn column_layout() -> ControlError {
+/// A height resize on a column-painted tab: its stacked charts' heights are
+/// not the tree's.
+fn column_heights() -> ControlError {
     let mut error = ControlError::invalid_request(
-        "the column painter draws this layout with its own dividers: the tree resize moves nothing on screen",
+        "the column painter stacks these charts by its own heights: a tree height resize moves nothing on screen",
     );
     error.context.details = Some(serde_json::json!({ "refusal": "canvas.column_layout" }));
-    error.context.next_steps = vec![
-        "Move the column divider with layout.pane.resize (layout.pane.resize_pair between stacked context charts).".to_owned(),
-    ];
+    error.context.next_steps =
+        vec!["Move the boundary between stacked charts with layout.pane.resize_pair.".to_owned()];
     error
 }
 
@@ -396,11 +395,26 @@ pub fn picked(preset_id: &str) -> Result<&'static LayoutPreset, ControlError> {
         .ok_or_else(|| refused(&CanvasRefusal::UnknownPreset(preset_id.to_owned())))
 }
 
+/// The preset a pick names on `state`, refused with `canvas.full` when the
+/// panes it lays out and those left floating would pass the pane cap: the
+/// pick would change nothing, and must not read as done.
+pub fn pick_on(
+    state: &CanvasState,
+    preset_id: &str,
+) -> Result<&'static LayoutPreset, ControlError> {
+    let preset = picked(preset_id)?;
+    let mut trial = state.clone();
+    if !trial.apply_preset(preset) && trial.preset() != Some(preset) {
+        return Err(refused(&CanvasRefusal::Full));
+    }
+    Ok(preset)
+}
+
 /// Apply `act` to `state`, a canvas `drawn` as the window draws it. An
 /// unconfirmed removal of a pane the `saved` workspace holds is refused, as
-/// the trader's dialog asks first, and so is a resize of a column-painted
-/// tab, whose dividers are not the tree's. Answers whether the canvas changed
-/// and the slot acted on. A window whose pick lays out more than the model (a
+/// the trader's dialog asks first, and so is a height resize on a
+/// column-painted tab. Answers whether the canvas changed and the slot acted
+/// on. A window whose pick lays out more than the model (a
 /// split, its painter) applies [`CanvasAct::PickLayout`] itself.
 pub fn act(
     state: &mut CanvasState,
@@ -408,8 +422,15 @@ pub fn act(
     drawn: Drawn,
     act: CanvasAct,
 ) -> Result<(bool, Option<u32>), ControlError> {
-    if drawn.columns && matches!(act, CanvasAct::Resize { .. }) {
-        return Err(column_layout());
+    let height = matches!(
+        act,
+        CanvasAct::Resize {
+            dimension: CanvasDimension::Height,
+            ..
+        }
+    );
+    if drawn.columns && height {
+        return Err(column_heights());
     }
     let area = drawn.area;
     if let CanvasAct::Remove {
@@ -427,7 +448,10 @@ pub fn act(
     let rect_of = |dto: CanvasRectDto| CanvasRect::new(dto.x, dto.y, dto.w, dto.h);
     let on = |slot: u32| move |done: bool| (done, Some(slot));
     let acted = match act {
-        CanvasAct::PickLayout { preset_id } => Ok((state.apply_preset(picked(&preset_id)?), None)),
+        CanvasAct::PickLayout { preset_id } => {
+            let preset = pick_on(state, &preset_id)?;
+            Ok((state.apply_preset(preset), None))
+        }
         CanvasAct::Minimize { slot } => state.minimize(slot).map(on(slot)),
         CanvasAct::Maximize { slot } => state.maximize(slot).map(on(slot)),
         CanvasAct::Restore { slot } => state.restore(slot).map(on(slot)),
@@ -793,8 +817,7 @@ pub fn result(
     }
 }
 
-/// One tab's canvas as the wire reads it, `drawn` as the window draws it:
-/// tree shares only where the tree painter shows them.
+/// One tab's canvas as the wire reads it, `drawn` as the window draws it.
 #[must_use]
 pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
     let panes = (state.panes().into_iter())
@@ -840,14 +863,14 @@ pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
 }
 
 /// `slot`'s share along `dimension` as the screen shows it, as the wire
-/// writes it; none on a column-painted tab, whose split is not the tree's.
+/// writes it; no height on a column-painted tab, whose stack is its own.
 fn share_on(
     state: &CanvasState,
     slot: u32,
     dimension: CanvasDimension,
     drawn: Drawn,
 ) -> Option<quantick_control::wire::CanonicalDecimal> {
-    if drawn.columns {
+    if drawn.columns && dimension == CanvasDimension::Height {
         return None;
     }
     let share = state.pane_share(slot, axis_of(dimension), drawn.area)?;

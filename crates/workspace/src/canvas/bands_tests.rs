@@ -106,3 +106,32 @@ fn presets_answer_their_split_label_and_word() {
     assert_eq!(DeclaredLayout::nearest(charts), DeclaredLayout::Time);
     assert_eq!(charts.time_panes(), 4);
 }
+
+/// What a canvas draws, per built chart: a folded chart only its strip, a
+/// maximized one alone, a floating one over the rest.
+#[test]
+fn seat_drawn_follows_folds_maximize_and_floats() {
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut state = CanvasState::from_preset(preset("time+time+flow").unwrap());
+    let mut seats = Seats::default();
+    let _ = tree_bands(&state, &mut seats, area, 4.0);
+    let drawn = |state: &CanvasState, seats: &Seats| {
+        [None, Some(0), Some(1), Some(2)].map(|seat| seat_drawn(state, seats, seat))
+    };
+    assert_eq!(drawn(&state, &seats), [true, true, true, false]);
+    let first = seats.held()[0].0;
+    state.minimize(first).unwrap();
+    assert_eq!(
+        seat_mode(&state, &seats, Some(0)),
+        Some(PaneMode::Minimized)
+    );
+    assert_eq!(drawn(&state, &seats), [true, false, true, false]);
+    let flow = seat_slot(&state, &mut seats, None).unwrap();
+    state.maximize(flow).unwrap();
+    assert_eq!(drawn(&state, &seats), [true, false, false, false]);
+    state.restore(flow).unwrap();
+    let added = state.add(PaneKind::Time, area).unwrap();
+    let _ = tree_bands(&state, &mut seats, area, 4.0);
+    assert_eq!(state.mode(added), Some(PaneMode::Floating));
+    assert_eq!(drawn(&state, &seats), [true, false, true, true]);
+}

@@ -176,7 +176,12 @@ impl FloatGesture {
             DropTarget::Dock(target) => DropOutcome::Dock(target),
             // A docked pane is not floating to park: it floats parked there.
             DropTarget::Park(corner) if docked => {
-                DropOutcome::Float(park_rect(canvas, corner, (rect.w, rect.h)))
+                let mut floated = state.clone();
+                let strips = match floated.float(self.slot(), rect) {
+                    Ok(_) => floated.strips(canvas),
+                    Err(_) => state.strips(canvas),
+                };
+                DropOutcome::Float(park_rect(canvas, corner, (rect.w, rect.h), &strips))
             }
             DropTarget::Park(corner) => DropOutcome::Park(corner),
             DropTarget::Float => DropOutcome::Float(rect),

@@ -10,6 +10,7 @@
 //! open child past it, and the strip slides along.
 
 use super::bands::inset_seams;
+use super::presets::{LayoutPreset, PaneKind};
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
 
@@ -383,5 +384,68 @@ impl CanvasState {
         let whole = extent(bounds(split, &rects), axis);
         let own = extent(bounds(children.get(index)?, &rects), axis);
         (whole > f32::EPSILON).then(|| own / whole)
+    }
+
+    /// `preset` laid out with the column painter's `split`, if any, in its
+    /// row: what a save keeping only the preset's name and the split
+    /// rebuilds, and so what it may leave its tree out for.
+    #[must_use]
+    pub fn from_preset_split(preset: &LayoutPreset, split: Option<f32>) -> Self {
+        let mut state = Self::from_preset(preset);
+        if let Some(mut split) = split {
+            state.mirror_split(preset, &mut split, true);
+        }
+        state
+    }
+
+    /// The model a save carries for this canvas, laid out as `preset` with the
+    /// column painter's `split`, which owns it while `columns` draw: the tree
+    /// as the next frame draws it, or `None` when the preset's name and the
+    /// split rebuild it ([`Self::from_preset_split`]).
+    #[must_use]
+    pub fn saved_form(&self, preset: &LayoutPreset, split: f32, columns: bool) -> Option<Self> {
+        let (mut state, mut split) = (self.clone(), split);
+        state.mirror_split(preset, &mut split, columns);
+        let plain = columns && state == Self::from_preset_split(preset, Some(split));
+        (!plain).then_some(state)
+    }
+
+    /// Keep the column painter's `split` and this tree's row share one number
+    /// while the tree is laid out as the column layout `preset`, floats and
+    /// folds aside: the share its first timeframe chart's branch stores along
+    /// the row. The painter drawing (`columns`) owns it and the other follows,
+    /// so a fold, a float or a call never jumps the divider. With `columns`
+    /// the tree takes `split`, its other children sharing the rest as they
+    /// did; else `split` takes the tree's. Answers whether either changed.
+    pub fn mirror_split(&mut self, preset: &LayoutPreset, split: &mut f32, columns: bool) -> bool {
+        let time = (self.tree().panes().into_iter()).find(|(_, kind)| *kind == PaneKind::Time);
+        let Some((path, index)) = time
+            .filter(|_| self.preset() == Some(preset))
+            .and_then(|(slot, _)| branch(self.tree(), slot, SplitAxis::Row))
+        else {
+            return false;
+        };
+        let Some(PaneTree::Split { shares, .. }) = node_at_mut(self.tree_mut(), &path) else {
+            return false;
+        };
+        let sum: f32 = shares.iter().map(|share| share.max(0.0)).sum();
+        let held = shares.get(index).map_or(0.0, |share| share.max(0.0));
+        let rest = sum - held;
+        if sum <= f32::EPSILON || (*split - held / sum).abs() <= f32::EPSILON {
+            return false;
+        }
+        if !columns {
+            *split = held / sum;
+            return true;
+        }
+        let others = (shares.len() - 1).max(1) as f32;
+        for (at, share) in shares.to_mut().iter_mut().enumerate() {
+            *share = match at {
+                _ if at == index => *split,
+                _ if rest > f32::EPSILON => share.max(0.0) / rest * (1.0 - *split),
+                _ => (1.0 - *split) / others,
+            };
+        }
+        true
     }
 }

@@ -26,8 +26,8 @@ pub mod tree;
 pub mod widgets;
 
 pub use bands::{
-    LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_slot, signal, slot_seat,
-    tree_bands,
+    LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_drawn, seat_mode,
+    seat_slot, signal, slot_seat, tree_bands,
 };
 pub use drag::{
     DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX,
