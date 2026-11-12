@@ -5,7 +5,7 @@ impl crate::Model for Model {
     type Intent = (i64, u64);
     type Effects = (i64, u64);
     fn update(state: &mut i64, (delta, now): Self::Intent) -> Self::Effects {
-        *state += delta * 1;
+        *state += delta;
         (*state, now)
     }
 }
