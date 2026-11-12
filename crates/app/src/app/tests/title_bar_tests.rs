@@ -206,8 +206,12 @@ fn title_bar_idle_frames_preserve_text_focus_and_native_close_uses_normal_shutdo
     let mut draft = String::from("original");
     for frame in 0..2 {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let _ =
-                super::super::title_bar::draw(ctx, &app.runtime.tabs, &mut app.chrome.title_bar);
+            let _ = super::super::title_bar::draw(
+                ctx,
+                &app.runtime.tabs,
+                &mut app.chrome.title_bar,
+                &mut app.surfaces,
+            );
             egui::CentralPanel::default().show(ctx, |ui| {
                 let field = ui.add(egui::TextEdit::singleline(&mut draft).id(focus));
                 if frame == 0 {
@@ -310,8 +314,12 @@ fn title_bar_accepts_degenerate_client_widths_without_negative_widget_sizes() {
             ..Default::default()
         };
         let _ = ctx.run(input, |ctx| {
-            let _ =
-                super::super::title_bar::draw(ctx, &app.runtime.tabs, &mut app.chrome.title_bar);
+            let _ = super::super::title_bar::draw(
+                ctx,
+                &app.runtime.tabs,
+                &mut app.chrome.title_bar,
+                &mut app.surfaces,
+            );
         });
         assert!(
             app.chrome

@@ -90,3 +90,8 @@ pub(super) struct ChromeState {
     /// the defect it was measured chasing.
     pub(super) surface: Option<window_scale::SurfaceProbe>,
 }
+
+pub(in crate::app) mod capsule;
+pub(in crate::app) mod toolbar;
+
+pub(in crate::app) mod menu_bar;

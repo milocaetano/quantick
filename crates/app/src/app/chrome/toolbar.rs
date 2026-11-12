@@ -10,11 +10,11 @@ use eframe::egui;
 use quantick_control_handlers::market_palette::MarketPaletteHost as _;
 use quantick_engine::Side;
 
-use super::indicator_manager::IndicatorEdit;
+use crate::app::indicator_manager::IndicatorEdit;
 use crate::indicator_worker::SlotId;
 use crate::toolbar::{self, ToolbarAction};
 
-use super::{QuantickApp, TabsMutPort};
+use crate::app::{QuantickApp, TabsMutPort};
 
 // A failed recut still owns older prints after venue paging is exhausted.
 // The history button retries those retained pages through its ordinary action.
@@ -27,90 +27,115 @@ fn toolbar_caps(
     caps
 }
 
-impl QuantickApp {
-    /// Build the toolbar's model from the app's state, draw it, and carry
-    /// out whatever it asked (§6 — the toolbar module owns grouping and the
-    /// overflow rule; this method owns the side effects).
-    pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        let chip = self.config.venue_chip(&self.active_tab().feed_id);
-        let feed = &self.active_tab().link;
-        let replay = feed.replay.as_ref().map(|link| toolbar::ReplaySource {
-            label: link.label(),
-            hover: format!(
-                "Replaying {}\nSide source: {}",
-                link.session.path.display(),
-                link.session
-                    .header
-                    .side_source
-                    .as_deref()
-                    .unwrap_or("not recorded"),
-            ),
+/// Build the toolbar's model from the app's state, draw it, and carry
+/// out whatever it asked (§6 — the toolbar module owns grouping and the
+/// overflow rule; this method owns the side effects).
+pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
+    let chip = app.config.venue_chip(&app.active_tab().feed_id);
+    let feed = &app.active_tab().link;
+    let replay = feed.replay.as_ref().map(|link| toolbar::ReplaySource {
+        label: link.label(),
+        hover: format!(
+            "Replaying {}\nSide source: {}",
+            link.session.path.display(),
+            link.session
+                .header
+                .side_source
+                .as_deref()
+                .unwrap_or("not recorded"),
+        ),
+    });
+    let capabilities = toolbar_caps(app.active_tab(), &app.config);
+    let candles_held = app.active_tab().session.venue_candles_held();
+    let older_candles = app.active_tab().older_candles(capabilities);
+    let dock_visible = app.dock.visible();
+    // The History button names this tab's target and run.
+    let history = toolbar::HistoryButton {
+        main: app.active_tab().session.main_history_reach(),
+        status: app.active_tab().session.history_status(),
+        tz: app.runtime.tz,
+    };
+
+    let capsule = crate::app::chrome::capsule::snapshot(app, ctx);
+
+    let deal_recording = app.active_tab().deal_recording_view();
+    #[cfg(any(feature = "scenario-harness", test))]
+    let deal_recording_menu =
+        deal_recording.is_some() && app.chrome.harness.take_deal_recording_menu();
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    let deal_recording_menu = false;
+    #[cfg(any(feature = "scenario-harness", test))]
+    if app.chrome.harness.take_bars_menu() {
+        let popup = crate::pane_header::menu_id(app.focused_pane().id);
+        ctx.memory_mut(|memory| memory.open_popup(popup));
+    }
+    let scope = app.runtime.tabs.windows().presented().0;
+    app.surfaces
+        .retain_slot_scopes(quantick_ui_model::Slot::Toolbar, |scope| {
+            app.runtime
+                .tabs
+                .windows()
+                .window(quantick_workspace::arrangement::windows::WindowId(scope))
+                .is_some()
         });
-        let capabilities = toolbar_caps(self.active_tab(), &self.config);
-        let candles_held = self.active_tab().session.venue_candles_held();
-        let older_candles = self.active_tab().older_candles(capabilities);
-        let dock_visible = self.dock.visible();
-        // The History button names this tab's target and run.
-        let history = toolbar::HistoryButton {
-            main: self.active_tab().session.main_history_reach(),
-            status: self.active_tab().session.history_status(),
-            tz: self.runtime.tz,
-        };
-        let mut history_menu_rect = self.chrome.history_menu_rect;
-        let capsule = super::capsule_wiring::CapsuleState::of(self, ctx);
-        let mut capsule_rects = self.chrome.capsule;
-        let deal_recording = self.active_tab().deal_recording_view();
-        #[cfg(any(feature = "scenario-harness", test))]
-        let deal_recording_menu =
-            deal_recording.is_some() && self.chrome.harness.take_deal_recording_menu();
-        #[cfg(not(any(feature = "scenario-harness", test)))]
-        let deal_recording_menu = false;
-        #[cfg(any(feature = "scenario-harness", test))]
-        if self.chrome.harness.take_bars_menu() {
-            let popup = crate::pane_header::menu_id(self.focused_pane().id);
-            ctx.memory_mut(|memory| memory.open_popup(popup));
-        }
-        let mut toolbar_door = None;
-        let window_menu = capsule.door(&mut toolbar_door);
-        let tab = self.active_tab_mut();
-        let focused_bars = tab.focused_pane().spec.spec().definition();
-        let mut model = toolbar::ToolbarModel {
-            window_menu,
-            capsule: capsule.model(),
-            capsule_rects: &mut capsule_rects,
-            market: (chip, tab.chip_label()),
-            replay,
-            deal_recording,
-            deal_recording_menu,
-            focused_bars,
-            history_menu_rect: &mut history_menu_rect,
-            history,
-            history_candles: candles_held,
-            older_candles,
-            capabilities,
-            dock_visible,
-            // The lock reaches the toolbar too: `blocked` carries it, so a
-            // fast click here cannot only toast while the ticket refuses.
-            paper: tab
-                .paper
-                .trade_bar(&ctx.format_shortcut(&super::menu_bar::PAPER_REVERSE_SHORTCUT)),
-        };
-        let actions = toolbar::draw(ctx, &mut model);
-        drop(model);
-        self.chrome.history_menu_rect = history_menu_rect;
-        let settle = super::capsule_wiring::settle;
-        for action in settle(self, ctx, &capsule, capsule_rects, toolbar_door, actions) {
-            self.apply_toolbar_action(action);
+    let tab = app.active_tab();
+    let snapshot = quantick_ui_model::chrome_toolbar::Snapshot {
+        capsule: capsule.clone(),
+        market: (chip, tab.chip_label().to_owned()),
+        replay,
+        deal_recording,
+        focused_bars: tab.focused_pane().spec.spec(),
+        history,
+        history_candles: candles_held,
+        older_candles,
+        capabilities,
+        dock_visible,
+        paper: tab
+            .paper
+            .trade_bar(&ctx.format_shortcut(&crate::app::menu_bar::PAPER_REVERSE_SHORTCUT)),
+    };
+    app.surfaces.update_scoped(
+        scope,
+        crate::surfaces::HostIntent::ChromeToolbar(Box::new(
+            quantick_ui_model::chrome_toolbar::Intent::Refresh(Box::new(snapshot)),
+        )),
+    );
+    app.surfaces.chrome_toolbar.scoped(scope).1.recording_menu = deal_recording_menu;
+    let response = app.surfaces.draw_slot_scoped(
+        scope,
+        quantick_ui_model::Slot::Toolbar,
+        &mut crate::surfaces::ViewContext { ctx, ui: None },
+    );
+    let view = app.surfaces.chrome_toolbar.scoped(scope).1;
+    app.chrome.history_menu_rect = view.history;
+    let (capsule_rects, toolbar_door) = (view.capsule, view.door);
+    let mut actions = response.indicator_actions;
+    for effect in response.model_effects {
+        if let quantick_ui_model::HostEffect::ChromeToolbar(effects) = effect {
+            for effect in effects.0 {
+                use quantick_ui_model::chrome_toolbar::Effect;
+                match effect {
+                    Effect::Action(action) => actions.push(action),
+                    Effect::SetLayoutPopover(open) => app.chrome.layout_picker_open = open,
+                    Effect::SetAddMenu(open) => app.chrome.add_menu.open = open,
+                }
+            }
         }
     }
+    let settle = crate::app::chrome::capsule::settle;
+    for action in settle(app, ctx, &capsule, capsule_rects, toolbar_door, actions) {
+        app.apply_toolbar_action(action);
+    }
+}
 
+impl QuantickApp {
     /// Switch the active tab to `preset`.
     ///
     /// **The one path.** The toolbar's picker, the `View → Layout` menu and
     /// the keyboard all arrive here, so none of them can grow its own idea of
     /// what applying a layout does. A control-plane capability joins them by
     /// calling this, never by repeating it.
-    pub(super) fn apply_layout_preset(
+    pub(in crate::app) fn apply_layout_preset(
         &mut self,
         preset: &'static crate::canvas_layout::LayoutPreset,
     ) {
@@ -118,7 +143,7 @@ impl QuantickApp {
     }
 
     /// One toolbar side effect.
-    pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
+    pub(in crate::app) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadHistory(reach) => {
                 let active = self.runtime.tabs.active_index();
@@ -131,7 +156,7 @@ impl QuantickApp {
             }
             ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
-            // Carried out by `capsule_wiring::settle`, which knows the window.
+            // Carried out by `chrome::capsule::settle`, which knows the window.
             ToolbarAction::ToggleWindowMenu
             | ToolbarAction::ToggleLayoutPopover
             | ToolbarAction::ToggleAddMenu
@@ -150,7 +175,7 @@ impl QuantickApp {
             // which the workspace restore and the harness hooks also travel —
             // there it would erase the fold on every launch.
             ToolbarAction::AddNative(id) => {
-                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                crate::app::indicator_manager::IndicatorState::set_legend_collapsed(
                     self.focused_pane_mut(),
                     false,
                 );
@@ -179,7 +204,7 @@ impl QuantickApp {
                 wiring.apply_indicator_edit(IndicatorEdit::Remove(target));
             }
             ToolbarAction::AddScriptIndicator(index) => {
-                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                crate::app::indicator_manager::IndicatorState::set_legend_collapsed(
                     self.focused_pane_mut(),
                     false,
                 );

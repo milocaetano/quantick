@@ -22,7 +22,7 @@ pub(super) fn prepare(
     background: Option<egui::Color32>,
 ) -> (egui::Color32, crate::config::FeedCapabilities, bool) {
     drawings.chrome.sync_content_editing(tabs);
-    surfaces.retain_scopes(|scope| {
+    surfaces.retain_slot_scopes(quantick_ui_model::Slot::PaneHeader, |scope| {
         tabs.iter()
             .any(|tab| tab.panes().any(|(pane, _)| pane.id == scope))
     });

@@ -3386,8 +3386,17 @@ name = "quantick-ui-model"
 version = "0.1.0"
 dependencies = [
  "quantick-chart",
+ "quantick-chart-interaction",
+ "quantick-civil",
+ "quantick-control-schema",
  "quantick-engine",
  "quantick-orderflow",
+ "quantick-paper",
+ "quantick-replay",
+ "quantick-session",
+ "quantick-sources",
+ "quantick-stores",
+ "quantick-workspace",
 ]
 
 [[package]]

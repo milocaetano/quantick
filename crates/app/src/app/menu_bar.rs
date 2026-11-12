@@ -13,12 +13,11 @@ use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
-use quantick_control_schema::window_menu::KEBAB_CONTROL;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
-pub(in crate::app) use menus::{KEBAB_GLYPH, MenuDoor, WindowMenuState};
+pub(in crate::app) use menus::{MenuDoor, WindowMenuState};
 
 mod commands;
 mod menus;
@@ -261,7 +260,12 @@ impl QuantickApp {
             .control_access
             .as_ref()
             .is_some_and(crate::control::ControlAccess::is_enabled);
-        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
+        let action = super::title_bar::draw(
+            ctx,
+            &self.runtime.tabs,
+            &mut self.chrome.title_bar,
+            &mut self.surfaces,
+        );
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
@@ -385,32 +389,50 @@ impl QuantickApp {
 
 /// The menu's panes, each handed exactly the state it shows.
 fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    let door = match app.chrome.window_menu.door() {
-        MenuDoor::Kebab => app.chrome.title_bar.control_rect(KEBAB_CONTROL),
-        MenuDoor::Toolbar => app.chrome.window_menu.toolbar_door,
+    super::chrome::menu_bar::draw(app, ctx, commands);
+}
+
+pub(in crate::app) fn menu_shortcuts(
+    ctx: &egui::Context,
+) -> Vec<(quantick_ui_model::chrome_menu_bar::Shortcut, String)> {
+    use quantick_control_schema::window_menu::RowId;
+    use quantick_ui_model::chrome_menu_bar::Shortcut;
+    [
+        RowId::SaveToWorkspace,
+        RowId::SaveDesk,
+        RowId::TogglePanels,
+        RowId::MarketReplay,
+        RowId::Settings,
+    ]
+    .into_iter()
+    .map(Shortcut::Row)
+    .chain(
+        (0..LAYOUT_PRESET_KEYS.len())
+            .flat_map(|index| [Shortcut::Layout(index), Shortcut::Preset(index)]),
+    )
+    .chain([Shortcut::Context, Shortcut::Legend])
+    .filter_map(|key| menu_shortcut(ctx, key).map(|text| (key, text)))
+    .collect()
+}
+pub(crate) fn menu_shortcut(
+    ctx: &egui::Context,
+    shortcut: quantick_ui_model::chrome_menu_bar::Shortcut,
+) -> Option<String> {
+    use quantick_control_schema::window_menu::RowId;
+    use quantick_ui_model::chrome_menu_bar::Shortcut;
+    let binding = match shortcut {
+        Shortcut::Row(RowId::SaveToWorkspace) => SAVE_TO_WORKSPACE_SHORTCUT,
+        Shortcut::Row(RowId::SaveDesk) => SAVE_WORKSPACE_SHORTCUT,
+        Shortcut::Row(RowId::TogglePanels) => DOCK_SHORTCUT,
+        Shortcut::Row(RowId::MarketReplay) => REPLAY_SHORTCUT,
+        Shortcut::Row(RowId::Settings) => SETTINGS_SHORTCUT,
+        Shortcut::Row(_) => return None,
+        Shortcut::Layout(index) => layout_tab_shortcut(index)?,
+        Shortcut::Preset(index) => layout_preset_shortcut(index)?,
+        Shortcut::Context => COLLAPSE_CONTEXT_SHORTCUT,
+        Shortcut::Legend => LEGEND_SHORTCUT,
     };
-    let Some(door) = door else {
-        return;
-    };
-    let mut state = std::mem::take(&mut app.chrome.window_menu);
-    let workspace = workspace_rows::WorkspaceRows::of(app);
-    menus::WindowMenu {
-        workspace,
-        chart_shown: !app.chrome.title_bar.surface.is_home(),
-        replaying: app.active_tab().link.replay.is_some(),
-        layouts: app.layout_state(),
-        tab: app.active_tab(),
-        dock_visible: app.dock.visible(),
-        dock_tab: app.dock.tab(),
-        toolrail: &app.toolrail,
-        panel_folds: app.runtime.tabs.panel_folds(),
-        startup_saved: app.runtime.workspace.session().saved(),
-        save_on_exit: app.runtime.workspace.session().save_on_exit(),
-        recent: app.runtime.workspace.recent_on_disk(),
-        focus_live_row: std::cell::Cell::new(false),
-    }
-    .show(ctx, &mut state, door, commands);
-    app.chrome.window_menu = state;
+    Some(shortcut_text(ctx, &binding))
 }
 
 /// The capsule's workspace name: a click, or Ctrl+Shift+O from anywhere in

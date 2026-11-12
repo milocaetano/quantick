@@ -10,9 +10,19 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+quantick-chart-interaction = { path = "../chart-interaction" }
+quantick-stores = { path = "../stores" }
+quantick-control-schema = { path = "../control-schema" }
+quantick-session = { path = "../session" }
 quantick-chart = { path = "../chart" }
 quantick-engine = { path = "../engine" }
 quantick-orderflow = { path = "../orderflow" }
+
+quantick-civil = { path = "../civil" }
+quantick-paper = { path = "../paper" }
+quantick-replay = { path = "../replay" }
+quantick-sources = { path = "../sources" }
+quantick-workspace = { path = "../workspace" }
 
 [lints]
 workspace = true

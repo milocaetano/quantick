@@ -21,6 +21,31 @@ macro_rules! surface_catalog {
             }
             modules { drawing_chrome; home; remove_chart; }
             models {
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_title_first: ChromeTitleFirst => chrome_title_first = "chrome/probe_title_first.rs", chrome_title_first = "chrome/tests/title_first.rs", chrome_title_first::effects, TitleBar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_title_second: ChromeTitleSecond => chrome_title_second = "chrome/probe_title_second.rs", chrome_title_second = "chrome/tests/title_second.rs", chrome_title_second::effects, TitleBar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_toolbar_first: ChromeToolbarFirst => chrome_toolbar_first = "chrome/probe_toolbar_first.rs", chrome_toolbar_first = "chrome/tests/toolbar_first.rs", chrome_toolbar_first::effects, Toolbar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_toolbar_second: ChromeToolbarSecond => chrome_toolbar_second = "chrome/probe_toolbar_second.rs", chrome_toolbar_second = "chrome/tests/toolbar_second.rs", chrome_toolbar_second::effects, Toolbar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_menu_first: ChromeMenuFirst => chrome_menu_first = "chrome/probe_menu_first.rs", chrome_menu_first = "chrome/tests/menu_first.rs", chrome_menu_first::effects, MenuBar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_menu_second: ChromeMenuSecond => chrome_menu_second = "chrome/probe_menu_second.rs", chrome_menu_second = "chrome/tests/menu_second.rs", chrome_menu_second::effects, MenuBar;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_tabs_first: ChromeTabsFirst => chrome_tabs_first = "chrome/probe_tabs_first.rs", chrome_tabs_first = "chrome/tests/tabs_first.rs", chrome_tabs_first::effects, TabStrip;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_tabs_second: ChromeTabsSecond => chrome_tabs_second = "chrome/probe_tabs_second.rs", chrome_tabs_second = "chrome/tests/tabs_second.rs", chrome_tabs_second::effects, TabStrip;
+
+                [] []
+                chrome_menu_bar: ChromeMenuBar => chrome_menu_bar = "chrome/menu_bar.rs", chrome_menu_bar = "chrome/menu_bar.rs", chrome_menu_bar::effects, MenuBar;
+                [] []
+                chrome_title_bar: ChromeTitleBar => chrome_title_bar = "chrome/title_bar.rs", chrome_title_bar = "chrome/title_bar.rs", chrome_title_bar::effects, TitleBar;
+                [] []
+                chrome_tab_strip: ChromeTabStrip => chrome_tab_strip = "chrome/tab_strip.rs", chrome_tab_strip = "chrome/tab_strip.rs", chrome_tab_strip::effects, TabStrip;
+                [] []
+                chrome_toolbar: ChromeToolbar => chrome_toolbar = "chrome/toolbar.rs", chrome_toolbar = "chrome/toolbar.rs", chrome_toolbar::effects, Toolbar;
                 [] []
                 pane_header: PaneHeader => pane_header = "pane_header.rs", pane_header = "../pane_header.rs", pane_header::effects, PaneHeader;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
