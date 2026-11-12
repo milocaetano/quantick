@@ -207,13 +207,18 @@ pub const WORKSPACE_TOKENS: [Token; 8] = [
 /// graphics floor of WCAG 1.4.11.
 pub const WORKSPACE_EDGE_CONTRAST: f32 = 3.0;
 
+/// Below this contrast with the strip a bar reads as no bar at all, as
+/// Light's Chalk (about 1.04:1) does. The picked palette keeps every other
+/// bar unoutlined (Light's next lowest, Indigo, is about 1.76:1).
+pub const WORKSPACE_BAR_LOST_CONTRAST: f32 = 1.5;
+
 /// Whether a workspace's bar needs a 1 px outline along its strip-facing
-/// edges: it falls short of [`WORKSPACE_EDGE_CONTRAST`] against the strip, as
-/// Light's Chalk does. The outline is the strip's `TextPrimary`.
+/// edges: it falls below [`WORKSPACE_BAR_LOST_CONTRAST`] against the strip,
+/// as Light's Chalk does. The outline is the strip's `TextPrimary`.
 #[must_use]
 pub fn bar_needs_outline(bar: [u8; 4], strip: [u8; 4]) -> bool {
     let [bar, strip] = [bar, strip].map(PremultipliedRgba::from_premultiplied);
-    contrast_ratio(bar, strip) < WORKSPACE_EDGE_CONTRAST
+    contrast_ratio(bar, strip) < WORKSPACE_BAR_LOST_CONTRAST
 }
 
 /// The ink of the current swatch's ring: `TextPrimary` unless that falls short
@@ -403,9 +408,8 @@ mod tests {
         }
     }
 
-    /// Each bar reaches 3:1 on the strip or is outlined in an ink that does;
-    /// Light's bars all fall short on its slate strip and are outlined, Chalk
-    /// (1.04:1) the worst; Dark's Violet needs none.
+    /// Only a bar lost on the strip is outlined, in an ink that reads there:
+    /// of both themes' palettes that is Light's Chalk (1.04:1) alone.
     #[test]
     fn a_bar_lost_on_the_strip_is_outlined_in_an_ink_that_reads_there() {
         let dark = ResolvedTheme::default();
@@ -430,12 +434,17 @@ mod tests {
             chalk.to_array(),
             light.title_strip().color(Token::TabStrip).to_array()
         ));
-        // Dark's bright colours reach 3:1 on its strip unaided.
-        let violet = dark.color(Token::WorkspaceViolet);
-        assert!(!bar_needs_outline(
-            violet.to_array(),
-            dark.title_strip().color(Token::TabStrip).to_array()
-        ));
+        let mut outlined = Vec::new();
+        for theme in [&dark, &light] {
+            let ground = theme.title_strip().color(Token::TabStrip).to_array();
+            for token in WORKSPACE_TOKENS {
+                if bar_needs_outline(theme.color(token).to_array(), ground) {
+                    outlined.push((theme.name.clone(), token.key()));
+                }
+            }
+        }
+        assert_eq!(outlined.len(), 1, "{outlined:?}");
+        assert_eq!(outlined[0].1, Token::WorkspaceChalk.key());
     }
 
     /// The current swatch's ring reads on every colour in both themes.
