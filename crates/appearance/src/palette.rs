@@ -285,9 +285,12 @@ pub enum Token {
     PanelLiveRow,
     /// A losing trade card's left stripe.
     PanelStripeLoss,
+    /// A gain on the panels' grey plates, the footer and a lit session row,
+    /// where Light's buy ink falls short of 4.5:1.
+    PanelGainInk,
 }
 impl Token {
-    pub const ALL: [Self; 150] = [
+    pub const ALL: [Self; 151] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -438,6 +441,7 @@ impl Token {
         Self::PanelFilterBar,
         Self::PanelLiveRow,
         Self::PanelStripeLoss,
+        Self::PanelGainInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -498,6 +502,7 @@ impl Token {
             Self::PanelFilterBar => "panel_filter_bar",
             Self::PanelLiveRow => "panel_live_row",
             Self::PanelStripeLoss => "panel_stripe_loss",
+            Self::PanelGainInk => "panel_gain_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

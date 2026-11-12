@@ -186,6 +186,7 @@ panel_strong_ink = "#D2DAE2"
 panel_filter_bar = "#10141D"
 panel_live_row = "#262E40"
 panel_stripe_loss = "#EF5350"
+panel_gain_ink = "#88CEC7"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

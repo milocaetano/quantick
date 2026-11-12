@@ -304,7 +304,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 44] = [
+pub(crate) const MODE_TOKENS: [Token; 45] = [
     Token::TabStrip,
     Token::Brand,
     Token::ReplayInk,
@@ -349,6 +349,7 @@ pub(crate) const MODE_TOKENS: [Token; 44] = [
     Token::PanelFilterBar,
     Token::PanelLiveRow,
     Token::PanelStripeLoss,
+    Token::PanelGainInk,
 ];
 
 #[derive(Debug, Clone, PartialEq)]

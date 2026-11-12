@@ -1,6 +1,8 @@
 //! The bundled surfaces as text, every byte a renderer reads off them, against
 //! the dump taken at the commit before the flow pane's lights existed: the
-//! bulb's off state, and Dark, paint exactly what they painted then.
+//! bulb's off state, and Dark, paint exactly what they painted then. Light's
+//! ledger card edge and session box later took the settings panels' blocks;
+//! the fixture carries those three Light values as they are now.
 use crate::{DARK, LIGHT, ResolvedTheme, Token};
 use std::fmt::Write;
 

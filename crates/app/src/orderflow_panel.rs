@@ -156,7 +156,7 @@ fn section_block(
     landing: Option<(PanelSection, f32, f32)>,
     painted: &mut PaintedControls,
 ) -> (bool, bool) {
-    let id = egui::Id::new(("orderflow_panel_section", section.id()));
+    let id = ui.make_persistent_id(("orderflow_panel_section", section.id()));
     let title = section.title().to_uppercase();
     let (header, body) = panel_chrome::band(ui, id, (&title, state), open, body);
     if quantick_workspace::orderflow_panel::still_landing(landing, section, header.rect.top()) {

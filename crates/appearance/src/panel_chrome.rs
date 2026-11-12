@@ -23,8 +23,8 @@ pub const PLATE_PAD_Y_PX: f32 = 7.0;
 /// A subgroup caption's size, and the rule under it.
 pub const CAPTION_SIZE: f32 = 10.5;
 pub const CAPTION_RULE_PX: f32 = 1.0;
-/// A trade card's left stripe in its result colour.
-pub const STRIPE_PX: f32 = 3.0;
+/// The size of a band's state words.
+pub const BAND_STATE_SIZE: f32 = 11.0;
 /// The panel's own margin around its blocks, which a full-bleed plate
 /// reaches back across: across, then above and below.
 pub const PANEL_MARGIN_X_PX: f32 = 10.0;
@@ -38,57 +38,57 @@ pub const FOLD_ICON_PX: f32 = 9.0;
 
 /// A filled shape and the words written on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Surface {
+pub struct Plate {
     pub fill: Token,
     pub ink: Token,
 }
 
 /// Each part of a panel, as the theme paints it.
-pub const GROUND: Surface = Surface {
+pub const GROUND: Plate = Plate {
     fill: Token::PanelGround,
     ink: Token::TextPrimary,
 };
-pub const TITLE_PLATE: Surface = Surface {
+pub const TITLE_PLATE: Plate = Plate {
     fill: Token::PanelPlate,
     ink: Token::PanelPlateInk,
 };
-pub const BLOCK: Surface = Surface {
+pub const BLOCK: Plate = Plate {
     fill: Token::PanelBlock,
     ink: Token::TextPrimary,
 };
-pub const BAND: Surface = Surface {
+pub const BAND: Plate = Plate {
     fill: Token::PanelBand,
     ink: Token::PanelPlateInk,
 };
 /// The state words on a band's right.
-pub const BAND_STATE: Surface = Surface {
+pub const BAND_STATE: Plate = Plate {
     fill: Token::PanelBand,
     ink: Token::PanelBandState,
 };
-pub const CAPTION: Surface = Surface {
+pub const CAPTION: Plate = Plate {
     fill: Token::PanelBlock,
     ink: Token::PanelCaption,
 };
-pub const FOOTER: Surface = Surface {
+pub const FOOTER: Plate = Plate {
     fill: Token::PanelFooter,
     ink: Token::PanelStrongInk,
 };
-pub const FILTER_BAR: Surface = Surface {
+pub const FILTER_BAR: Plate = Plate {
     fill: Token::PanelFilterBar,
     ink: Token::TextPrimary,
 };
-pub const LIVE_ROW: Surface = Surface {
+pub const LIVE_ROW: Plate = Plate {
     fill: Token::PanelLiveRow,
     ink: Token::TextPrimary,
 };
 /// THIS SESSION / EARLIER SESSIONS, bold on the ground.
-pub const SESSION_CAPTION: Surface = Surface {
+pub const SESSION_CAPTION: Plate = Plate {
     fill: Token::PanelGround,
     ink: Token::PanelStrongInk,
 };
 
 /// Every surface that carries words, for the contrast tests.
-pub const WORDED: [Surface; 10] = [
+pub const WORDED: [Plate; 10] = [
     GROUND,
     TITLE_PLATE,
     BLOCK,
@@ -100,6 +100,10 @@ pub const WORDED: [Surface; 10] = [
     LIVE_ROW,
     SESSION_CAPTION,
 ];
+
+/// A band under the pointer: the title plate's fill, which both the band's
+/// words and its state words read on.
+pub const BAND_HOVER: Token = TITLE_PLATE.fill;
 
 /// The border of a block, and the rule under the filter bar.
 pub const BLOCK_EDGE: Token = Token::PanelBlockEdge;
@@ -196,24 +200,49 @@ mod tests {
         }
     }
 
-    /// Dark gains the structure only: every panel colour is one Dark already
-    /// paints with.
+    /// Dark gains the structure only: each panel colour is the Dark colour
+    /// the panels painted there before, named.
     #[test]
-    fn dark_panel_colours_are_dark_colours_already_there() {
+    fn dark_panel_colours_mirror_the_dark_tokens_they_replace() {
         let dark = ResolvedTheme::bundled(true);
-        let existing: Vec<_> = Token::ALL
-            .into_iter()
-            .filter(|token| !token.key().starts_with("panel_"))
-            .map(|token| dark.color(token))
-            .collect();
-        for token in Token::ALL
-            .into_iter()
-            .filter(|t| t.key().starts_with("panel_"))
-        {
-            assert!(
-                existing.contains(&dark.color(token)),
-                "{token:?} is a new Dark colour"
-            );
+        let mirrors = [
+            (Token::PanelGround, Token::Chrome),
+            (Token::PanelPlate, Token::Inset),
+            (Token::PanelPlateInk, Token::TextPrimary),
+            (Token::PanelBlock, Token::LedgerCard),
+            (Token::PanelBlockEdge, Token::LedgerCardEdge),
+            (Token::PanelBand, Token::LedgerCardEdge),
+            (Token::PanelBandState, Token::TextMuted),
+            (Token::PanelCaption, Token::TextMuted),
+            (Token::PanelCaptionRule, Token::LedgerCardEdge),
+            (Token::PanelFooter, Token::Inset),
+            (Token::PanelStrongInk, Token::TextPrimary),
+            (Token::PanelFilterBar, Token::Inset),
+            (Token::PanelLiveRow, Token::LedgerSession),
+            (Token::PanelStripeLoss, Token::LossInk),
+            (Token::PanelGainInk, Token::BuyInk),
+        ];
+        for (panel, mirrored) in mirrors {
+            assert_eq!(dark.color(panel), dark.color(mirrored), "{panel:?}");
+        }
+        let panels = Token::ALL.iter().filter(|t| t.key().starts_with("panel_"));
+        assert_eq!(
+            panels.count(),
+            mirrors.len(),
+            "every panel token is mirrored"
+        );
+    }
+
+    /// A band under the pointer still reads: its title and its state words
+    /// on the hover fill, and the fill stands off the band at rest.
+    #[test]
+    fn a_hovered_band_reads_and_stands_off_the_band() {
+        for theme in both() {
+            for ink in [BAND.ink, BAND_STATE.ink] {
+                let ratio = contrast_ratio(theme.color(ink), theme.color(BAND_HOVER));
+                assert!(ratio >= TEXT, "{} {ink:?}: {ratio:.2}", theme.name);
+            }
+            assert_ne!(theme.color(BAND_HOVER), theme.color(BAND.fill));
         }
     }
 

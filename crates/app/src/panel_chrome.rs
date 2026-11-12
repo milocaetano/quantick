@@ -6,9 +6,9 @@
 
 use eframe::egui;
 use quantick_appearance::panel_chrome::{
-    self as chrome, BAND_PAD_X_PX, BAND_PAD_Y_PX, BLOCK_EDGE_PX, BLOCK_PAD_PX, BLOCK_RADIUS_PX,
-    CAPTION_GAP_PX, CAPTION_RULE_PX, CAPTION_SIZE, CAPTION_TRACKING_PX, FOLD_ICON_PX,
-    PANEL_MARGIN_X_PX, PANEL_MARGIN_Y_PX, PLATE_PAD_X_PX, PLATE_PAD_Y_PX, Surface,
+    self as chrome, BAND_PAD_X_PX, BAND_PAD_Y_PX, BAND_STATE_SIZE, BLOCK_EDGE_PX, BLOCK_PAD_PX,
+    BLOCK_RADIUS_PX, CAPTION_GAP_PX, CAPTION_RULE_PX, CAPTION_SIZE, CAPTION_TRACKING_PX,
+    FOLD_ICON_PX, PANEL_MARGIN_X_PX, PANEL_MARGIN_Y_PX, PLATE_PAD_X_PX, PLATE_PAD_Y_PX, Plate,
 };
 
 use crate::theme;
@@ -31,7 +31,7 @@ pub(crate) fn ground(ctx: &egui::Context) -> egui::Frame {
 /// edges, every word on it in the plate's ink.
 fn plate<R>(
     ui: &mut egui::Ui,
-    surface: Surface,
+    surface: Plate,
     [x, top, bottom]: [f32; 3],
     rounding: egui::Rounding,
     add: impl FnOnce(&mut egui::Ui) -> R,
@@ -133,8 +133,8 @@ pub(crate) fn block<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) 
 
 /// A section's header band across the top of its [`block`]: the fold
 /// triangle and `title` in the band's ink, `state` on its right in the
-/// state ink, cut to the room left. The whole band answers the pointer; the
-/// body under it shows, padded, while `open`.
+/// state ink, cut to the room left. The whole band answers the pointer (a
+/// pointing hand, the hover fill); the body shows, padded, while `open`.
 pub(crate) fn band<R>(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -152,6 +152,9 @@ pub(crate) fn band<R>(
     let words = ui.painter().layout_no_wrap(title.to_owned(), font, ink);
     let size = egui::vec2(ui.available_width(), words.size().y + 2.0 * BAND_PAD_Y_PX);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let kind = egui::WidgetType::CollapsingHeader;
+    response.widget_info(|| egui::WidgetInfo::labeled(kind, ui.is_enabled(), title));
     if ui.is_rect_visible(rect) {
         let top = BLOCK_RADIUS_PX - BLOCK_EDGE_PX;
         let foot = if openness > 0.0 { 0.0 } else { top };
@@ -161,8 +164,9 @@ pub(crate) fn band<R>(
             sw: foot,
             se: foot,
         };
-        ui.painter()
-            .rect_filled(rect, rounding, *palette.get(chrome::BAND.fill));
+        let fill = response.hovered().then_some(chrome::BAND_HOVER);
+        let fill = *palette.get(fill.unwrap_or(chrome::BAND.fill));
+        ui.painter().rect_filled(rect, rounding, fill);
         let icon = egui::Rect::from_center_size(
             egui::pos2(
                 rect.left() + BAND_PAD_X_PX + FOLD_ICON_PX / 2.0,
@@ -170,7 +174,7 @@ pub(crate) fn band<R>(
             ),
             egui::Vec2::splat(FOLD_ICON_PX),
         );
-        fold_icon(ui.painter(), icon, openness, ink);
+        fold_icon(ui, &response.clone().with_new_rect(icon), openness, ink);
         let at = egui::pos2(icon.right() + ui.spacing().icon_spacing, rect.center().y);
         let title_right = at.x + words.size().x;
         ui.painter()
@@ -180,7 +184,7 @@ pub(crate) fn band<R>(
             let state_ink = *palette.get(chrome::BAND_STATE.ink);
             let mut job = egui::text::LayoutJob::simple_singleline(
                 state.to_owned(),
-                palette.mono_font(11.0),
+                palette.mono_font(BAND_STATE_SIZE),
                 state_ink,
             );
             job.wrap = egui::text::TextWrapping::truncate_at_width(room);
@@ -231,13 +235,7 @@ pub(crate) fn folding_caption<R>(
     let shown = egui::CollapsingHeader::new(caption_words(ui, name))
         .id_salt(salt)
         .default_open(default_open)
-        .icon(move |ui, openness, response| {
-            let icon = egui::Rect::from_center_size(
-                response.rect.center(),
-                egui::Vec2::splat(FOLD_ICON_PX),
-            );
-            fold_icon(ui.painter(), icon, openness, ink);
-        })
+        .icon(move |ui, openness, response| fold_icon(ui, response, openness, ink))
         .show(ui, body);
     let header = shown.header_response.rect;
     rule(
@@ -261,14 +259,16 @@ fn rule(ui: &egui::Ui, across: egui::Rangef, y: f32, token: quantick_appearance:
     ui.painter().hline(across, y + CAPTION_RULE_PX, stroke);
 }
 
-/// The fold triangle in `rect`: pointing right shut, down open.
-fn fold_icon(painter: &egui::Painter, rect: egui::Rect, openness: f32, ink: egui::Color32) {
-    let turn = egui::emath::Rot2::from_angle((openness - 1.0) * std::f32::consts::FRAC_PI_2);
-    let points = [rect.left_top(), rect.right_top(), rect.center_bottom()]
-        .map(|point| rect.center() + turn * (point - rect.center()));
-    painter.add(egui::Shape::convex_polygon(
-        points.to_vec(),
-        ink,
-        egui::Stroke::NONE,
-    ));
+/// egui's fold triangle in `ink`, `FOLD_ICON_PX` across at the centre of
+/// `at` (egui draws in three quarters of its rect): right shut, down open.
+fn fold_icon(ui: &mut egui::Ui, at: &egui::Response, openness: f32, ink: egui::Color32) {
+    let side = egui::Vec2::splat(FOLD_ICON_PX / 0.75);
+    let rect = egui::Rect::from_center_size(at.rect.center(), side);
+    let saved = ui.visuals().widgets.clone();
+    let widgets = &mut ui.visuals_mut().widgets;
+    widgets.inactive.fg_stroke.color = ink;
+    widgets.hovered.fg_stroke.color = ink;
+    widgets.active.fg_stroke.color = ink;
+    egui::collapsing_header::paint_default_icon(ui, openness, &at.clone().with_new_rect(rect));
+    ui.visuals_mut().widgets = saved;
 }

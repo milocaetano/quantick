@@ -27,9 +27,10 @@ use super::{
     TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{caption, financial_text, list_symbol_folders, points_color};
+use crate::paper_chrome::{caption, list_symbol_folders, points_color_on, signed_text};
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_appearance::Token;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl ReportState {
@@ -718,7 +719,7 @@ enum TradePick {
 }
 
 /// The strip under the list: trades and win rate over everything in scope
-/// in the footer plate's ink, and the net points.
+/// in the footer plate's ink, and the net in the footer's signed inks.
 pub(super) fn draw_totals_strip(
     ui: &mut egui::Ui,
     net: (String, rust_decimal::Decimal),
@@ -729,12 +730,15 @@ pub(super) fn draw_totals_strip(
     let palette = theme::get(ui.ctx());
     let summary = totals.summary(page.remaining > 0, rows_listed);
     ui.label(egui::RichText::new(summary).monospace());
-    ui.label(financial_text(
-        &palette,
-        &net.0,
-        palette.mono_font(12.0),
-        points_color(&palette, net.1),
-    ));
+    let dark = palette.resolved.dark;
+    let ink = |value| points_color_on(&palette, Token::PanelFooter, value);
+    let words = if dark {
+        ink(net.1)
+    } else {
+        palette.text_primary()
+    };
+    let signed = |value| if dark { words } else { ink(value) };
+    ui.label(signed_text(&net.0, palette.mono_font(12.0), words, signed));
 }
 
 /// What the Trades ledger asked of its host.

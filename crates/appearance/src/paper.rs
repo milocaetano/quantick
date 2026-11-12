@@ -7,15 +7,12 @@
 //! slate flow pane is a dark surface, so it keeps Dark's look too.
 use std::cmp::Ordering;
 
-use crate::panel_chrome::{self, BAND, BLOCK, BLOCK_EDGE, CAPTION_RULE, LIVE_ROW, TITLE_PLATE};
-use crate::{PremultipliedRgba, ResolvedTheme, Token, contrast::relative_luminance};
-
-/// A filled shape and the words written on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Plate {
-    pub fill: Token,
-    pub ink: Token,
-}
+pub use crate::panel_chrome::Plate;
+use crate::panel_chrome::{self, BAND, BLOCK, LIVE_ROW, TITLE_PLATE};
+use crate::{
+    PremultipliedRgba, ResolvedTheme, Token,
+    contrast::{contrast_ratio, relative_luminance},
+};
 
 /// Whether `theme` lays plates under its chart's levels: a light theme over
 /// a light chart.
@@ -46,8 +43,9 @@ pub fn plate_for(theme: &ResolvedTheme, line: PremultipliedRgba) -> Option<Plate
 
 /// The ink of a signed amount written on `surface` (a panel's inset, the
 /// chart canvas): Dark's candle colours and a muted zero; a light theme's
-/// buy ink and loss ink where the surface is pale, and its bright inks where
-/// it is dark, such as its slate flow pane.
+/// buy ink and loss ink where the surface is pale (the panels' deeper gain
+/// ink where the buy ink falls short of 4.5:1, as on the footer's grey), and
+/// its bright inks where it is dark, such as its slate flow pane.
 #[must_use]
 pub fn pnl_ink(theme: &ResolvedTheme, surface: Token, sign: Ordering) -> Token {
     if theme.dark {
@@ -58,8 +56,10 @@ pub fn pnl_ink(theme: &ResolvedTheme, surface: Token, sign: Ordering) -> Token {
         };
     }
     let pale = relative_luminance(theme.color(surface)) > 0.5;
+    let buy_reads = contrast_ratio(theme.color(Token::BuyInk), theme.color(surface)) >= 4.5;
     match sign {
-        Ordering::Greater if pale => Token::BuyInk,
+        Ordering::Greater if pale && buy_reads => Token::BuyInk,
+        Ordering::Greater if pale => Token::PanelGainInk,
         Ordering::Less if pale => Token::LossInk,
         Ordering::Greater => Token::BrightGainInk,
         Ordering::Less => Token::BrightLossInk,
@@ -165,7 +165,10 @@ pub const TRADE_PAD: Margin = Margin {
 /// The look of one ledger row kind. Light and Dark share the structure; a
 /// loss is Dark's soft sell ink and Light's own loss ink, and Light marks a
 /// replay in its violet replay ink, never Dark's amber. A day's header is
-/// the band of its block, its figures in the band's state ink.
+/// the band of its block, its count in the band's state ink; Light writes
+/// its net there too, where Dark keeps the net in its sign's ink. A lit
+/// session row (the one F2 and Del act on) takes Light's footer grey, a
+/// clear step from its live row, where Dark keeps its hover fill.
 #[must_use]
 pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
     let base = RowLook {
@@ -187,12 +190,22 @@ pub const fn ledger_row(dark: bool, row: RowKind) -> RowLook {
             fill: Some(BAND.fill),
             ink: BAND.ink,
             detail: panel_chrome::BAND_STATE.ink,
-            pnl: [panel_chrome::BAND_STATE.ink; 2],
+            pnl: if dark {
+                base.pnl
+            } else {
+                [panel_chrome::BAND_STATE.ink; 2]
+            },
             hover_fill: Some(TITLE_PLATE.fill),
             ..base
         },
         RowKind::Session => RowLook {
             fill: Some(LIVE_ROW.fill),
+            pnl: [Token::PanelGainInk, base.pnl[1]],
+            hover_fill: Some(if dark {
+                Token::HoverFill
+            } else {
+                Token::PanelFooter
+            }),
             mark: if dark { None } else { Some(Token::ReplayInk) },
             radius: SESSION_RADIUS_PX,
             ..base
@@ -310,8 +323,8 @@ pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
     let [day_opens, day_closes] = day;
     let top = if day_opens { CARD_GAP_PX } else { 0.0 };
     frame.layers[0] = Some(FrameLayer {
-        fill: BLOCK.fill,
-        stroke: BLOCK_EDGE,
+        fill: Token::LedgerCard,
+        stroke: Token::LedgerCardEdge,
         radius: CARD_RADIUS_PX,
         inset: Margin {
             top,
@@ -325,8 +338,8 @@ pub fn ledger_frame(day: Option<Ends>, session: Option<Ends>) -> RowFrame {
             let [opens, closes] = session;
             let below = if closes { SESSION_INSET_PX } else { 0.0 };
             frame.layers[1] = Some(FrameLayer {
-                fill: BLOCK.fill,
-                stroke: CAPTION_RULE,
+                fill: Token::LedgerSession,
+                stroke: Token::LedgerSessionEdge,
                 radius: SESSION_RADIUS_PX,
                 inset: Margin {
                     left: SESSION_INSET_PX,
