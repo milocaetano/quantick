@@ -471,10 +471,10 @@ fn paint_tab_surface(
         Some(fill) => egui::Shape::rect_filled(bar, corner, fill),
         None => egui::Shape::rect_stroke(bar.shrink(0.5), corner, (1.0, palette.text_faint())),
     });
-    let strip = palette.get(Token::TabStrip).to_array();
+    let inks = theme::get(ui.ctx()); // the strip's (Light: slate), not the face's
     let edge = [bar.left(), bar.top(), bar.bottom(), bar.right()];
-    let outline = fill.and_then(|c| bar_outline(c.to_array(), strip, edge, CHIP_ROUNDING_PX));
-    let ink = (1.0, palette.text_primary());
+    let outline = fill.and_then(|c| bar_outline(c.to_array(), inks.tab_strip().to_array(), edge));
+    let ink = (1.0, inks.text_primary());
     shapes.extend(outline.map(|p| egui::Shape::line(p.into_iter().map(Into::into).collect(), ink)));
     ui.painter().set(slot, egui::Shape::Vec(shapes));
     if focused {

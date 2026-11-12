@@ -256,15 +256,15 @@ pub fn bar_edge_points(left: f32, top: f32, bottom: f32, right: f32, radius: f32
 }
 
 /// The polyline of a bar's outline when it needs one against the strip (see
-/// [`bar_needs_outline`]): `[left, top, bottom, right]` is the bar's box.
+/// [`bar_needs_outline`]): `[left, top, bottom, right]` is the bar's box, its
+/// corner the tab's [`TAB_CORNER_PT`].
 #[must_use]
 pub fn bar_outline(
     bar: [u8; 4],
     strip: [u8; 4],
     [left, top, bottom, right]: [f32; 4],
-    radius: f32,
 ) -> Option<Vec<[f32; 2]>> {
-    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, right, radius))
+    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, right, TAB_CORNER_PT))
 }
 
 /// The line in the workspace's colour under the toolbar capsule, and the bar
