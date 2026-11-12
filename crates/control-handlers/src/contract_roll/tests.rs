@@ -68,6 +68,10 @@ impl FeedSourcePort for Window {
     fn select_feed(&mut self, index: usize, _feed_id: &str, symbol: &str) -> Option<FeedSelection> {
         self.switches += 1;
         self.symbol = symbol.into();
+        // The feed's link disarms on connect; a listed contract connects.
+        if !self.delisted.contains(&self.symbol) {
+            self.auto.disarm();
+        }
         self.feed_selection(index)
     }
 }
@@ -99,9 +103,6 @@ impl UnlistedContractPort for Window {
     }
     fn unlisted_contract(&self, _index: usize) -> Option<String> {
         (!self.replay && self.delisted.contains(&self.symbol)).then(|| self.symbol.clone())
-    }
-    fn feed_connected(&self, index: usize) -> bool {
-        !self.replay && self.unlisted_contract(index).is_none()
     }
     fn auto_roll_mut(&mut self, _index: usize) -> Option<&mut AutoRoll> {
         Some(&mut self.auto)
@@ -320,4 +321,30 @@ fn a_recording_never_rolls_by_itself() {
     assert!(settle_auto_rolls(&mut window).is_empty());
     assert_eq!(unlisted_roll(&window, 0, "AAAZ26"), None);
     assert_eq!(window.switches, 0);
+}
+
+#[test]
+fn a_pressed_roll_runs_on_the_next_settle_once() {
+    let mut window = unlisted_on("AAAZ26", &[]);
+    window.auto.press("AAAG27");
+    assert_eq!(
+        settle_auto_rolls(&mut window),
+        ["AAAZ26 is no longer listed; rolled to AAAG27"],
+        "a hand needs no armed tab"
+    );
+    assert_eq!(window.symbol, "AAAG27");
+    assert!(
+        settle_auto_rolls(&mut window).is_empty(),
+        "the press ran once"
+    );
+
+    let mut refused = unlisted_on("AAAZ26", &[]);
+    refused.paper_open = true;
+    refused.auto.press("AAAG27");
+    assert_eq!(
+        settle_auto_rolls(&mut refused),
+        [RollRefusal::PaperNotFlat.reason()],
+        "a refused press says why instead"
+    );
+    assert_eq!(refused.switches, 0);
 }

@@ -26,6 +26,10 @@ pub struct FeedLink {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     pub notice: FeedNotice,
+    /// Whether this tab, opened from a saved workspace, rolls itself off a
+    /// contract [`Self::notice`] says the venue no longer lists. Kept across
+    /// attaches: the roll it makes is one.
+    pub auto_roll: quantick_sources::recovery::AutoRoll,
     /// Wall clock when the running feed session was attached — the floor for
     /// judging a first connection that never lands.
     pub feed_attached_ms: i64,
@@ -136,6 +140,7 @@ impl FeedLink {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
+            auto_roll: quantick_sources::recovery::AutoRoll::default(),
         }
     }
 
@@ -185,6 +190,8 @@ impl FeedLink {
         while let Ok(notice) = self.notices.try_recv() {
             let next = match notice {
                 FeedNotice::Connected => {
+                    // A contract that streams is listed: rolls wait for a hand.
+                    self.auto_roll.disarm();
                     self.set_connection(FeedConnectionState::Connected, now_ms);
                     FeedNotice::Clear
                 }

@@ -6,7 +6,7 @@
 //! so a desk saved on an expired contract opens on the live one. Either way
 //! the roll is [`super::apply`], the same act the palette and
 //! `feed.contract.roll` run, and refused by the same rule.
-use std::collections::BTreeSet;
+pub use quantick_sources::recovery::AutoRoll;
 
 use super::{ContractRollPort, RollRefusal, apply, resolve};
 
@@ -17,36 +17,8 @@ pub trait UnlistedContractPort: ContractRollPort {
     /// The contract tab `index`'s feed reported it does not list, as the
     /// feed's structured report names it.
     fn unlisted_contract(&self, index: usize) -> Option<String>;
-    /// Whether tab `index`'s feed connected since it last attached: a contract
-    /// that streams is listed.
-    fn feed_connected(&self, index: usize) -> bool;
-    /// Tab `index`'s memory of the rolls it made by itself.
+    /// Tab `index`'s roll memory: armed, decided, and a pressed Roll.
     fn auto_roll_mut(&mut self, index: usize) -> Option<&mut AutoRoll>;
-}
-
-/// A tab's licence to roll by itself, and the contracts it already decided.
-///
-/// Armed when the tab is opened from a saved workspace and disarmed once its
-/// feed connects. Each missing contract is decided once, rolled or refused,
-/// so a chain of unlisted contracts is walked one step per report and a
-/// configured cycle cannot loop.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AutoRoll {
-    armed: bool,
-    decided: BTreeSet<String>,
-}
-
-impl AutoRoll {
-    /// The tab was opened from a saved workspace.
-    pub fn arm(&mut self) {
-        self.armed = true;
-    }
-
-    /// Whether the tab still rolls by itself.
-    #[must_use]
-    pub fn is_armed(&self) -> bool {
-        self.armed
-    }
 }
 
 /// The roll tab `index` can make off `missing`: the configured next contract,
@@ -109,9 +81,9 @@ pub fn roll_from_notice<H: UnlistedContractPort + ?Sized>(
     Ok(unlisted_toast(&missing, target))
 }
 
-/// Roll every armed tab whose feed reports its contract unlisted onto the
-/// configured next one, and disarm the tabs whose feed connected. Answers one
-/// toast per roll.
+/// Run each tab's pressed Roll, then roll every armed tab whose feed reports
+/// its contract unlisted onto the configured next one. Answers one toast per
+/// roll or refused press.
 pub fn settle_auto_rolls<H: UnlistedContractPort + ?Sized>(host: &mut H) -> Vec<String> {
     (0..host.tab_count())
         .filter_map(|index| settle_tab(host, index))
@@ -119,16 +91,15 @@ pub fn settle_auto_rolls<H: UnlistedContractPort + ?Sized>(host: &mut H) -> Vec<
 }
 
 fn settle_tab<H: UnlistedContractPort + ?Sized>(host: &mut H, index: usize) -> Option<String> {
-    if !host.auto_roll_mut(index)?.armed {
-        return None;
+    if let Some(target) = host.auto_roll_mut(index)?.take_press() {
+        return Some(roll_from_notice(host, index, &target).unwrap_or_else(|refusal| refusal));
     }
-    if host.feed_connected(index) {
-        host.auto_roll_mut(index)?.armed = false;
+    if !host.auto_roll_mut(index)?.is_armed() {
         return None;
     }
     let missing = host.unlisted_contract(index)?;
     let roll = unlisted_roll(host, index, &missing)?;
-    if !host.auto_roll_mut(index)?.decided.insert(missing.clone()) {
+    if !host.auto_roll_mut(index)?.decide(&missing) {
         return None;
     }
     let next = roll.ok()?;

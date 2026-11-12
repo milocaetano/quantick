@@ -41,13 +41,19 @@ impl CanvasAnswers {
     /// What the frame already knows before the canvas draws: which tab's popup
     /// this is, and what the status bar was just asked.
     pub(in crate::app) fn seeded(
+        app: &crate::app::QuantickApp,
         popup_tab: u64,
-        open_popup: Option<u64>,
         status: &crate::statusbar::StatusResponse,
     ) -> Self {
+        let popup_open = app.chrome.feed_popup_tab == Some(popup_tab);
+        let port = app as &dyn crate::app::control_host::ControlPort;
+        let index = app.runtime.tabs.active_index();
         Self {
             popup_tab,
-            popup_open: open_popup == Some(popup_tab),
+            popup_open,
+            roll: popup_open
+                .then(|| quantick_control_handlers::contract_roll::notice_roll(port, index))
+                .flatten(),
             chip_clicked: status.word_clicked,
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {

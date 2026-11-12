@@ -80,17 +80,11 @@ impl quantick_control_handlers::contract_roll::UnlistedContractPort for dyn Cont
         let tab = self.tab_reads().tab_at(index)?;
         tab.link.notice.unlisted_symbol().map(str::to_owned)
     }
-    fn feed_connected(&self, index: usize) -> bool {
-        let tab = self.tab_reads().tab_at(index);
-        tab.is_some_and(|tab| {
-            tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected
-        })
-    }
     fn auto_roll_mut(
         &mut self,
         index: usize,
     ) -> Option<&mut quantick_control_handlers::contract_roll::AutoRoll> {
-        Some(&mut self.tabs_mut().tab_at_mut(index)?.auto_roll)
+        Some(&mut self.tabs_mut().tab_at_mut(index)?.link.auto_roll)
     }
 }
 

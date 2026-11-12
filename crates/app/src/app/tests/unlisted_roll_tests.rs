@@ -57,6 +57,8 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
         "the act it displaced stays beside it"
     );
     run_frame_with_events(&mut app, &ctx, click(at));
+    // The press rolls on the next frame's settle, beside the drawings.
+    run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
         app.surfaces.toast.message(),
@@ -146,7 +148,7 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
             }],
             None,
         ));
-    assert!(app.active_tab().auto_roll.is_armed());
+    assert!(app.active_tab().link.auto_roll.is_armed());
     app.active_tab_mut().link.notice = unlisted("TESTUSDT");
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
@@ -168,5 +170,17 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         app.active_tab().active.1,
         "TESTUSDT",
         "a configured cycle does not loop: TESTUSDT was decided already"
+    );
+}
+
+#[test]
+fn a_feed_that_connected_waits_for_a_hand() {
+    let (mut app, notices, _feed_ends) = test_app_with_notices();
+    app.active_tab_mut().link.auto_roll.arm();
+    notices.blocking_send(FeedNotice::Connected).unwrap();
+    app.active_tab_mut().link.drain_notices_at(0);
+    assert!(
+        !app.active_tab().link.auto_roll.is_armed(),
+        "a contract that streamed is listed; a later report gets the popup, not a roll"
     );
 }

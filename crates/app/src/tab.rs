@@ -125,9 +125,6 @@ pub struct Tab {
     /// The running feed session: its channels, notices, transport state and
     /// the newest live trade. Replaced wholesale on every attach.
     pub link: FeedLink,
-    /// Whether this tab, opened from a saved workspace, rolls itself off a
-    /// contract the venue no longer lists.
-    pub auto_roll: quantick_control_handlers::contract_roll::AutoRoll,
     /// What every surface says about this feed; read after the frame observed.
     pub connection: quantick_chart::connection_state::ConnectionTracker,
     /// The venue's deal counter and its optional durable recording.
@@ -240,7 +237,6 @@ impl Tab {
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
             link: FeedLink::new(feed, metrics::wall_clock_ms()),
-            auto_roll: Default::default(),
             connection: quantick_chart::connection_state::ConnectionTracker::new(),
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
             history_step: 2000,

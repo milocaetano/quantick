@@ -50,3 +50,52 @@ impl Recovery {
         }
     }
 }
+
+/// A tab's licence to roll itself off a contract the venue no longer lists,
+/// and the contracts it already decided.
+///
+/// State only: the rule that reads it is the contract roll's. Armed when the
+/// tab is opened from a saved workspace and disarmed once its feed connects.
+/// Each missing contract is decided once, rolled or refused, so a chain of
+/// unlisted contracts is walked one step per report and a configured cycle
+/// cannot loop.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AutoRoll {
+    armed: bool,
+    decided: std::collections::BTreeSet<String>,
+    pressed: Option<String>,
+}
+
+impl AutoRoll {
+    /// The tab was opened from a saved workspace.
+    pub fn arm(&mut self) {
+        self.armed = true;
+    }
+
+    /// The tab's feed connected: from here on a roll waits for a hand.
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    /// Whether the tab still rolls by itself.
+    #[must_use]
+    pub fn is_armed(&self) -> bool {
+        self.armed
+    }
+
+    /// The trader pressed the notice's Roll to `target`; the roll runs on the
+    /// window's next settle, where the drawings it carries are reachable.
+    pub fn press(&mut self, target: &str) {
+        self.pressed = Some(target.to_owned());
+    }
+
+    /// The pressed Roll, once.
+    pub fn take_press(&mut self) -> Option<String> {
+        self.pressed.take()
+    }
+
+    /// Record the decision about `symbol`; `false` when it was made already.
+    pub fn decide(&mut self, symbol: &str) -> bool {
+        self.decided.insert(symbol.to_owned())
+    }
+}
