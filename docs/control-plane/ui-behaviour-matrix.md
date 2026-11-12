@@ -70,7 +70,7 @@ The three exclusion classes are closed:
 | `market.palette.add` | Add a symbol to a venue and open it | Enter on a palette no-match row | — | `pending_capability` — no capability adds a symbol to a venue's list yet; `market.open` opens what the config and the added-symbols file already offer. Tracked in issue 401 |
 | `market.palette.remove` | Remove a market the trader added | Delete on a palette row the trader added | `catalog.remove` | — |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's market button, then Enter on a row of the palette in switch mode | `tab.market.set`, `feed.source.set` | — |
-| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode | `feed.contract.roll` | — |
+| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode; the feed notice popup's Roll button on a contract the venue no longer lists | `feed.contract.roll` | — |
 | `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | window menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | window menu, Help | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -254,7 +254,7 @@ matrix fails the build.
 | `rail_tool` | 2 |
 | `toolbox_dock` | 3 |
 | `layout_preset` | 16 |
-| `notice_action` | 2 |
+| `notice_action` | 3 |
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
