@@ -1062,7 +1062,9 @@ fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
     assert_eq!(app.active_tab().symbol, "WINJ26");
 
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        crate::app::chrome::toolbar::draw(&mut app, ctx)
+    });
     assert_eq!(
         app.active_tab().symbol,
         "WINJ26",

@@ -20,7 +20,6 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
 pub(crate) mod canvas_wiring;
-pub(crate) mod capsule_wiring;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
@@ -61,7 +60,6 @@ pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tab_workspaces;
 pub(crate) mod title_bar;
-mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
 mod workspace_save_adapter;

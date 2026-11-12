@@ -116,3 +116,6 @@ mod tests {
         assert_eq!(run::<second::Model>(), run::<second::Model>());
     }
 }
+
+#[cfg(test)]
+pub mod chrome;

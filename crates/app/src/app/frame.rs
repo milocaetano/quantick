@@ -343,7 +343,7 @@ impl QuantickApp {
                 }
             }
             FrameStage::HomeToolbar => super::home_wiring::stand_in_for_toolbar(self),
-            FrameStage::Toolbar => self.draw_toolbar(ctx),
+            FrameStage::Toolbar => super::chrome::toolbar::draw(self, ctx),
             FrameStage::IndicatorSurfaces => self.service_indicator_requests(),
             FrameStage::IndicatorDialogs => self.indicator_wiring().draw_indicator_surfaces(ctx),
             FrameStage::StrategyPopupRequests => surfaces::open_requested_strategy_popups(

@@ -377,8 +377,8 @@ macro_rules! register_surfaces {
                 }
             }
 
-            pub fn retain_scopes(&mut self, keep: impl Fn(u64) -> bool) {
-                $($(#[$view_attr])* self.$field.retain_scopes(&keep);)*
+            pub fn retain_slot_scopes(&mut self, slot: quantick_ui_model::Slot, keep: impl Fn(u64) -> bool) {
+                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { self.$field.retain_scopes(&keep); })*
             }
 
             pub fn draw_slot_scoped(&mut self, scope: u64, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
@@ -478,9 +478,28 @@ mod tests {
         });
         assert_eq!(*registry.first.scoped(10).0, 8);
         assert_eq!(registry.first.model_state, 0);
-        registry.retain_scopes(|scope| scope == 20);
+        registry.retain_slot_scopes(quantick_ui_model::Slot::Overlay, |scope| scope == 20);
         assert_eq!(*registry.first.scoped(10).0, 0);
         assert_eq!(*registry.first.scoped(20).0, 8);
+    }
+
+    #[test]
+    fn slot_cleanup_keeps_other_owners_and_removes_closed_windows() {
+        use quantick_ui_model::Slot;
+        let mut registry = Surfaces::default();
+        registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
+        registry.update_scoped(10, HostIntent::Second(Box::new((7, 17))));
+        registry.update_scoped(20, HostIntent::Second(Box::new((9, 17))));
+        registry.retain_slot_scopes(Slot::PaneHeader, |_| false);
+        assert_eq!(*registry.first.scoped(10).0, 3);
+        assert_eq!(*registry.second.scoped(10).0, 14);
+        registry.retain_slot_scopes(Slot::Toolbar, |scope| scope == 20);
+        assert_eq!(*registry.first.scoped(10).0, 3);
+        assert_eq!(*registry.second.scoped(10).0, 0);
+        assert_eq!(*registry.second.scoped(20).0, 18);
+        registry.retain_slot_scopes(Slot::Overlay, |_| false);
+        assert_eq!(*registry.first.scoped(10).0, 0);
+        assert_eq!(*registry.second.scoped(20).0, 18);
     }
 
     #[test]

@@ -59,3 +59,12 @@ The two app View fixtures are test-only catalog rows under
 corrects production classification; it is not behavioral extraction and removes
 no app-owned test. Compare final feature counts to the original pinned baseline,
 and report this classification correction separately from policy migration.
+
+The four window chrome slots (`TitleBar`, `TabStrip`, `Toolbar`, `MenuBar`)
+use the same scoped adapter and catalog as pane headers. Chrome scopes are stable
+window IDs; pane retention only visits `PaneHeader`, so owners cannot erase one
+another. Host snapshots enter as refresh intents; models cache projections and
+validate actions before returning typed effects to existing domain adapters.
+The menu model owns navigation, availability and row projection. Its view keeps
+only native rectangles and formatted shortcuts. Test-only catalog items exercise
+ordering, visibility and effects in all four slots.

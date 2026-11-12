@@ -5,90 +5,43 @@
 use eframe::egui;
 use quantick_control_schema::canvas::{OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID};
 use quantick_session::workspace_menu::WorkspaceCommand;
-use quantick_workspace::canvas::{LayoutMarks, PaneTree};
+use quantick_workspace::canvas::LayoutMarks;
 
-use super::QuantickApp;
-use super::menu_bar::MenuDoor;
-use crate::toolbar::capsule::{CapsuleModel, CapsuleRects};
+use crate::app::QuantickApp;
+use crate::app::menu_bar::MenuDoor;
+use crate::toolbar::capsule::CapsuleRects;
 use crate::toolbar::layout_popover::{self, PopoverModel};
 use crate::toolbar::{DrawnControl, ToolbarAction};
+use quantick_ui_model::chrome_toolbar::Capsule as CapsuleState;
 
-/// What the capsule shows, read before the toolbar borrows the tab.
-pub(super) struct CapsuleState {
-    tree: PaneTree,
-    workspace: String,
-    unsaved: bool,
-    marks: LayoutMarks,
-    menu_open: bool,
-    popover_open: bool,
-    add_open: bool,
-    door_open: bool,
-    door_hover: String,
-}
-
-impl CapsuleState {
-    pub(super) fn of(app: &QuantickApp, ctx: &egui::Context) -> Self {
-        let tab = app.runtime.tabs.active_id();
-        let book = &app.runtime.workspace.book;
-        let (workspace, unsaved) = book.tab_row(tab);
-        let live = &app.active_tab().canvas.state;
-        let saved = book
-            .book()
-            .recipe(&workspace)
-            .map(super::canvas_wiring::recipe_state);
-        Self {
-            tree: live.tree().clone(),
-            unsaved,
-            marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
-            menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
-            popover_open: app.chrome.layout_picker_open,
-            add_open: app.chrome.add_menu.open,
-            workspace,
-            door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
-            door_hover: format!(
-                "Window menu ({})",
-                super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
-            ),
-        }
-    }
-
-    /// The toolbar's `≡`, writing where it was drawn into `rect`.
-    pub(super) fn door<'a>(
-        &'a self,
-        rect: &'a mut Option<egui::Rect>,
-    ) -> crate::toolbar::WindowMenuDoor<'a> {
-        crate::toolbar::WindowMenuDoor {
-            open: self.door_open,
-            hover: self.door_hover.clone(),
-            rect,
-        }
-    }
-
-    pub(super) fn model(&self) -> CapsuleModel<'_> {
-        CapsuleModel {
-            tree: &self.tree,
-            workspace: &self.workspace,
-            unsaved: self.unsaved,
-            layout_unsaved: self.marks.layout_unsaved,
-            menu_open: self.menu_open,
-            popover_open: self.popover_open,
-            add_open: self.add_open,
-            compact: false,
-        }
-    }
-}
-
-#[cfg(test)]
-impl CapsuleState {
-    /// The name, the floppy's dot and the miniature's dot.
-    pub(super) fn marks(&self) -> (&str, bool, bool) {
-        (&self.workspace, self.unsaved, self.marks.layout_unsaved)
+pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> CapsuleState {
+    let tab = app.runtime.tabs.active_id();
+    let book = &app.runtime.workspace.book;
+    let (workspace, unsaved) = book.tab_row(tab);
+    let live = &app.active_tab().canvas.state;
+    let saved = book
+        .book()
+        .recipe(&workspace)
+        .map(crate::app::canvas_wiring::recipe_state);
+    CapsuleState {
+        tree: live.tree().clone(),
+        unsaved,
+        marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
+        menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
+        popover_open: app.chrome.layout_picker_open,
+        add_open: app.chrome.add_menu.open,
+        workspace,
+        door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
+        door_hover: format!(
+            "Window menu ({})",
+            crate::app::menu_bar::shortcut_text(ctx, &crate::app::menu_bar::WINDOW_MENU_SHORTCUT)
+        ),
     }
 }
 
 /// After the toolbar drew: hang the popover and the workspace menu, publish
 /// the controls, and carry out the presses only the window can.
-pub(super) fn settle(
+pub(in crate::app) fn settle(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     state: &CapsuleState,
@@ -105,7 +58,7 @@ pub(super) fn settle(
     }
     #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_window_menu_toolbar() {
-        super::canvas_wiring::open_window_menu(&mut app.chrome.window_menu);
+        crate::app::canvas_wiring::open_window_menu(&mut app.chrome.window_menu);
     }
     let mut workspace_clicked = false;
     let mut rest = Vec::new();
@@ -115,13 +68,9 @@ pub(super) fn settle(
                 let menu = &mut app.chrome.window_menu;
                 menu.toggle_from(viewport, MenuDoor::Toolbar, false);
             }
-            ToolbarAction::ToggleLayoutPopover => {
-                app.chrome.layout_picker_open = !app.chrome.layout_picker_open;
-            }
-            ToolbarAction::ToggleAddMenu => app.chrome.add_menu.open ^= true,
             ToolbarAction::ToggleWorkspaceMenu => workspace_clicked = true,
             ToolbarAction::SaveWorkspace => {
-                super::tab_workspaces::apply_workspace_command(app, WorkspaceCommand::SaveTo);
+                crate::app::tab_workspaces::apply_workspace_command(app, WorkspaceCommand::SaveTo);
             }
             action => rest.push(action),
         }
@@ -133,15 +82,15 @@ pub(super) fn settle(
             marks: state.marks,
         };
         let (drawn, outside) = layout_popover::draw(ctx, rects.miniature, &model, &mut rest);
-        let picked = rest
-            .iter()
-            .any(|action| matches!(action, ToolbarAction::SetLayout(_)));
-        app.chrome.layout_picker_open = !(outside || picked);
+        let mut next = state.clone();
+        next.popover_open = app.chrome.layout_picker_open;
+        next.settle_popover(outside, &rest);
+        app.chrome.layout_picker_open = next.popover_open;
         cells = drawn;
     }
-    super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
+    crate::app::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
-    super::canvas_wiring::add_from_menu(app, ctx);
+    crate::app::canvas_wiring::add_from_menu(app, ctx);
     publish(app, viewport, state, rects, door, &cells);
     rest
 }

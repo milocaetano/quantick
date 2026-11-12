@@ -22,7 +22,6 @@ pub(super) struct WorkspaceRows<'a> {
     pub(super) book: &'a WorkspaceBook,
     pub(super) tabs: &'a ArrangementHost,
     pub(super) tab: u64,
-    pub(super) symbol: &'a str,
 }
 
 impl<'a> WorkspaceRows<'a> {
@@ -32,7 +31,6 @@ impl<'a> WorkspaceRows<'a> {
             book: app.runtime.workspace.book.book(),
             tabs: &app.runtime.tabs,
             tab: app.runtime.tabs.active_id(),
-            symbol: app.active_tab().symbol.as_str(),
         }
     }
 
@@ -50,30 +48,6 @@ impl<'a> WorkspaceRows<'a> {
 
     fn push(commands: &mut Vec<MenuCommand>, command: WorkspaceCommand) {
         commands.push(MenuCommand::Workspace(command));
-    }
-
-    /// `Save WINV26 to Scalp`, which names the tabs it will change before the click.
-    pub(super) fn save_to_row(
-        self,
-        ui: &mut egui::Ui,
-        keys: String,
-        commands: &mut Vec<MenuCommand>,
-    ) -> egui::Response {
-        let (workspace, modified) = self.state();
-        let row = row_of(RowId::SaveToWorkspace);
-        let followers = self.book.save_to_preview(self.tab).unwrap_or_default();
-        let response = ui
-            .add_enabled(
-                modified,
-                egui::Button::new(text::save_to_label(self.symbol, workspace))
-                    .shortcut_text(crate::theme::supporting_text(ui, keys)),
-            )
-            .on_hover_text(text::save_to_hover(&self.symbols(&followers)))
-            .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
-        if response.clicked() {
-            Self::push(commands, WorkspaceCommand::SaveTo);
-        }
-        response
     }
 
     /// Every workspace, the active tab's lit, beside the tabs on it or, in the
