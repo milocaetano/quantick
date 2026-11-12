@@ -34,10 +34,9 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
         for (_, rect) in &title.strip.tabs {
             assert_eq!(rect.height(), crate::tabstrip::CHIP_HEIGHT);
             if width >= 1200.0 {
-                assert!(
-                    rect.width() >= 150.0,
-                    "normal market labels use the enlarged width"
-                );
+                // Room to spare: each tab hugs its content, with no stretch gap.
+                let hug = (40.0..150.0).contains(&rect.width());
+                assert!(hug, "a tab hugs its content: {}", rect.width());
             }
         }
         let plus = title.strip.add.unwrap();

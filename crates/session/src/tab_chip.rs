@@ -54,7 +54,7 @@ pub fn lay_face(parts: FaceParts) -> FaceLayout {
     let tag = TEXT_LEFT_PT + parts.symbol + PART_GAP_PT;
     let tag_width = parts.code + 2.0 * TAG_PADDING_PT;
     let mut end = tag + tag_width;
-    let mark = parts.marked.then(|| end + PART_GAP_PT + MARK_RADIUS_PT);
+    let mark = parts.marked.then_some(end + PART_GAP_PT + MARK_RADIUS_PT);
     if let Some(mark) = mark {
         end = mark + MARK_RADIUS_PT;
     }

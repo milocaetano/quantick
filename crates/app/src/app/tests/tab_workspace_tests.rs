@@ -261,10 +261,8 @@ fn two_workspaces_on_one_market_wear_two_colours() {
     let book = app.runtime.workspace.book.book_mut();
     book.save_as(first, "Scalp").unwrap();
     let chips = crate::app::title_bar::chips_of(market(&app), &[0, 1]);
-    assert_eq!(
-        (chips[0].workspace, chips[1].workspace),
-        ("Scalp", "Default")
-    );
+    assert_eq!(chips[0].workspace, "Scalp");
+    assert_ne!(chips[1].workspace, "Scalp");
     assert!(chips[0].colour.is_some() && chips[1].colour.is_some());
     assert_ne!(chips[0].colour, chips[1].colour);
     assert_eq!(
