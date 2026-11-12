@@ -300,6 +300,61 @@ impl LedgerTotals {
     pub fn win_rate(&self) -> Option<usize> {
         (self.wins * 100).checked_div(self.trades)
     }
+
+    /// The strip's count line: trades and win rate over everything in
+    /// scope, and how many are listed while saved pages are still held back.
+    #[must_use]
+    pub fn summary(&self, held_back: bool, rows_listed: usize) -> String {
+        let win_rate = self
+            .win_rate()
+            .map_or_else(String::new, |rate| format!(" · {rate}% win"));
+        let scope = if held_back {
+            format!(" · {rows_listed} listed")
+        } else {
+            String::new()
+        };
+        format!("{} trades{win_rate}{scope}", self.trades)
+    }
+
+    /// The strip's totals over everything *in scope*, not everything
+    /// listed: the rows above are one revealed page and the strip must not
+    /// swing every time the trader reveals another. Unfiltered, these saved
+    /// totals (summed when the folder was read, again only if their wording
+    /// went stale) plus this session's own closes - a handful. A filter
+    /// narrows the scope, and the strip follows it.
+    pub fn in_scope<'t>(
+        &mut self,
+        pnl: PnlReader<'_>,
+        rows: Option<&[HistoryRow]>,
+        scope: LedgerScopeTotals<'_, 't>,
+    ) -> Self {
+        match scope {
+            LedgerScopeTotals::Whole { symbol, own } => {
+                let own = Self::of_trades(pnl, symbol, own);
+                self.reworded(pnl, rows).plus(&own)
+            }
+            LedgerScopeTotals::Cut { kept, live } => {
+                let rows = rows.unwrap_or_default();
+                let kept = Self::of_rows(pnl, kept.iter().filter_map(|&index| rows.get(index)));
+                kept.plus(&Self::of(live))
+            }
+        }
+    }
+}
+
+/// What [`LedgerTotals::in_scope`] sums besides the saved totals.
+pub enum LedgerScopeTotals<'a, 't> {
+    /// No filter: this session's closes, all on the chart's `symbol`.
+    Whole {
+        symbol: &'a str,
+        own: &'t [ClosedTrade],
+    },
+    /// A filter cut the list: the saved rows it `kept` and the `live`
+    /// closes it let through, each with the symbol it is worded by.
+    Cut {
+        kept: &'a [usize],
+        live: Vec<(SymbolPnl<'a>, &'t ClosedTrade)>,
+    },
 }
 
 #[cfg(test)]

@@ -145,6 +145,31 @@ fn the_ledger_totals_keep_each_currency_apart() {
 }
 
 #[test]
+fn the_strip_sums_what_is_in_scope_and_says_what_is_held_back() {
+    let world = World::new(None);
+    let rows = vec![
+        row("WINZ26", 1_000, "400", "2"),
+        row("WINZ26", 2_000, "-100", "1"),
+    ];
+    let mut saved = LedgerTotals::of_rows(world.reader(), &rows);
+    let own = [rows[0].trade.clone()];
+    let whole = LedgerScopeTotals::Whole {
+        symbol: "WINZ26",
+        own: &own,
+    };
+    let all = saved.in_scope(world.reader(), Some(&rows), whole);
+    assert_eq!((all.trades, all.wins), (3, 2));
+    assert_eq!(all.summary(false, 3), "3 trades · 66% win");
+    let cut = LedgerScopeTotals::Cut {
+        kept: &[1],
+        live: Vec::new(),
+    };
+    let kept = saved.in_scope(world.reader(), Some(&rows), cut);
+    assert_eq!(kept.summary(true, 1), "1 trades · 0% win · 1 listed");
+    assert_eq!(LedgerTotals::default().summary(false, 0), "0 trades");
+}
+
+#[test]
 fn a_ledger_total_with_an_unpriced_trade_is_never_a_partial_money_sum() {
     let world = World::new(Some(PnlPrimary::Money));
     let rows = vec![

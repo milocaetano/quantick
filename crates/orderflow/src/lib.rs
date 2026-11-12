@@ -11,6 +11,7 @@ pub mod config;
 mod constants;
 pub mod engine;
 pub mod grouping;
+pub mod health_words;
 pub mod history;
 pub mod interaction;
 pub mod pane_tape;

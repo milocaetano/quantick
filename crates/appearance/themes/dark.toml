@@ -170,6 +170,23 @@ ledger_card_edge = "#2E3648"
 ledger_session = "#262E40"
 ledger_session_edge = "#34405A"
 ledger_selection = "#2B3F63"
+# The settings panels' blocks in Dark's own colours: chrome ground, inset
+# plates, ledger cards as blocks, the card edge as the band.
+panel_ground = "#171B26"
+panel_plate = "#10141D"
+panel_plate_ink = "#D2DAE2"
+panel_block = "#1E2330"
+panel_block_edge = "#2E3648"
+panel_band = "#2E3648"
+panel_band_state = "#96A0AF"
+panel_caption = "#96A0AF"
+panel_caption_rule = "#2E3648"
+panel_footer = "#10141D"
+panel_strong_ink = "#D2DAE2"
+panel_filter_bar = "#10141D"
+panel_live_row = "#262E40"
+panel_stripe_loss = "#EF5350"
+panel_gain_ink = "#88CEC7"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]
