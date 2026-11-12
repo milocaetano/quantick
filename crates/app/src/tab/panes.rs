@@ -192,13 +192,8 @@ impl Tab {
     /// How many context panes the layout draws — bounded by how many exist,
     /// for the frame between asking for a layout and its panes being built.
     pub fn context_panes_shown(&self) -> usize {
-        self.canvas
-            .layout
-            .kinds()
-            .iter()
-            .filter(|kind| **kind == PaneKind::Time)
-            .count()
-            .min(self.time_panes.len())
+        let wanted = self.canvas.layout.preset().count(PaneKind::Time);
+        wanted.min(self.time_panes.len())
     }
 
     /// The pane on `side`, falling back to the flow pane when the time pane

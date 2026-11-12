@@ -14,8 +14,10 @@
 //! - [`bands`]: what the window paints a canvas from and compares it by.
 //! - [`menu`]: a chart's ⋯ menu, its folded strip and the remove dialog.
 //! - [`seams`]: the seams between docked panes and the resize they share.
+//! - [`columns`]: the column painter's folds, focus on a switch and its reach.
 
 pub mod bands;
+pub mod columns;
 pub mod drag;
 pub mod drop;
 pub mod menu;
@@ -29,6 +31,7 @@ pub use bands::{
     LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_drawn, seat_mode,
     seat_slot, signal, slot_seat, tree_bands,
 };
+pub use columns::{fold_column, revealed};
 pub use drag::{
     DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX,
     ResizeEdges, open_panes,
@@ -54,6 +57,8 @@ pub use widgets::{WIDGETS, WidgetSpec, widget};
 
 #[cfg(test)]
 mod bands_tests;
+#[cfg(test)]
+mod columns_tests;
 #[cfg(test)]
 mod drag_tests;
 #[cfg(test)]
