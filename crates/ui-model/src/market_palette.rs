@@ -1,4 +1,6 @@
 //! Presentation lifecycle and semantic input over the authoritative workspace palette.
+use std::sync::Arc;
+
 use quantick_control_handlers::market_palette::default_bar_size;
 use quantick_workspace::market_list::{
     ClosedMarket, MarketListing, MarketPalette, MarketSnapshot, PaletteFocus, PaletteIntent,
@@ -10,7 +12,7 @@ pub struct State {
     pub open: Option<MarketPalette>,
     pub recent: RecentMarkets,
     pub listing: MarketListing,
-    pub snapshot: MarketSnapshot,
+    pub snapshot: Arc<MarketSnapshot>,
     pub request_focus: bool,
     pending: Option<PaletteIntent>,
 }
@@ -60,7 +62,7 @@ pub enum Intent {
     Close,
     Refuse(String),
     Remember(ClosedMarket),
-    Refresh(Box<MarketSnapshot>),
+    Refresh(Arc<MarketSnapshot>),
     Query(String),
     Keys(Vec<PaletteKey>),
     Row {
@@ -113,8 +115,8 @@ impl crate::Model for Model {
             }
             Intent::Remember(closed) => state.recent.closed(closed),
             Intent::Refresh(snapshot) => {
-                if state.snapshot != *snapshot {
-                    state.snapshot = *snapshot;
+                if state.snapshot != snapshot {
+                    state.snapshot = snapshot;
                     state.refresh();
                 }
             }

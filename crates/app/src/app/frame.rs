@@ -510,7 +510,7 @@ impl QuantickApp {
     fn draw_surface_stage(&mut self, ctx: &egui::Context, now: Instant) {
         let palette = &self.surfaces.market_palette.model_state;
         let markets = (self.surfaces.hooks_pending() || palette.is_open())
-            .then(|| MarketPaletteHost::market_snapshot(self));
+            .then(|| std::sync::Arc::new(MarketPaletteHost::market_snapshot(self)));
         let asks = surfaces::draw_surfaces(
             ctx,
             now,

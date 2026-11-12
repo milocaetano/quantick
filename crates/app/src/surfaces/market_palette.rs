@@ -3,6 +3,8 @@
 //! each key means are `quantick_workspace::market_list`'s; this file reads
 //! keys and paints, and the host answers what they ask.
 
+use std::sync::Arc;
+
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Ui};
 use quantick_workspace::market_list::{
     self as list, BAR_KINDS, MarketRow, PaletteFocus, PaletteKey, StatusTone, VenueKind,
@@ -305,9 +307,7 @@ impl super::View<Model> for View {
         let Some(data) = env.markets.filter(|_| session.state().is_open()) else {
             return;
         };
-        if session.state().snapshot != *data {
-            session.update(Intent::Refresh(Box::new(data.clone())));
-        }
+        session.update(Intent::Refresh(Arc::clone(data)));
         let query_id = id.with("query");
         let cursor = egui::TextEdit::load_state(ctx, query_id).and_then(|s| s.cursor.char_range());
         let cursor = cursor.map(|range| (range.primary.index, range.secondary.index));
@@ -425,7 +425,7 @@ mod market_palette_surface_tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> Frame {
-        let markets = snapshot();
+        let markets = Arc::new(snapshot());
         let (mut response, mut chart_pressed) = (SurfaceResponse::default(), false);
         let mut strip_pressed = false;
         let input = egui::RawInput {
@@ -546,7 +546,7 @@ mod market_palette_surface_tests {
                 let workspace = "A long workspace name with several words";
                 data.workspaces = vec![workspace.into()];
                 adapter.update(Intent::Workspace(workspace.into()));
-                adapter.update(Intent::Refresh(Box::new(data)));
+                adapter.update(Intent::Refresh(Arc::new(data)));
                 let output = ctx.run(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(

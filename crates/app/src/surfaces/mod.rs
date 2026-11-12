@@ -40,7 +40,7 @@ pub(crate) struct SurfaceEnv<'a> {
     pub focused_side: crate::pane::PaneSide,
     /// What "Open a market" lists. Built by the host **only while the
     /// palette is open**; `None` otherwise.
-    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
+    pub markets: Option<&'a std::sync::Arc<quantick_workspace::market_list::MarketSnapshot>>,
     /// The **stable id** of the tab on screen. The arming dialog speaks for
     /// one drawing on one tab, and drawing ids are per-pane counters — the
     /// same id over there names an unrelated object — so it closes when this

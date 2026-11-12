@@ -13,7 +13,7 @@ fn opened() -> State {
     );
     Model::update(
         &mut state,
-        Intent::Refresh(Box::new(MarketSnapshot {
+        Intent::Refresh(Arc::new(MarketSnapshot {
             venues: vec![Venue {
                 feed_id: "binance".into(),
                 name: "Binance".into(),
@@ -166,4 +166,62 @@ fn footer_and_focus_intents_delegate_to_workspace_and_handler_defaults() {
         "volume:13"
     );
     assert_eq!(state.open.as_ref().unwrap().workspace(), "Scalp");
+}
+
+#[test]
+fn equal_snapshot_preserves_cached_listing_and_selection() {
+    let mut state = opened();
+    Model::update(&mut state, Intent::Keys(vec![PaletteKey::Down]));
+    Model::update(&mut state, Intent::Refuse("host refusal".into()));
+    let snapshot = Arc::clone(&state.snapshot);
+    let groups = state.listing.groups.as_ptr();
+    let equal = Arc::new((*snapshot).clone());
+    assert!(!Arc::ptr_eq(&snapshot, &equal));
+    assert_eq!(Model::update(&mut state, Intent::Refresh(equal)), None);
+    assert!(Arc::ptr_eq(&state.snapshot, &snapshot));
+    assert_eq!(state.listing.groups.as_ptr(), groups);
+    assert_eq!(state.palette().refusal(), Some("host refusal"));
+    Model::update(
+        &mut state,
+        Intent::Keys(vec![PaletteKey::Enter { background: false }]),
+    );
+    let Some(PaletteIntent::Open(choice)) = finish(&mut state) else {
+        panic!("selected market effect");
+    };
+    assert_eq!(choice.symbol, "ETHUSDT");
+}
+
+#[test]
+fn changed_snapshot_refreshes_query_recent_and_selection_without_copying() {
+    let mut state = opened();
+    Model::update(&mut state, Intent::Query("ETH".into()));
+    let mut next = (*state.snapshot).clone();
+    next.recent.closed(ClosedMarket {
+        feed_id: "binance".into(),
+        symbol: "ETHUSDT".into(),
+        at: "12:34".into(),
+        price: Some("42".into()),
+        bar: "volume:13".into(),
+        context_bars: vec![],
+    });
+    next.workspaces.push("New workspace".into());
+    let next = Arc::new(next);
+    Model::update(&mut state, Intent::Refresh(Arc::clone(&next)));
+    assert!(Arc::ptr_eq(&state.snapshot, &next));
+    assert_eq!(state.palette().query(), "ETH");
+    assert_eq!(state.listing, state.palette().listing(&next.world()));
+    assert!(state.listing.rows().all(|row| row.symbol == "ETHUSDT"));
+    drop(next);
+    Model::update(&mut state, Intent::Query("BTC".into()));
+    assert!(state.listing.rows().all(|row| row.symbol == "BTCUSDT"));
+    Model::update(&mut state, Intent::Query("ETH".into()));
+    Model::update(
+        &mut state,
+        Intent::Keys(vec![PaletteKey::Enter { background: false }]),
+    );
+    let Some(PaletteIntent::Open(choice)) = finish(&mut state) else {
+        panic!("refreshed selection effect");
+    };
+    assert_eq!(choice.symbol, "ETHUSDT");
+    assert_eq!(choice.bar, "volume:13");
 }
