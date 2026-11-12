@@ -113,12 +113,13 @@ pub(super) fn draw_surfaces(
     // collapsed pane is focus on nothing.
     let focused_side = focused_tab.focused_side();
     let focused_pane = focused_tab.pane(focused_side);
-    let picker_indicators: Vec<_> = if staging || registry.indicator_picker.state.target.is_some() {
+    let picker = &registry.indicator_picker.model_state.picker;
+    let picker_indicators: Vec<_> = if staging || picker.target.is_some() {
         focused_pane
             .indicators
             .all()
             .iter()
-            .map(|view| crate::toolbar::IndicatorMenuEntry {
+            .map(|view| quantick_ui_model::indicator_picker::ActiveEntry {
                 slot: view.slot.0,
                 label: view.label().to_owned(),
                 hidden: view.hidden,
@@ -129,6 +130,13 @@ pub(super) fn draw_surfaces(
     } else {
         Vec::new()
     };
+    registry.update(crate::surfaces::HostIntent::IndicatorPicker(Box::new(
+        quantick_ui_model::indicator_picker::Intent::Refresh {
+            target: (tabs.active_id(), focused_pane.id),
+            scripts: indicators.script_library.entries().to_vec(),
+            active: picker_indicators,
+        },
+    )));
     let editor_pane = target_pane.unwrap_or(focused_pane);
     let editor_tab = target_tab.unwrap_or(focused_tab);
     let palette = editor_pane.palette(ctx);
@@ -167,8 +175,8 @@ pub(super) fn draw_surfaces(
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
+            #[cfg(any(feature = "scenario-harness", test))]
             picker_pane_id: focused_pane.id,
-            picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
             now,
             indicator_preview_area: indicator_preview_area(

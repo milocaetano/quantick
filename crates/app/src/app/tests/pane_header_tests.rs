@@ -1516,7 +1516,7 @@ fn the_indicators_glyph_opens_the_library_on_its_own_pane() {
         let pane = app.active_tab().pane(side).id;
         assert_eq!(app.active_tab().focused_side(), side);
         assert_eq!(
-            app.surfaces.indicator_picker.state.target,
+            app.surfaces.indicator_picker.model_state.picker.target,
             Some((app.runtime.tabs.active_id(), pane)),
             "the library stays open on the pane that asked"
         );
@@ -1653,16 +1653,47 @@ fn a_click_outside_the_library_hands_the_app_back() {
     click_chart(&mut app, &ctx, glyph.center());
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    assert!(app.surfaces.indicator_picker.state.target.is_some());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_some()
+    );
 
     click_chart(&mut app, &ctx, egui::pos2(30.0, 400.0));
     run_frame(&mut app, &ctx);
-    assert!(app.surfaces.indicator_picker.state.target.is_none());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_none()
+    );
 
+    let dock = app.dock.visible();
+    let shortcut = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+    press_key(&mut app, &ctx, egui::Key::B, shortcut);
+    assert_ne!(
+        app.dock.visible(),
+        dock,
+        "dismissal returns keyboard input to chrome"
+    );
+    press_key(&mut app, &ctx, egui::Key::B, shortcut);
+    assert_eq!(app.dock.visible(), dock);
+    run_frame(&mut app, &ctx);
+    let glyph = glyph_of(&app, &ctx, PaneSide::Flow);
     click_chart(&mut app, &ctx, glyph.center());
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.indicator_picker.state.target.is_some(),
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_some(),
         "the header answers again once the library is gone"
     );
 }

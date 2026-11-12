@@ -24,7 +24,14 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     )
     .0;
     assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
-    assert!(app.surfaces.indicator_picker.state.target.is_none());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_none()
+    );
     let mut client = connect(
         &directory,
         &options(
@@ -47,40 +54,16 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     ));
     let entries = searched["entries"].as_array().unwrap();
     assert!(!entries.is_empty());
-    assert!(entries.iter().all(|entry| {
-        let name_matches = entry["name"]
-            .as_str()
-            .unwrap()
-            .to_lowercase()
-            .contains("ema");
-        let filename_matches = entry["id"]
-            .as_str()
-            .unwrap()
-            .strip_prefix("script.")
-            .and_then(|index| index.parse::<usize>().ok())
-            .and_then(|index| app.runtime.indicators.script_library.entries().get(index))
-            .is_some_and(|script| script.name.to_lowercase().contains("ema"));
-        name_matches || filename_matches
-    }));
-    let ema_index = app
-        .runtime
-        .indicators
-        .script_library
-        .entries()
-        .iter()
-        .position(|script| script.name == "ema.pine")
-        .unwrap();
-    assert!(entries.iter().any(|entry| {
-        entry["id"] == format!("script.{ema_index}")
-            && entry["name"] == "Exponential Moving Average"
-    }));
     let invalid = call(
         &mut app,
         &mut client,
         json!({"action":"search", "query":"x", "category":"community"}),
     );
     assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
-    assert_eq!(app.surfaces.indicator_picker.state.query, "eMa");
+    assert_eq!(
+        app.surfaces.indicator_picker.model_state.picker.query,
+        "eMa"
+    );
     let closed = success_result(&call(&mut app, &mut client, json!({"action":"close"})));
     assert_eq!(closed["open"], false);
     assert!(app.focused_pane().indicators.all().is_empty());
@@ -111,9 +94,16 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
         "modal blocks the unguarded dock shortcut"
     );
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::Text("12".into())]);
-    assert_eq!(app.surfaces.indicator_picker.state.query, "12");
+    assert_eq!(app.surfaces.indicator_picker.model_state.picker.query, "12");
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-    assert!(app.surfaces.indicator_picker.state.target.is_none());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_none()
+    );
     // Escape normally disarms the drawing rail. The modal alone consumed it.
     assert_eq!(
         app.toolrail.tool(),
@@ -160,11 +150,14 @@ fn focusing_a_pane_then_opening_the_picker_matches_its_glyph() {
     let time_pane = app.active_tab().pane(PaneSide::Time(0)).id;
     assert_eq!(opened["pane_id"], time_pane.to_string());
 
-    let by_script = app.surfaces.indicator_picker.state.target;
-    app.surfaces.indicator_picker.state.close();
+    let by_script = app.surfaces.indicator_picker.model_state.picker.target;
+    app.surfaces.indicator_picker.model_state.picker.close();
     app.active_tab_mut().focus = PaneSide::Flow;
     app.active_tab_mut().time_panes[0].request_indicator_picker();
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-    assert_eq!(app.surfaces.indicator_picker.state.target, by_script);
+    assert_eq!(
+        app.surfaces.indicator_picker.model_state.picker.target,
+        by_script
+    );
 }

@@ -62,7 +62,8 @@ impl IndicatorWiring<'_> {
             self.runtime.tabs.active_id(),
             self.runtime.active_tab().focused_pane().id,
         );
-        self.picker.state.open(target);
+        self.picker
+            .update(quantick_ui_model::indicator_picker::Intent::Open(target));
     }
 
     /// Execute persistence only after the owner has prepared the indicator edit.
