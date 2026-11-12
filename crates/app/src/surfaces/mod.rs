@@ -363,7 +363,7 @@ macro_rules! register_surfaces {
      modules { $($module:ident;)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
-        $effects:path, $slot:ident, $dispatch:ident; )* }) => {
+        $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
         register_host_routes! { [] ; $(
             $dispatch [$($view_attr),*] $tag $model $field;
         )* }
@@ -381,7 +381,7 @@ macro_rules! register_surfaces {
             fn default() -> Self {
                 Self {
                     $($legacy: Default::default(),)*
-                    $($(#[$view_attr])* $field: Adapter::new(Default::default(), $effects),)*
+                    $($(#[$view_attr])* $field: Adapter::new(Default::default(), $effects).in_slots(&[quantick_ui_model::Slot::$slot $(, quantick_ui_model::Slot::$additional_slot)*]),)*
                     widgets: Default::default(),
                     #[cfg(any(feature = "scenario-harness", test))]
                     hooks_applied: false,
@@ -390,12 +390,12 @@ macro_rules! register_surfaces {
         }
         impl Surfaces {
             pub fn retain_slot_scopes(&mut self, slot: quantick_ui_model::Slot, keep: impl Fn(u64) -> bool) {
-                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { self.$field.retain_scopes(&keep); })*
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) { self.$field.retain_scopes(&keep); })*
             }
 
             pub fn draw_slot_scoped(&mut self, scope: u64, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
                 let mut response = SurfaceResponse::default();
-                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot {
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) {
                     self.$field.with_scoped_updates(scope, |effect| response.merge(effect), |view, session| {
                         view.paint_updated(session, target, None);
                     }); })*
@@ -419,7 +419,7 @@ macro_rules! register_surfaces {
                     }
                     $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
                 }
-                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { response.merge(self.$field.draw_in(target, env)); })*
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) { response.merge(self.$field.draw_in(target, env)); })*
                 response
             }
         }
@@ -463,6 +463,55 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
+
+    #[test]
+    fn catalog_passes_share_state_and_fold_each_effect_once() {
+        use quantick_ui_model::Slot;
+        let mut registry = Surfaces::default();
+        let mut effects = SurfaceResponse::default();
+        let mut calls = 0;
+        let mut canvas_selection = 3;
+        let before = registry.first.with_pass(
+            Slot::PinnedInspector,
+            |effect| effects.merge(effect),
+            |view, session| {
+                calls += 1;
+                view.enabled = true;
+                session.update((canvas_selection, 17));
+                *session.state()
+            },
+        );
+        assert_eq!(before, Some(3));
+        let wrong = registry.first.with_pass(
+            Slot::Toolbar,
+            |effect| effects.merge(effect),
+            |_, session| {
+                calls += 1;
+                session.update((99, 17));
+            },
+        );
+        assert_eq!(wrong, None);
+        // The canvas changes the host's borrowed input between the two passes.
+        canvas_selection = 7;
+        let after = registry.first.with_pass(
+            Slot::DrawingChrome,
+            |effect| effects.merge(effect),
+            |view, session| {
+                calls += 1;
+                assert!(view.enabled);
+                assert_eq!(*session.state(), 3);
+                session.update((canvas_selection, 18));
+                *session.state()
+            },
+        );
+        assert_eq!(after, Some(10));
+        assert_eq!(calls, 2);
+        assert_eq!(registry.first.model_state, 10);
+        assert_eq!(
+            effects.model_effects,
+            vec![HostEffect::First((3, 17)), HostEffect::First((10, 18))]
+        );
+    }
 
     #[test]
     fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {

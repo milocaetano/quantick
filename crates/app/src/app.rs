@@ -12,6 +12,8 @@
 //! [`ChartPane`], not to the window. The market feeding that pane — channels,
 //! connection state, notices, history counters — is still owned here.
 
+#[cfg(any(feature = "drawing-harness", feature = "quick-range-harness", test))]
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use std::time::Instant;
 
 use eframe::egui;
@@ -256,7 +258,7 @@ macro_rules! arrangement_adapter {
             show_perf: &mut $app.health.show_perf,
             record_deals: &mut $app.chrome.record_deals,
             history: &mut $app.runtime.history,
-            drawing_chrome: &mut $app.drawings.chrome,
+            drawing_chrome: &mut $app.surfaces.drawing_chrome,
             toast: &mut $app.surfaces.toast,
             surface: &mut $app.chrome.title_bar.surface,
         }
@@ -285,7 +287,7 @@ impl QuantickApp {
         indicator_wiring::IndicatorWiring {
             runtime: self.runtime.bound_mut(&self.presentation.binding),
             picker: &mut self.surfaces.indicator_picker,
-            drawing_chrome: &mut self.drawings.chrome,
+            drawing_chrome: &mut self.surfaces.drawing_chrome,
             toast: &mut self.surfaces.toast,
             rename: &mut self.chrome.layout_rename,
             delete_confirm: &mut self.chrome.layout_delete_confirm,
@@ -557,12 +559,14 @@ impl QuantickApp {
         // hooks and the captured rail inputs. `launch_hooks` owns their
         // construction-phase order after workspace restoration.
         #[cfg(any(feature = "quick-range-harness", test))]
-        app.drawings
-            .chrome
-            .quick_range
+        app.surfaces
+            .drawing_chrome
+            .quick_range()
             .queue_launch(launch.quick_range);
         #[cfg(any(feature = "drawing-harness", test))]
-        app.drawings.chrome.queue_launch(launch.drawing_chrome);
+        app.surfaces
+            .drawing_chrome
+            .queue_launch(launch.drawing_chrome);
         launch_hooks::apply_launch_phase(
             &mut app,
             #[cfg(any(feature = "scenario-harness", test))]

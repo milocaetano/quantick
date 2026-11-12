@@ -7,11 +7,11 @@
 use eframe::egui;
 
 use crate::app::arrangement_host::ArrangementHost;
-use crate::app::drawing_controller::DrawingController;
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockResponse};
 use crate::loading::LoadingTask;
 use crate::replay_view::{ReplayAction, ReplayView};
+use crate::surfaces::drawing_chrome::{DrawingChromeExt as _, DrawingChromeSurface};
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
@@ -55,15 +55,15 @@ pub(super) fn draw_drawing_rail(
     ctx: &egui::Context,
     toolrail: &mut ToolRail,
     tabs: &mut ArrangementHost,
-    drawings: &mut DrawingController,
+    chrome: &mut DrawingChromeSurface,
 ) {
     let side = tabs[tabs.active_index()].focused_side();
     // The flag lives with the window it opens, so it travels through a local
     // rather than a `&mut` handed out of the surface.
-    let mut manager_open = drawings.chrome.manager_open();
+    let mut manager_open = chrome.manager_open();
     let tab = tabs.runtime_mut(tabs.active_index());
     toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
-    drawings.chrome.set_manager_open(manager_open);
+    chrome.set_manager_open(manager_open);
 }
 
 /// The right dock. The Trading tab speaks for the market on screen: one tab,

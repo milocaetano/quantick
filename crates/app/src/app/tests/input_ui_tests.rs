@@ -343,12 +343,12 @@ fn a_parked_popup_comes_back_after_a_restart() {
         .restore_workspace(ui_state::load(app.runtime.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
-        next.drawings.chrome.inspector_pos(),
+        next.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "the popup opens where the last session left it"
     );
     assert!(
-        next.drawings.chrome.inspector_moved(),
+        next.surfaces.drawing_chrome.inspector_moved(),
         "and counts as hand-placed, so nothing places it again"
     );
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
@@ -362,14 +362,14 @@ fn button_manager_and_keyboard_send_the_same_delete_command() {
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.drawings.chrome.set_manager_open(true);
+    app.surfaces.drawing_chrome.set_manager_open(true);
     // Let the manager window settle its size before reading button rects.
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     let delete = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .manager_action_rects()
         .iter()
         .find(|(index, action, _)| *index == 0 && *action == "Delete")
@@ -799,14 +799,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -818,14 +820,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -839,14 +843,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -952,7 +958,7 @@ fn drawing_controller_characterization_cancel_follows_locked_delete_request() {
         },
         Instant::now(),
     );
-    assert!(!app.drawings.chrome.delete_confirm());
+    assert!(!app.surfaces.drawing_chrome.delete_confirm());
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
     assert!(app.active_tab().flow_pane.drawings.items()[0].locked);
 }

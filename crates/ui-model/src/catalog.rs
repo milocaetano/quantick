@@ -16,8 +16,10 @@ macro_rules! surface_catalog {
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
-            modules { drawing_chrome; home; remove_chart; }
+            modules { home; remove_chart; }
             models {
+                [] []
+                drawing_chrome: DrawingChrome => drawing_chrome = "drawing_chrome.rs", drawing_chrome = "drawing_chrome/mod.rs", drawing_chrome::effects, PinnedInspector | DrawingChrome, Local;
                 [] []
                 chart_settings: ChartSettings => chart_settings = "chart_settings.rs", chart_settings = "chart_settings/mod.rs", chart_settings::effects, Overlay, Host;
                 [] []
@@ -52,7 +54,7 @@ macro_rules! surface_catalog {
                 [] []
                 pane_header: PaneHeader => pane_header = "pane_header.rs", pane_header = "../pane_header.rs", pane_header::effects, PaneHeader, Host;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
-                first: First => first = "first.rs", first_view = "tests/fixtures/first.rs", first_view::effects, Overlay, Host;
+                first: First => first = "first.rs", first_view = "tests/fixtures/first.rs", first_view::effects, Overlay | PinnedInspector | DrawingChrome, Host;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 second: Second => second = "second.rs", second_view = "tests/fixtures/second.rs", second_view::effects, Toolbar, Local;
             }

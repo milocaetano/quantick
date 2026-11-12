@@ -1,58 +1,13 @@
-//! The drawing chrome: everything that speaks for the *selected drawing*.
+//! Drawing chrome view and adapters for the catalog-owned headless model.
 //!
-//! Four pieces of chrome appear when a trader selects an object — the context
-//! bar under it, the inline field for a note's words, the inspector (floating
-//! or docked at the side) and the object manager listing every mark on the
-//! chart. They were four `draw_*` methods on `QuantickApp` reading twenty-one
-//! of its fields, and this module is where that state lives instead.
-//!
-//! # Why one [`Surface`], not four
-//!
-//! They are one subsystem, not four neighbours. Five pieces of state are
-//! written by one and read by another:
-//!
-//! | State | Written by | Read by |
-//! | --- | --- | --- |
-//! | [`Shared::open`] | the context bar's gear | the inspector |
-//! | [`Shared::pinned`] | the inspector's pin | the context bar, to hide a gear leading where the eye already is |
-//! | [`Shared::last_selection`] | the context bar, on a new selection | the inspector's placement rule |
-//! | [`Shared::delete_confirm`] | the action applier | the bar and the inspector body |
-//! | [`Shared::edit_baseline`] | the action applier | the context bar, to decide whether this frame owes a clone |
-//!
-//! Registering four members would leave that sharing in `QuantickApp` — the
-//! disease this port exists to cure — or push it through the response and
-//! make [`super::Surfaces::draw_all`]'s call order load-bearing, which its own
-//! documentation says it is not. One member keeps the sharing private, and
-//! the order the four are drawn in is decided here, in writing, beside the
-//! reason.
-//!
-//! So [`super::Surfaces`] grows by exactly one field, 8 to 9. The typed-struct
-//! trade the registry documents is not under pressure from this change.
-//!
-//! # What it reads and what it asks for
-//!
-//! [`DrawingEnv`] is the read-only slice, nested inside [`super::SurfaceEnv`]
-//! rather than flattened into it: eleven more loose fields on the shared env
-//! would be the same disease one level out. Everything in it is borrowed or
-//! `Copy`, and the two entries that cost an allocation —
-//! [`DrawingEnv::manager_rows`] and [`DrawingEnv::selected_band`] — are built
-//! by the host only while the surface that reads them is on screen, the rule
-//! `open_markets` already follows.
-//!
-//! Writes go back through [`DrawingChromeAsk`]. The inspector **edits a copy**
-//! of the selected drawing and hands it over; it never holds a `&mut` into a
-//! pane. The store commands are named fields, not an enum, for the reason
-//! [`super::SurfaceResponse`] is a struct: a new ask is an added field that
-//! defaults to "did not ask", never a `match` arm that reopens every caller.
-//!
-//! # Cost
-//!
-//! Event-driven throughout. Nothing here runs per trade, per depth update or
-//! inside a renderer. Per frame the host pays one virtual call that returns
-//! after an `Option` test when nothing is selected and the manager is shut;
-//! the clone of the selected drawing is paid only while the inspector is
-//! actually open, which is what the trunk paid before.
+//! One model/view instance serves both the pinned inspector before canvas
+//! and the floating chrome after canvas. Each pass reads current host facts;
+//! UI transitions use typed intents and domain mutations return host effects.
+//! Subviews flush effects in their existing order, sharing one model state.
+//! Geometry and painting stay here; drawing rules remain in quantick-drawings.
 
+mod adapter;
+pub(crate) use adapter::DrawingChromeExt;
 pub(crate) mod context_bar;
 // `demo` and `launch` are drawing-harness scenarios, gated inside their own
 // files (`#![cfg]`) so each file says what it is.
@@ -76,9 +31,10 @@ pub(crate) use quick_range::{
 };
 
 use eframe::egui;
+use quantick_ui_model::drawing_chrome::Intent;
 
 use crate::bands::BandLabel;
-use crate::drawings::{Drawing, DrawingStyle, PresetHost};
+use crate::drawings::{Drawing, PresetHost};
 use crate::pane::PaneSide;
 use crate::toolrail::ToolboxDock;
 
@@ -86,7 +42,8 @@ use crate::toolrail::ToolboxDock;
 /// [`inspector::placement`] has a size and a bbox to place it from.
 pub(crate) const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Inspector width bounds (UX spec: resizable between 300 and 440 px).
-pub(crate) const INSPECTOR_MIN_WIDTH_PX: f32 = 300.0;
+pub(crate) const INSPECTOR_MIN_WIDTH_PX: f32 =
+    quantick_ui_model::drawing_chrome::inspector::MIN_WIDTH_PX;
 /// See [`INSPECTOR_MIN_WIDTH_PX`].
 const INSPECTOR_MAX_WIDTH_PX: f32 = 440.0;
 /// Default inspector width for the shipped tools (the spec reserves 360 px
@@ -95,13 +52,15 @@ const INSPECTOR_DEFAULT_WIDTH_PX: f32 = 320.0;
 /// Default inspector width for tools that mount a level editor tab.
 const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
 /// Gap kept between the inspector and the selected object's bounding box.
-const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
+const INSPECTOR_OBJECT_GAP_PX: f32 = quantick_ui_model::drawing_chrome::inspector::OBJECT_GAP_PX;
 /// Assumed inspector height for placement before its first frame reports one.
 const INSPECTOR_FALLBACK_HEIGHT_PX: f32 = 280.0;
 /// Below this chart width a fresh selection opens the inspector pinned —
 /// there is no floating position that would not crowd the geometry. Stops
 /// applying once the user touches the pin either way.
-pub(crate) const INSPECTOR_AUTO_PIN_CHART_WIDTH_PX: f32 = 1180.0;
+#[cfg(test)]
+pub(crate) const INSPECTOR_AUTO_PIN_CHART_WIDTH_PX: f32 =
+    quantick_ui_model::drawing_chrome::inspector::AUTO_PIN_CHART_WIDTH_PX;
 /// Height of the floating inspector's custom title bar.
 const INSPECTOR_TITLE_HEIGHT_PX: f32 = 28.0;
 /// Title-bar paint metrics: leading padding, the title column when the grip
@@ -128,89 +87,9 @@ const INSPECTOR_AREA_ID: &str = "drawing_inspector";
 /// egui remembers.
 const MANAGER_AREA_ID: &str = "drawing_manager";
 
-/// Which inspector tab is open. Tabs exist per capability: every tool gets
-/// Style and Coordinates; a tool that brings its own tab (the Fib level
-/// editor) mounts it as Extra without the central code knowing its fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum InspectorTab {
-    #[default]
-    Style,
-    Extra,
-    Coordinates,
-}
-
-/// Which default-style button the Style tab was pressed on, so the caller can
-/// say out loud that something was remembered — a silent save leaves the
-/// trader wondering whether it took.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SavedDefault {
-    OneTool,
-    EveryTool,
-    Forgotten,
-}
-
-impl SavedDefault {
-    pub(crate) const fn message(self) -> &'static str {
-        match self {
-            Self::OneTool => "Saved - new drawings of this tool open configured like this one.",
-            Self::EveryTool => "Saved - every new drawing opens with this colour, width and fill.",
-            Self::Forgotten => "Reset - this tool goes back to how it opened out of the box.",
-        }
-    }
-}
-
-/// What the inspector body asked for this frame. The applier owns every
-/// mutation, so the pinned panel and the floating window share one rule set.
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct InspectorActions {
-    pub toggle_hidden: bool,
-    pub toggle_lock: bool,
-    pub toggle_pin: bool,
-    pub delete: bool,
-    pub cancel_delete: bool,
-    pub force_delete: bool,
-    pub close: bool,
-    pub edited: bool,
-    /// Which default-style button was pressed, if any.
-    pub saved_default: Option<SavedDefault>,
-}
-
-impl InspectorActions {
-    /// Fold another frame section's requests into this one — the title bar
-    /// and the body each report intent, the applier takes the union.
-    pub fn merge(&mut self, other: Self) {
-        self.toggle_hidden |= other.toggle_hidden;
-        self.toggle_lock |= other.toggle_lock;
-        self.toggle_pin |= other.toggle_pin;
-        self.delete |= other.delete;
-        self.cancel_delete |= other.cancel_delete;
-        self.force_delete |= other.force_delete;
-        self.close |= other.close;
-        self.edited |= other.edited;
-        self.saved_default = self.saved_default.or(other.saved_default);
-    }
-}
-
-/// An edit in flight: which object, on which pane of which tab, and what it
-/// said before the first keystroke or the first drag.
-///
-/// One record for both kinds of edit — the inline field's and the inspector's
-/// — because they are the same fact and end at the same call. Two identical
-/// structs would be two merge rules and two host branches to keep in step, and
-/// a fix applied to one would not reach the other.
-///
-/// The tab and the pane, not the index alone: an index identifies nothing once
-/// there are two panes, let alone two tabs. Switching tabs with an editor open
-/// would otherwise record the note's undo entry against whatever object
-/// happened to sit at that index on the tab now in front — swapping an
-/// unrelated drawing for a copy of the note on the next Ctrl+Z.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DrawingEdit {
-    pub tab: u64,
-    pub side: PaneSide,
-    pub index: usize,
-    pub before: Drawing,
-}
+pub(crate) use quantick_ui_model::drawing_chrome::{
+    DrawingEdit, InspectorActions, InspectorTab, SavedDefault,
+};
 
 /// The selected object, as the chrome reads it: borrowed, never cloned on the
 /// way in.
@@ -310,427 +189,103 @@ impl DrawingEnv<'_> {
     }
 }
 
-/// One write to the preset bank, recorded rather than performed.
-///
-/// The bank is host state that persists to disk on every write, so the
-/// surface cannot hold a `&mut` to it any more than it can hold one to a
-/// pane. [`RecordingPresetHost`] reads through the borrowed bank and pushes
-/// these; the host replays them.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum PresetWrite {
-    Save {
-        tool_id: String,
-        name: String,
-        value: toml::Value,
-    },
-    Delete {
-        tool_id: String,
-        name: String,
-    },
-    SetDefaultPreset {
-        tool_id: String,
-        name: Option<String>,
-    },
-    SetDefaultStyle {
-        tool_id: String,
-        style: Option<DrawingStyle>,
-    },
-    SetDefaultConfig {
-        tool_id: String,
-        value: Option<toml::Value>,
-    },
-}
+pub(crate) use quantick_ui_model::drawing_chrome::RecordingPresetHost;
 
-impl PresetWrite {
-    /// Replay this write onto the real bank.
-    ///
-    /// One `match` over an enum the host cannot extend by accident: a variant
-    /// added to [`PresetWrite`] without a line here does not compile, which is
-    /// the property that makes recording the writes safe at all.
-    pub(crate) fn apply_to(self, bank: &mut dyn PresetHost) {
-        match self {
-            Self::Save {
-                tool_id,
-                name,
-                value,
-            } => {
-                // Overwrite: the recorder already answered the "is that name
-                // taken" question against this same bank, and answering it
-                // twice would refuse a save the trader was told had succeeded.
-                bank.save_custom_preset(&tool_id, &name, value, true);
-            }
-            Self::Delete { tool_id, name } => bank.delete_custom_preset(&tool_id, &name),
-            Self::SetDefaultPreset { tool_id, name } => bank.set_default_preset(&tool_id, name),
-            Self::SetDefaultStyle { tool_id, style } => bank.set_default_style(&tool_id, style),
-            Self::SetDefaultConfig { tool_id, value } => bank.set_default_config(&tool_id, value),
-        }
-    }
-}
+pub(crate) use quantick_ui_model::drawing_chrome::DrawingChromeAsk;
 
-/// A [`PresetHost`] that reads the real bank and writes into a list.
-///
-/// The tool-owned inspector tab talks to the bank through `PresetHost`, which
-/// is already a port — but its five mutating methods persist to disk, so the
-/// surface records them and the host replays them on the same frame. Every
-/// read is delegated, unchanged, to the bank the env borrowed.
-///
-/// [`PresetHost::save_custom_preset`] is the one method whose answer the
-/// caller reads immediately: `false` means "that name is taken and you did
-/// not say overwrite". It is answered here from the bank's own
-/// [`PresetHost::load_custom_preset`] rather than from a copy of the store's
-/// rule, and `recorder_refuses_a_taken_name_exactly_as_the_bank_does` pins
-/// the two together.
-///
-/// **A read sees the writes this frame already made.** The bank is not
-/// mutated until the host replays the list, so consulting it alone would let
-/// one frame delete a preset and then be told the name it just freed is still
-/// taken — and would list a preset the trader deleted a moment ago. Every
-/// name-answering read therefore checks the pending writes first, newest
-/// wins, exactly as replaying them onto the bank would.
-pub(crate) struct RecordingPresetHost<'a> {
-    bank: &'a dyn PresetHost,
-    writes: Vec<PresetWrite>,
-}
-
-impl<'a> RecordingPresetHost<'a> {
-    fn new(bank: &'a dyn PresetHost) -> Self {
-        Self {
-            bank,
-            // Not `with_capacity`: the overwhelmingly common frame records
-            // nothing, and an empty `Vec` does not allocate.
-            writes: Vec::new(),
-        }
-    }
-}
-
-impl RecordingPresetHost<'_> {
-    /// The writes this frame recorded, in the order they were made.
-    fn into_writes(self) -> Vec<PresetWrite> {
-        self.writes
-    }
-}
-
-impl RecordingPresetHost<'_> {
-    /// Whether a preset by that name would exist once this frame's writes are
-    /// replayed. The newest pending write about the name wins; with none, the
-    /// bank answers.
-    fn pending_exists(&self, tool_id: &str, name: &str) -> Option<bool> {
-        self.writes.iter().rev().find_map(|write| match write {
-            PresetWrite::Save {
-                tool_id: t,
-                name: n,
-                ..
-            } if t == tool_id && n == name => Some(true),
-            PresetWrite::Delete {
-                tool_id: t,
-                name: n,
-            } if t == tool_id && n == name => Some(false),
-            _ => None,
-        })
-    }
-
-    fn exists(&self, tool_id: &str, name: &str) -> bool {
-        self.pending_exists(tool_id, name)
-            .unwrap_or_else(|| self.bank.load_custom_preset(tool_id, name).is_some())
-    }
-}
-
-impl PresetHost for RecordingPresetHost<'_> {
-    fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
-        self.bank.theme()
-    }
-    fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
-        let mut names = self.bank.custom_preset_names(tool_id);
-        for write in &self.writes {
-            match write {
-                PresetWrite::Save {
-                    tool_id: t, name, ..
-                } if t == tool_id => {
-                    if !names.contains(name) {
-                        names.push(name.clone());
-                    }
-                }
-                PresetWrite::Delete { tool_id: t, name } if t == tool_id => {
-                    names.retain(|held| held != name);
-                }
-                _ => {}
-            }
-        }
-        // The bank hands these back in `BTreeMap` order; a name appended here
-        // has to land in the same place, or the combo box reorders itself for
-        // one frame after a save.
-        names.sort();
-        names
-    }
-
-    fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value> {
-        match self.pending_exists(tool_id, name) {
-            Some(false) => None,
-            Some(true) => self.writes.iter().rev().find_map(|write| match write {
-                PresetWrite::Save {
-                    tool_id: t,
-                    name: n,
-                    value,
-                } if t == tool_id && n == name => Some(value.clone()),
-                _ => None,
-            }),
-            None => self.bank.load_custom_preset(tool_id, name),
-        }
-    }
-
-    fn save_custom_preset(
-        &mut self,
-        tool_id: &str,
-        name: &str,
-        value: toml::Value,
-        overwrite: bool,
-    ) -> bool {
-        if !overwrite && self.exists(tool_id, name) {
-            return false;
-        }
-        self.writes.push(PresetWrite::Save {
-            tool_id: tool_id.to_owned(),
-            name: name.to_owned(),
-            value,
-        });
-        true
-    }
-
-    fn delete_custom_preset(&mut self, tool_id: &str, name: &str) {
-        self.writes.push(PresetWrite::Delete {
-            tool_id: tool_id.to_owned(),
-            name: name.to_owned(),
-        });
-    }
-
-    fn default_preset(&self, tool_id: &str) -> Option<String> {
-        self.bank.default_preset(tool_id)
-    }
-
-    fn set_default_preset(&mut self, tool_id: &str, name: Option<String>) {
-        self.writes.push(PresetWrite::SetDefaultPreset {
-            tool_id: tool_id.to_owned(),
-            name,
-        });
-    }
-
-    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
-        self.bank.default_style(tool_id)
-    }
-
-    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
-        self.writes.push(PresetWrite::SetDefaultStyle {
-            tool_id: tool_id.to_owned(),
-            style,
-        });
-    }
-
-    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
-        self.bank.default_config(tool_id)
-    }
-
-    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
-        self.writes.push(PresetWrite::SetDefaultConfig {
-            tool_id: tool_id.to_owned(),
-            value,
-        });
-    }
-
-    fn has_default_config(&self, tool_id: &str) -> bool {
-        self.bank.has_default_config(tool_id)
-    }
-}
-
-/// What the drawing chrome asked the host to do.
-///
-/// A struct of defaults like [`super::SurfaceResponse`] itself: every field
-/// means "this was not asked for" until a surface sets it, so a new request
-/// never touches an existing caller. The store commands are named fields
-/// rather than an enum for exactly that reason.
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct DrawingChromeAsk {
-    /// Replace the temporary secondary-drag ruler with the chosen durable
-    /// drawing through its registered annotation action.
-    pub place_quick_range: Option<quick_range::PendingRangePlacement>,
-    /// The temporary range stood down because the trader clicked the chart.
-    pub dismiss_quick_range: bool,
-    /// The inspector edited its copy of the selected drawing. Boxed: it is by
-    /// far the largest thing a response can carry — a pencil stroke is 512
-    /// anchors — and every other surface would pay for its size in a response
-    /// returned by value on every frame.
-    pub edited: Option<Box<Drawing>>,
-    /// The pointer and the keyboard have let go: record this pre-edit copy as
-    /// the one undo entry the whole gesture earned.
-    ///
-    /// The copy travels with the ask rather than being fetched back off the
-    /// surface, so the host applies a response instead of interrogating the
-    /// thing that produced it. Boxed for the reason [`Self::edited`] is: a
-    /// `Drawing` inline here would be paid for by every surface in the
-    /// application, on every frame, in a response returned by value.
-    pub commit_edit_gesture: Option<Box<DrawingEdit>>,
-    /// Hide or show the selection.
-    pub toggle_selected_hidden: bool,
-    /// Lock or unlock the selection.
-    pub toggle_selected_locked: bool,
-    /// Delete the selection, through the confirmation rule the keyboard uses.
-    pub request_delete: bool,
-    /// Delete the selection even though it is locked — the trader answered
-    /// the question.
-    pub force_delete: bool,
-    /// The trader answered "no" to that question.
-    ///
-    /// Applied by the host *after* [`Self::request_delete`], not cleared
-    /// surface-side during the draw: a frame that carries both — the bar's
-    /// confirm glyph and the body's Cancel — must end with the prompt gone,
-    /// and a delete request on a locked object raises it again.
-    pub cancel_delete: bool,
-    /// Copy the selection, offset so the copy is visibly a copy.
-    pub duplicate: bool,
-    /// Arm this tool again — the selected stroke's own pencil.
-    pub draw_again: Option<crate::drawings::DrawingTool>,
-    /// Place a text note in the middle of the pane and open its editor — the
-    /// `QUANTICK_TEXT_NOTE` hook, which needs the placement rules the host
-    /// owns.
-    #[cfg(any(feature = "drawing-harness", test))]
-    pub place_text_note: bool,
-    /// Record this object's pre-edit copy as one undo entry: the inline
-    /// editor closed, on the pane the note actually lives on, which is not
-    /// necessarily the one in front. Boxed like the two above.
-    pub record_inline_edit: Option<Box<DrawingEdit>>,
-    /// The caret moved to a different object, or left the chart. Every pane
-    /// has to be told, so exactly one object anywhere stands down; the host
-    /// reads the new target back by name.
-    pub content_editing_changed: bool,
-    /// Select this row, and bring it into view.
-    pub manager_select: Option<usize>,
-    /// Toggle this row's eye.
-    pub manager_toggle_hidden: Option<usize>,
-    /// Toggle this row's lock.
-    pub manager_toggle_locked: Option<usize>,
-    /// Raise this row above the rest.
-    pub manager_bring_to_front: Option<usize>,
-    /// Delete this row, through the same confirmation the inspector raises.
-    pub manager_delete: Option<usize>,
-    /// Show every hidden object.
-    pub show_all: bool,
-    /// Unlock every locked object.
-    pub unlock_all: bool,
-    /// Delete every object, locked ones included — the count-bearing gate was
-    /// answered.
-    pub delete_all: bool,
-    /// Take back every object an assistant placed on this chart.
-    pub sweep_authored: bool,
-    /// A named default was remembered, and is owed a line the trader can read.
-    pub saved_default: Option<SavedDefault>,
-    /// Writes to the preset bank, in the order the frame made them.
-    pub presets: Vec<PresetWrite>,
-}
-
-impl DrawingChromeAsk {
-    /// Fold one piece of chrome's asks into the frame's.
-    ///
-    /// Flags stay set, so no piece can cancel another's ask by being drawn
-    /// after it, and a valued ask keeps the **first** — the same rule
-    /// [`super::SurfaceResponse::merge`] follows, for the same reason: two
-    /// pieces cannot both be right about one row, and dropping the later ask
-    /// deterministically beats letting draw order decide in silence.
-    /// Conversion is linear: its sole producer must never contribute twice.
-    /// A debug build says so loudly; a release frame keeps the first like
-    /// every other valued ask rather than aborting on the UI thread.
-    pub(super) fn merge(&mut self, other: Self) {
-        debug_assert!(
-            self.place_quick_range.is_none() || other.place_quick_range.is_none(),
-            "one quick-range conversion producer"
-        );
-        self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
-        self.dismiss_quick_range |= other.dismiss_quick_range;
-        self.edited = self.edited.take().or(other.edited);
-        self.commit_edit_gesture = self
-            .commit_edit_gesture
-            .take()
-            .or(other.commit_edit_gesture);
-        self.toggle_selected_hidden |= other.toggle_selected_hidden;
-        self.toggle_selected_locked |= other.toggle_selected_locked;
-        self.request_delete |= other.request_delete;
-        self.force_delete |= other.force_delete;
-        self.cancel_delete |= other.cancel_delete;
-        self.duplicate |= other.duplicate;
-        self.draw_again = self.draw_again.or(other.draw_again);
-        #[cfg(any(feature = "drawing-harness", test))]
-        {
-            self.place_text_note |= other.place_text_note;
-        }
-        self.record_inline_edit = self.record_inline_edit.take().or(other.record_inline_edit);
-        self.content_editing_changed |= other.content_editing_changed;
-        self.manager_select = self.manager_select.or(other.manager_select);
-        self.manager_toggle_hidden = self.manager_toggle_hidden.or(other.manager_toggle_hidden);
-        self.manager_toggle_locked = self.manager_toggle_locked.or(other.manager_toggle_locked);
-        self.manager_bring_to_front = self.manager_bring_to_front.or(other.manager_bring_to_front);
-        self.manager_delete = self.manager_delete.or(other.manager_delete);
-        self.show_all |= other.show_all;
-        self.unlock_all |= other.unlock_all;
-        self.delete_all |= other.delete_all;
-        self.sweep_authored |= other.sweep_authored;
-        self.saved_default = self.saved_default.or(other.saved_default);
-        self.presets.extend(other.presets);
-    }
-}
-
-/// The state the four pieces share, and the reason they are one surface.
-///
-/// Private to this module: the whole point of the member being one rather
-/// than four is that nothing outside can reach across the subsystem.
+/// Toolkit mechanics owned by the catalog alongside the headless state.
 #[derive(Default)]
-pub(crate) struct Shared {
-    /// Whether the floating inspector is open. Selecting a drawing no longer
-    /// opens it: the context bar is what a selection raises, and the gear on
-    /// that bar is the one thing that opens the full panel.
-    open: bool,
-    /// Whether the inspector is docked at the chart's side instead.
-    pinned: bool,
-    /// The selection the last automatic placement was computed for.
-    last_selection: Option<usize>,
-    /// A locked object's delete was asked for and is awaiting its answer.
-    delete_confirm: bool,
-    /// The pre-edit copy held across an in-flight edit gesture.
-    edit_baseline: Option<DrawingEdit>,
-}
-
-/// The chrome that speaks for the selected drawing: the context bar, the
-/// inline text editor, the inspector and the object manager.
-#[derive(Default)]
-pub(crate) struct DrawingChromeSurface {
-    pub(crate) quick_range: quick_range::QuickRange,
-    /// What the chart menu's object entries asked for, tagged with the pane
-    /// they listed. Applied with this frame's asks only when that pane is the
-    /// one the chrome speaks for, so a menu never edits another chart.
-    menu_ask: Option<(u64, DrawingChromeAsk)>,
-    shared: Shared,
-    inspector: inspector::Inspector,
+pub(crate) struct View {
+    quick_range: quick_range::View,
+    inspector: inspector::View,
     bar: context_bar::ContextBarState,
-    manager: manager::Manager,
-    inline: inline_editor::InlineEditor,
-    /// One-shot: the placement that just happened asked for the caret. The
-    /// object it made is the selected one, so the editor opens on the frame
-    /// the placement landed.
-    pending_text_edit: bool,
-    /// One-shot: the `QUANTICK_TEXT_NOTE` hook wants a note placed and typed.
-    /// The placement rules belong to the host, so this leaves through
-    /// [`DrawingChromeAsk::place_text_note`].
+    #[cfg(test)]
+    manager_rects: Vec<(usize, &'static str, egui::Rect)>,
     #[cfg(any(feature = "drawing-harness", test))]
     scenario: launch::DrawingScenario,
-    /// One-shot: the object just placed asked for its settings panel. Applied
-    /// *after* the new-selection reset, because the placement that made the
-    /// request also made the selection change that clears it.
-    pending_open_settings: bool,
-    /// One window-level snapshot, kept here so copy/paste crosses panes and
-    /// tabs without adding feature state to `QuantickApp`.
-    clipboard: Option<Drawing>,
-    /// Number of copies already pasted from the current snapshot.
-    paste_count: u32,
 }
-
-impl DrawingChromeSurface {
+/// Delivery stays with the adapter transaction; host operations return their effects.
+pub(super) enum Session<'a> {
+    Host(&'a mut quantick_ui_model::drawing_chrome::State),
+    Paint(quantick_ui_model::UpdateSession<'a, quantick_ui_model::drawing_chrome::Model>),
+}
+impl Session<'_> {
+    fn reborrow(&mut self) -> Session<'_> {
+        match self {
+            Self::Host(state) => Session::Host(state),
+            Self::Paint(session) => Session::Paint(session.reborrow()),
+        }
+    }
+    pub fn state(&self) -> &quantick_ui_model::drawing_chrome::State {
+        match self {
+            Self::Host(state) => state,
+            Self::Paint(session) => session.state(),
+        }
+    }
+    pub fn emit(&mut self, intent: quantick_ui_model::drawing_chrome::Intent) -> DrawingChromeAsk {
+        use quantick_ui_model::Model;
+        match self {
+            Self::Host(state) => quantick_ui_model::drawing_chrome::Model::update(state, intent),
+            Self::Paint(session) => {
+                session.update(intent);
+                DrawingChromeAsk::default()
+            }
+        }
+    }
+}
+/// A temporary borrow of the catalog owner, never a second state cache.
+pub(crate) struct Chrome<'a> {
+    session: Session<'a>,
+    view: &'a mut View,
+}
+impl std::ops::Deref for Chrome<'_> {
+    type Target = quantick_ui_model::drawing_chrome::Core;
+    fn deref(&self) -> &Self::Target {
+        &self.session.state().core
+    }
+}
+pub(crate) type DrawingChromeSurface = Owner;
+pub(crate) type Owner = super::Adapter<quantick_ui_model::drawing_chrome::Model, View>;
+pub(crate) fn borrow(owner: &mut Owner) -> Chrome<'_> {
+    Chrome {
+        session: Session::Host(&mut owner.model_state),
+        view: &mut owner.view,
+    }
+}
+impl Chrome<'_> {
+    fn state(&self) -> &quantick_ui_model::drawing_chrome::State {
+        self.session.state()
+    }
+    fn emit(&mut self, intent: quantick_ui_model::drawing_chrome::Intent) -> DrawingChromeAsk {
+        self.session.emit(intent)
+    }
+    pub fn quick_range(&mut self) -> quick_range::QuickRange<'_> {
+        quick_range::QuickRange::new(self.session.reborrow(), &mut self.view.quick_range)
+    }
+}
+impl super::View<quantick_ui_model::drawing_chrome::Model> for View {
+    fn id(&self) -> &'static str {
+        "drawing_chrome"
+    }
+    fn paint(
+        &mut self,
+        _: &quantick_ui_model::drawing_chrome::State,
+        _: &mut super::ViewContext<'_>,
+        _: Option<&super::SurfaceEnv<'_>>,
+    ) -> Option<quantick_ui_model::drawing_chrome::Intent> {
+        None
+    }
+}
+pub(crate) fn effects(effects: DrawingChromeAsk) -> super::SurfaceResponse {
+    if effects == DrawingChromeAsk::default() {
+        return super::SurfaceResponse::default();
+    }
+    super::SurfaceResponse {
+        model_effects: vec![quantick_ui_model::HostEffect::DrawingChrome(effects)],
+        ..Default::default()
+    }
+}
+impl Chrome<'_> {
     /// The view owner selects its rendering pass; the window supplies facts only.
     pub fn draw_pass(
         &mut self,
@@ -757,36 +312,17 @@ impl DrawingChromeSurface {
         self.manager.open
     }
 
-    /// Whether the inspector is docked at the chart's side. The host asks
-    /// before it lays out the central canvas, because a docked panel is
-    /// declared with the chrome and the canvas pays its width.
-    pub fn inspector_pinned(&self) -> bool {
-        self.shared.pinned
-    }
-
-    /// Which note is being typed on the chart right now — what a second
-    /// operator reads to know the keyboard belongs to an object.
-    pub fn inline_text_editing(&self) -> Option<usize> {
-        self.inline.editing_index()
-    }
-
     /// The same answer with the tab and pane that make it unambiguous: an
     /// index alone names a different object on every pane.
     pub fn content_editing_target(&self) -> Option<(u64, PaneSide, usize)> {
         self.inline.target()
     }
 
-    /// The parked inspector position, for the workspace file.
-    pub fn remembered_inspector_position(&self) -> Option<[f32; 2]> {
-        self.inspector.remembered_position()
-    }
-
     // ---- What the host commands -----------------------------------------
 
     /// Replace the internal clipboard with this drawing snapshot.
     pub fn copy_drawing(&mut self, drawing: &Drawing) {
-        self.clipboard = Some(drawing.clone());
-        self.paste_count = 0;
+        self.emit(Intent::Copy(Box::new(drawing.clone())));
     }
 
     /// Return the copied snapshot and its next one-based paste count.
@@ -794,20 +330,14 @@ impl DrawingChromeSurface {
     /// The count makes repeated pastes advance instead of stacking at the
     /// same offset. Cloning is paid only for the explicit paste gesture.
     pub fn next_drawing_paste(&mut self) -> Option<(Drawing, u32)> {
-        let drawing = self.clipboard.as_ref()?.clone();
-        self.paste_count = self.paste_count.saturating_add(1);
-        Some((drawing, self.paste_count))
+        self.emit(Intent::Paste)
+            .clipboard_paste
+            .map(|(drawing, count)| (*drawing, count))
     }
 
     /// Open the object manager, or shut it.
     pub fn set_manager_open(&mut self, open: bool) {
-        self.manager.open = open;
-    }
-
-    /// Whether the floating inspector is on screen. Read by the host before
-    /// it formats the band name, which only the inspector's title shows.
-    pub fn inspector_open(&self) -> bool {
-        self.shared.open
+        self.emit(Intent::ManagerOpen(open));
     }
 
     /// Carry an open inspector across a selection the host is about to make.
@@ -818,13 +348,13 @@ impl DrawingChromeSurface {
     /// came to disagree about it.
     #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
     pub fn carry_across_selection(&mut self) {
-        self.pending_open_settings |= self.shared.open;
+        self.emit(Intent::CarrySelection);
     }
 
     /// Ask for the caret on the next frame — the placement that just happened
     /// wants its note typed.
     pub fn request_text_edit(&mut self) {
-        self.pending_text_edit = true;
+        self.emit(Intent::RequestTextEdit);
     }
 
     /// The host placed the note the `QUANTICK_TEXT_NOTE` hook asked for.
@@ -835,15 +365,7 @@ impl DrawingChromeSurface {
     /// and photographing nothing.
     #[cfg(any(feature = "drawing-harness", test))]
     pub fn note_text_note_placed(&mut self) {
-        self.scenario.acknowledge_placement(true);
-    }
-
-    /// Whether the open inline edit belongs to this pane — asked before its
-    /// drawing store is swapped out from under the caret.
-    pub fn inline_edit_is_on(&self, tab: u64, side: PaneSide) -> bool {
-        self.inline
-            .target()
-            .is_some_and(|(edit_tab, edit_side, _)| edit_tab == tab && edit_side == side)
+        self.view.scenario.acknowledge_placement(true);
     }
 
     /// Drop an undo baseline that describes this pane, rather than record it.
@@ -851,14 +373,7 @@ impl DrawingChromeSurface {
     /// Its object is about to be replaced by another set's, and an entry
     /// recorded against that would undo something the trader never did.
     pub fn drop_edit_baseline_on(&mut self, tab: u64, side: PaneSide) {
-        if self
-            .shared
-            .edit_baseline
-            .as_ref()
-            .is_some_and(|edit| edit.tab == tab && edit.side == side)
-        {
-            self.shared.edit_baseline = None;
-        }
+        self.emit(Intent::DropEditBaseline { tab, side });
     }
 
     /// Put the caret in a note now. The host owns the store, so it hands the
@@ -873,7 +388,13 @@ impl DrawingChromeSurface {
         index: usize,
         drawing: &Drawing,
     ) -> bool {
-        self.inline.begin(tab, side, index, drawing)
+        self.emit(Intent::BeginInline(DrawingEdit {
+            tab,
+            side,
+            index,
+            before: drawing.clone(),
+        }))
+        .inline_started
     }
 
     /// Commit the inline edit against its actual pane and synchronize its render suppression.
@@ -906,21 +427,15 @@ impl DrawingChromeSurface {
 
     /// Close the editor, if one is open, and return its undo record.
     pub fn end_inline_text_edit(&mut self) -> Option<DrawingEdit> {
-        self.inline.end()
+        self.emit(Intent::EndInline)
+            .record_inline_edit
+            .map(|edit| *edit)
     }
 
     /// Restore the position a workspace file remembered.
     pub fn restore_inspector_position(&mut self, remembered: Option<[f32; 2]>) {
-        self.inspector.restore_position(remembered);
-    }
-
-    /// Whether the baseline in flight describes an object other than this
-    /// one, which is a gesture that outlived its selection and must commit.
-    pub fn baseline_is_stale(&self, index: Option<usize>) -> bool {
-        self.shared
-            .edit_baseline
-            .as_ref()
-            .is_some_and(|edit| Some(edit.index) != index)
+        self.emit(Intent::InspectorRestore(remembered));
+        self.view.inspector.max_width = None;
     }
 
     /// Draw the docked inspector.
@@ -934,7 +449,8 @@ impl DrawingChromeSurface {
         ctx: &egui::Context,
         env: &DrawingEnv<'_>,
     ) -> DrawingChromeAsk {
-        inspector::draw_pinned(self, ctx, env)
+        let ask = inspector::draw_pinned(self, ctx, env);
+        self.emit(Intent::Ask(ask))
     }
 
     /// Draw the four floating pieces, in the one order that is correct.
@@ -955,160 +471,111 @@ impl DrawingChromeSurface {
         env: &DrawingEnv<'_>,
         current_owner: Option<QuickRangeOwner>,
     ) -> DrawingChromeAsk {
-        self.quick_range.reconcile_tab(env.tab);
-        if self.quick_range.owner().is_some() {
-            self.quick_range.reconcile(current_owner);
+        self.quick_range().reconcile_tab(env.tab);
+        if self.quick_range().owner().is_some() {
+            self.quick_range().reconcile(current_owner);
         }
-        self.quick_range.note_selection(
+        self.quick_range().note_selection(
             env.pane_id,
             env.selected.as_ref().map(|selected| selected.drawing.id.0),
         );
-        let mut ask = match self.quick_range.reconcile_tab(env.tab) {
-            Some(true) => {
-                let mut quick = std::mem::take(&mut self.quick_range);
-                let ask = quick_range::draw(&mut quick, ctx, env);
-                self.quick_range = quick;
-                ask
-            }
+        let mut ask = match self.quick_range().reconcile_tab(env.tab) {
+            Some(true) => quick_range::draw(&mut self.quick_range(), ctx, env),
             // A temporary ruler is already the active chart selection. Its
             // own action arrives on release; unrelated object chrome stands
             // down for the held gesture.
             Some(false) => DrawingChromeAsk::default(),
             None => context_bar::draw(self, ctx, env),
         };
-        ask.merge(inline_editor::draw(self, ctx, env));
-        ask.merge(inspector::draw_floating(self, ctx, env));
-        ask.merge(manager::draw(self, ctx, env));
-        if let Some((pane, menu)) = self.menu_ask.take()
-            && pane == env.pane_id
-        {
-            ask.merge(menu);
-        }
+        // Flush each subview before the next so first-valued effects keep their order
+        // in both synchronous host calls and immediate session delivery.
+        ask = self.emit(Intent::Ask(ask));
+        let inline = inline_editor::draw(self, ctx, env);
+        ask.merge(self.emit(Intent::Ask(inline)));
+        let inspector = inspector::draw_floating(self, ctx, env);
+        ask.merge(self.emit(Intent::Ask(inspector)));
+        let manager = manager::draw(self, ctx, env);
+        ask.merge(self.emit(Intent::Ask(manager)));
+        ask.merge(self.emit(Intent::TakeMenu(env.pane_id)));
         ask
     }
 
     /// Queue the chart menu's ask for pane `pane`, merged with any earlier
     /// one for the same pane that has not been applied yet.
     pub(crate) fn ask_from_menu(&mut self, pane: u64, ask: DrawingChromeAsk) {
-        match &mut self.menu_ask {
-            Some((queued, earlier)) if *queued == pane => earlier.merge(ask),
-            _ => self.menu_ask = Some((pane, ask)),
-        }
-    }
-
-    /// The pane a queued menu ask names, for the host to aim the chrome at
-    /// before it draws.
-    pub(crate) fn menu_target(&self) -> Option<u64> {
-        self.menu_ask.as_ref().map(|(pane, _)| *pane)
-    }
-
-    /// Whether a locked object's delete is awaiting its answer. The keyboard
-    /// owns Escape and the Delete key, so it reads and clears this by name
-    /// rather than reaching into the surface.
-    pub fn delete_confirm(&self) -> bool {
-        self.shared.delete_confirm
+        self.emit(Intent::Menu { pane, ask });
     }
 
     /// Raise or drop that question.
     pub fn set_delete_confirm(&mut self, confirming: bool) {
-        self.shared.delete_confirm = confirming;
+        self.emit(Intent::ConfirmDelete(confirming));
     }
 
     /// Whether the parked inspector position owes the workspace file a write,
     /// taken so it is owed once.
     pub fn take_inspector_position_dirty(&mut self) -> bool {
-        self.inspector.take_position_dirty()
+        self.emit(Intent::TakePositionDirty)
+            .inspector_position_dirty
     }
 }
 
 #[cfg(test)]
-impl DrawingChromeSurface {
+impl Chrome<'_> {
     /// Open the inspector, or shut it.
     pub fn set_inspector_open(&mut self, open: bool) {
-        self.shared.open = open;
+        self.emit(Intent::InspectorOpen(open));
     }
 
     /// Park the inspector where a hand put it. The hook that stands in for one
     /// reaches [`inspector::Inspector::place_by_hand`] through the opt-in
     /// owner launch scenario.
     pub fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
-        self.inspector.place_by_hand(position);
+        self.emit(Intent::InspectorPlace([position.x, position.y]));
+        self.view.inspector.max_width = None;
     }
 
     /// The rest is what a test needs to say about state that has no other
     /// door: the pin it is about to click, the position it is about to check,
     /// the flag a capture hook would otherwise have to be launched to set.
     pub fn set_inspector_pinned(&mut self, pinned: bool) {
-        self.shared.pinned = pinned;
+        self.emit(Intent::InspectorPinned(pinned));
     }
 
     pub fn set_inspector_tab(&mut self, tab: InspectorTab) {
-        self.inspector.tab = tab;
-    }
-
-    pub fn inspector_pos(&self) -> Option<egui::Pos2> {
-        self.inspector.pos
+        self.emit(Intent::InspectorTab(tab));
     }
 
     pub fn set_inspector_pos(&mut self, position: Option<egui::Pos2>) {
-        self.inspector.pos = position;
-    }
-
-    pub fn inspector_moved(&self) -> bool {
-        self.inspector.moved
+        self.emit(Intent::InspectorPosition(position.map(|p| [p.x, p.y])));
     }
 
     pub fn set_inspector_moved(&mut self, moved: bool) {
-        self.inspector.moved = moved;
-    }
-
-    pub fn inspector_pin_touched(&self) -> bool {
-        self.inspector.pin_touched
+        self.emit(Intent::InspectorMoved(moved));
     }
 
     pub fn set_inspector_pin_touched(&mut self, touched: bool) {
-        self.inspector.pin_touched = touched;
-    }
-
-    pub fn context_bar(&self) -> &crate::drawings::context_bar::ContextBar {
-        &self.bar.bar
-    }
-
-    pub fn context_bar_mut(&mut self) -> &mut crate::drawings::context_bar::ContextBar {
-        &mut self.bar.bar
+        self.emit(Intent::InspectorPinTouched(touched));
     }
 
     pub fn set_pending_text_note(&mut self, pending: bool) {
-        self.scenario.request_note(pending);
+        self.view.scenario.request_note(pending);
     }
 
     /// Forget the rectangle the bar was last drawn at, so a test can prove a
     /// frame drew it again rather than read a stale one.
     pub fn forget_context_bar_rect(&mut self) {
-        self.bar.last_drawn_rect = None;
+        self.view.bar.last_drawn_rect = None;
     }
 
     /// Open an edit gesture by hand, so a test can prove that one which
     /// outlives its selection is committed rather than dropped.
     pub fn open_edit_gesture(&mut self, tab: u64, side: PaneSide, index: usize, before: Drawing) {
-        self.shared.edit_baseline = Some(DrawingEdit {
+        self.emit(Intent::OpenEditGesture(DrawingEdit {
             tab,
             side,
             index,
             before,
-        });
-    }
-
-    pub fn context_bar_rect(&self) -> Option<egui::Rect> {
-        self.bar.last_drawn_rect
-    }
-
-    pub fn inspector_pin_rect(&self) -> Option<egui::Rect> {
-        self.inspector.pin_rect
-    }
-
-    pub fn manager_action_rects(&self) -> &[(usize, &'static str, egui::Rect)] {
-        &self.manager.action_rects
+        }));
     }
 }
 
@@ -1119,74 +586,30 @@ impl DrawingChromeSurface {
 /// undo coalescing cannot drift between them. What this surface owns it
 /// changes here; what the host owns leaves as an ask.
 fn apply_actions(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome<'_>,
     ctx: &egui::Context,
     actions: InspectorActions,
     index: usize,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
-    let mut ask = DrawingChromeAsk::default();
-    // The undo baseline, taken *before* the edit this frame asked for lands.
-    // A copy made afterwards would equal the new state and the change would
-    // never reach the history. `env` still describes the object as it was at
-    // the top of the frame, which is exactly the copy that is wanted — and it
-    // costs its allocation only on the frame a gesture opens.
-    if actions.edited
-        && chrome.shared.edit_baseline.is_none()
-        && let Some(selected) = env.selected.as_ref()
-    {
-        chrome.shared.edit_baseline = Some(DrawingEdit {
+    let before = (actions.edited && chrome.shared.edit_baseline.is_none())
+        .then(|| {
+            env.selected
+                .as_ref()
+                .map(|selected| Box::new(selected.drawing.clone()))
+        })
+        .flatten();
+    chrome.emit(Intent::Actions(
+        quantick_ui_model::drawing_chrome::ActionInput {
+            actions,
+            index,
             tab: env.tab,
             side: env.side,
-            index,
-            before: selected.drawing.clone(),
-        });
-    }
-    let gesture_settled = ctx.input(|input| !input.pointer.any_down())
-        && ctx.memory(|memory| memory.focused().is_none());
-    if gesture_settled {
-        ask.commit_edit_gesture = chrome.shared.edit_baseline.take().map(Box::new);
-    }
-    ask.toggle_selected_hidden |= actions.toggle_hidden;
-    if actions.toggle_lock {
-        ask.toggle_selected_locked = true;
-        chrome.shared.delete_confirm = false;
-    }
-    if actions.toggle_pin {
-        chrome.shared.pinned = !chrome.shared.pinned;
-        // The user has expressed a preference: the auto-pin width rule stops
-        // firing for the rest of the session.
-        chrome.inspector.pin_touched = true;
-        if !chrome.shared.pinned {
-            // Unpinning re-opens the floating window. The pinned host has been
-            // claiming the selection each frame, so treat it as fresh again —
-            // otherwise automatic placement never runs and the window falls
-            // back to the fixed default corner.
-            chrome.shared.last_selection = None;
-            chrome.inspector.settle_frame = true;
-        }
-    }
-    ask.request_delete |= actions.delete;
-    ask.cancel_delete |= actions.cancel_delete;
-    if actions.force_delete {
-        chrome.shared.delete_confirm = false;
-        ask.force_delete = true;
-    }
-    if actions.close {
-        // Closing the panel is a smaller act than it used to be: it puts the
-        // trader back on the context bar, with the object still selected.
-        // Clearing the selection here would make the X the only control that
-        // answers a bigger question than it asks.
-        chrome.shared.open = false;
-        if chrome.shared.pinned {
-            chrome.shared.pinned = false;
-            chrome.inspector.pin_touched = true;
-        }
-        chrome.shared.delete_confirm = false;
-    }
-    // Nothing to undo: this changed a preference, not the chart.
-    ask.saved_default = actions.saved_default;
-    ask
+            before,
+            gesture_settled: ctx.input(|input| !input.pointer.any_down())
+                && ctx.memory(|memory| memory.focused().is_none()),
+        },
+    ))
 }
 
 /// Read the five `QUANTICK_*` capture hooks this surface owns.
@@ -1204,9 +627,10 @@ fn apply_actions(
 /// Here rather than in `app.rs` because the fields are here: a hook that
 /// stops matching its field stops compiling.
 #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
-pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
+pub(crate) fn apply_launch_hooks(owner: &mut Owner) {
+    let mut chrome = borrow(owner);
     #[cfg(any(feature = "quick-range-harness", test))]
-    chrome.quick_range.apply_launch();
+    chrome.quick_range().apply_launch();
     #[cfg(any(feature = "drawing-harness", test))]
     chrome.apply_launch();
 }
@@ -1246,167 +670,29 @@ crate::hooks::declare_hooks![
 ];
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) fn new_owner() -> Owner {
+    Owner::new(View::default(), effects).in_slots(&[
+        quantick_ui_model::Slot::PinnedInspector,
+        quantick_ui_model::Slot::DrawingChrome,
+    ])
+}
 
-    /// A bank with one saved preset, to test the recorder's refusal against
-    /// the real store's.
-    ///
-    /// Its own file every call. The store persists on every write, so two
-    /// banks sharing a path would let the first call's save leak into the
-    /// second and turn a free name into a taken one.
-    /// `thread_dir` rather than a `ScratchFile`: the store outlives the
-    /// expression that built it and keeps saving to this path, so nothing
-    /// here could hold a value that removed the file at the right moment.
-    fn bank(tag: &str) -> crate::drawings::presets::PresetStore {
-        let path = crate::scratch::thread_dir("drawing-chrome").join(format!("{tag}.toml"));
-        let mut store = crate::drawings::presets::PresetStore::load_from(path);
-        store.save_custom_preset("fib", "taken", toml::Value::Integer(1), false);
-        store
-    }
-
-    /// The one rule the recorder has to answer for itself, pinned against the
-    /// bank that would otherwise answer it. Two surfaces that disagree about
-    /// whether a name is free would let the inspector's "name already used?"
-    /// prompt appear when the save would have succeeded, or skip it when the
-    /// save is about to overwrite.
-    #[test]
-    fn recorder_refuses_a_taken_name_exactly_as_the_bank_does() {
-        for (name, overwrite) in [
-            ("taken", false),
-            ("taken", true),
-            ("free", false),
-            ("free", true),
-        ] {
-            let mut real = bank(&format!("real-{name}-{overwrite}"));
-            let real_answer =
-                real.save_custom_preset("fib", name, toml::Value::Integer(2), overwrite);
-            let read_only = bank(&format!("copy-{name}-{overwrite}"));
-            let mut recorder = RecordingPresetHost::new(&read_only);
-            let recorded =
-                recorder.save_custom_preset("fib", name, toml::Value::Integer(2), overwrite);
-            assert_eq!(
-                recorded, real_answer,
-                "the recorder and the bank disagreed about {name:?} with overwrite={overwrite}"
-            );
-            assert_eq!(
-                recorder.writes.is_empty(),
-                !real_answer,
-                "a refused save must record nothing, and an accepted one exactly one write"
-            );
-            let _ = std::fs::remove_file(real.path());
-            let _ = std::fs::remove_file(read_only.path());
-        }
-    }
-
-    /// Every read is the bank's own answer, so a tool tab cannot see a
-    /// different world through the recorder than through the store.
-    #[test]
-    fn recorder_delegates_every_read_to_the_bank() {
-        let store = bank("reads");
-        let recorder = RecordingPresetHost::new(&store);
-        assert_eq!(
-            recorder.custom_preset_names("fib"),
-            store.custom_preset_names("fib")
-        );
-        assert_eq!(
-            recorder.load_custom_preset("fib", "taken"),
-            store.load_custom_preset("fib", "taken")
-        );
-        assert_eq!(recorder.default_preset("fib"), store.default_preset("fib"));
-        assert_eq!(recorder.default_style("fib"), store.default_style("fib"));
-        assert_eq!(recorder.default_config("fib"), store.default_config("fib"));
-        assert_eq!(
-            recorder.has_default_config("fib"),
-            store.has_default_config("fib")
-        );
-        let _ = std::fs::remove_file(store.path());
-    }
-
-    /// A frame that deletes a preset and saves under the freed name must not
-    /// be told the name is taken. The bank is not written until the host
-    /// replays the list, so a recorder that consulted it alone would raise the
-    /// "Overwrite?" prompt for a name its own pending delete is about to free.
-    #[test]
-    fn a_read_sees_the_writes_the_same_frame_already_made() {
-        let store = bank("same-frame");
-        let mut recorder = RecordingPresetHost::new(&store);
-        assert!(
-            !recorder.save_custom_preset("fib", "taken", toml::Value::Integer(2), false),
-            "the name is taken and overwrite was not asked for"
-        );
-        recorder.delete_custom_preset("fib", "taken");
-        assert!(
-            recorder.save_custom_preset("fib", "taken", toml::Value::Integer(2), false),
-            "the delete this frame recorded freed the name"
-        );
-        let _ = std::fs::remove_file(store.path());
-    }
-
-    /// And the list the trader picks from is the list the frame's own writes
-    /// leave behind — a combo box that still offers a preset deleted a moment
-    /// ago is offering something that will not load.
-    #[test]
-    fn the_name_list_follows_the_frame_s_own_writes() {
-        let store = bank("name-list");
-        let mut recorder = RecordingPresetHost::new(&store);
-        assert_eq!(
-            recorder.custom_preset_names("fib"),
-            vec!["taken".to_owned()]
-        );
-        recorder.save_custom_preset("fib", "another", toml::Value::Integer(3), false);
-        assert_eq!(
-            recorder.custom_preset_names("fib"),
-            vec!["another".to_owned(), "taken".to_owned()],
-            "a saved name joins the list, in the order the bank would give it back"
-        );
-        assert_eq!(
-            recorder.load_custom_preset("fib", "another"),
-            Some(toml::Value::Integer(3)),
-            "and it loads what was saved rather than nothing"
-        );
-        recorder.delete_custom_preset("fib", "taken");
-        assert_eq!(
-            recorder.custom_preset_names("fib"),
-            vec!["another".to_owned()]
-        );
-        assert_eq!(recorder.load_custom_preset("fib", "taken"), None);
-        let _ = std::fs::remove_file(store.path());
-    }
-
-    /// The fold keeps a flag set and takes the first valued ask, which is the
-    /// half of a merge a newly added field is most likely to get wrong.
-    #[test]
-    fn the_fold_keeps_flags_and_the_first_value() {
-        let mut first = DrawingChromeAsk {
-            show_all: true,
-            manager_delete: Some(3),
-            presets: vec![PresetWrite::Delete {
-                tool_id: "fib".into(),
-                name: "a".into(),
-            }],
-            ..DrawingChromeAsk::default()
+impl View {
+    pub(crate) fn paint_pass(
+        &mut self,
+        mut session: quantick_ui_model::UpdateSession<'_, quantick_ui_model::drawing_chrome::Model>,
+        ctx: &egui::Context,
+        env: &DrawingEnv<'_>,
+        current_owner: Option<QuickRangeOwner>,
+        floating: bool,
+    ) {
+        let mut chrome = Chrome {
+            session: Session::Paint(session.reborrow()),
+            view: self,
         };
-        first.merge(DrawingChromeAsk {
-            unlock_all: true,
-            manager_delete: Some(7),
-            presets: vec![PresetWrite::Delete {
-                tool_id: "fib".into(),
-                name: "b".into(),
-            }],
-            ..DrawingChromeAsk::default()
-        });
-        assert!(first.show_all, "a set flag survives the fold");
-        assert!(first.unlock_all, "and the other side's flag arrives");
-        assert_eq!(
-            first.manager_delete,
-            Some(3),
-            "the first valued ask wins; the later one is dropped"
-        );
-        assert_eq!(
-            first.presets.len(),
-            2,
-            "preset writes are a sequence, not an answer to one question: both land, in order"
-        );
+        chrome.draw_pass(ctx, env, current_owner, floating);
     }
 }
+
+#[cfg(test)]
+mod tests;

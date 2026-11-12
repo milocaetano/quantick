@@ -8,6 +8,7 @@
 //! Editing a drawing *on the canvas* is [`super::DrawingController`]; this is
 //! the chrome around it.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 
 use crate::drawings;
@@ -16,7 +17,7 @@ use crate::toolrail::{Tool, ToolRail};
 
 #[cfg(any(feature = "drawing-harness", test))]
 use super::DrawingAccess;
-use super::{DrawingController, DrawingReadAccess};
+use super::{DrawingControllerAccess, DrawingReadAccess};
 
 /// The slice the drawing chrome reads, assembled from the pieces of the
 /// application it is allowed to see.
@@ -103,7 +104,7 @@ struct DrawingViewCosts<'a> {
     manager_rows: &'a [crate::surfaces::drawing_chrome::ManagerRow],
 }
 
-impl DrawingController {
+impl DrawingControllerAccess<'_> {
     fn drawing_manager_rows(
         &self,
         host: &DrawingReadAccess<'_>,
@@ -227,11 +228,28 @@ impl DrawingController {
         read: DrawingViewCosts<'_>,
         floating: bool,
     ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        let env = drawing_env(ctx, host, tools, &self.presets, read);
+        let env = drawing_env(ctx, host, tools, self.presets, read);
         let current = floating
-            .then(|| host.current_range_owner(self.chrome.quick_range.owner()))
+            .then(|| host.current_range_owner(self.chrome.quick_range_read().owner()))
             .flatten();
-        self.chrome.draw_pass(ctx, &env, current, floating)
+        let mut asks = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+        let slot = if floating {
+            quantick_ui_model::Slot::DrawingChrome
+        } else {
+            quantick_ui_model::Slot::PinnedInspector
+        };
+        self.chrome.with_pass(
+            slot,
+            |response| {
+                for effect in response.model_effects {
+                    if let quantick_ui_model::HostEffect::DrawingChrome(ask) = effect {
+                        asks.merge(ask);
+                    }
+                }
+            },
+            |view, session| view.paint_pass(session.reborrow(), ctx, &env, current, floating),
+        );
+        asks
     }
 
     #[cfg(any(feature = "drawing-harness", test))]
@@ -245,7 +263,7 @@ impl DrawingController {
         // Through the same door the click path uses, saved defaults and all —
         // and on the same pane every drawing surface reads, so the index the
         // editor opens on is the object this just placed.
-        let fresh = drawings::new_drawing_from_defaults(&self.presets, tool);
+        let fresh = drawings::new_drawing_from_defaults(self.presets, tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);
@@ -271,7 +289,7 @@ impl DrawingController {
             return false;
         }
         host.drawings_mut().select(Some(index));
-        host.sync_inline(&self.chrome);
+        host.sync_inline(self.chrome);
         true
     }
 }

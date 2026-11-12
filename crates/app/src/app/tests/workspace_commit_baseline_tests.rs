@@ -58,8 +58,8 @@ fn commit_baseline_close_overwrites_unknown_and_consumes_inspector_dirty_each_ti
     app.runtime.workspace.session_mut().set_save_on_exit(true);
     for position in [[120.0, 240.0], [220.0, 340.0]] {
         std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .restore_inspector_position(Some(position));
         app.runtime.workspace.session_mut().inspector_moved();
         maintain(&mut app, true);
@@ -92,8 +92,8 @@ fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.runtime.workspace.session_mut().set_save_on_exit(true);
     std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .restore_inspector_position(Some([120.0, 240.0]));
     app.runtime.workspace.session_mut().inspector_moved();
     let before = app.surfaces.toast.message().map(str::to_owned);

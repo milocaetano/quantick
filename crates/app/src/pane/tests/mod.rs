@@ -1,3 +1,4 @@
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::theme;
 mod pane_model_tests;
 
@@ -1229,7 +1230,7 @@ fn drive_navigation_asking(
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = quantick_layers::LayerActions::default();
-    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
+    let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),
@@ -1288,7 +1289,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = quantick_layers::LayerActions::default();
-    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
+    let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
     body(&mut PaneChrome {
         tab: 1,
         side: PaneSide::Flow,

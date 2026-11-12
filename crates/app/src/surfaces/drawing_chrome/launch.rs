@@ -6,7 +6,7 @@ use std::ffi::OsString;
 
 use eframe::egui;
 
-use super::{DrawingChromeSurface, InspectorTab};
+use super::{Chrome, InspectorTab};
 use crate::drawings::ChartPoint;
 
 #[derive(Default)]
@@ -51,28 +51,29 @@ impl DrawingChromeLaunch {
         }
     }
 
-    fn apply(self, chrome: &mut DrawingChromeSurface) {
-        chrome.scenario.demos.install(self.demos);
+    fn apply(self, chrome: &mut Chrome) {
+        chrome.view.scenario.demos.install(self.demos);
         if self.manager {
-            chrome.manager.open = true;
+            chrome.emit(super::Intent::ManagerOpen(true));
         }
         if self.inspector {
-            chrome.shared.open = true;
+            chrome.emit(super::Intent::InspectorOpen(true));
         }
         if self.note {
-            chrome.scenario.request_note(true);
+            chrome.view.scenario.request_note(true);
         }
         if let Some(tab) = self.tab {
-            chrome.inspector.tab = tab;
+            chrome.emit(super::Intent::InspectorTab(tab));
         }
         if let Some(tab) = self.rejected_tab {
             tracing::warn!(tab, "unknown drawing inspector tab");
         }
         if let Some(position) = self.inspector_position {
-            chrome.inspector.place_by_hand(position);
+            chrome.emit(super::Intent::InspectorPlace([position.x, position.y]));
+            chrome.view.inspector.max_width = None;
         }
         if let Some(position) = self.bar_position {
-            chrome.bar.bar.set_manual(position);
+            chrome.view.bar.bar.set_manual(position);
         }
     }
 }
@@ -85,6 +86,12 @@ pub(crate) struct DrawingScenario {
 }
 
 impl DrawingScenario {
+    pub(super) fn demos(&self) -> &super::demo::DrawingDemoState {
+        &self.demos
+    }
+    pub(super) fn demos_mut(&mut self) -> &mut super::demo::DrawingDemoState {
+        &mut self.demos
+    }
     pub fn request_note(&mut self, pending: bool) {
         self.pending_note = pending;
     }
@@ -99,19 +106,13 @@ impl DrawingScenario {
     }
 }
 
-impl DrawingChromeSurface {
-    pub fn demos(&self) -> &super::demo::DrawingDemoState {
-        &self.scenario.demos
-    }
-    pub fn demos_mut(&mut self) -> &mut super::demo::DrawingDemoState {
-        &mut self.scenario.demos
-    }
+impl Chrome<'_> {
     pub fn queue_launch(&mut self, input: DrawingChromeLaunch) {
-        self.scenario.pending_launch = Some(input);
+        self.view.scenario.pending_launch = Some(input);
     }
 
     pub fn apply_launch(&mut self) {
-        if let Some(input) = self.scenario.pending_launch.take() {
+        if let Some(input) = self.view.scenario.pending_launch.take() {
             input.apply(self);
         }
     }
@@ -204,22 +205,33 @@ mod tests {
                 "QUANTICK_DRAWING_CONSTRAIN"
             ]
         );
-        let mut chrome = DrawingChromeSurface::default();
+        let mut owner = super::super::new_owner();
+        let mut chrome = super::super::borrow(&mut owner);
         chrome.queue_launch(input);
-        assert!(!chrome.manager.open && !chrome.shared.open && !chrome.scenario.note_requested());
+        assert!(
+            !chrome.manager.open && !chrome.shared.open && !chrome.view.scenario.note_requested()
+        );
         chrome.apply_launch();
-        assert!(chrome.manager.open && chrome.shared.open && chrome.scenario.note_requested());
-        assert!(matches!(chrome.inspector.tab, InspectorTab::Coordinates));
-        assert_eq!(chrome.inspector.remembered_position(), Some([-4.0, 200.5]));
+        assert!(chrome.manager.open && chrome.shared.open && chrome.view.scenario.note_requested());
+        assert!(matches!(
+            chrome.state().inspector.tab,
+            InspectorTab::Coordinates
+        ));
         assert_eq!(
-            chrome.bar.bar.manual_position(),
+            chrome.state().inspector.remembered_position(),
+            Some([-4.0, 200.5])
+        );
+        assert_eq!(
+            chrome.view.bar.bar.manual_position(),
             Some(egui::pos2(0.0, -8.0))
         );
-        chrome.manager.open = false;
-        chrome.shared.open = false;
+        chrome.set_manager_open(false);
+        chrome.emit(super::super::Intent::InspectorOpen(false));
         chrome.note_text_note_placed();
         chrome.apply_launch();
-        assert!(!chrome.manager.open && !chrome.shared.open && !chrome.scenario.note_requested());
+        assert!(
+            !chrome.manager.open && !chrome.shared.open && !chrome.view.scenario.note_requested()
+        );
     }
 
     #[test]
@@ -279,7 +291,8 @@ mod tests {
             let input = DrawingChromeLaunch::capture(|name| {
                 (name == "QUANTICK_DRAWING_INSPECTOR_TAB").then(|| " unknown ".into())
             });
-            let mut chrome = DrawingChromeSurface::default();
+            let mut owner = super::super::new_owner();
+            let mut chrome = super::super::borrow(&mut owner);
             chrome.queue_launch(input);
             assert!(
                 bytes.lock().unwrap().is_empty(),

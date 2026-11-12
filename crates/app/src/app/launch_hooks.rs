@@ -74,7 +74,7 @@ pub(super) fn apply_launch_phase(
     // to be in place before any of them. They live with the fields they
     // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
     #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
-    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.drawings.chrome);
+    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.surfaces.drawing_chrome);
     #[cfg(any(feature = "scenario-harness", test))]
     tape(app, env);
     #[cfg(any(feature = "scenario-harness", test))]

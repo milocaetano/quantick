@@ -717,12 +717,12 @@ fn a_restored_workspace_puts_the_window_back() {
         "and every tab phrases its request that way"
     );
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(egui::pos2(260.0, 480.0)),
         "the properties popup reopens where the trader parked it"
     );
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "and counts as hand-placed, so automatic placement does not undo it"
     );
 }

@@ -15,31 +15,36 @@ fn drawing_toolbar_avoids_manager() {
     app.drawing_pane_mut().drawings.select(Some(index));
     for parked in [false, true] {
         if parked {
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_mut()
                 .set_manual(egui::pos2(55.0, 190.0));
         }
         for (locked, hidden) in [(false, false), (true, false), (false, true)] {
             app.drawing_pane_mut().drawings.set_locked_at(index, locked);
             app.drawing_pane_mut().drawings.set_hidden_at(index, hidden);
-            app.drawings.chrome.set_manager_open(true);
-            app.drawings.chrome.forget_context_bar_rect();
+            app.surfaces.drawing_chrome.set_manager_open(true);
+            app.surfaces.drawing_chrome.forget_context_bar_rect();
             for _ in 0..3 {
                 run_frame(&mut app, &ctx);
             }
             assert!(
-                app.drawings.chrome.context_bar_rect().is_none(),
+                app.surfaces.drawing_chrome.context_bar_rect().is_none(),
                 "the manager owns object actions while open"
             );
-            assert!(!app.drawings.chrome.manager_action_rects().is_empty());
-            app.drawings.chrome.set_manager_open(false);
+            assert!(
+                !app.surfaces
+                    .drawing_chrome
+                    .manager_action_rects()
+                    .is_empty()
+            );
+            app.surfaces.drawing_chrome.set_manager_open(false);
             for _ in 0..3 {
                 run_frame(&mut app, &ctx);
             }
             if !hidden {
                 assert!(
-                    app.drawings.chrome.context_bar_rect().is_some(),
+                    app.surfaces.drawing_chrome.context_bar_rect().is_some(),
                     "closing restores the selected object's toolbar"
                 );
             }
@@ -270,9 +275,9 @@ fn drawing_text_and_forms_remain_readable_inspector() {
                 app.drawing_pane_mut().drawings.select(Some(index));
                 let locked = id == "trend-line";
                 app.drawing_pane_mut().drawings.set_locked_at(index, locked);
-                app.drawings.chrome.set_inspector_pinned(true);
-                app.drawings.chrome.set_inspector_open(true);
-                app.drawings.chrome.set_inspector_tab(if locked {
+                app.surfaces.drawing_chrome.set_inspector_pinned(true);
+                app.surfaces.drawing_chrome.set_inspector_open(true);
+                app.surfaces.drawing_chrome.set_inspector_tab(if locked {
                     InspectorTab::Coordinates
                 } else {
                     InspectorTab::Extra
@@ -345,7 +350,7 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 run_frame(&mut app, &ctx);
             }
             let index = place_drawing(&mut app, &ctx, "text", &[egui::pos2(400.0, 300.0)]);
-            app.drawings.chrome.end_inline_text_edit();
+            app.surfaces.drawing_chrome.end_inline_text_edit();
             app.toolrail.arm(Tool::Pointer);
             for color in [
                 egui::Color32::from_rgb(181, 131, 43),
@@ -407,8 +412,8 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 let tab = app.runtime.tabs.active_id();
                 let side = app.active_tab().focused_side();
                 assert!(
-                    app.drawings
-                        .chrome
+                    app.surfaces
+                        .drawing_chrome
                         .begin_inline_text_edit(tab, side, index, &drawing)
                 );
                 let mut output = run_frame(&mut app, &ctx);
@@ -419,7 +424,10 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 for _ in 0..16 {
                     output = run_frame(&mut app, &ctx);
                 }
-                assert_eq!(app.drawings.chrome.inline_text_editing(), Some(index));
+                assert_eq!(
+                    app.surfaces.drawing_chrome.inline_text_editing(),
+                    Some(index)
+                );
                 let palette = crate::theme::get(&ctx);
                 let resolved = palette.resolved.legible_drawing(authored);
                 let text = output
@@ -472,7 +480,7 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                         .color,
                     authored
                 );
-                app.drawings.chrome.end_inline_text_edit();
+                app.surfaces.drawing_chrome.end_inline_text_edit();
             }
         }
     }

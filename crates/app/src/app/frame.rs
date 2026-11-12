@@ -13,9 +13,12 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
+use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
+use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::stall::Stall;
 use quantick_workspace::market_list::PaletteIntent;
@@ -106,14 +109,17 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
         return;
     }
     app.toolrail.handle_keys(ctx);
-    let effects = app.drawings.handle_drawing_keys(
-        &mut super::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-        &mut app.toolrail,
-        &mut *app.audio.alerts,
-        ctx,
-        now,
-        crate::dock::holds_pointer(&app.dock, ctx),
-    );
+    let effects = app
+        .drawings
+        .with(&mut app.surfaces.drawing_chrome)
+        .handle_drawing_keys(
+            &mut DrawingAccess::new(&mut app.runtime.tabs),
+            &mut app.toolrail,
+            &mut *app.audio.alerts,
+            ctx,
+            now,
+            crate::dock::holds_pointer(&app.dock, ctx),
+        );
     effects.apply(&mut app.surfaces.toast, &mut app.toolrail);
 }
 
@@ -166,8 +172,8 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
     let popup_tab = app.runtime.tabs.active_id();
     scratch.canvas =
         canvas::CanvasAnswers::seeded(popup_tab, app.chrome.feed_popup_tab, &scratch.status);
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .sync_content_editing(&mut app.runtime.tabs);
     if super::home_wiring::draw_stage(ctx, app.active_tab_mut(), background) {
         app.surfaces.market_palette.open("", None);
@@ -368,7 +374,7 @@ impl QuantickApp {
                     ctx,
                     &mut self.toolrail,
                     &mut self.runtime.tabs,
-                    &mut self.drawings,
+                    &mut self.surfaces.drawing_chrome,
                 );
                 // A star clicked this frame is on disk this frame: the pinned
                 // rail is what the trader reaches for without looking, and
@@ -385,9 +391,10 @@ impl QuantickApp {
             // Chrome like the dock: declared before the central canvas so
             // the chart pays its width.
             FrameStage::PinnedInspector => {
-                if let Some(ask) = self.drawings.draw_pinned_inspector(
+                let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
+                if let Some(ask) = drawings.draw_pinned_inspector(
                     ctx,
-                    &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),
+                    &DrawingReadAccess::new(&self.runtime.tabs),
                     &self.toolrail,
                 ) {
                     self.resolve_drawing_response(ask, now);
@@ -656,7 +663,6 @@ impl QuantickApp {
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
         let (background, capabilities, side_inferred) = canvas::prepare(
-            &mut self.drawings,
             &mut self.runtime.tabs,
             &mut self.surfaces,
             &self.config,
@@ -675,7 +681,6 @@ impl QuantickApp {
                     surfaces: &mut self.surfaces,
                     toolrail: &mut self.toolrail,
                     presets: &self.drawings.presets,
-                    drawing_chrome: &mut self.drawings.chrome,
                     begin_text_edit: &mut answers.begin_text_edit,
                     style: &self.runtime.style,
                     tz: self.runtime.tz,
@@ -714,11 +719,12 @@ impl QuantickApp {
         scratch: &FrameScratch,
     ) {
         if scratch.canvas.begin_text_edit {
-            self.drawings.chrome.request_text_edit();
+            self.surfaces.drawing_chrome.request_text_edit();
         }
-        let ask = self.drawings.draw_drawing_chrome(
+        let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
+        let ask = drawings.draw_drawing_chrome(
             ctx,
-            &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),
+            &DrawingReadAccess::new(&self.runtime.tabs),
             &self.toolrail,
         );
         self.resolve_drawing_response(ask, now);
@@ -800,7 +806,8 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
+        let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
+        if let Some(action) = drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;
             let result = self.control_action(
                 action.capability,
@@ -808,23 +815,20 @@ impl QuantickApp {
                 crate::control::ActionOrigin::Human,
                 action.input,
             );
-            let outcome =
-                quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::of(
-                    result.is_ok(),
-                );
-            let explain = self.drawings.finish_registered_action(pending, outcome);
+            let outcome = PlacementOutcome::of(result.is_ok());
+            let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
+            let explain = drawings.finish_registered_action(pending, outcome);
             if let Err(error) = result {
                 tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_ACTION_REFUSED",action=action.action_id,code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
                 if explain {
-                    self.surfaces
-                        .toast
-                        .note(super::drawing_controller::QUICK_RANGE_REFUSED, now);
+                    self.surfaces.toast.note(QUICK_RANGE_REFUSED, now);
                 }
             }
         }
-        let effects = self.drawings.apply_drawing_chrome(
+        let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
+        let effects = drawings.apply_drawing_chrome(
             ask,
-            &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
+            &mut DrawingAccess::new(&mut self.runtime.tabs),
             &mut *self.audio.alerts,
             now,
         );

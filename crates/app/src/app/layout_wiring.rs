@@ -39,6 +39,7 @@
 //! allocates on a quiet frame.
 
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use quantick_drawings::{PaneMarks, PaneSync};
 use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};

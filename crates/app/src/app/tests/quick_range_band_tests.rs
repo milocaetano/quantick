@@ -70,7 +70,7 @@ fn a_right_drag_on_the_cvd_pane_measures_its_values_and_places_there() {
     } = cvd_pane();
     let (start, end) = cvd_leg(&app);
     drag_quick_range(&mut app, &ctx, start, end);
-    let quick = &app.drawings.chrome.quick_range;
+    let quick = app.surfaces.drawing_chrome.quick_range_read();
     assert!(on_cvd(quick.band()), "the range is the CVD pane's");
     let leg = quick.paint_anchors().expect("a settled range");
     assert!(
@@ -135,7 +135,7 @@ fn a_drag_into_the_candles_stays_clamped_to_the_cvd_pane() {
     let edge = right_edge(&app);
     drag_quick_range(&mut app, &ctx, start, into_candles);
     assert_eq!(right_edge(&app), edge, "measuring the pane does not pan it");
-    let quick = &app.drawings.chrome.quick_range;
+    let quick = app.surfaces.drawing_chrome.quick_range_read();
     assert!(on_cvd(quick.band()), "a range never changes band");
     let leg = quick.paint_anchors().expect("a settled range");
     assert!(
@@ -156,8 +156,20 @@ fn a_right_drag_from_the_pane_divider_raises_no_range() {
     // Inside the divider's grab tolerance, on the pane's side of it.
     let divider = egui::pos2(x_at(&app, 80.5), body.top() + 2.0);
     drag_quick_range(&mut app, &ctx, divider, end);
-    assert!(app.drawings.chrome.quick_range.band().is_none());
-    assert!(app.drawings.chrome.quick_range.paint_anchors().is_none());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .band()
+            .is_none()
+    );
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .is_none()
+    );
 }
 
 #[test]
@@ -228,11 +240,17 @@ fn a_range_goes_with_its_hidden_pane_and_escape_reaches_the_next_layer() {
     } = cvd_pane();
     let (start, end) = cvd_leg(&app);
     drag_quick_range(&mut app, &ctx, start, end);
-    assert!(on_cvd(app.drawings.chrome.quick_range.band()));
+    assert!(on_cvd(
+        app.surfaces.drawing_chrome.quick_range_read().band()
+    ));
     cvd_view(&mut app).hidden = true;
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.quick_range.band().is_none(),
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .band()
+            .is_none(),
         "the range went with its pane"
     );
     app.toolrail.arm(Tool::Crosshair);
@@ -246,7 +264,11 @@ fn a_range_goes_with_its_hidden_pane_and_escape_reaches_the_next_layer() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.quick_range.paint_anchors().is_none(),
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .is_none(),
         "the range does not come back with the pane"
     );
 }
@@ -263,7 +285,13 @@ fn a_range_goes_when_its_pane_collapses() {
     cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Collapsed;
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    assert!(app.drawings.chrome.quick_range.band().is_none());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .band()
+            .is_none()
+    );
 }
 
 #[test]
@@ -285,10 +313,16 @@ fn a_right_drag_at_the_bottom_of_the_candles_measures_price_as_on_main() {
     let end = egui::pos2(x_at(&app, 160.5), chart.center().y);
     drag_quick_range(&mut app, &ctx, start, end);
     assert_eq!(
-        app.drawings.chrome.quick_range.band(),
+        app.surfaces.drawing_chrome.quick_range_read().band(),
         Some(&drawings::DrawingBand::Price)
     );
-    assert!(app.drawings.chrome.quick_range.paint_anchors().is_some());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .is_some()
+    );
 }
 
 #[test]
@@ -355,7 +389,7 @@ fn a_call_on_a_collapsed_cvd_pane_is_refused_as_the_hand_is() {
 /// The harness hook's value, staged the way a launch stages it.
 fn stage(app: &mut QuantickApp, ctx: &egui::Context, value: &str) {
     let launch = crate::surfaces::drawing_chrome::QuickRangeLaunch::capture(|_| Some(value.into()));
-    let quick = &mut app.drawings.chrome.quick_range;
+    let mut quick = app.surfaces.drawing_chrome.quick_range();
     quick.queue_launch(launch);
     quick.apply_launch();
     run_frame(app, ctx);
@@ -370,7 +404,7 @@ fn the_demo_hook_stages_a_ready_range_on_the_named_indicator_pane() {
         _commands,
     } = cvd_pane();
     stage(&mut app, &ctx, "ready@test.indicator");
-    let quick = &app.drawings.chrome.quick_range;
+    let quick = app.surfaces.drawing_chrome.quick_range_read();
     assert!(on_cvd(quick.band()), "staged on the CVD pane");
     let leg = quick.paint_anchors().expect("a staged range");
     assert!(
@@ -397,13 +431,26 @@ fn the_demo_hook_stages_nothing_on_a_pane_the_chart_lacks_or_collapses() {
             run_frame(&mut app, &ctx);
         }
         stage(&mut app, &ctx, value);
-        assert!(app.drawings.chrome.quick_range.band().is_none(), "{value}");
+        assert!(
+            app.surfaces
+                .drawing_chrome
+                .quick_range_read()
+                .band()
+                .is_none(),
+            "{value}"
+        );
         if collapse {
             // The ask was dropped, not parked until the pane opens again.
             cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Auto;
             run_frame(&mut app, &ctx);
             run_frame(&mut app, &ctx);
-            assert!(app.drawings.chrome.quick_range.band().is_none());
+            assert!(
+                app.surfaces
+                    .drawing_chrome
+                    .quick_range_read()
+                    .band()
+                    .is_none()
+            );
         }
     }
 }

@@ -187,20 +187,20 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
         app.runtime
             .workspace
             .set_ui_state_path(scratch_ui_state("stage-order-demo-inspector"));
-        app.drawings.chrome.set_inspector_pinned(true);
-        app.drawings.chrome.set_inspector_pin_touched(true);
-        app.drawings
-            .chrome
+        app.surfaces.drawing_chrome.set_inspector_pinned(true);
+        app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
+        app.surfaces
+            .drawing_chrome
             .demos_mut()
             .arm_drawings_demo(DrawingsDemo::default());
         for _ in 0..8 {
             staged_frame(&mut app, &ctx, order);
-            if !app.drawings.chrome.demos().gallery_requested() {
+            if !app.surfaces.drawing_chrome.demos().gallery_requested() {
                 break;
             }
         }
         assert!(
-            !app.drawings.chrome.demos().gallery_requested(),
+            !app.surfaces.drawing_chrome.demos().gallery_requested(),
             "the demo ran"
         );
         assert!(

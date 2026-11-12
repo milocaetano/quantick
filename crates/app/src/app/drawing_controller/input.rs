@@ -1,7 +1,8 @@
 //! Drawing input: egui keyboard intent and chrome responses share the same
 //! drawing-store mutations, undo, clipboard and confirmation state. Rendering
 //! and geometry assembly remain separate; neither input path owns a pane.
-use super::{DrawingAccess, DrawingController, DrawingEffects};
+use super::{DrawingAccess, DrawingControllerAccess, DrawingEffects};
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::toolrail::{Tool, ToolRail};
 use eframe::egui;
 use std::time::Instant;
@@ -76,7 +77,7 @@ impl DrawingKeys {
     }
 }
 
-impl DrawingController {
+impl DrawingControllerAccess<'_> {
     /// The drawing keys, read before any panel draws. A widget holding the
     /// keyboard keeps them all; Del and Backspace with the pointer on the
     /// dock (`pointer_on_dock`) are the dock's — the Trades ledger deletes a
@@ -118,11 +119,11 @@ impl DrawingController {
                 }
                 pending
             }
-            EscapeLayer::QuickRange => self.chrome.quick_range.dismiss(),
+            EscapeLayer::QuickRange => self.chrome.quick_range().dismiss(),
             EscapeLayer::InlineText => {
                 let editing = self.chrome.inline_text_editing().is_some();
                 if editing {
-                    host.commit_inline(&mut self.chrome);
+                    host.commit_inline(self.chrome);
                 }
                 editing
             }
@@ -231,7 +232,7 @@ impl DrawingController {
 use crate::drawings;
 use quantick_drawings::{DrawingEffect, DrawingIntent};
 pub(crate) const DUPLICATE_OFFSET_BARS: f32 = 2.0;
-impl DrawingController {
+impl DrawingControllerAccess<'_> {
     pub(crate) fn request_delete_selected(
         &mut self,
         host: &mut DrawingAccess<'_>,
@@ -297,7 +298,7 @@ impl DrawingController {
         }
         if let Some(edit) = ask.commit_edit_gesture.take() {
             if let Some(after) = host.drawing_at(edit.tab, edit.side, edit.index) {
-                drawings::remember_last_style(&mut self.presets, &edit.before, after);
+                drawings::remember_last_style(self.presets, &edit.before, after);
             }
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
@@ -341,7 +342,7 @@ impl DrawingController {
             effects.note(saved.message(), now);
         }
         for write in ask.presets.drain(..) {
-            write.apply_to(&mut self.presets);
+            write.apply_to(self.presets);
         }
         if ask.sweep_authored {
             let removed = host.remove_authored();
@@ -432,7 +433,7 @@ impl DrawingController {
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
         if ask.content_editing_changed {
-            host.sync_inline(&self.chrome);
+            host.sync_inline(self.chrome);
         }
         if self.chrome.take_inspector_position_dirty() {
             effects.inspector_moved = true;
@@ -487,14 +488,14 @@ pub(crate) struct RegisteredDrawingAction {
 pub(crate) struct PendingDrawingAction(
     quantick_chart_interaction::quick_range::conversion_plan::PendingConversion,
 );
-impl DrawingController {
+impl DrawingControllerAccess<'_> {
     pub(crate) fn begin_registered_action(
         &mut self,
         ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
     ) -> Option<RegisteredDrawingAction> {
         use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
         if ask.dismiss_quick_range {
-            self.chrome.quick_range.dismiss();
+            self.chrome.quick_range().dismiss();
         }
         let request = ask
             .place_quick_range
@@ -504,7 +505,7 @@ impl DrawingController {
             operation,
             crate::control::annotated_side(request.side),
         ) else {
-            self.chrome.quick_range.finish_conversion(
+            self.chrome.quick_range().finish_conversion(
                 request.conversion,
                 quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::InputInvalid,
             );
@@ -543,13 +544,13 @@ impl DrawingController {
             .anchors
             .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
         let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
-            let opening = drawings::new_drawing_from_defaults(&self.presets, *tool);
+            let opening = drawings::new_drawing_from_defaults(self.presets, *tool);
             host.seed_draft(tab, side, *tool, &operation.band, &points, opening)
         });
         let outcome = PlacementOutcome::of(seeded.is_some());
         let readback = self
             .chrome
-            .quick_range
+            .quick_range()
             .finish_conversion(request.conversion, outcome);
         effects.arm = seeded;
         if readback.explain_refusal {
@@ -562,7 +563,7 @@ impl DrawingController {
         outcome: quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome,
     ) -> bool {
         self.chrome
-            .quick_range
+            .quick_range()
             .finish_conversion(pending.0, outcome)
             .explain_refusal
     }

@@ -5,6 +5,7 @@
 //! that tab after it drew: the one overlay over the panes with no bars, and the
 //! recovery popup the status word opens.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_feed::stall::Stall;
 
@@ -14,14 +15,13 @@ use crate::tab::Tab;
 
 /// Synchronize the existing canvas owners before painting or accepting input.
 pub(super) fn prepare(
-    drawings: &mut crate::app::drawing_controller::DrawingController,
     tabs: &mut crate::app::ArrangementHost,
     surfaces: &mut crate::surfaces::Surfaces,
     config: &crate::config::AppConfig,
     style: &crate::style::ChartStyle,
     background: Option<egui::Color32>,
 ) -> (egui::Color32, crate::config::FeedCapabilities, bool) {
-    drawings.chrome.sync_content_editing(tabs);
+    surfaces.drawing_chrome.sync_content_editing(tabs);
     surfaces.retain_slot_scopes(quantick_ui_model::Slot::PaneHeader, |scope| {
         tabs.iter()
             .any(|tab| tab.panes().any(|(pane, _)| pane.id == scope))

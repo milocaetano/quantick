@@ -33,7 +33,7 @@ impl QuickRangeLaunch {
     }
 
     pub fn apply(self, quick: &mut QuickRange) {
-        self.deliver(|request| quick.demo_requested = Some(request));
+        self.deliver(|request| quick.view.demo_requested = Some(request));
     }
 
     fn deliver(self, request: impl FnOnce(core::DemoRequest)) {
@@ -81,14 +81,14 @@ mod tests {
     }
 }
 
-impl QuickRange {
+impl QuickRange<'_> {
     /// Construction queues only the input; the drawing launch phase applies it.
     pub fn queue_launch(&mut self, input: QuickRangeLaunch) {
-        self.pending_launch = Some(input);
+        self.view.pending_launch = Some(input);
     }
 
     pub fn apply_launch(&mut self) {
-        if let Some(input) = self.pending_launch.take() {
+        if let Some(input) = self.view.pending_launch.take() {
             input.apply(self);
         }
     }
@@ -100,12 +100,12 @@ impl QuickRange {
         owner: Owner,
         opening: impl FnOnce(&DrawingBand, bool) -> Result<Option<Staged>, &'static str>,
     ) {
-        let Some(request) = self.demo_requested.take() else {
+        let Some(request) = self.view.demo_requested.take() else {
             return;
         };
         let (anchors, look) = match opening(&request.band, request.future) {
             Ok(Some(staged)) => staged,
-            Ok(None) => return self.demo_requested = Some(request),
+            Ok(None) => return self.view.demo_requested = Some(request),
             Err(reason) => return tracing::warn!(reason, "quick-range demo band refused"),
         };
         let ready = request.ready;
@@ -153,18 +153,24 @@ mod stage_tests {
                 revision: 3,
                 layout: Some(4),
             };
-            let mut quick = QuickRange::default();
+            let mut model = quantick_ui_model::drawing_chrome::State::default();
+            let session = super::super::super::Session::Host(&mut model);
+            let mut view = super::super::View::default();
+            let mut quick = QuickRange::new(session, &mut view);
             quick.queue_launch(QuickRangeLaunch::capture(|_| Some(raw.into())));
             assert!(
-                quick.demo_requested.is_none(),
+                quick.view.demo_requested.is_none(),
                 "construction must not stage a demo"
             );
             quick.stage_demo(owner, |_, _| {
                 panic!("the launch phase has not applied its input")
             });
             quick.apply_launch();
-            assert!(quick.pending_launch.is_none());
-            assert!(!quick.model.present(), "launch waits for the staging phase");
+            assert!(quick.view.pending_launch.is_none());
+            assert!(
+                !quick.model().present(),
+                "launch waits for the staging phase"
+            );
             quick.stage_demo(owner, |band, requested_future| {
                 assert_eq!(requested_future, future);
                 assert_eq!(*band, DrawingBand::Price, "no `@`: the candles");
@@ -177,13 +183,13 @@ mod stage_tests {
                     },
                 )))
             });
-            assert_eq!(quick.model.view().unwrap().actionable(), ready);
+            assert_eq!(quick.model().view().unwrap().actionable(), ready);
             quick.dismiss();
             quick.apply_launch();
             quick.stage_demo(owner, |_, _| {
                 panic!("the captured demo was already consumed")
             });
-            assert!(!quick.model.present());
+            assert!(!quick.model().present());
         }
     }
 
@@ -196,10 +202,13 @@ mod stage_tests {
             revision: 3,
             layout: Some(4),
         };
-        let mut quick = QuickRange {
+        let mut model = quantick_ui_model::drawing_chrome::State::default();
+        let session = super::super::super::Session::Host(&mut model);
+        let mut view = super::super::View {
             demo_requested: core::DemoRequest::parse("future"),
-            ..QuickRange::default()
+            ..Default::default()
         };
+        let mut quick = QuickRange::new(session, &mut view);
         quick.stage_demo(owner, |_, future| {
             assert!(future);
             let tool = drawings::DrawingTool::by_id("measure").unwrap();
@@ -214,9 +223,9 @@ mod stage_tests {
                 },
             )))
         });
-        assert!(quick.model.view().unwrap().actionable());
+        assert!(quick.model().view().unwrap().actionable());
         quick.dismiss();
         quick.stage_demo(owner, |_, _| panic!("the demo was consumed"));
-        assert!(!quick.model.present());
+        assert!(!quick.model().present());
     }
 }

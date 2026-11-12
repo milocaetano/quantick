@@ -417,8 +417,8 @@ fn hand_flip_own_magnet(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
     let index = place_drawing(app, ctx, "horizontal-line", &[egui::pos2(700.0, 300.0)]);
     run_frame(app, ctx);
     let slot = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .magnet_rect()
         .expect("a pointer-anchored drawing renders the magnet slot")

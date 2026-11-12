@@ -36,8 +36,8 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
         .expect("price chart drawn");
     let header = crate::indicator_render::pane_header_rect(band, false, 18.0);
     let bar = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("selected bar drawn");
     assert!(
@@ -56,7 +56,7 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
 
 #[test]
 fn selected_indicator_bounds_use_the_drawn_band_scale() {
-    let (app, _ctx, index, anchor) = selected_cvd_line();
+    let (mut app, _ctx, index, anchor) = selected_cvd_line();
     let chart = app
         .active_tab()
         .drawing_pane()
@@ -65,6 +65,7 @@ fn selected_indicator_bounds_use_the_drawn_band_scale() {
         .expect("price chart drawn");
     let bbox = app
         .drawings
+        .with(&mut app.surfaces.drawing_chrome)
         .drawing_bbox_on_screen(
             &crate::app::drawing_controller::DrawingReadAccess::new(&app.runtime.tabs),
             chart,
@@ -94,15 +95,18 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
                 })
                 .expect("real indicator legend drawn");
             if parked {
-                app.drawings.chrome.context_bar_mut().set_manual(legend.min);
+                app.surfaces
+                    .drawing_chrome
+                    .context_bar_mut()
+                    .set_manual(legend.min);
             } else {
-                app.drawings.chrome.context_bar_mut().clear_manual();
+                app.surfaces.drawing_chrome.context_bar_mut().clear_manual();
             }
-            app.drawings.chrome.forget_context_bar_rect();
+            app.surfaces.drawing_chrome.forget_context_bar_rect();
             run_frame(&mut app, &ctx);
             let bar = app
-                .drawings
-                .chrome
+                .surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .expect("selected CVD line raises its bar");
             assert!(
@@ -111,7 +115,7 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
             );
             if parked {
                 assert_eq!(
-                    app.drawings.chrome.context_bar().manual_position(),
+                    app.surfaces.drawing_chrome.context_bar().manual_position(),
                     Some(legend.min),
                     "placement repair preserves the trader's parked point"
                 );

@@ -1,5 +1,6 @@
 //! Executes workspace persistence effects over explicit arrangement/session/file ports.
 use super::arrangement_adapter::ArrangementRead;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::ui_state;
 use eframe::egui;
 use quantick_workspace::workspace_commit::{

@@ -7,6 +7,7 @@
 //! pointer is over, the marks one pane paints on another's behalf, the focus
 //! rule, the collapsed rail and the divider between the columns.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -34,7 +35,6 @@ pub struct CanvasChrome<'a> {
     pub(crate) surfaces: &'a mut crate::surfaces::Surfaces,
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a crate::drawings::presets::PresetStore,
-    pub drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     /// See [`PaneChrome::begin_text_edit`].
     pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
@@ -199,7 +199,7 @@ impl Tab {
         self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
-        if let Some(pane) = chrome.drawing_chrome.menu_target() {
+        if let Some(pane) = chrome.surfaces.drawing_chrome.menu_target() {
             self.aim_drawing_at(pane);
         }
 
@@ -697,7 +697,7 @@ impl Tab {
             side: PaneSide::Flow,
             toolrail: chrome.toolrail,
             presets: chrome.presets,
-            drawing_chrome: chrome.drawing_chrome,
+            drawing_chrome: &mut chrome.surfaces.drawing_chrome,
             begin_text_edit: chrome.begin_text_edit,
             style: chrome.style,
             tz: chrome.tz,

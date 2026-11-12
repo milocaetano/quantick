@@ -1,20 +1,21 @@
 use super::*;
+use crate::drawing_chrome::DrawingChromeAsk;
 
-fn ready() -> QuickRange {
-    let mut quick = QuickRange {
-        side: Some(PaneSide::Time(2)),
-        ..QuickRange::default()
+fn ready() -> State {
+    let mut quick = State::default();
+    let owner = Owner {
+        tab: 0,
+        side: PaneSide::Time(2),
+        pane: 0,
+        revision: 0,
+        layout: None,
     };
-    let context = core::RangeContext::default();
-    let anchor = core::Anchor {
-        bar: 0.5,
-        price: 100.0,
-        time_ms: Some(1),
-    };
-    quick.model.update(
-        Command::Press {
+    update(
+        &mut quick,
+        Intent::Press {
+            owner,
             position: [1.0, 1.0],
-            anchor,
+            value: ChartPoint::at_time(0.5, 100.0, Some(1)),
             eligibility: core::GestureEligibility {
                 pointer_tool: true,
                 unoccluded: true,
@@ -25,25 +26,44 @@ fn ready() -> QuickRange {
             },
             band: DrawingBand::Price,
         },
-        context,
     );
-    quick.model.update(
-        Command::Drag {
+    update(
+        &mut quick,
+        Intent::Drag {
+            owner,
             position: [40.0, 40.0],
-            anchor: core::Anchor { bar: 4.5, ..anchor },
+            value: ChartPoint::at_time(4.5, 100.0, Some(1)),
             threshold_px: 4.0,
             level: false,
         },
-        context,
     );
-    quick.model.update(Command::Release, context);
+    update(&mut quick, Intent::Release(owner));
     quick
+}
+
+fn convert(state: &mut State, action: Action) -> Option<Box<PendingRangePlacement>> {
+    update(state, Intent::Convert(action)).place_quick_range
+}
+fn finish(
+    state: &mut State,
+    conversion: PendingConversion,
+    outcome: PlacementOutcome,
+) -> ConversionReadback {
+    *update(
+        state,
+        Intent::FinishConversion {
+            conversion,
+            outcome,
+        },
+    )
+    .quick_range_readback
+    .unwrap()
 }
 
 #[test]
 fn merge_carries_one_continuation_with_its_original_side_and_request() {
     let mut quick = ready();
-    let placement = quick.convert(Action::Projection).unwrap();
+    let placement = convert(&mut quick, Action::Projection).unwrap();
     let request = placement.conversion.request().clone();
     let mut ask = DrawingChromeAsk::default();
     ask.merge(DrawingChromeAsk {
@@ -59,9 +79,7 @@ fn merge_carries_one_continuation_with_its_original_side_and_request() {
     assert_eq!(carried.side, PaneSide::Time(2));
     assert_eq!(*carried.conversion.request(), request);
     assert_eq!(
-        quick
-            .finish_conversion(carried.conversion, PlacementOutcome::Placed)
-            .view,
+        finish(&mut quick, carried.conversion, PlacementOutcome::Placed).view,
         None
     );
 }
@@ -72,11 +90,11 @@ fn merge_rejects_a_second_producer_instead_of_dropping_its_continuation() {
     let mut first = ready();
     let mut second = ready();
     let mut ask = DrawingChromeAsk {
-        place_quick_range: first.convert(Action::Profile),
+        place_quick_range: convert(&mut first, Action::Profile),
         ..DrawingChromeAsk::default()
     };
     ask.merge(DrawingChromeAsk {
-        place_quick_range: second.convert(Action::Retracement),
+        place_quick_range: convert(&mut second, Action::Retracement),
         ..DrawingChromeAsk::default()
     });
 }
@@ -84,10 +102,16 @@ fn merge_rejects_a_second_producer_instead_of_dropping_its_continuation() {
 #[test]
 fn dismiss_before_finishing_cannot_restore_a_range() {
     let mut quick = ready();
-    let placement = quick.convert(Action::Profile).unwrap();
-    assert!(quick.dismiss());
+    let placement = convert(&mut quick, Action::Profile).unwrap();
+    assert!(quick.present());
+    update(&mut quick, Intent::Dismiss);
+    assert!(!quick.present());
     assert_eq!(
-        quick.finish_conversion(placement.conversion, PlacementOutcome::ActionRefused),
+        finish(
+            &mut quick,
+            placement.conversion,
+            PlacementOutcome::ActionRefused
+        ),
         ConversionReadback::default()
     );
 }

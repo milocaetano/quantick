@@ -1511,12 +1511,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
     drag_chart(&mut app, &ctx, bar, bar + egui::vec2(150.0, 120.0));
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "a title-bar drag records the manual move"
     );
     let held = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inspector_pos()
         .expect("the manual position is recorded");
 
@@ -1528,12 +1528,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(held),
         "the manual position survives a selection change"
     );
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "the manual flag is never auto-cleared"
     );
 }
@@ -1553,7 +1553,7 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "the window still went where it was dragged"
     );
@@ -1584,7 +1584,9 @@ fn a_remembered_position_greets_the_next_drawing_too() {
 
     // What a restored workspace does, through the same one door.
     let remembered = egui::pos2(420.0, 200.0);
-    app.drawings.chrome.place_inspector_by_hand(remembered);
+    app.surfaces
+        .drawing_chrome
+        .place_inspector_by_hand(remembered);
 
     // A different drawing than the one selected when it was parked.
     click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
@@ -1622,15 +1624,15 @@ fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
 
     // What a restored workspace does.
     let remembered = egui::pos2(300.0, 200.0);
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .restore_inspector_position(Some([remembered.x, remembered.y]));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.drawings.chrome.inspector_pinned(),
+        !app.surfaces.drawing_chrome.inspector_pinned(),
         "the parked position wins over the narrow-chart auto-pin"
     );
     assert!(
@@ -1652,24 +1654,24 @@ fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
         .set_ui_state_path(scratch_ui_state("popup-auto-pin-default"));
     // A previous cockpit that *did* park the popup, so this proves the
     // silence is adopted rather than merely never contradicted.
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .place_inspector_by_hand(egui::pos2(300.0, 200.0));
-    app.drawings.chrome.restore_inspector_position(None);
+    app.surfaces.drawing_chrome.restore_inspector_position(None);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.drawings.chrome.inspector_pin_touched(),
+        !app.surfaces.drawing_chrome.inspector_pin_touched(),
         "silence in the file is not a preference about the pin"
     );
     assert!(
-        app.drawings.chrome.inspector_pinned(),
+        app.surfaces.drawing_chrome.inspector_pinned(),
         "so a chart too narrow for a floating window still docks the panel"
     );
 }
@@ -1693,7 +1695,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
         .set_ui_state_path(scratch_ui_state("popup-clamp"));
     // The auto-pin owns a chart this narrow until the trader touches the
     // pin; this test is about the floating window, so say they have.
-    app.drawings.chrome.set_inspector_pin_touched(true);
+    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -1710,7 +1712,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
             Vec::new(),
             Some(chrome_with_popup_at(Some(parked))),
         ));
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
@@ -1729,7 +1731,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
              {popup:?} against {chart:?}"
     );
     assert_eq!(
-        app.drawings.chrome.remembered_inspector_position(),
+        app.surfaces.drawing_chrome.remembered_inspector_position(),
         Some(parked),
         "and the point the trader parked is not eaten by the repair — the \
              desk monitor gets it back"
@@ -1746,7 +1748,7 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("popup-ratchet"));
-    app.drawings.chrome.set_inspector_pin_touched(true);
+    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -1756,14 +1758,14 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     // Parked against the bottom-right of a big screen, then squeezed by a
     // small one for a while.
     let parked = egui::pos2(1_500.0, 900.0);
-    app.drawings.chrome.place_inspector_by_hand(parked);
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.place_inspector_by_hand(parked);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     for _ in 0..6 {
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     }
 
     assert_eq!(
-        app.drawings.chrome.inspector_pos(),
+        app.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "six frames of repair leave the parked point exactly as it was"
     );
@@ -1778,17 +1780,19 @@ fn a_position_that_is_not_a_number_is_read_as_no_position_at_all() {
     let (mut app, _commands) = app_with_history(50);
 
     for pair in [[f32::NAN, 200.0], [200.0, f32::NAN], [f32::INFINITY, 200.0]] {
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .place_inspector_by_hand(egui::pos2(10.0, 10.0));
-        app.drawings.chrome.restore_inspector_position(Some(pair));
+        app.surfaces
+            .drawing_chrome
+            .restore_inspector_position(Some(pair));
         assert_eq!(
-            app.drawings.chrome.inspector_pos(),
+            app.surfaces.drawing_chrome.inspector_pos(),
             None,
             "{pair:?} is not a position, and must not survive as one"
         );
         assert!(
-            !app.drawings.chrome.inspector_moved(),
+            !app.surfaces.drawing_chrome.inspector_moved(),
             "{pair:?} hands the popup back to automatic placement"
         );
     }
@@ -1810,14 +1814,14 @@ fn the_object_manager_toggles_eye_lock_and_z_order_per_row() {
         .expect("the toolbox shows the Objects entry");
     click_chart(&mut app, &ctx, objects.center());
     assert!(
-        app.drawings.chrome.manager_open(),
+        app.surfaces.drawing_chrome.manager_open(),
         "the Objects button opens the manager"
     );
     run_frame(&mut app, &ctx);
 
     let rect_of = |app: &QuantickApp, index: usize, action: &str| {
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .manager_action_rects()
             .iter()
             .find(|(row, name, _)| *row == index && *name == action)
@@ -1863,8 +1867,8 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("the editor is open");
 
@@ -1897,7 +1901,7 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inline_text_editing(),
+        app.surfaces.drawing_chrome.inline_text_editing(),
         None,
         "Escape closes the editor"
     );
@@ -2040,16 +2044,16 @@ fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the finished object has it"
     );
 
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_none(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_none(),
         "arming a tool clears the way for the next drawing"
     );
 }
@@ -2929,14 +2933,18 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
                 ..Default::default()
             },
             |ctx| {
-                app.drawings.handle_drawing_keys(
-                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                    &mut app.toolrail,
-                    &mut *app.audio.alerts,
-                    ctx,
-                    Instant::now(),
-                    false,
-                );
+                app.drawings
+                    .with(&mut app.surfaces.drawing_chrome)
+                    .handle_drawing_keys(
+                        &mut crate::app::drawing_controller::DrawingAccess::new(
+                            &mut app.runtime.tabs,
+                        ),
+                        &mut app.toolrail,
+                        &mut *app.audio.alerts,
+                        ctx,
+                        Instant::now(),
+                        false,
+                    );
             },
         );
     }

@@ -81,3 +81,13 @@ never rebuild projections during idle painting.
 Each catalog row ends in `Host` or `Local`. `Host` opts into generated external
 `HostIntent` dispatch; `Local` owns only view/hook inputs and generates no unused
 host variant. Both retain identical model storage, slots, hooks and effect routing.
+
+A catalog row can declare several existing frame passes with `PinnedInspector |
+DrawingChrome`. The registration gives one adapter a static slot list. A host
+uses `adapter.with_pass(slot, sink, |view, session| ...)` to borrow pass-specific
+facts directly into the view; an undeclared slot invokes neither closure nor
+sink. Both passes see the same state and view, and session intents deliver
+converted effects once. Borrowed geometry and application references stay on
+that stack, so the host can refresh them after the canvas without copying them
+into the model. Ordinary views continue through `draw_slot` with the same
+catalog membership check.

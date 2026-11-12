@@ -2,6 +2,7 @@
 use super::ArrangementHost;
 use crate::config::AppConfig;
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};

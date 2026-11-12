@@ -149,7 +149,7 @@ fn each_objects_row_acts_on_its_own_object_only() {
     run_frame(&mut app, &ctx);
     assert_eq!(count(&app), 1, "a locked object never deletes on one click");
     assert!(
-        app.drawings.chrome.delete_confirm(),
+        app.surfaces.drawing_chrome.delete_confirm(),
         "the locked delete raises the same confirmation as the manager"
     );
 }
@@ -214,7 +214,7 @@ fn a_menu_ask_for_another_chart_is_dropped() {
     let (mut app, _events, _commands, _book) = test_app();
     place_rectangles(&mut app, 2);
     let other = app.active_tab().flow_pane.id + 1;
-    app.drawings.chrome.ask_from_menu(
+    app.surfaces.drawing_chrome.ask_from_menu(
         other,
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             delete_all: true,
@@ -248,7 +248,7 @@ fn a_menu_ask_applies_on_its_own_chart_and_so_does_the_undo() {
     app.active_tab_mut().flow_pane.drawings.select(Some(0));
     app.active_tab_mut().focus = PaneSide::Flow;
 
-    app.drawings.chrome.ask_from_menu(
+    app.surfaces.drawing_chrome.ask_from_menu(
         time_id,
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             delete_all: true,

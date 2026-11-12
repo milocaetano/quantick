@@ -1,6 +1,7 @@
 //! The chart pane itself: what one pane owns between frames. The passes that read it live in the
 //! siblings (`draw_chart`, `frame`, `gestures`), so this file is state and accessors, not drawing.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 
 use quantick_chart::flow_band::{flow_sides, gutter_strip_px, side_headers, side_parts};

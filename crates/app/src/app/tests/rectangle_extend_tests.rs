@@ -210,12 +210,12 @@ fn each_zone_shows_its_own_cursor() {
             frame.capsules
         );
         assert!(
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .is_none_or(|rect| !rect.contains(corner)),
             "the projected resize corner {corner:?} must be outside the selected drawing toolbar {:?}",
-            app.drawings.chrome.context_bar_rect()
+            app.surfaces.drawing_chrome.context_bar_rect()
         );
         let mut at = |x: f32, y: f32| cursor_at(&mut app, &ctx, egui::pos2(x, y));
         let zones = [
@@ -345,8 +345,8 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
                 .all(|rect| !rect.contains(position))
         );
         assert!(
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .is_none_or(|rect| !rect.contains(position))
         );
