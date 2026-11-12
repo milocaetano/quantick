@@ -1684,21 +1684,17 @@ fn clicking_a_drawing_keeps_it_selected_after_the_release() {
     }
 }
 
-/// The two Fib tools ask different questions, so they open with different
-/// spans — this is not one shared default:
-///
-/// - a retracement measures how much of *one move* was given back, so its
-///   lines live between its own anchors and end where the trader stopped
-///   dragging ("a linha deve ir até o ponto onde eu tô traçando e não ir
-///   para o infinito", reported from the running build);
-/// - an extension projects what comes *after* its last anchor, so drawing
-///   its targets back over the measured leg is backwards on its face.
+/// Both Fib tools open finite, between their own anchors: a retracement's
+/// lines end where the trader stopped dragging ("a linha deve ir até o ponto
+/// onde eu tô traçando e não ir para o infinito", reported from the running
+/// build), and an extension's targets running on to the chart's edge is an
+/// opt-in on the Levels tab rather than the default.
 #[test]
 fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
     use quantick_drawings::{FibExtend as Extend, FibPayload};
     for (tool, expected) in [
         ("fib-retracement", Extend::Anchors),
-        ("fib-extension", Extend::Forward),
+        ("fib-extension", Extend::Anchors),
     ] {
         let payload = drawing_tool(tool).default_payload();
         let fib = payload

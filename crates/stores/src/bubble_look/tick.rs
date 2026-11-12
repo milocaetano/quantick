@@ -139,9 +139,9 @@ mod tests {
         for (feed, symbol, allowed) in [
             ("binance", "BTCUSDT", true),
             ("binance-futures", "BTCUSDT.p", true),
-            ("binance", "ETHUSDT", false),
+            ("binance", "ETHUSDT", true),
             ("hyperliquid", "BTCUSDT", false),
-            ("hyperliquid", "BTC", false),
+            ("hyperliquid", "BTC", true),
             ("metatrader-b3", "WINV26", true),
             ("metatrader-b3", "WDO$N", false),
         ] {

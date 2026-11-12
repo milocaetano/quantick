@@ -95,7 +95,8 @@ impl ChartPane {
         // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
         // line it opens that line; on a candle the Candles settings, the view kept; on open canvas,
         // the divider or a drawing live at the candles' zoom with the last price centred, and the
-        // third click there zooms in too (`Model::live_centre`).
+        // third click there zooms in too; already live, the double click zooms in itself
+        // (`Model::live_centre`). The tape follows the same rule on its own side.
         let mut open_settings = false;
         let on_canvas = chart.clicked() && primary_free;
         let repeat = CanvasRepeat::of(chart.double_clicked(), chart.triple_clicked());
@@ -120,6 +121,10 @@ impl ChartPane {
                 self,
                 quantick_chart_interaction::pane::Intent::ReturnToLive {
                     tape,
+                    tape_live: self
+                        .orderflow
+                        .as_ref()
+                        .is_some_and(|t| t.tape_end().is_live()),
                     overlay,
                     canvas,
                     repeat: Some(repeat),
@@ -129,7 +134,10 @@ impl ChartPane {
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
             // Scroll up (positive) zooms in.
             let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
-            let tape = tape_only || chart.hover_pos().is_some_and(over_tape);
+            // Any lane past the divider takes the wheel: the ordinary lane the
+            // native tape leaves when switched off zooms its window too.
+            let over_lane = |at: egui::Pos2| divider.is_some_and(|x| at.x > x);
+            let tape = tape_only || chart.hover_pos().is_some_and(over_lane);
             navigate(
                 self,
                 quantick_chart_interaction::pane::Intent::Zoom {

@@ -1,12 +1,14 @@
 //! Virtual ledger rows resolved before a renderer lays them out.
+use super::LoadedHistory;
 use super::fit::TradeRowText;
+use super::ledger_state::LiveTrade;
 use super::sessions::{
     SessionKey, SessionLabel, SessionRow, TradeRef, clock_second, group_by_day_and_session,
     place_session_rows, session_title, source_word, span_of,
 };
 use super::snapshot::OpenRow;
 use crate::format::{fmt_decimal, fmt_duration_ms, position_word, sanitize_symbol};
-use crate::pnl::SymbolPnl;
+use crate::pnl::{PnlReader, SymbolPnl};
 use quantick_civil::{CivilDate, TzOffset};
 use quantick_engine::Side;
 use quantick_sim::{ClosedTrade, history::SessionSource};
@@ -66,6 +68,9 @@ pub struct TradeWords<'a> {
     /// The leading figure, written on line one, and the one that keeps it
     /// honest, on line two ([`SymbolPnl::row_split`]).
     pub pnl: (String, String),
+    /// Whether the trade won, lost or came out flat: the sign of its move;
+    /// `None` while the position is open, its move not settled.
+    pub result: Option<std::cmp::Ordering>,
     /// The detail line's facts: the closing clock, how long it was held,
     /// and why it ended with its tags ([`trade_detail_parts`]).
     pub detail: [String; 3],
@@ -100,6 +105,7 @@ impl<'a> TradeWords<'a> {
             symbol: shown_symbol(instrument, chart),
             source: meta.source,
             pnl: meta.pnl.closed_split(trade),
+            result: Some(trade.pnl_points.cmp(&Decimal::ZERO)),
             detail,
         }
     }
@@ -128,6 +134,7 @@ impl<'a> TradeWords<'a> {
                 .open_points
                 .map(|points| pnl.row_split(points, summary.quantity))
                 .unwrap_or_default(),
+            result: None,
             detail: [String::new(), held, "at the last print".to_owned()],
         }
     }
@@ -185,6 +192,57 @@ pub struct Item<'a> {
     /// Its index among this session's closed trades; `None` for a saved row.
     pub live: Option<usize>,
     pub meta: TradeMeta<'a>,
+}
+
+impl<'a> Item<'a> {
+    /// This session's close as a list item on the chart's `symbol`.
+    #[must_use]
+    pub fn live(live: LiveTrade<'a>, symbol: &'a str, pnl: SymbolPnl<'a>) -> Self {
+        Self {
+            trade: live.trade,
+            symbol,
+            live: Some(live.index),
+            meta: TradeMeta {
+                session: live.at.map(|at| &at.session),
+                trade_ref: live.at.map_or_else(TradeRef::default, |at| at.trade),
+                source: live.source,
+                tags: live.tags,
+                pnl,
+            },
+        }
+    }
+}
+
+/// The revealed page of saved rows, newest first, as list items: only the
+/// `shown` newest of the `kept` rows are walked, so a year of sessions costs
+/// the same per frame as a week of them.
+#[must_use]
+pub fn saved_items<'a>(
+    cache: Option<&'a LoadedHistory>,
+    kept: &[usize],
+    shown: usize,
+    pnl: PnlReader<'a>,
+) -> Vec<Item<'a>> {
+    let Some(cache) = cache else {
+        return Vec::new();
+    };
+    let item = |row: &'a super::HistoryRow| Item {
+        trade: &row.trade,
+        symbol: &row.symbol,
+        live: None,
+        meta: TradeMeta {
+            session: row.session.as_ref(),
+            trade_ref: row.trade_ref,
+            source: row.source,
+            tags: &row.tags,
+            pnl: pnl.of(&row.symbol),
+        },
+    };
+    kept.iter()
+        .rev()
+        .take(shown)
+        .map(|&index| item(&cache.rows[index]))
+        .collect()
 }
 
 /// How the list folds and shows sessions while rows are cut.
@@ -469,7 +527,6 @@ impl LedgerPage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pnl::PnlReader;
     use crate::report::readout::LedgerTotals;
     use quantick_engine::Side;
     use quantick_sim::ExitReason;

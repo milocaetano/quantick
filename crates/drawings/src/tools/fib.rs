@@ -214,20 +214,16 @@ impl LabelPosition {
 /// How far the level lines run horizontally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Extend {
-    /// Between the anchors and nowhere else — what a fresh retracement opens
-    /// with, so the levels end where the trader stopped dragging.
+    /// Between the anchors and nowhere else — what a fresh object of either
+    /// kind opens with (see [`Extend::for_kind`]), so the levels end where
+    /// the trader stopped clicking.
     Anchors,
-    /// Forward from the *last* anchor only — what a fresh extension opens
-    /// with (see [`Extend::for_kind`], which is where a new object's span
-    /// is decided; this `Default` only answers for a value nobody set).
+    /// Forward from the *last* anchor only, on to the chart's right edge.
+    /// An opt-in on the Levels tab; this `Default` only answers for a value
+    /// nobody set, so a payload saved before the field existed keeps the
+    /// span it was drawn with.
     ///
-    /// A Fib level is something price is going to meet, so it has to be drawn
-    /// where price is — to the right of the swing that defined it. Levels
-    /// that stop at the anchors vanish behind the tape the moment the market
-    /// moves on, and an extension whose targets sit to the *left* of the leg
-    /// they project is backwards on its face.
-    ///
-    /// Starting at the last anchor rather than the first also keeps the
+    /// Starting at the last anchor rather than the first keeps the
     /// projection off the leg it was measured from: the rays say "from here
     /// on", which is what a target is.
     #[default]
@@ -253,15 +249,14 @@ impl Extend {
     /// traçando e não ir para o infinito". Extending it is a choice on the
     /// Levels tab, and one that can now be saved as the default.
     ///
-    /// **Extension keeps projecting from its last anchor.** Its levels are
-    /// where the next leg may reach — a target, ahead of the move — so
-    /// drawing them back over the leg they were measured from is backwards
-    /// on its face.
+    /// **An extension is finite too.** It used to open projecting to the
+    /// chart's right edge, and the trader asked for that to be a choice
+    /// rather than the default: running the targets on forever is what the
+    /// Levels tab's "From the last point" (or a saved default) is for.
     #[must_use]
     pub fn for_kind(kind: FibKind) -> Self {
         match kind {
-            FibKind::Retracement => Self::Anchors,
-            FibKind::Extension => Self::Forward,
+            FibKind::Retracement | FibKind::Extension => Self::Anchors,
         }
     }
 
@@ -1108,18 +1103,23 @@ mod tests {
         );
     }
 
-    /// The other kind asks the other question: an extension's targets are
-    /// what comes after its last anchor, so they must not paint back over the
-    /// leg they were measured from.
+    /// A fresh extension is finite: its levels end at its last anchor, and
+    /// running them on to the chart's edge is an opt-in on the Levels tab.
     #[test]
-    fn an_extension_still_projects_from_its_last_anchor() {
+    fn a_fresh_extension_ends_at_its_last_anchor() {
         let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
         let placed = [pos2(200.0, 420.0), pos2(400.0, 90.0), pos2(620.0, 260.0)];
-        let (left, _) = level_span(&placed, chart, Extend::for_kind(FibKind::Extension));
+        let (left, right) = level_span(&placed, chart, Extend::for_kind(FibKind::Extension));
         assert!(
-            (left - 620.0).abs() < f32::EPSILON,
-            "an extension starts where its projection origin is: {left}"
+            (left - 200.0).abs() < f32::EPSILON,
+            "starts at the first anchor: {left}"
         );
+        assert!(
+            (right - 620.0).abs() < f32::EPSILON,
+            "ends at the last anchor, not the chart's edge: {right}"
+        );
+        let (from, to) = level_span(&placed, chart, Extend::Forward);
+        assert!((from - 620.0).abs() < f32::EPSILON && (to - 1000.0).abs() < f32::EPSILON);
     }
 
     fn context<'a>(

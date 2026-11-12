@@ -150,7 +150,7 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     let mut here = bound_to(&store, ("binance", "BTCUSDT"));
     let mut there = bound_to(&store, ("binance", "BTCUSDT"));
     let mut reloaded = embedded();
-    let active = "Binance BTC Spot spheres";
+    let active = "Crypto default";
     let look = reloaded
         .presets
         .iter_mut()
@@ -253,12 +253,13 @@ fn the_sphere_picker_follows_the_tick_sphere_rule() {
         "a volume chart offers no presets (TickSpherePane::offered) but keeps \
          the switch-off for spheres the asset wears, as tick.set(null) does"
     );
-    let mut eth = bound_to(&store, ("binance", "ETHUSDT"));
-    assert!(!texts(&mut eth, true).contains("Tick chart spheres"));
-    eth.edit_config(|config| config.volume_dots.tick_bubbles = spheres);
-    let offered = texts(&mut eth, true);
+    // Gold has no mode: every crypto market has one.
+    let mut gold = bound_to(&store, ("metatrader-tickmill", "XAUUSD"));
+    assert!(!texts(&mut gold, true).contains("Tick chart spheres"));
+    gold.edit_config(|config| config.volume_dots.tick_bubbles = spheres);
+    let offered = texts(&mut gold, true);
     assert!(offered.contains("Tick chart spheres"), "{offered}");
     assert!(!offered.contains("quantity in"), "{offered}");
-    assert_eq!(eth.apply_tick_preset(None, Default::default()), Ok(true));
-    assert_eq!(eth.config.volume_dots.tick_bubbles, None);
+    assert_eq!(gold.apply_tick_preset(None, Default::default()), Ok(true));
+    assert_eq!(gold.config.volume_dots.tick_bubbles, None);
 }

@@ -1,16 +1,19 @@
 //! The bundled surfaces as text, every byte a renderer reads off them, against
 //! the dump taken at the commit before the flow pane's lights existed: the
 //! bulb's off state, and Dark, paint exactly what they painted then.
+//! One deliberate edit since: Light's paper `drawing_default` is black.
 use crate::{DARK, LIGHT, ResolvedTheme, Token};
 use std::fmt::Write;
 
 /// The tokens the lights added; they did not exist before them.
 const ADDED: [&str; 1] = ["flow_bulb_lit"];
+/// The settings panels' tokens came later still, under one prefix.
+const ADDED_PREFIX: &str = "panel_";
 
 fn dump(name: &str, theme: &ResolvedTheme, out: &mut String) {
     writeln!(out, "[{name}]").unwrap();
     for token in Token::ALL {
-        if !ADDED.contains(&token.key()) {
+        if !ADDED.contains(&token.key()) && !token.key().starts_with(ADDED_PREFIX) {
             writeln!(out, "{} {:?}", token.key(), theme.color(token).to_array()).unwrap();
         }
     }

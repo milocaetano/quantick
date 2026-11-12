@@ -257,9 +257,40 @@ pub enum Token {
     /// The band's light bulb while the flow pane's lights are on; at rest it
     /// wears the gear's ink.
     FlowBulbLit,
+    /// A settings panel's or dock's ground, under its blocks.
+    PanelGround,
+    /// The full-bleed title plate across a panel's top.
+    PanelPlate,
+    /// Words on the title plate and on a section's band.
+    PanelPlateInk,
+    /// A section's block, and a trade's card, on the panel ground.
+    PanelBlock,
+    /// A block's one-pixel border, and the rule under the filter bar.
+    PanelBlockEdge,
+    /// A section header's band, and the ledger's date row.
+    PanelBand,
+    /// A section header's state words on its band.
+    PanelBandState,
+    /// A subgroup's uppercase caption inside a block.
+    PanelCaption,
+    /// The one-pixel rule under a subgroup caption.
+    PanelCaptionRule,
+    /// The full-bleed footer plate: health, reset and totals.
+    PanelFooter,
+    /// Words on the footer plate, and the ledger's bold session captions.
+    PanelStrongInk,
+    /// The ledger's full-bleed filter bar.
+    PanelFilterBar,
+    /// The ledger's Live session row.
+    PanelLiveRow,
+    /// A losing trade card's left stripe.
+    PanelStripeLoss,
+    /// A gain on the panels' grey plates, the footer and a lit session row,
+    /// where Light's buy ink falls short of 4.5:1.
+    PanelGainInk,
 }
 impl Token {
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 151] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -396,6 +427,21 @@ impl Token {
         Self::FlowKeyUnlitInk,
         Self::FlowGearInk,
         Self::FlowBulbLit,
+        Self::PanelGround,
+        Self::PanelPlate,
+        Self::PanelPlateInk,
+        Self::PanelBlock,
+        Self::PanelBlockEdge,
+        Self::PanelBand,
+        Self::PanelBandState,
+        Self::PanelCaption,
+        Self::PanelCaptionRule,
+        Self::PanelFooter,
+        Self::PanelStrongInk,
+        Self::PanelFilterBar,
+        Self::PanelLiveRow,
+        Self::PanelStripeLoss,
+        Self::PanelGainInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -442,6 +488,21 @@ impl Token {
             Self::FlowKeyUnlitInk => "flow_key_unlit_ink",
             Self::FlowGearInk => "flow_gear_ink",
             Self::FlowBulbLit => "flow_bulb_lit",
+            Self::PanelGround => "panel_ground",
+            Self::PanelPlate => "panel_plate",
+            Self::PanelPlateInk => "panel_plate_ink",
+            Self::PanelBlock => "panel_block",
+            Self::PanelBlockEdge => "panel_block_edge",
+            Self::PanelBand => "panel_band",
+            Self::PanelBandState => "panel_band_state",
+            Self::PanelCaption => "panel_caption",
+            Self::PanelCaptionRule => "panel_caption_rule",
+            Self::PanelFooter => "panel_footer",
+            Self::PanelStrongInk => "panel_strong_ink",
+            Self::PanelFilterBar => "panel_filter_bar",
+            Self::PanelLiveRow => "panel_live_row",
+            Self::PanelStripeLoss => "panel_stripe_loss",
+            Self::PanelGainInk => "panel_gain_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

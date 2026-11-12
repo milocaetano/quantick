@@ -1640,7 +1640,7 @@ mod tests {
         };
 
         let output = frame(&mut view, Vec::new());
-        let lane_header = find(&output, "live lane")[0];
+        let lane_header = find(&output, "LIVE LANE")[0];
         click(&mut view, lane_header);
         let output = frame(&mut view, Vec::new());
         assert!(

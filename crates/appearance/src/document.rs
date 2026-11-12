@@ -79,6 +79,10 @@ pub struct ThemeDocument {
     pub chart_time_grid: Option<bool>,
     #[serde(default)]
     pub chart_axes: Option<ChartAxes>,
+    /// Whether a drawing's labels sit on a filled plate. Absent, they do, as
+    /// Dark always has; Light turns it off so a label is its ink alone.
+    #[serde(default)]
+    pub drawing_label_plates: Option<bool>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     /// Indicator plot inks: `[plot_ink."<indicator title>"]`, `<plot> = colour`.
@@ -247,6 +251,10 @@ impl ThemeDocument {
             )?,
             chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
             chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
+            drawing_label_plates: self
+                .drawing_label_plates
+                .or_else(|| fallback.map(|theme| theme.drawing_label_plates))
+                .unwrap_or(true),
             candle_casing_px: None,
             colors,
             plot_ink: plot_ink::resolve(&self.plot_ink)?,
@@ -304,7 +312,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 30] = [
+pub(crate) const MODE_TOKENS: [Token; 45] = [
     Token::TabStrip,
     Token::Brand,
     Token::ReplayInk,
@@ -335,6 +343,21 @@ pub(crate) const MODE_TOKENS: [Token; 30] = [
     Token::LedgerSession,
     Token::LedgerSessionEdge,
     Token::LedgerSelection,
+    Token::PanelGround,
+    Token::PanelPlate,
+    Token::PanelPlateInk,
+    Token::PanelBlock,
+    Token::PanelBlockEdge,
+    Token::PanelBand,
+    Token::PanelBandState,
+    Token::PanelCaption,
+    Token::PanelCaptionRule,
+    Token::PanelFooter,
+    Token::PanelStrongInk,
+    Token::PanelFilterBar,
+    Token::PanelLiveRow,
+    Token::PanelStripeLoss,
+    Token::PanelGainInk,
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -347,6 +370,9 @@ pub struct ResolvedTheme {
     pub candle_wick_opacity: f32,
     pub chart_time_grid: bool,
     pub chart_axes: ChartAxes,
+    /// Whether a drawing's labels — its price-axis tag and a measurement's
+    /// readout — sit on a filled plate; see [`Self::drawing_tag_paint`].
+    pub drawing_label_plates: bool,
     /// The plate under each candle, in logical pixels, painted in `casing`;
     /// only the lit flow pane authors one.
     pub candle_casing_px: Option<f32>,

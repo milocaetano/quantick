@@ -341,6 +341,7 @@ pub(super) fn handle_axis_gestures(
                 pane,
                 Intent::ReturnToLive {
                     tape: false,
+                    tape_live: false,
                     overlay: None,
                     canvas: None,
                     repeat: None,
