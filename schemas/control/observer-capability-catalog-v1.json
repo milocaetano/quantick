@@ -5,6 +5,3027 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Permanently clear all recorded alert history at execution time. Definitions remain. Requires cockpit.alert.delete; no command restores events.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.alert.delete",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.clear_history",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.alert.delete"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "alert_removed"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "Required idempotency keys deduplicate only within the same connection and bounded retention window. After reconnect or unknown outcome, reconcile alerts.list/read/history and alerts.changed before retrying. Delete requires payload.expected_revision for the selected definition; this is distinct from unsupported envelope.expected_revisions. Clear history has no revision guard and removes all events present at execution, including events recorded after the last read.",
+      "title": "alerts.clear_history",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.create",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "spec": {
+            "additionalProperties": false,
+            "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+            "properties": {
+              "conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operator": {
+                      "enum": [
+                        "Crossing",
+                        "CrossingUp",
+                        "CrossingDown",
+                        "GreaterThan",
+                        "LessThan",
+                        "Entering",
+                        "Exiting",
+                        "Inside",
+                        "Outside"
+                      ]
+                    },
+                    "target": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Value": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                              "title": "CanonicalDecimal",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "Value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Drawing": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drawing": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "incarnation": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "origin": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "pane": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "workspace": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "workspace",
+                                "origin",
+                                "pane",
+                                "drawing",
+                                "incarnation"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "Drawing"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operator",
+                    "target"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "expiration": {
+                "oneOf": [
+                  {
+                    "const": "Never"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "At": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "display_offset_minutes": {
+                            "maximum": 840,
+                            "minimum": -720,
+                            "type": "integer"
+                          },
+                          "utc_ms": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "utc_ms",
+                          "display_offset_minutes"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "At"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "frequency": {
+                "enum": [
+                  "Once",
+                  "PerBar",
+                  "PerBarClose",
+                  "PerMinute"
+                ]
+              },
+              "id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "market": {
+                "additionalProperties": false,
+                "properties": {
+                  "aggregation": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "source": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Live": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "feed": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "feed"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Live"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Replay": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "recording": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "recording"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Replay"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "symbol": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "symbol",
+                  "aggregation"
+                ],
+                "type": "object"
+              },
+              "message": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "notification": {
+                "additionalProperties": false,
+                "properties": {
+                  "popup": {
+                    "type": "boolean"
+                  },
+                  "sound": {
+                    "enum": [
+                      null,
+                      "information",
+                      "question",
+                      "exclamation",
+                      "critical",
+                      "beep",
+                      "american-phone",
+                      "business-phone",
+                      "cuckoo",
+                      "english-phone",
+                      "high-pitched-beep",
+                      "low-beep",
+                      "short-beep",
+                      "aviary",
+                      "brook",
+                      "city",
+                      "dock",
+                      "dockside",
+                      "ebb-tide",
+                      "everglades",
+                      "foghorn",
+                      "hail",
+                      "northwoods",
+                      "oceanside",
+                      "rain",
+                      "rainforest",
+                      "steam-train",
+                      "summer-night",
+                      "surfs-up",
+                      "thunderstorm",
+                      "white-noise",
+                      "wind-chimes",
+                      "yosemite-falls"
+                    ]
+                  },
+                  "sound_seconds": {
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "toast": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "popup",
+                  "toast"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "version",
+              "id",
+              "name",
+              "market",
+              "conditions",
+              "frequency",
+              "expiration",
+              "message",
+              "notification"
+            ],
+            "type": "object",
+            "x-frequency-semantics": {
+              "Once": "Complete after the first qualifying event; rearm explicitly.",
+              "PerBar": "At most once per actual bar identity.",
+              "PerBarClose": "Only each distinct committed close.",
+              "PerMinute": "At most once per monotonic session minute."
+            },
+            "x-operator-targets": {
+              "Crossing": [
+                "Value",
+                "Line"
+              ],
+              "CrossingDown": [
+                "Value",
+                "Line"
+              ],
+              "CrossingUp": [
+                "Value",
+                "Line"
+              ],
+              "Entering": [
+                "Channel",
+                "Rectangle"
+              ],
+              "Exiting": [
+                "Channel",
+                "Rectangle"
+              ],
+              "GreaterThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Inside": [
+                "Channel",
+                "Rectangle"
+              ],
+              "LessThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Outside": [
+                "Channel",
+                "Rectangle"
+              ]
+            }
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.create",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Permanently remove one alert definition. Recorded history remains. Requires cockpit.alert.delete; no command restores the definition.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.alert.delete",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.delete",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.alert.delete"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "alert_removed"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "Required idempotency keys deduplicate only within the same connection and bounded retention window. After reconnect or unknown outcome, reconcile alerts.list/read/history and alerts.changed before retrying. Delete requires payload.expected_revision for the selected definition; this is distinct from unsupported envelope.expected_revisions. Clear history has no revision guard and removes all events present at execution, including events recorded after the last read.",
+      "title": "alerts.delete",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.edit",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spec": {
+            "additionalProperties": false,
+            "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+            "properties": {
+              "conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operator": {
+                      "enum": [
+                        "Crossing",
+                        "CrossingUp",
+                        "CrossingDown",
+                        "GreaterThan",
+                        "LessThan",
+                        "Entering",
+                        "Exiting",
+                        "Inside",
+                        "Outside"
+                      ]
+                    },
+                    "target": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Value": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                              "title": "CanonicalDecimal",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "Value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Drawing": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drawing": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "incarnation": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "origin": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "pane": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "workspace": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "workspace",
+                                "origin",
+                                "pane",
+                                "drawing",
+                                "incarnation"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "Drawing"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operator",
+                    "target"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "expiration": {
+                "oneOf": [
+                  {
+                    "const": "Never"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "At": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "display_offset_minutes": {
+                            "maximum": 840,
+                            "minimum": -720,
+                            "type": "integer"
+                          },
+                          "utc_ms": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "utc_ms",
+                          "display_offset_minutes"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "At"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "frequency": {
+                "enum": [
+                  "Once",
+                  "PerBar",
+                  "PerBarClose",
+                  "PerMinute"
+                ]
+              },
+              "id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "market": {
+                "additionalProperties": false,
+                "properties": {
+                  "aggregation": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "source": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Live": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "feed": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "feed"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Live"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Replay": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "recording": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "recording"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Replay"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "symbol": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "symbol",
+                  "aggregation"
+                ],
+                "type": "object"
+              },
+              "message": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "notification": {
+                "additionalProperties": false,
+                "properties": {
+                  "popup": {
+                    "type": "boolean"
+                  },
+                  "sound": {
+                    "enum": [
+                      null,
+                      "information",
+                      "question",
+                      "exclamation",
+                      "critical",
+                      "beep",
+                      "american-phone",
+                      "business-phone",
+                      "cuckoo",
+                      "english-phone",
+                      "high-pitched-beep",
+                      "low-beep",
+                      "short-beep",
+                      "aviary",
+                      "brook",
+                      "city",
+                      "dock",
+                      "dockside",
+                      "ebb-tide",
+                      "everglades",
+                      "foghorn",
+                      "hail",
+                      "northwoods",
+                      "oceanside",
+                      "rain",
+                      "rainforest",
+                      "steam-train",
+                      "summer-night",
+                      "surfs-up",
+                      "thunderstorm",
+                      "white-noise",
+                      "wind-chimes",
+                      "yosemite-falls"
+                    ]
+                  },
+                  "sound_seconds": {
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "toast": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "popup",
+                  "toast"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "version",
+              "id",
+              "name",
+              "market",
+              "conditions",
+              "frequency",
+              "expiration",
+              "message",
+              "notification"
+            ],
+            "type": "object",
+            "x-frequency-semantics": {
+              "Once": "Complete after the first qualifying event; rearm explicitly.",
+              "PerBar": "At most once per actual bar identity.",
+              "PerBarClose": "Only each distinct committed close.",
+              "PerMinute": "At most once per monotonic session minute."
+            },
+            "x-operator-targets": {
+              "Crossing": [
+                "Value",
+                "Line"
+              ],
+              "CrossingDown": [
+                "Value",
+                "Line"
+              ],
+              "CrossingUp": [
+                "Value",
+                "Line"
+              ],
+              "Entering": [
+                "Channel",
+                "Rectangle"
+              ],
+              "Exiting": [
+                "Channel",
+                "Rectangle"
+              ],
+              "GreaterThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Inside": [
+                "Channel",
+                "Rectangle"
+              ],
+              "LessThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Outside": [
+                "Channel",
+                "Rectangle"
+              ]
+            }
+          }
+        },
+        "required": [
+          "spec",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.edit",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Read or validate bounded local alert state. No notification or mutation.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.history",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "bar_epoch": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "bar_sequence": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "definition_revision": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "delivery": {
+                  "enum": [
+                    "Pending",
+                    "Delivered",
+                    "Suppressed",
+                    "Failed"
+                  ]
+                },
+                "price": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                  "title": "CanonicalDecimal",
+                  "type": "string"
+                },
+                "sequence": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "session_ms": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "spec": {
+                  "additionalProperties": false,
+                  "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+                  "properties": {
+                    "conditions": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "operator": {
+                            "enum": [
+                              "Crossing",
+                              "CrossingUp",
+                              "CrossingDown",
+                              "GreaterThan",
+                              "LessThan",
+                              "Entering",
+                              "Exiting",
+                              "Inside",
+                              "Outside"
+                            ]
+                          },
+                          "target": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "Value": {
+                                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                                    "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                                    "title": "CanonicalDecimal",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "Value"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "Drawing": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "drawing": {
+                                        "minimum": 1,
+                                        "type": "integer"
+                                      },
+                                      "incarnation": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "origin": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "pane": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "workspace": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "workspace",
+                                      "origin",
+                                      "pane",
+                                      "drawing",
+                                      "incarnation"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "Drawing"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "operator",
+                          "target"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 8,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "expiration": {
+                      "oneOf": [
+                        {
+                          "const": "Never"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "At": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "display_offset_minutes": {
+                                  "maximum": 840,
+                                  "minimum": -720,
+                                  "type": "integer"
+                                },
+                                "utc_ms": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "utc_ms",
+                                "display_offset_minutes"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "At"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "frequency": {
+                      "enum": [
+                        "Once",
+                        "PerBar",
+                        "PerBarClose",
+                        "PerMinute"
+                      ]
+                    },
+                    "id": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "market": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "aggregation": {
+                          "maxLength": 2048,
+                          "type": "string"
+                        },
+                        "source": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "Live": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "feed": {
+                                      "maxLength": 2048,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "feed"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "Live"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "Replay": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "recording": {
+                                      "maxLength": 2048,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "recording"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "Replay"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "symbol": {
+                          "maxLength": 2048,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "symbol",
+                        "aggregation"
+                      ],
+                      "type": "object"
+                    },
+                    "message": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "name": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "notification": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "popup": {
+                          "type": "boolean"
+                        },
+                        "sound": {
+                          "enum": [
+                            null,
+                            "information",
+                            "question",
+                            "exclamation",
+                            "critical",
+                            "beep",
+                            "american-phone",
+                            "business-phone",
+                            "cuckoo",
+                            "english-phone",
+                            "high-pitched-beep",
+                            "low-beep",
+                            "short-beep",
+                            "aviary",
+                            "brook",
+                            "city",
+                            "dock",
+                            "dockside",
+                            "ebb-tide",
+                            "everglades",
+                            "foghorn",
+                            "hail",
+                            "northwoods",
+                            "oceanside",
+                            "rain",
+                            "rainforest",
+                            "steam-train",
+                            "summer-night",
+                            "surfs-up",
+                            "thunderstorm",
+                            "white-noise",
+                            "wind-chimes",
+                            "yosemite-falls"
+                          ]
+                        },
+                        "sound_seconds": {
+                          "minimum": 1,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "toast": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "popup",
+                        "toast"
+                      ],
+                      "type": "object"
+                    },
+                    "version": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "id",
+                    "name",
+                    "market",
+                    "conditions",
+                    "frequency",
+                    "expiration",
+                    "message",
+                    "notification"
+                  ],
+                  "type": "object",
+                  "x-frequency-semantics": {
+                    "Once": "Complete after the first qualifying event; rearm explicitly.",
+                    "PerBar": "At most once per actual bar identity.",
+                    "PerBarClose": "Only each distinct committed close.",
+                    "PerMinute": "At most once per monotonic session minute."
+                  },
+                  "x-operator-targets": {
+                    "Crossing": [
+                      "Value",
+                      "Line"
+                    ],
+                    "CrossingDown": [
+                      "Value",
+                      "Line"
+                    ],
+                    "CrossingUp": [
+                      "Value",
+                      "Line"
+                    ],
+                    "Entering": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "Exiting": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "GreaterThan": [
+                      "Value",
+                      "Line",
+                      "Rectangle"
+                    ],
+                    "Inside": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "LessThan": [
+                      "Value",
+                      "Line",
+                      "Rectangle"
+                    ],
+                    "Outside": [
+                      "Channel",
+                      "Rectangle"
+                    ]
+                  }
+                },
+                "utc_ms": {
+                  "description": "Desktop receipt/evaluation time in UTC milliseconds, not replay market time.",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sequence",
+                "definition_revision",
+                "spec",
+                "utc_ms",
+                "session_ms",
+                "bar_epoch",
+                "bar_sequence",
+                "price",
+                "delivery"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "next_after": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "events",
+          "next_after"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "alerts.history",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Read or validate bounded local alert state. No notification or mutation.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "alerts": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "enum": [
+                    null,
+                    "SourceInactive",
+                    "MissingDrawing",
+                    "AmbiguousDrawing",
+                    "LegacyIdentity",
+                    "UnsupportedDrawing",
+                    "OutsideTimeDomain",
+                    "InvalidGeometry",
+                    "Hydrating",
+                    "ReplayPaused",
+                    "Scaffold"
+                  ]
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "spec": {
+                  "additionalProperties": false,
+                  "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+                  "properties": {
+                    "conditions": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "operator": {
+                            "enum": [
+                              "Crossing",
+                              "CrossingUp",
+                              "CrossingDown",
+                              "GreaterThan",
+                              "LessThan",
+                              "Entering",
+                              "Exiting",
+                              "Inside",
+                              "Outside"
+                            ]
+                          },
+                          "target": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "Value": {
+                                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                                    "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                                    "title": "CanonicalDecimal",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "Value"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "Drawing": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "drawing": {
+                                        "minimum": 1,
+                                        "type": "integer"
+                                      },
+                                      "incarnation": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "origin": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "pane": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      },
+                                      "workspace": {
+                                        "maxLength": 2048,
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "workspace",
+                                      "origin",
+                                      "pane",
+                                      "drawing",
+                                      "incarnation"
+                                    ],
+                                    "type": "object"
+                                  }
+                                },
+                                "required": [
+                                  "Drawing"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "operator",
+                          "target"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 8,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "expiration": {
+                      "oneOf": [
+                        {
+                          "const": "Never"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "At": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "display_offset_minutes": {
+                                  "maximum": 840,
+                                  "minimum": -720,
+                                  "type": "integer"
+                                },
+                                "utc_ms": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "utc_ms",
+                                "display_offset_minutes"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "At"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "frequency": {
+                      "enum": [
+                        "Once",
+                        "PerBar",
+                        "PerBarClose",
+                        "PerMinute"
+                      ]
+                    },
+                    "id": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "market": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "aggregation": {
+                          "maxLength": 2048,
+                          "type": "string"
+                        },
+                        "source": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "Live": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "feed": {
+                                      "maxLength": 2048,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "feed"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "Live"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "Replay": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "recording": {
+                                      "maxLength": 2048,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "recording"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "Replay"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "symbol": {
+                          "maxLength": 2048,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "symbol",
+                        "aggregation"
+                      ],
+                      "type": "object"
+                    },
+                    "message": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "name": {
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "notification": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "popup": {
+                          "type": "boolean"
+                        },
+                        "sound": {
+                          "enum": [
+                            null,
+                            "information",
+                            "question",
+                            "exclamation",
+                            "critical",
+                            "beep",
+                            "american-phone",
+                            "business-phone",
+                            "cuckoo",
+                            "english-phone",
+                            "high-pitched-beep",
+                            "low-beep",
+                            "short-beep",
+                            "aviary",
+                            "brook",
+                            "city",
+                            "dock",
+                            "dockside",
+                            "ebb-tide",
+                            "everglades",
+                            "foghorn",
+                            "hail",
+                            "northwoods",
+                            "oceanside",
+                            "rain",
+                            "rainforest",
+                            "steam-train",
+                            "summer-night",
+                            "surfs-up",
+                            "thunderstorm",
+                            "white-noise",
+                            "wind-chimes",
+                            "yosemite-falls"
+                          ]
+                        },
+                        "sound_seconds": {
+                          "minimum": 1,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "toast": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "popup",
+                        "toast"
+                      ],
+                      "type": "object"
+                    },
+                    "version": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "id",
+                    "name",
+                    "market",
+                    "conditions",
+                    "frequency",
+                    "expiration",
+                    "message",
+                    "notification"
+                  ],
+                  "type": "object",
+                  "x-frequency-semantics": {
+                    "Once": "Complete after the first qualifying event; rearm explicitly.",
+                    "PerBar": "At most once per actual bar identity.",
+                    "PerBarClose": "Only each distinct committed close.",
+                    "PerMinute": "At most once per monotonic session minute."
+                  },
+                  "x-operator-targets": {
+                    "Crossing": [
+                      "Value",
+                      "Line"
+                    ],
+                    "CrossingDown": [
+                      "Value",
+                      "Line"
+                    ],
+                    "CrossingUp": [
+                      "Value",
+                      "Line"
+                    ],
+                    "Entering": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "Exiting": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "GreaterThan": [
+                      "Value",
+                      "Line",
+                      "Rectangle"
+                    ],
+                    "Inside": [
+                      "Channel",
+                      "Rectangle"
+                    ],
+                    "LessThan": [
+                      "Value",
+                      "Line",
+                      "Rectangle"
+                    ],
+                    "Outside": [
+                      "Channel",
+                      "Rectangle"
+                    ]
+                  }
+                },
+                "status": {
+                  "enum": [
+                    "monitoring",
+                    "paused",
+                    "completed",
+                    "expired",
+                    "suspended"
+                  ]
+                },
+                "summary": {
+                  "maxLength": 65536,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "spec",
+                "revision",
+                "status",
+                "reason",
+                "summary"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "next_after": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "alerts",
+          "next_after"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "alerts.list",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Open the local Alerts manager beside the chart.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "const": true
+          }
+        },
+        "required": [
+          "open"
+        ],
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening an open manager leaves it open; inspect dock.alerts selected state.",
+      "title": "Open Alerts",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.pause",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.pause",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Read or validate bounded local alert state. No notification or mutation.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              null,
+              "SourceInactive",
+              "MissingDrawing",
+              "AmbiguousDrawing",
+              "LegacyIdentity",
+              "UnsupportedDrawing",
+              "OutsideTimeDomain",
+              "InvalidGeometry",
+              "Hydrating",
+              "ReplayPaused",
+              "Scaffold"
+            ]
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "spec": {
+            "additionalProperties": false,
+            "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+            "properties": {
+              "conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operator": {
+                      "enum": [
+                        "Crossing",
+                        "CrossingUp",
+                        "CrossingDown",
+                        "GreaterThan",
+                        "LessThan",
+                        "Entering",
+                        "Exiting",
+                        "Inside",
+                        "Outside"
+                      ]
+                    },
+                    "target": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Value": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                              "title": "CanonicalDecimal",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "Value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Drawing": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drawing": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "incarnation": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "origin": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "pane": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "workspace": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "workspace",
+                                "origin",
+                                "pane",
+                                "drawing",
+                                "incarnation"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "Drawing"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operator",
+                    "target"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "expiration": {
+                "oneOf": [
+                  {
+                    "const": "Never"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "At": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "display_offset_minutes": {
+                            "maximum": 840,
+                            "minimum": -720,
+                            "type": "integer"
+                          },
+                          "utc_ms": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "utc_ms",
+                          "display_offset_minutes"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "At"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "frequency": {
+                "enum": [
+                  "Once",
+                  "PerBar",
+                  "PerBarClose",
+                  "PerMinute"
+                ]
+              },
+              "id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "market": {
+                "additionalProperties": false,
+                "properties": {
+                  "aggregation": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "source": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Live": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "feed": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "feed"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Live"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Replay": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "recording": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "recording"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Replay"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "symbol": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "symbol",
+                  "aggregation"
+                ],
+                "type": "object"
+              },
+              "message": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "notification": {
+                "additionalProperties": false,
+                "properties": {
+                  "popup": {
+                    "type": "boolean"
+                  },
+                  "sound": {
+                    "enum": [
+                      null,
+                      "information",
+                      "question",
+                      "exclamation",
+                      "critical",
+                      "beep",
+                      "american-phone",
+                      "business-phone",
+                      "cuckoo",
+                      "english-phone",
+                      "high-pitched-beep",
+                      "low-beep",
+                      "short-beep",
+                      "aviary",
+                      "brook",
+                      "city",
+                      "dock",
+                      "dockside",
+                      "ebb-tide",
+                      "everglades",
+                      "foghorn",
+                      "hail",
+                      "northwoods",
+                      "oceanside",
+                      "rain",
+                      "rainforest",
+                      "steam-train",
+                      "summer-night",
+                      "surfs-up",
+                      "thunderstorm",
+                      "white-noise",
+                      "wind-chimes",
+                      "yosemite-falls"
+                    ]
+                  },
+                  "sound_seconds": {
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "toast": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "popup",
+                  "toast"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "version",
+              "id",
+              "name",
+              "market",
+              "conditions",
+              "frequency",
+              "expiration",
+              "message",
+              "notification"
+            ],
+            "type": "object",
+            "x-frequency-semantics": {
+              "Once": "Complete after the first qualifying event; rearm explicitly.",
+              "PerBar": "At most once per actual bar identity.",
+              "PerBarClose": "Only each distinct committed close.",
+              "PerMinute": "At most once per monotonic session minute."
+            },
+            "x-operator-targets": {
+              "Crossing": [
+                "Value",
+                "Line"
+              ],
+              "CrossingDown": [
+                "Value",
+                "Line"
+              ],
+              "CrossingUp": [
+                "Value",
+                "Line"
+              ],
+              "Entering": [
+                "Channel",
+                "Rectangle"
+              ],
+              "Exiting": [
+                "Channel",
+                "Rectangle"
+              ],
+              "GreaterThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Inside": [
+                "Channel",
+                "Rectangle"
+              ],
+              "LessThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Outside": [
+                "Channel",
+                "Rectangle"
+              ]
+            }
+          },
+          "status": {
+            "enum": [
+              "monitoring",
+              "paused",
+              "completed",
+              "expired",
+              "suspended"
+            ]
+          },
+          "summary": {
+            "maxLength": 65536,
+            "type": "string"
+          }
+        },
+        "required": [
+          "spec",
+          "revision",
+          "status",
+          "reason",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "alerts.read",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.rearm",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.rearm",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.resume",
+      "idempotency": "required",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.resume",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Persist local alert definitions or a durable drawing binding. Never places orders or sends a notification during this command.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 65536
+      },
+      "id": "alerts.target.resolve",
+      "idempotency": "required",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "drawing_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pane_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tab_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "drawing_id"
+        ],
+        "title": "DrawingSelector",
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "additionalProperties": false,
+            "properties": {
+              "drawing": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "incarnation": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "origin": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "pane": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "workspace": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "workspace",
+              "origin",
+              "pane",
+              "drawing",
+              "incarnation"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Idempotency keys deduplicate within the same connection and bounded retention window only. After reconnect or unknown outcome, read back before retrying. Mutations require idempotency keys. Edits, deletion and lifecycle changes require the definition revision; target resolution persists the same identity before returning it.",
+      "title": "alerts.target.resolve",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Read or validate bounded local alert state. No notification or mutation.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.validate",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "spec": {
+            "additionalProperties": false,
+            "description": "Version 1. All conditions evaluate together against actual price; no OR, indicators or orders. Decimal prices are canonical strings that round-trip through finite f64 precision; values needing rounding are refused. Expiration is an absolute UTC millisecond cutoff and display offset, so reconnect never extends it. Bar aggregation is the canonical chart token, e.g. tick:50 or time:60000.",
+            "properties": {
+              "conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operator": {
+                      "enum": [
+                        "Crossing",
+                        "CrossingUp",
+                        "CrossingDown",
+                        "GreaterThan",
+                        "LessThan",
+                        "Entering",
+                        "Exiting",
+                        "Inside",
+                        "Outside"
+                      ]
+                    },
+                    "target": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Value": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                              "title": "CanonicalDecimal",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "Value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "Drawing": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drawing": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "incarnation": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "origin": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "pane": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                },
+                                "workspace": {
+                                  "maxLength": 2048,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "workspace",
+                                "origin",
+                                "pane",
+                                "drawing",
+                                "incarnation"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "Drawing"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operator",
+                    "target"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "expiration": {
+                "oneOf": [
+                  {
+                    "const": "Never"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "At": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "display_offset_minutes": {
+                            "maximum": 840,
+                            "minimum": -720,
+                            "type": "integer"
+                          },
+                          "utc_ms": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "utc_ms",
+                          "display_offset_minutes"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "At"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "frequency": {
+                "enum": [
+                  "Once",
+                  "PerBar",
+                  "PerBarClose",
+                  "PerMinute"
+                ]
+              },
+              "id": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "market": {
+                "additionalProperties": false,
+                "properties": {
+                  "aggregation": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "source": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Live": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "feed": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "feed"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Live"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "Replay": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "recording": {
+                                "maxLength": 2048,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "recording"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "Replay"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "symbol": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "symbol",
+                  "aggregation"
+                ],
+                "type": "object"
+              },
+              "message": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "notification": {
+                "additionalProperties": false,
+                "properties": {
+                  "popup": {
+                    "type": "boolean"
+                  },
+                  "sound": {
+                    "enum": [
+                      null,
+                      "information",
+                      "question",
+                      "exclamation",
+                      "critical",
+                      "beep",
+                      "american-phone",
+                      "business-phone",
+                      "cuckoo",
+                      "english-phone",
+                      "high-pitched-beep",
+                      "low-beep",
+                      "short-beep",
+                      "aviary",
+                      "brook",
+                      "city",
+                      "dock",
+                      "dockside",
+                      "ebb-tide",
+                      "everglades",
+                      "foghorn",
+                      "hail",
+                      "northwoods",
+                      "oceanside",
+                      "rain",
+                      "rainforest",
+                      "steam-train",
+                      "summer-night",
+                      "surfs-up",
+                      "thunderstorm",
+                      "white-noise",
+                      "wind-chimes",
+                      "yosemite-falls"
+                    ]
+                  },
+                  "sound_seconds": {
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "toast": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "popup",
+                  "toast"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "version",
+              "id",
+              "name",
+              "market",
+              "conditions",
+              "frequency",
+              "expiration",
+              "message",
+              "notification"
+            ],
+            "type": "object",
+            "x-frequency-semantics": {
+              "Once": "Complete after the first qualifying event; rearm explicitly.",
+              "PerBar": "At most once per actual bar identity.",
+              "PerBarClose": "Only each distinct committed close.",
+              "PerMinute": "At most once per monotonic session minute."
+            },
+            "x-operator-targets": {
+              "Crossing": [
+                "Value",
+                "Line"
+              ],
+              "CrossingDown": [
+                "Value",
+                "Line"
+              ],
+              "CrossingUp": [
+                "Value",
+                "Line"
+              ],
+              "Entering": [
+                "Channel",
+                "Rectangle"
+              ],
+              "Exiting": [
+                "Channel",
+                "Rectangle"
+              ],
+              "GreaterThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Inside": [
+                "Channel",
+                "Rectangle"
+              ],
+              "LessThan": [
+                "Value",
+                "Line",
+                "Rectangle"
+              ],
+              "Outside": [
+                "Channel",
+                "Rectangle"
+              ]
+            }
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "valid": {
+            "const": true
+          }
+        },
+        "required": [
+          "valid"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "alerts.validate",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Draws an arrow between two chart coordinates, attributed to its author and removable in one action.",
       "destructive": false,
       "dry_run_supported": false,
@@ -26349,6 +29370,11 @@
   ],
   "modules": [
     {
+      "description": "Persistent local price alerts and immutable firing history.",
+      "id": "alerts",
+      "title": "Alerts"
+    },
+    {
       "description": "Indicators and drawings the trader placed on the chart.",
       "id": "analysis",
       "title": "Analysis"
@@ -26569,6 +29595,16 @@
         "cockpit"
       ],
       "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Permanently delete local alert definitions or clear recorded alert history. No command restores removed definitions or events. Deleting a definition preserves its recorded history; clearing history preserves definitions.",
+      "id": "cockpit.alert.delete",
+      "label": "Delete alerts and alert history",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": true
     },
     {
       "default_grant": "prompt",

@@ -950,6 +950,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.pop_out", 1, Value::Null, Readback::Moves),
         ("canvas.pane.return", 1, Value::Null, Readback::Moves),
         ("canvas.pane.remove", 1, Value::Null, Readback::Moves),
+        ("alerts.open", 1, json!({}), Readback::Moves),
         // Last of all: it closes the active tab, edits or not.
         ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]

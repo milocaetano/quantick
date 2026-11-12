@@ -36,6 +36,9 @@ use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
 
+mod alert_target_binding_tests;
+mod alerts_control_tests;
+mod alerts_native_tests;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;

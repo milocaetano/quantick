@@ -482,3 +482,77 @@ amendment for the PR's CI completion, not recalibration: calibration history,
 limits, host, toolchain, jobs, protocol, selection and representatives are
 unchanged. A fresh ordinary exact-final-head run must still pass every ceiling;
 this amendment does not authorize automatic future identity refreshes.
+
+
+#### Alerts member-only applicability amendment (PR #867)
+
+The scoped [#858 amendment](https://github.com/milocaetano/quantick/issues/858)
+binds the active root-manifest SHA256 to
+`6a723dc22f754631f58c6d9117754c6a5e5892dcaa6092f265949051297b5425`.
+Relative to `bd725cf788426050f6fa5e48c7780696715eaf6a`, only `crates/alerts`
+is added to the root workspace members; all other parsed manifest values,
+including build profiles, are equal. Calibration identity/history, numerical
+ceilings, host, toolchain, jobs, protocol and representatives remain unchanged.
+
+The [retained run](https://github.com/milocaetano/quantick/actions/runs/42761366116)
+at `f63656948c8232914570b5dbdcd4cf2c5e890acc` completed all five-sample series
+and failed the old manifest identity. Its loop maxima were app 49.144 seconds
+(limit 82.126), orderflow 44.086 (limit 38.703), and pine 2.174 (limit 2.653).
+The orderflow result is an actual over-budget measurement, not a PASS hidden
+by the identity failure: its package test run took 41.897 seconds, with only
+0.12 seconds reported by Cargo before test execution.
+
+Orderflow, appearance, engine and orderbook source/manifest trees are unchanged
+from the pinned base. The lockfile adds only alerts and incoming references
+from app/control-handlers/stores/strategy; no external versions or orderflow
+resolution entries change. No timing ceiling is raised. The next ordinary
+exact-final-head run is the **one authorized outside-diff retry (count 1)**;
+this count does not reset with the metadata commit. It must pass every existing
+ceiling, or the timing failure remains a blocker. This scoped amendment does
+not authorize automatic future identity refreshes or additional retries.
+
+#### Post-main-integration third-owner calibration (#967)
+
+The scoped [#967 repair](https://github.com/milocaetano/quantick/issues/967)
+replaces Pine with control-schema after main integration. Before integration,
+`3bd1ab64b37655a78646d9adfad418d23faa2ec2` ranks Pine at 11,493 lines above
+control-schema at 11,349. The frozen lexer at
+`617329170fe2797d9d93370d72e713f893d8f2de` ranks app 63,807, orderflow 18,771,
+control-schema 11,821 and Pine 11,493 production lines. The incoming native
+indicator schema (`fd6cc39e2`, merged through #951) adds the new schema module
+and decimal support; the canvas integration also grows its schema. The actual
+representative is `crates/control-schema/src/evidence.rs` (688 production
+lines). Selection remains computed by the canonical lexer.
+
+The complete [reference run](https://github.com/milocaetano/quantick/actions/runs/43234386538)
+started at `2026-11-12T14:17:58.381940+00:00` on that exact source SHA and
+failed with `uncalibrated top-three/source drift`. Its retained
+[artifact 13953381626](https://github.com/milocaetano/quantick/actions/runs/43234386538/artifacts/13953381626)
+has archive SHA256
+`7242481b5456a2763f06dbb1f6a0ada58e23fb99d38d5e604e2f09894dabb5af`.
+Canonical inspection validates raw digests, exact-source ranking and required
+inputs, all five touched builds per crate, tests, contention observations and
+source restoration. Host class, Rust 1.98.0, four jobs, root-manifest hash and
+protocol hash equal the existing contract.
+
+All five control-schema loops are retained: 5.233369451, 5.203048159,
+5.393984511, 5.311937807 and 5.373083915 seconds. The unchanged policy gives
+`ceil(1.25 * 5.393984511 * 1000) / 1000 = 6.743` seconds. This is the newly
+selected third owner's limit under the current protocol; the historical
+3.384-second control-schema limit above belongs to the previous protocol.
+App's maximum 48.061902781 seconds and orderflow's 31.759286447 seconds fit
+all five samples under their unchanged 82.126 and 38.703 ceilings. The full
+automatic proposal is not adopted. No existing applicable ceiling is raised,
+and the original calibration identity remains historical. The old failed
+artifact remains failure evidence, not a passing ordinary run.
+
+C8 (retained-series acceptance): `python tools/edit_loop/measure.py propose
+<report.json> --repo .` audits the complete reference above; after committing
+the scoped correction, `python tools/edit_loop/measure.py check <report.json>
+--repo .` verifies every retained loop against the committed limits.
+
+C9 (final-head acceptance): `gh pr checks <child-pr> --watch --interval 60`
+must finish green on the final committed correction, followed by canonical
+`check` on that exact-head run's complete artifact. This is the one final-CI
+repair, retry count 1; the metadata correction does not reset that count or
+authorize a blind retry. Raw artifacts remain outside Git.

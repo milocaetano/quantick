@@ -68,9 +68,9 @@ pub fn instructions(profile_ceiling: &str) -> String {
 fn instructions_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> String {
     let authority = if profile_ceiling == COCKPIT_PROFILE {
         if allow_recovery {
-            "Authority: cockpit profile with explicit --allow-recovery. Recovery is requested; the window must also grant cockpit.recover. Feed reload/source changes rebuild timelines, close paper positions and disarm strategies. Read, annotation, layout and feed operations remain subject to grants. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
+            "Authority: cockpit profile with explicit --allow-recovery. Recovery is requested; the window must also grant cockpit.recover. Feed reload/source changes rebuild timelines, close paper positions and disarm strategies. Read, annotation, layout and feed operations remain subject to grants. Alert deletion and history clearing require --allow-alert-delete and the separate cockpit.alert.delete grant. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
         } else {
-            "Authority: cockpit profile. It may read, annotate, manage layout and reconnect feeds, subject to the window's grants. Recovery is excluded by default: feed reload/source changes also require --allow-recovery and the window's cockpit.recover grant; they rebuild timelines, close paper positions and disarm strategies. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
+            "Authority: cockpit profile. It may read, annotate, manage layout and reconnect feeds, subject to the window's grants. Recovery is excluded by default: feed reload/source changes also require --allow-recovery and the window's cockpit.recover grant; they rebuild timelines, close paper positions and disarm strategies. Alert deletion and history clearing require --allow-alert-delete and the separate cockpit.alert.delete grant. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
         }
     } else if profile_ceiling == ANNOTATOR_PROFILE {
         "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
@@ -114,7 +114,7 @@ impl McpServer {
         profile_ceiling: &str,
         allow_recovery: bool,
     ) -> Self {
-        Self::new_with_opt_ins(link, profile_ceiling, allow_recovery, false)
+        Self::new_with_opt_ins(link, profile_ceiling, allow_recovery, false, false)
     }
 
     /// Explicit sensitive scopes still require matching grants in the window.
@@ -122,6 +122,7 @@ impl McpServer {
         link: Box<dyn ControlLink>,
         profile_ceiling: &str,
         allow_recovery: bool,
+        allow_alert_delete: bool,
         allow_indicators: bool,
     ) -> Self {
         // The ceiling decides what the client is offered and what it is told,
@@ -149,7 +150,7 @@ impl McpServer {
             tools: published_tools(
                 tools::tools_with_sensitive_edits(
                     profile_ceiling,
-                    allow_recovery || allow_indicators,
+                    allow_recovery || allow_alert_delete || allow_indicators,
                 ),
                 publish_output_schemas(),
             ),
@@ -365,6 +366,47 @@ mod tests {
 
     use super::*;
     use crate::fake::FakeLink;
+
+    #[test]
+    fn independent_sensitive_opt_ins_advertise_loss_without_claiming_other_consent() {
+        for profile in [OBSERVER_PROFILE, COCKPIT_PROFILE] {
+            for deletion in [false, true] {
+                for indicators in [false, true] {
+                    let mut server = McpServer::new_with_opt_ins(
+                        Box::new(FakeLink::default()),
+                        profile,
+                        false,
+                        deletion,
+                        indicators,
+                    );
+                    let reply = server
+                        .handle_line(&request(1, "initialize", json!({})))
+                        .unwrap();
+                    let instructions = reply["result"]["instructions"].as_str().unwrap();
+                    assert_eq!(
+                        instructions.contains("Native indicator edits are requested"),
+                        profile == COCKPIT_PROFILE && indicators
+                    );
+                    let reply = server
+                        .handle_line(&request(2, "tools/list", json!({})))
+                        .unwrap();
+                    let invoke = reply["result"]["tools"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|tool| tool["name"] == tools::INVOKE);
+                    if profile == COCKPIT_PROFILE {
+                        assert_eq!(
+                            invoke.unwrap()["annotations"]["destructiveHint"],
+                            deletion || indicators
+                        );
+                    } else if let Some(invoke) = invoke {
+                        assert_eq!(invoke["annotations"]["destructiveHint"], false);
+                    }
+                }
+            }
+        }
+    }
 
     fn server_over(link: FakeLink) -> McpServer {
         McpServer::new(Box::new(link), "observer")
