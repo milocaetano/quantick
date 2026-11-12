@@ -472,7 +472,7 @@ fn paint_tab_surface(
         None => egui::Shape::rect_stroke(bar.shrink(0.5), corner, (1.0, palette.text_faint())),
     });
     let strip = palette.get(Token::TabStrip).to_array();
-    let edge = [rect.left(), rect.top(), rect.bottom()];
+    let edge = [bar.left(), bar.top(), bar.bottom(), bar.right()];
     let outline = fill.and_then(|c| bar_outline(c.to_array(), strip, edge, CHIP_ROUNDING_PX));
     let ink = (1.0, palette.text_primary());
     shapes.extend(outline.map(|p| egui::Shape::line(p.into_iter().map(Into::into).collect(), ink)));

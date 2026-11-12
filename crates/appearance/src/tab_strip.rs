@@ -238,7 +238,7 @@ pub fn swatch_ring_token(swatch: [u8; 4], text_primary: [u8; 4]) -> Token {
 /// a tab whose box is `left`, `top` to `bottom`, then round its top-left curve
 /// of `radius`, inset half a point so a 1 px stroke stays inside the tab.
 #[must_use]
-pub fn bar_edge_points(left: f32, top: f32, bottom: f32, radius: f32) -> Vec<[f32; 2]> {
+pub fn bar_edge_points(left: f32, top: f32, bottom: f32, right: f32, radius: f32) -> Vec<[f32; 2]> {
     let (left, top) = (left + 0.5, top + 0.5);
     let arc = (0..=6).map(|step| {
         let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 6.0;
@@ -247,19 +247,24 @@ pub fn bar_edge_points(left: f32, top: f32, bottom: f32, radius: f32) -> Vec<[f3
             top + radius - radius * angle.sin(),
         ]
     });
-    std::iter::once([left, bottom]).chain(arc).collect()
+    // A bar wider than the corner keeps a straight top edge on the strip.
+    let rest = (right > left + radius).then_some([right, top]);
+    std::iter::once([left, bottom])
+        .chain(arc)
+        .chain(rest)
+        .collect()
 }
 
 /// The polyline of a bar's outline when it needs one against the strip (see
-/// [`bar_needs_outline`]): `[left, top, bottom]` is the tab's box edge.
+/// [`bar_needs_outline`]): `[left, top, bottom, right]` is the bar's box.
 #[must_use]
 pub fn bar_outline(
     bar: [u8; 4],
     strip: [u8; 4],
-    [left, top, bottom]: [f32; 3],
+    [left, top, bottom, right]: [f32; 4],
     radius: f32,
 ) -> Option<Vec<[f32; 2]>> {
-    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, radius))
+    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, right, radius))
 }
 
 /// The line in the workspace's colour under the toolbar capsule, and the bar
@@ -445,6 +450,20 @@ mod tests {
         }
         assert_eq!(outlined.len(), 1, "{outlined:?}");
         assert_eq!(outlined[0].1, Token::WorkspaceChalk.key());
+    }
+
+    /// The outline climbs the bar's left edge, rounds its corner and runs on
+    /// along the top to the bar's right edge when the bar is wider than the
+    /// corner.
+    #[test]
+    fn a_bar_outline_follows_the_corner_and_the_whole_top_edge() {
+        let points = bar_edge_points(10.0, 0.0, 30.0, 19.0, 6.0);
+        assert_eq!(points.first(), Some(&[10.5, 30.0]));
+        assert_eq!(points[1], [10.5, 6.5]);
+        assert!(points[1..8].iter().all(|[x, y]| *x <= 16.5 && *y <= 6.5));
+        assert_eq!(points.last(), Some(&[19.0, 0.5]));
+        let narrow = bar_edge_points(10.0, 0.0, 30.0, 14.0, 6.0);
+        assert_eq!(narrow.len(), 8, "a bar inside the corner ends on the arc");
     }
 
     /// The current swatch's ring reads on every colour in both themes.
