@@ -82,7 +82,7 @@ impl AlertSurface {
         let width = 340.0_f32
             .min(ctx.available_rect().width() * 0.55)
             .max(180.0);
-        egui::SidePanel::right("alerts_manager_panel")
+        egui::SidePanel::right(egui::Id::new((ctx.viewport_id(), "alerts_manager_panel")))
             .resizable(true)
             .default_width(width)
             .width_range(180.0..=width)
@@ -94,7 +94,7 @@ impl AlertSurface {
                     }
                 });
                 if let Some(storage_error) = storage_error {
-                    error(ui, &error_text(storage_error));
+                    show_storage_error(ui, storage_error);
                 } else {
                     self.draw_manager(ui, book, context, &mut response);
                 }
@@ -283,10 +283,8 @@ impl Surface for AlertSurface {
             .show(ctx, |ui| {
                 ui.set_width(width);
                 if let Some(storage_error) = env.alert_error {
-                    ui.heading("Alert storage is unavailable");
-                    error(ui, &error_text(storage_error));
-                    ui.label("Definitions and history cannot be confirmed. Failed saves do not replace the last saved definitions.");
-                    ui.label("Correct the alert storage file or its permissions, then restart Quantick to reload it. Your open draft is retained until you close this window or restart.");
+                    show_storage_error(ui, storage_error);
+                    ui.label("Your open draft is retained until you close this window or restart.");
                 } else if self.draft.is_some() {
                     self.draw_editor(ui, book, env, &mut response);
                 } else {
@@ -342,6 +340,14 @@ fn action(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response {
 }
 fn error(ui: &mut egui::Ui, message: &str) {
     ui.colored_label(ui.visuals().error_fg_color, message);
+}
+fn show_storage_error(ui: &mut egui::Ui, problem: &AlertError) {
+    ui.heading("Alert storage is unavailable");
+    error(ui, &error_text(problem));
+    ui.label("Definitions and history cannot be confirmed. Failed saves do not replace the last saved definitions.");
+    ui.label(
+        "Correct the alert storage file or its permissions, then restart Quantick to reload it.",
+    );
 }
 fn error_text(value: &AlertError) -> String {
     match value {

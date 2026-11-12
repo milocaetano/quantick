@@ -612,7 +612,65 @@ fn alerts_parity_integration() {
 
 #[test]
 fn alerts_parity_surface_harness() {
+    alerts_manager_owns_delete_keys_in_its_viewport();
     the_context_bar_yields_to_the_open_alert_surface();
     a_search_that_hides_every_alert_does_not_claim_there_are_none();
     tab_keeps_the_focused_control_visible_in_a_short_alert_editor();
+}
+
+#[test]
+fn alerts_manager_owns_delete_keys_in_its_viewport() {
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        for hide_strip in [false, true] {
+            let ctx = egui::Context::default();
+            let (mut app, _commands) = app_with_history(200);
+            run_frame(&mut app, &ctx);
+            let chart = egui::pos2(500.0, 300.0);
+            let drawing = place_drawing(&mut app, &ctx, "horizontal-line", &[chart]);
+            app.toolrail.arm(Tool::Pointer);
+            app.drawing_pane_mut().drawings.select(Some(drawing));
+            app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
+            if hide_strip {
+                app.dock.toggle_visible();
+            }
+            run_frame(&mut app, &ctx);
+            let panel = egui::containers::panel::PanelState::load(
+                &ctx,
+                egui::Id::new((egui::ViewportId::ROOT, "alerts_manager_panel")),
+            )
+            .expect("the manager has a viewport-owned panel");
+            let manager = panel.rect.center();
+            run_frame_with_events(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(manager), key_press(key)],
+            );
+            assert!(crate::dock::holds_pointer(&app.dock, &ctx, true));
+            assert_eq!(app.drawing_pane_mut().drawings.items().len(), 1);
+            assert!(app.drawing_pane_mut().drawings.selected().is_some());
+
+            let other = egui::ViewportId::from_hash_of("alerts-other-window");
+            let mut input = egui::RawInput {
+                viewport_id: other,
+                events: vec![egui::Event::PointerMoved(manager)],
+                ..Default::default()
+            };
+            input.viewports.entry(other).or_default();
+            let _ = ctx.run(input, |ctx| {
+                assert!(
+                    !crate::dock::holds_pointer(&app.dock, ctx, true),
+                    "the other viewport cannot inherit this manager's rectangle"
+                );
+            });
+            run_frame_with_events(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(chart), key_press(key)],
+            );
+            assert!(
+                app.drawing_pane_mut().drawings.items().is_empty(),
+                "{key:?} over the chart still deletes its selected drawing"
+            );
+        }
+    }
 }

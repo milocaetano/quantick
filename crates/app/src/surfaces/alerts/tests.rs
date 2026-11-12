@@ -232,11 +232,16 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         };
         for _ in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                surface.draw(ctx, &env);
+                surface.draw_manager_panel(ctx, &book, env.alert_error, None);
             });
         }
         let output = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(surface.draw(ctx, &env).alerts.is_none());
+            assert!(
+                surface
+                    .draw_manager_panel(ctx, &book, env.alert_error, None)
+                    .alerts
+                    .is_none()
+            );
         });
         let labels: Vec<_> = output
             .shapes
@@ -258,7 +263,7 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         ..SurfaceEnv::quiet(std::time::Instant::now())
     };
     let output = ctx.run(egui::RawInput::default(), |ctx| {
-        surface.draw(ctx, &env);
+        surface.draw_manager_panel(ctx, &book, env.alert_error, None);
     });
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().starts_with("No alerts."))));
 }

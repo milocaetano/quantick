@@ -1,5 +1,7 @@
 # #947 authorized desktop rail, docked Alerts manager, drawing bell painting and scene/native dispatch wiring.
 # Includes editor-only toolbar suppression, mutually exclusive dock panels and narrow manager header.
 # Predicates, attachment counting, cadence and expiry remain headless; no UI-free or root increase.
-crates/app +247
-!budget +247
+# Includes six lines for viewport-aware Alerts sidebar pointer ownership.
+# Includes shared storage-error explanation in both the sidebar and editor.
+crates/app +259
+!budget +259

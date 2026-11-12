@@ -112,7 +112,7 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
         &mut *app.audio.alerts,
         ctx,
         now,
-        crate::dock::holds_pointer(&app.dock, ctx),
+        crate::dock::holds_pointer(&app.dock, ctx, app.surfaces.alerts.is_open()),
     );
     effects.apply(&mut app.surfaces.toast, &mut app.toolrail);
 }
