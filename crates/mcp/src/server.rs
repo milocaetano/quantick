@@ -94,6 +94,7 @@ pub struct McpServer {
     /// list and what the instructions claim about its authority.
     profile_ceiling: &'static str,
     allow_recovery: bool,
+    allow_indicators: bool,
     tools: Vec<Tool>,
     protocol_version: Option<&'static str>,
     initialized: bool,
@@ -112,6 +113,16 @@ impl McpServer {
         link: Box<dyn ControlLink>,
         profile_ceiling: &str,
         allow_recovery: bool,
+    ) -> Self {
+        Self::new_with_opt_ins(link, profile_ceiling, allow_recovery, false)
+    }
+
+    /// Explicit sensitive scopes still require matching grants in the window.
+    pub fn new_with_opt_ins(
+        link: Box<dyn ControlLink>,
+        profile_ceiling: &str,
+        allow_recovery: bool,
+        allow_indicators: bool,
     ) -> Self {
         // The ceiling decides what the client is offered and what it is told,
         // and anything the adapter cannot request is treated as the read-only
@@ -134,8 +145,12 @@ impl McpServer {
             link,
             profile_ceiling,
             allow_recovery: allow_recovery && profile_ceiling == COCKPIT_PROFILE,
+            allow_indicators: allow_indicators && profile_ceiling == COCKPIT_PROFILE,
             tools: published_tools(
-                tools::tools_with_recovery(profile_ceiling, allow_recovery),
+                tools::tools_with_sensitive_edits(
+                    profile_ceiling,
+                    allow_recovery || allow_indicators,
+                ),
                 publish_output_schemas(),
             ),
             protocol_version: None,
@@ -242,7 +257,7 @@ impl McpServer {
                         "title": SERVER_TITLE,
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": instructions_with_recovery(self.profile_ceiling, self.allow_recovery),
+                    "instructions": format!("{} {}", instructions_with_recovery(self.profile_ceiling, self.allow_recovery), if self.allow_indicators { "Native indicator edits are requested via --allow-indicators; cockpit.indicators must also be granted in the window. Add, configure, hide or remove saved native indicators and their layout mirrors, including user-created entries. Removed entries and overwritten settings have no undo." } else { "Native indicator edits are excluded: they require --profile cockpit --allow-indicators and the window cockpit.indicators grant." }),
                 }))
             }
             "ping" => Ok(json!({})),
