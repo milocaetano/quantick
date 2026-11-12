@@ -5,9 +5,12 @@
 //! window paints it as a divider and drags it to move the boundary. The move
 //! trades share between those two neighbours only, so the split's other
 //! children keep their place and the shares keep their sum; each neighbour
-//! keeps [`MIN_TREE_PANE_PX`] per pane it lays along the split's axis.
+//! keeps [`MIN_TREE_PANE_PX`] per pane it lays along the split's axis. A
+//! folded strip beside a seam is skipped: the seam trades with the nearest
+//! open child past it, and the strip slides along.
 
 use super::bands::inset_seams;
+use super::presets::{LayoutPreset, PaneKind};
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
 
@@ -34,7 +37,9 @@ pub struct TreeSeam {
     pub axis: SplitAxis,
     /// The gap between the two neighbours' bands, `divider` thick.
     pub rect: CanvasRect,
-    /// Whether it moves: false beside a folded chart, whose strip is pinned.
+    /// Whether it moves: it pairs the nearest open children on each side,
+    /// sliding any folded strip between them along; false when one side has
+    /// only folded charts up to the split's end.
     pub resizable: bool,
 }
 
@@ -76,16 +81,13 @@ fn collect(
     };
     let cross = inset_seams(boxes.iter().copied().fold(*first, union), area, divider);
     let half = divider / 2.0;
-    for index in 0..children.len().saturating_sub(1) {
+    let before_seams = boxes.iter().take(children.len().saturating_sub(1));
+    for (index, before) in before_seams.enumerate() {
         let rect = match axis {
-            SplitAxis::Row => {
-                CanvasRect::new(boxes[index].right() - half, cross.y, divider, cross.h)
-            }
-            SplitAxis::Column => {
-                CanvasRect::new(cross.x, boxes[index].bottom() - half, cross.w, divider)
-            }
+            SplitAxis::Row => CanvasRect::new(before.right() - half, cross.y, divider, cross.h),
+            SplitAxis::Column => CanvasRect::new(cross.x, before.bottom() - half, cross.w, divider),
         };
-        let resizable = !pinned(state, &children[index]) && !pinned(state, &children[index + 1]);
+        let resizable = partners(state, children, index).is_some();
         out.push(TreeSeam {
             address: SeamAddress {
                 path: path.clone(),
@@ -103,9 +105,24 @@ fn collect(
     }
 }
 
-/// Whether `child` is a folded pane its split holds to a strip.
+/// Whether `child` is folded to a strip its split holds: a folded pane, or a
+/// split whose every pane is folded.
 fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
-    matches!(child, PaneTree::Pane { slot, .. } if state.minimized().contains(slot))
+    match child {
+        PaneTree::Pane { slot, .. } => state.minimized().contains(slot),
+        PaneTree::Split { children, .. } => children.iter().all(|child| pinned(state, child)),
+    }
+}
+
+/// The two open children the seam after child `index` trades between: the
+/// nearest unfolded one at or before it and the nearest after it. A strip
+/// between them keeps its extent and slides along. `None` when either side
+/// is folded to the split's end.
+fn partners(state: &CanvasState, children: &[PaneTree], index: usize) -> Option<(usize, usize)> {
+    let open = |at: &usize| !pinned(state, &children[*at]);
+    let first = (0..=index).rev().find(open)?;
+    let second = (index + 1..children.len()).find(open)?;
+    Some((first, second))
 }
 
 /// The rectangle `node`'s panes cover.
@@ -189,9 +206,12 @@ fn branch(tree: &PaneTree, slot: PaneSlot, axis: SplitAxis) -> Option<(Vec<usize
     found
 }
 
-/// The two neighbours a seam divides, as a canvas lays them out: their
-/// stored shares, and how much share one point of extent is worth.
+/// The two open children a seam trades between, as a canvas lays them out:
+/// their indices, stored shares, and how much share one point of extent is
+/// worth.
 struct Pair {
+    first: usize,
+    second: usize,
     first_share: f32,
     pair_share: f32,
     /// Share per point along the split's axis.
@@ -216,15 +236,14 @@ impl CanvasState {
         else {
             return Err(CanvasRefusal::NoSeam);
         };
-        let (Some(first), Some(second)) = (children.get(seam.index), children.get(seam.index + 1))
-        else {
-            return Err(CanvasRefusal::NoSeam);
-        };
-        if shares.len() != children.len() || pinned(self, first) || pinned(self, second) {
+        if seam.index + 1 >= children.len() || shares.len() != children.len() {
             return Err(CanvasRefusal::NoSeam);
         }
-        let first_share = shares[seam.index].max(0.0);
-        let pair_share = first_share + shares[seam.index + 1].max(0.0);
+        let (at_first, at_second) =
+            partners(self, children, seam.index).ok_or(CanvasRefusal::NoSeam)?;
+        let (first, second) = (&children[at_first], &children[at_second]);
+        let first_share = shares[at_first].max(0.0);
+        let pair_share = first_share + shares[at_second].max(0.0);
         if pair_share <= f32::EPSILON {
             return Err(CanvasRefusal::NoSeam);
         }
@@ -239,6 +258,8 @@ impl CanvasState {
         }
         let unit = pair_share / pair_px;
         Ok(Pair {
+            first: at_first,
+            second: at_second,
             first_share,
             pair_share,
             unit,
@@ -267,8 +288,8 @@ impl CanvasState {
             return Err(CanvasRefusal::NoSeam);
         };
         let shares = shares.to_mut();
-        shares[seam.index] = first;
-        shares[seam.index + 1] = pair.pair_share - first;
+        shares[pair.first] = first;
+        shares[pair.second] = pair.pair_share - first;
         Ok(true)
     }
 
@@ -279,7 +300,7 @@ impl CanvasState {
     ///
     /// # Errors
     /// [`CanvasRefusal::NoSeam`] when the tree holds no such seam, a chart is
-    /// maximized, or a neighbour is folded; [`CanvasRefusal::NoRoom`] when
+    /// maximized, or one side holds only folded charts; [`CanvasRefusal::NoRoom`] when
     /// the pair is narrower than both minimums together.
     pub fn move_seam(
         &mut self,
@@ -296,8 +317,9 @@ impl CanvasState {
 
     /// Give `slot`'s branch `share` (0..1) of the extent of the deepest split
     /// along `axis` that holds it, as [`Self::pane_share`] reads it back. It
-    /// trades with the neighbour whose seam a hand could drag: the next one,
-    /// else the previous, never a folded chart; held to the minimum a drag
+    /// trades with the open child whose seam a hand could drag: the next one,
+    /// else the previous, past any folded strip; a folded chart itself never
+    /// resizes. Held to the minimum a drag
     /// keeps. Answers whether anything moved.
     ///
     /// # Errors
@@ -314,6 +336,12 @@ impl CanvasState {
     ) -> Result<bool, CanvasRefusal> {
         self.docked(slot)?;
         let (path, index) = branch(self.tree(), slot, axis).ok_or(CanvasRefusal::NoSeam)?;
+        let split = node_at(self.tree(), &path).ok_or(CanvasRefusal::NoSeam)?;
+        if let PaneTree::Split { children, .. } = split
+            && children.get(index).is_none_or(|child| pinned(self, child))
+        {
+            return Err(CanvasRefusal::NoSeam);
+        }
         let (seam, pair) = [Some(index), index.checked_sub(1)]
             .into_iter()
             .flatten()
@@ -329,9 +357,8 @@ impl CanvasState {
             .ok_or(CanvasRefusal::NoSeam)?;
         let pair = pair?;
         let rects = self.rects(area);
-        let split = node_at(self.tree(), &path).ok_or(CanvasRefusal::NoSeam)?;
         let own = share.clamp(0.0, 1.0) * extent(bounds(split, &rects), axis) * pair.unit;
-        let first = if seam.index == index {
+        let first = if pair.first == index {
             own
         } else {
             pair.pair_share - own
@@ -357,5 +384,68 @@ impl CanvasState {
         let whole = extent(bounds(split, &rects), axis);
         let own = extent(bounds(children.get(index)?, &rects), axis);
         (whole > f32::EPSILON).then(|| own / whole)
+    }
+
+    /// `preset` laid out with the column painter's `split`, if any, in its
+    /// row: what a save keeping only the preset's name and the split
+    /// rebuilds, and so what it may leave its tree out for.
+    #[must_use]
+    pub fn from_preset_split(preset: &LayoutPreset, split: Option<f32>) -> Self {
+        let mut state = Self::from_preset(preset);
+        if let Some(mut split) = split {
+            state.mirror_split(preset, &mut split, true);
+        }
+        state
+    }
+
+    /// The model a save carries for this canvas, laid out as `preset` with the
+    /// column painter's `split`, which owns it while `columns` draw: the tree
+    /// as the next frame draws it, or `None` when the preset's name and the
+    /// split rebuild it ([`Self::from_preset_split`]).
+    #[must_use]
+    pub fn saved_form(&self, preset: &LayoutPreset, split: f32, columns: bool) -> Option<Self> {
+        let (mut state, mut split) = (self.clone(), split);
+        state.mirror_split(preset, &mut split, columns);
+        let plain = columns && state == Self::from_preset_split(preset, Some(split));
+        (!plain).then_some(state)
+    }
+
+    /// Keep the column painter's `split` and this tree's row share one number
+    /// while the tree is laid out as the column layout `preset`, floats and
+    /// folds aside: the share its first timeframe chart's branch stores along
+    /// the row. The painter drawing (`columns`) owns it and the other follows,
+    /// so a fold, a float or a call never jumps the divider. With `columns`
+    /// the tree takes `split`, its other children sharing the rest as they
+    /// did; else `split` takes the tree's. Answers whether either changed.
+    pub fn mirror_split(&mut self, preset: &LayoutPreset, split: &mut f32, columns: bool) -> bool {
+        let time = (self.tree().panes().into_iter()).find(|(_, kind)| *kind == PaneKind::Time);
+        let Some((path, index)) = time
+            .filter(|_| self.preset() == Some(preset))
+            .and_then(|(slot, _)| branch(self.tree(), slot, SplitAxis::Row))
+        else {
+            return false;
+        };
+        let Some(PaneTree::Split { shares, .. }) = node_at_mut(self.tree_mut(), &path) else {
+            return false;
+        };
+        let sum: f32 = shares.iter().map(|share| share.max(0.0)).sum();
+        let held = shares.get(index).map_or(0.0, |share| share.max(0.0));
+        let rest = sum - held;
+        if sum <= f32::EPSILON || (*split - held / sum).abs() <= f32::EPSILON {
+            return false;
+        }
+        if !columns {
+            *split = held / sum;
+            return true;
+        }
+        let others = (shares.len() - 1).max(1) as f32;
+        for (at, share) in shares.to_mut().iter_mut().enumerate() {
+            *share = match at {
+                _ if at == index => *split,
+                _ if rest > f32::EPSILON => share.max(0.0) / rest * (1.0 - *split),
+                _ => (1.0 - *split) / others,
+            };
+        }
+        true
     }
 }

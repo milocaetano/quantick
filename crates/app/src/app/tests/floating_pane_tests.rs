@@ -158,7 +158,7 @@ fn left_edge_docks_corner_parks_reload_restores() {
     drag_sized(&mut app, &ctx, TEST_WINDOW, from, corner);
     frames(&mut app, &ctx, 4);
     let area = crate::floating_panes::model_rect(canvas);
-    let expected = park_rect(area, Corner::BottomRight, (before.w, before.h));
+    let expected = park_rect(area, Corner::BottomRight, (before.w, before.h), &[]);
     assert_eq!(
         host(&app, parked),
         Some(FloatHost::Canvas { rect: expected })
@@ -273,4 +273,179 @@ fn canvas_hooks_add_hold_and_open_the_menu() {
         drawn(&app, "canvas.dock.left").is_some(),
         "the drop targets"
     );
+}
+
+/// Where the canvas model lays every docked pane of the active tab now.
+fn model_rects(app: &QuantickApp) -> Vec<(u32, CanvasRect)> {
+    let tab = &app.active_tab().canvas;
+    let area = crate::floating_panes::model_rect(tab.last_canvas);
+    tab.state.rects(area)
+}
+
+/// Each pane with the built chart its slot shows.
+fn seats(app: &mut QuantickApp) -> Vec<(u32, Option<Option<usize>>)> {
+    let canvas = &mut app.active_tab_mut().canvas;
+    let slots: Vec<u32> = canvas.state.panes().iter().map(|pane| pane.0).collect();
+    let mut seat =
+        |slot| quantick_workspace::canvas::slot_seat(&canvas.state, &mut canvas.seats, slot);
+    slots.into_iter().map(|slot| (slot, seat(slot))).collect()
+}
+
+/// C15: on 2 TF + Flow a chart is added, docked below chart 1 by a drop on
+/// that chart's bottom zone, minimized, restored, and a seam dragged: every
+/// pane keeps its seat, the restore puts every pane back where it stood, and
+/// the seam moves only the panes beside it.
+#[test]
+fn canvas_dock_minimize_restore_resize_round_trip() {
+    let (mut app, ctx) = saved_tab("time+time+flow");
+    let added = add_chart(&mut app, &ctx);
+    let first = model_rects(&app);
+    let one = (first.iter()).find(|(slot, _)| *slot == 1);
+    let one = one.expect("chart 1 is docked").1;
+    let below = egui::pos2(
+        one.x + one.w / 2.0,
+        one.bottom() - quantick_workspace::canvas::DOCK_EDGE_BAND_PX - 8.0,
+    );
+    let from = grip(&app, added);
+    drag_sized(&mut app, &ctx, TEST_WINDOW, from, below);
+    frames(&mut app, &ctx, 4);
+    let docked = model_rects(&app);
+    let at =
+        |rects: &[(u32, CanvasRect)], held| rects.iter().find(|(slot, _)| *slot == held).unwrap().1;
+    let (top, under) = (at(&docked, 1), at(&docked, added));
+    assert_eq!(
+        app.active_tab().canvas.state.mode(added),
+        Some(PaneMode::Docked)
+    );
+    assert_eq!((under.x, under.w), (top.x, top.w), "below chart 1");
+    assert_eq!(top.bottom(), under.y, "chart 1 split top over bottom");
+    assert_eq!(at(&docked, 0), at(&first, 0), "chart 0 is unchanged");
+    let seated = seats(&mut app);
+
+    press(&mut app, &ctx, &format!("pane_menu.{added}"));
+    press(&mut app, &ctx, &format!("pane_menu.{added}.minimize"));
+    assert_eq!(
+        app.active_tab().canvas.state.mode(added),
+        Some(PaneMode::Minimized)
+    );
+    press(&mut app, &ctx, &format!("pane_menu.{added}.strip"));
+    assert_eq!(
+        app.active_tab().canvas.state.mode(added),
+        Some(PaneMode::Docked)
+    );
+    assert_eq!(
+        model_rects(&app),
+        docked,
+        "the restore puts every pane back"
+    );
+    assert_eq!(seats(&mut app), seated, "every pane keeps its seat");
+
+    let area = crate::floating_panes::model_rect(app.active_tab().canvas.last_canvas);
+    let state = &app.active_tab().canvas.state;
+    let seams = quantick_workspace::canvas::tree_seams(state, area, CANVAS_DIVIDER_PX);
+    let seam = (seams.iter())
+        .find(|seam| seam.axis == quantick_workspace::canvas::SplitAxis::Row && seam.resizable)
+        .expect("a seam between the charts");
+    let grab = egui::pos2(
+        seam.rect.x + seam.rect.w / 2.0,
+        seam.rect.y + seam.rect.h / 2.0,
+    );
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        grab,
+        grab + egui::vec2(30.0, 0.0),
+    );
+    frames(&mut app, &ctx, 2);
+    let moved = model_rects(&app);
+    assert_ne!(moved, docked, "the seam moved");
+    assert_eq!(seats(&mut app), seated, "a seam drag keeps every seat");
+    let flow = seated
+        .iter()
+        .find(|(_, seat)| *seat == Some(None))
+        .unwrap()
+        .0;
+    assert_eq!(
+        at(&moved, flow),
+        at(&docked, flow),
+        "the flow beyond the seam stays"
+    );
+    let (top, under) = (at(&moved, 1), at(&moved, added));
+    assert_eq!((under.x, under.w), (top.x, top.w), "still below chart 1");
+    assert!((top.h - at(&docked, 1).h).abs() < 0.5, "its split kept");
+}
+
+/// A docked chart's ⋯ is its grip: dragged past the lift distance the chart
+/// is held while it stays in place, and dropped on the flow's centre the two
+/// trade places, both docked; a click still opens the menu.
+#[test]
+fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
+    let (mut app, ctx) = saved_tab("time+time+flow");
+    let panes = app.active_tab().canvas.state.panes();
+    let kind = |want| panes.iter().find(|pane| pane.1 == want).unwrap().0;
+    let (chart, flow) = (kind(PaneKind::Time), kind(PaneKind::Flow));
+    let before = model_rects(&app);
+    let at = |held| before.iter().find(|(slot, _)| *slot == held).unwrap().1;
+    let button = drawn(&app, &format!("pane_menu.{chart}")).expect("the chart wears its ⋯");
+    let frame = |app: &mut QuantickApp, events| {
+        run_frame_sized(app, &ctx, TEST_WINDOW, events, egui::Modifiers::NONE);
+    };
+    let press = button.center();
+    frame(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(press),
+            pointer_button(press, true),
+        ],
+    );
+    frame(
+        &mut app,
+        vec![egui::Event::PointerMoved(press + egui::vec2(0.0, 60.0))],
+    );
+    let held = app.active_tab().canvas.floats.held.map(|held| held.slot());
+    assert_eq!(held, Some(chart), "held");
+    let state = &app.active_tab().canvas.state;
+    assert_eq!(
+        state.mode(chart),
+        Some(PaneMode::Docked),
+        "in place until the drop"
+    );
+    let place = at(flow);
+    let centre = egui::pos2(place.x + place.w / 2.0, place.y + place.h / 2.0);
+    frame(&mut app, vec![egui::Event::PointerMoved(centre)]);
+    frame(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(centre),
+            pointer_button(centre, false),
+        ],
+    );
+    frames(&mut app, &ctx, 3);
+    let state = &app.active_tab().canvas.state;
+    assert_eq!(
+        state.mode(chart),
+        Some(PaneMode::Docked),
+        "{:?}",
+        state.panes()
+    );
+    assert_eq!(state.mode(flow), Some(PaneMode::Docked));
+    let after = model_rects(&app);
+    let now = |held| after.iter().find(|(slot, _)| *slot == held).unwrap().1;
+    assert_eq!(
+        (now(chart), now(flow)),
+        (place, at(chart)),
+        "they traded places"
+    );
+    assert!(
+        app.active_tab().canvas.menus.open.is_none(),
+        "a drag opens no menu"
+    );
+    press_menu_opens(&mut app, &ctx, chart);
+}
+
+/// A click on the ⋯ still opens the chart's menu.
+fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
+    press(app, ctx, &format!("pane_menu.{slot}"));
+    assert_eq!(app.active_tab().canvas.menus.open, Some(slot));
 }

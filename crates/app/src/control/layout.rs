@@ -90,6 +90,7 @@ impl LayoutTab for Tab {
     fn set_split_fraction(&mut self, fraction: f32) -> bool {
         let changed = (self.canvas.split_fraction - fraction).abs() > f32::EPSILON;
         self.canvas.split_fraction = fraction;
+        self.canvas.mirror_split(true);
         changed
     }
     fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
