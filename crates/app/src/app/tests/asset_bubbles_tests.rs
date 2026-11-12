@@ -50,7 +50,7 @@ fn a_win_edit_survives_a_round_trip_through_btc_in_one_tab() {
         app.active_tab().tape().cached_config().native_tape(),
         "BTC opens on its own stable tape"
     );
-    assert_eq!(look(&app).name, "Binance BTC Spot spheres");
+    assert_eq!(look(&app).name, "Crypto default");
     select_market(&mut app, "metatrader-b3", "WINV26");
     assert_eq!(look(&app), edited, "WIN comes back exactly as it was left");
 }
@@ -135,12 +135,12 @@ fn the_mini_dollar_beside_it_is_not_the_mini_index() {
     assert_eq!(look(&app).name, "live lane pie");
 }
 
-/// Only WIN and the explicitly declared Binance BTC looks enable native tape
-/// and its volume dots.
+/// Only WIN and the crypto markets, on their declared "Crypto default", enable
+/// native tape and its volume dots.
 /// Other shipped markets retain their ordinary lane and all non-WIN markets
 /// keep the opening scale, pane and candle aggression defaults.
 #[test]
-fn only_win_and_declared_binance_btc_looks_open_with_native_tape() {
+fn only_win_and_the_crypto_markets_open_with_native_tape() {
     let config = shipped_config();
     for feed in &config.feeds {
         for symbol in feed
@@ -151,8 +151,10 @@ fn only_win_and_declared_binance_btc_looks_open_with_native_tape() {
             let app = app_on(config.clone(), &feed.id, symbol);
             let tape = app.active_tab().tape().cached_config();
             let at = format!("{}/{symbol}", feed.id);
-            let btc = matches!(feed.id.as_str(), "binance" | "binance-futures")
-                && matches!(symbol.as_str(), "BTCUSDT" | "BTCUSDT.p");
+            let btc = matches!(
+                feed.id.as_str(),
+                "binance" | "binance-futures" | "hyperliquid"
+            );
             assert_eq!(tape.native_tape(), btc, "{at} native tape policy");
             assert!(!tape.live_lane.tape_only, "{at} opens tape only");
             assert_eq!(tape.volume_dots.enabled, btc, "{at} volume dot policy");

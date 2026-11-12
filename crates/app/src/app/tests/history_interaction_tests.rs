@@ -193,7 +193,14 @@ fn history_wait_keeps_chart_drag_zoom_price_and_drawing_input_available() {
             right_edge(&app) < before,
             "history must leave drag input available at {start:?}"
         );
-        let before = app.active_tab().flow_pane.model.viewport.px_per_bar();
+        // Past the lane divider the wheel zooms the lane's window instead.
+        let zoom = |app: &QuantickApp| {
+            (
+                app.active_tab().flow_pane.model.viewport.px_per_bar(),
+                app.active_tab().tape().live_lane_window(),
+            )
+        };
+        let before = zoom(&app);
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -207,7 +214,7 @@ fn history_wait_keeps_chart_drag_zoom_price_and_drawing_input_available() {
             ],
         );
         assert_ne!(
-            app.active_tab().flow_pane.model.viewport.px_per_bar(),
+            zoom(&app),
             before,
             "history must leave zoom input available"
         );

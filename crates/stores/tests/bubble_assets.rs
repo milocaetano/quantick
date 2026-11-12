@@ -10,7 +10,8 @@ use quantick_stores::bubble_presets::{self, BubblePresetFile, PresetSource};
 use quantick_stores::config::{AppConfig, BubbleAsset};
 
 const NATIVE_PRESET: &str = "mini index regions";
-const BTC_SPOT_PRESET: &str = "Binance BTC Spot spheres";
+/// The look every crypto market opens on.
+const CRYPTO_PRESET: &str = "Crypto default";
 
 fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse")
@@ -58,11 +59,11 @@ fn the_win_family_is_one_asset_declared_by_a_config_pattern() {
     assert_eq!(wdo.preset.as_deref(), Some("live lane pie"));
     let btc = asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT");
-    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
+    assert_eq!(btc.preset.as_deref(), Some(CRYPTO_PRESET));
 }
 
 #[test]
-fn only_win_and_declared_binance_btc_looks_open_on_native_tape() {
+fn only_win_and_the_crypto_markets_open_on_native_tape() {
     let store = memory();
     let config = shipped_config();
     for feed in &config.feeds {
@@ -72,8 +73,10 @@ fn only_win_and_declared_binance_btc_looks_open_on_native_tape() {
             assert_eq!(
                 native,
                 symbol.starts_with("WIN")
-                    || (matches!(feed.id.as_str(), "binance" | "binance-futures")
-                        && matches!(symbol.as_str(), "BTCUSDT" | "BTCUSDT.p")),
+                    || matches!(
+                        feed.id.as_str(),
+                        "binance" | "binance-futures" | "hyperliquid"
+                    ),
                 "{}/{symbol} opens on the native tape: {native}",
                 feed.id
             );
@@ -133,10 +136,13 @@ fn a_win_recording_in_a_btc_tab_is_still_the_mini_index() {
     }
     let btc = config.bubble_asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT");
-    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
+    assert_eq!(btc.preset.as_deref(), Some(CRYPTO_PRESET));
     let unknown = config.bubble_asset("binance", "NOSUCHSYMBOL");
     assert_eq!(unknown.key, "NOSUCHSYMBOL");
-    assert_eq!(unknown.preset, None);
+    assert_eq!(
+        unknown.preset, None,
+        "a symbol Binance does not list keeps the operator's look"
+    );
 }
 
 /// Review round 1, finding 9: a key resolves against one declared look,
@@ -160,16 +166,21 @@ fn one_asset_key_resolves_to_one_declared_look_whichever_feed_shows_it() {
 #[test]
 fn a_pattern_on_one_venue_does_not_capture_another_venues_symbol() {
     let mut config = shipped_config();
-    config
+    let hyperliquid = config
         .feeds
         .iter_mut()
         .find(|feed| feed.id == "hyperliquid")
-        .expect("the Hyperliquid feed")
+        .expect("the Hyperliquid feed");
+    // A mode or an exact declaration would give Hyperliquid's BTC a key of
+    // its own; the pattern's reach is what is under test.
+    hyperliquid.symbol_asset_modes.remove("BTC");
+    hyperliquid.symbol_bubble_presets.remove("BTC");
+    hyperliquid
         .symbol_bubble_presets
         .insert("BTC*".to_owned(), "live lane pie".to_owned());
     let btc = config.bubble_asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT", "Binance's BTCUSDT is its own asset");
-    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
+    assert_eq!(btc.preset.as_deref(), Some(CRYPTO_PRESET));
     let perp = config.bubble_asset("hyperliquid", "BTC");
     assert_eq!(perp.key, "BTC*");
     assert_eq!(perp.preset.as_deref(), Some("live lane pie"));
