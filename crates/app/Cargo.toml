@@ -20,6 +20,7 @@ control-harness = []
 scenario-harness = ["quantick-feed/harness"]
 
 [dependencies]
+quantick-ui-model = { path = "../ui-model" }
 quantick-appearance = { path = "../appearance" }
 quantick-anchored-studies = { path = "../anchored-studies" }
 # Bounded admission between the window and its workers, and their progress.
@@ -117,6 +118,7 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+quantick-ui-model = { path = "../ui-model", features = ["test-support"] }
 # The gate clock the worker tests park a real worker on, and the ledger
 # schedules; the same fixture the crate proves itself with.
 quantick-backpressure = { path = "../backpressure", features = ["test-support"] }

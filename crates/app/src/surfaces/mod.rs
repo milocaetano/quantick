@@ -1,68 +1,18 @@
-//! The surface port — where a self-contained overlay docks.
-//!
-//! A *surface* here is a piece of chrome that floats over the chart, owns the
-//! state it draws, and is not part of any pane: the assistant's popup, the
-//! undo toast, the workspace-name box. Before this port each one was wired
-//! into `QuantickApp` by hand in four places — a field, a line in the
-//! constructor, a call in `draw_frame`, and sometimes a hotkey — so
-//! sixty-eight modules left the root struct holding 133 fields and a
-//! 1,149-line constructor. `arch-review` dimension 9 is the review half of
-//! that story and `crates/guards/src/size.rs` the mechanical half; this module is the
-//! place the wiring goes instead.
-//!
-//! # Shape, and why it copies the dock
-//!
-//! [`SurfaceEnv`] and [`SurfaceResponse`] are deliberately the same pair
-//! `dock.rs` already uses: an env carrying the slice of the application a
-//! surface may read, and a response describing what it asked the host to do
-//! afterwards. Two things follow from copying a pattern that already works
-//! here rather than inventing a second one. A surface never reaches back into
-//! `QuantickApp`, so it cannot grow a dependency on the trunk; and
-//! [`SurfaceResponse`] is a **struct, not an enum**, so a new request is an
-//! added field that defaults to "did not ask", never a `match` arm that
-//! reopens every existing caller — the failure mode dimension 9 names in
-//! `ChartLayer`'s 21 variants across 264 call sites.
-//!
-//! # Why the registry is a typed struct, not `Vec<Box<dyn Surface>>`
-//!
-//! [`Surfaces`] names its members as fields. A trait-object list would let a
-//! surface register itself without being named here, which sounds stronger
-//! until the host needs to *command* one — `show_agent_popup` has to reach
-//! the assistant's popup specifically — and the only ways back to a concrete
-//! type from `Box<dyn Surface>` are downcasting, which dimension 1 calls a
-//! broken port, or a command enum, which is the growth this port exists to
-//! stop.
-//!
-//! So the trade is made in the open: adding a surface edits this file, on
-//! purpose. What matters is that the edit is one field and one line in a file
-//! of this size instead of four edits spread through a 11,874-line trunk, and
-//! that [`Surface`] keeps the draw contract uniform so the list below cannot
-//! drift into twenty bespoke call sites. When the count outgrows a legible
-//! struct, the move is to a keyed registry — and by then the trait every
-//! surface already implements is what makes that a local change.
+//! Shared surface catalog adapters. Models own cached state; views paint and
+//! emit intents. Legacy entries keep their behavior until migrated.
+//! See quantick-ui-model/src/catalog.rs for the single registration seam.
 
-pub(crate) mod agent_popup;
-pub(crate) mod bar_switch;
-pub(crate) mod chart_settings;
 pub(crate) mod drawing_chrome;
 pub(crate) mod home;
-pub(crate) mod indicator_picker;
-pub(crate) mod indicator_preview;
-pub(crate) mod market_palette;
 pub(crate) mod remove_chart;
-pub(crate) mod script_editor;
-pub(crate) mod strategy_popup;
-pub(crate) mod toast;
 
 use std::time::Instant;
 
 use eframe::egui;
 
-pub(crate) use agent_popup::AgentPopupSurface;
-pub(crate) use bar_switch::{BarSwitchRequest, BarSwitchSurface};
+pub(crate) use bar_switch::BarSwitchRequest;
 pub(crate) use chart_settings::{ChartSettingsSurface, ChartSettingsTab};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
-pub(crate) use indicator_preview::IndicatorPreviewSurface;
 pub(crate) use market_palette::MarketPaletteSurface;
 pub(crate) use strategy_popup::StrategyPopupSurface;
 pub(crate) use toast::ToastSurface;
@@ -290,6 +240,14 @@ pub(crate) trait Surface {
     /// enough to run unconditionally per frame.
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse;
 
+    /// Modal input runs before chrome hotkeys.
+    fn capture_keyboard(&mut self, _ctx: &egui::Context) {}
+
+    /// Shared entry for a floating view or a view inside existing chrome.
+    fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        self.draw(target.context(), env)
+    }
+
     /// Open whatever this surface's `QUANTICK_*` capture hook asks for, once,
     /// before the first frame is drawn. Takes the same [`SurfaceEnv`] the
     /// draw does, so a hook that needs to know something about the
@@ -306,48 +264,152 @@ pub(crate) trait Surface {
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
 }
 
-/// Every floating surface the application owns.
-#[derive(Default)]
-pub(crate) struct Surfaces {
-    pub script_editor: script_editor::ScriptEditorSurface,
-    pub indicator_picker: indicator_picker::IndicatorPickerSurface,
-    /// Whether the capture hooks have run.
-    ///
-    /// They are applied on the first *drawn frame*, not at construction. The
-    /// toast expires on a deadline, so starting that clock before wgpu init
-    /// and the history backfill have finished can retire a hook-raised toast
-    /// before frame one ever reaches the screen — and the failure is silent,
-    /// read as "the toast isn't there" rather than as a mistimed hook.
-    #[cfg(any(feature = "scenario-harness", test))]
-    hooks_applied: bool,
-    /// The assistant's popup — raised by `quantick_notify` over the control
-    /// plane, dismissed by the trader.
-    pub agent_popup: AgentPopupSurface,
-    /// The quick bar switch, opened by typing a number over the chart.
-    pub bar_switch: BarSwitchSurface,
-    /// The banner over a pane whose indicator is previewing an unapplied
-    /// draft.
-    pub indicator_preview: IndicatorPreviewSurface,
-    /// The chart settings window — candles and footprint as tabs — opened
-    /// by a double click on the candles, the toolbar, the menus and a pane's
-    /// layer menu.
-    pub chart_settings: ChartSettingsSurface,
-    /// "Open a market", opened by the `+`, Ctrl+T and Home.
-    pub market_palette: MarketPaletteSurface,
-    /// The "Arm strategy" dialog, opened by right-clicking a drawn region.
-    pub strategy_popup: StrategyPopupSurface,
-    /// The window's acknowledgement channel, with Undo where the act has one.
-    pub toast: ToastSurface,
-    pub widgets: crate::widget_surfaces::WidgetSurfaces,
+/// The existing egui host supplies either an overlay context or its chrome Ui.
+/// Chrome views use `ui` directly; overlay views use `context()`.
+pub(crate) struct ViewContext<'a> {
+    pub ctx: &'a egui::Context,
+    pub ui: Option<&'a mut egui::Ui>,
+}
+impl ViewContext<'_> {
+    pub fn context(&self) -> &egui::Context {
+        self.ui.as_ref().map_or(self.ctx, |ui| ui.ctx())
+    }
 }
 
-impl Surfaces {
-    /// Modal keyboard capture runs before chrome hotkeys.
-    pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
-        self.indicator_picker.capture_keyboard(ctx);
-        self.script_editor.capture_keyboard(ctx);
-    }
+/// Paint cached model state and return an intent only when input changes it.
+/// Time-dependent views include the supplied time in their intent.
+pub(crate) trait View<M: quantick_ui_model::Model> {
+    fn capture_keyboard(&mut self, _ctx: &egui::Context) {}
+    #[cfg(any(feature = "scenario-harness", test))]
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
+    fn id(&self) -> &'static str;
+    fn paint(
+        &mut self,
+        state: &M::State,
+        target: &mut ViewContext<'_>,
+        env: &SurfaceEnv<'_>,
+    ) -> Option<M::Intent>;
+}
 
+/// The same adapter drives migrated views and compatibility views.
+pub(crate) struct Adapter<M: quantick_ui_model::Model, V> {
+    pub model_state: M::State,
+    pub view: V,
+    pub effects: fn(M::Effects) -> SurfaceResponse,
+}
+impl<M: quantick_ui_model::Model, V> Adapter<M, V> {
+    /// Host/agent intents use the same transition and effect conversion as UI input.
+    pub fn update(&mut self, intent: M::Intent) -> SurfaceResponse {
+        (self.effects)(M::update(&mut self.model_state, intent))
+    }
+}
+impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
+    fn capture_keyboard(&mut self, ctx: &egui::Context) {
+        self.view.capture_keyboard(ctx);
+    }
+    #[cfg(any(feature = "scenario-harness", test))]
+    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
+        self.view.apply_env_hook(env);
+    }
+    fn id(&self) -> &'static str {
+        self.view.id()
+    }
+    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        self.draw_in(&mut ViewContext { ctx, ui: None }, env)
+    }
+    fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let Some(intent) = self.view.paint(&self.model_state, target, env) else {
+            return SurfaceResponse::default();
+        };
+        self.update(intent)
+    }
+}
+
+fn ignore_keyboard<S>(_: &mut S, _: &egui::Context) {}
+
+struct LegacyView<'a, S> {
+    surface: &'a mut S,
+    keyboard: fn(&mut S, &egui::Context),
+    draw: fn(&mut S, &egui::Context, &SurfaceEnv<'_>) -> SurfaceResponse,
+}
+impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView<'_, S> {
+    fn capture_keyboard(&mut self, ctx: &egui::Context) {
+        (self.keyboard)(self.surface, ctx);
+    }
+    fn id(&self) -> &'static str {
+        self.surface.id()
+    }
+    fn paint(
+        &mut self,
+        _: &(),
+        target: &mut ViewContext<'_>,
+        env: &SurfaceEnv<'_>,
+    ) -> Option<SurfaceResponse> {
+        Some((self.draw)(self.surface, target.context(), env))
+    }
+}
+
+macro_rules! register_surfaces {
+    (legacy { $( $legacy:ident: $ty:ident => $draw:path, $keyboard:path; )* }
+     models { $( $field:ident: $model:ident, $view:ident, $effects:path, $slot:ident; )* }
+     fixtures { $($fixture:ident: $fixture_slot:ident;)* }) => {
+        $(pub(crate) mod $legacy;)*
+        $(pub(crate) mod $view;)*
+        pub(crate) struct Surfaces {
+            $(pub $legacy: $legacy::$ty,)*
+            $(pub $field: Adapter<quantick_ui_model::$model::Model, $view::View>,)*
+            pub widgets: crate::widget_surfaces::WidgetSurfaces,
+            $(#[cfg(test)] pub $fixture: Adapter<quantick_ui_model::$fixture::Model, tests::FixtureView>,)*
+            #[cfg(any(feature = "scenario-harness", test))]
+            hooks_applied: bool,
+        }
+        impl Default for Surfaces {
+            fn default() -> Self {
+                Self {
+                    $($legacy: Default::default(),)*
+                    $($field: Adapter { model_state: Default::default(), view: Default::default(), effects: $effects },)*
+                    widgets: Default::default(),
+                    $(#[cfg(test)] $fixture: Adapter { model_state: 0, view: Default::default(), effects: |(value, _)| SurfaceResponse { undo_drawing: value > 0, ..Default::default() } },)*
+                    #[cfg(any(feature = "scenario-harness", test))]
+                    hooks_applied: false,
+                }
+            }
+        }
+        impl Surfaces {
+            /// Modal input follows the catalog before host hotkeys.
+            pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
+                $(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
+                    model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
+                }.capture_keyboard(ctx);)*
+                $(self.$field.capture_keyboard(ctx);)*
+            }
+            /// Route only entries belonging to this existing frame location.
+            pub fn draw_slot(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+                let mut response = SurfaceResponse::default();
+                if slot == quantick_ui_model::Slot::Overlay {
+                    #[cfg(any(feature = "scenario-harness", test))]
+                    if !self.hooks_applied {
+                        self.hooks_applied = true;
+                        $(self.$legacy.apply_env_hook(env);)*
+                        $(self.$field.apply_env_hook(env);)*
+                    }
+                    $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
+                        model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
+                    }.draw_in(target, env));)*
+                }
+                $(if slot == quantick_ui_model::Slot::$slot { response.merge(self.$field.draw_in(target, env)); })*
+                $(#[cfg(test)]
+                if slot == quantick_ui_model::Slot::$fixture_slot {
+                    response.merge(self.$fixture.draw_in(target, env));
+                })*
+                response
+            }
+        }
+    };
+}
+quantick_ui_model::surface_catalog!(register_surfaces);
+
+impl Surfaces {
     /// Whether the capture hooks have still to run.
     ///
     /// The host reads this when it decides whether to build the environment
@@ -369,49 +431,13 @@ impl Surfaces {
         }
     }
 
-    /// Draw every surface and return the merged asks.
-    ///
-    /// Per-frame path: one virtual call per registered surface, each of which
-    /// returns immediately when it has nothing to show. That is the whole
-    /// cost, and it replaces the same number of direct calls `draw_frame`
-    /// made by hand.
-    ///
-    /// Call order does not decide what covers what. Every surface here names
-    /// its own `egui::Order`, and egui sorts by layer before it considers the
-    /// sequence: the toast paints in `Foreground` wherever it is called from,
-    /// while the popup is an ordinary `Middle`-order window. Within one order
-    /// egui puts a newly created area on top, and every window here is created
-    /// on the frame it opens — so the window a trader just opened is in front
-    /// of whatever else is on screen, wherever this call sits in the frame.
-    /// That is what makes it safe for one call site to replace the scattered
-    /// ones, and it is also why a surface added here must set its own order
-    /// rather than rely on being last.
+    /// Draw overlay entries, preserving their catalog order and effect fold.
     pub fn draw_all(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        #[cfg(any(feature = "scenario-harness", test))]
-        if !self.hooks_applied {
-            self.hooks_applied = true;
-            self.indicator_picker.apply_env_hook(env);
-            self.script_editor.apply_env_hook(env);
-            self.agent_popup.apply_env_hook(env);
-            self.bar_switch.apply_env_hook(env);
-            self.chart_settings.apply_env_hook(env);
-            self.indicator_preview.apply_env_hook(env);
-            self.market_palette.apply_env_hook(env);
-            self.strategy_popup.apply_env_hook(env);
-            self.toast.apply_env_hook(env);
-        }
-        let mut response = SurfaceResponse::default();
-        response.merge(self.indicator_picker.draw(ctx, env));
-        response.merge(script_editor::draw(&mut self.script_editor, ctx, env));
-        response.merge(self.agent_popup.draw(ctx, env));
-        response.merge(self.bar_switch.draw(ctx, env));
-        response.merge(self.chart_settings.draw(ctx, env));
-        response.merge(self.indicator_preview.draw(ctx, env));
-        response.merge(self.market_palette.draw(ctx, env));
-        response.merge(self.strategy_popup.draw(ctx, env));
-        response.merge(self.toast.draw(ctx, env));
-        // Deliberately not `self.drawing_chrome` — see the field's own note.
-        response
+        self.draw_slot(
+            quantick_ui_model::Slot::Overlay,
+            &mut ViewContext { ctx, ui: None },
+            env,
+        )
     }
 }
 
@@ -419,6 +445,83 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
+
+    #[derive(Default)]
+    pub(crate) struct FixtureView {
+        enabled: bool,
+        painted: Option<i64>,
+        intent: Option<(i64, u64)>,
+    }
+    impl<M: quantick_ui_model::Model<State = i64, Intent = (i64, u64)>> View<M> for FixtureView {
+        fn id(&self) -> &'static str {
+            "fixture"
+        }
+        fn paint(
+            &mut self,
+            state: &i64,
+            target: &mut ViewContext<'_>,
+            _: &SurfaceEnv<'_>,
+        ) -> Option<(i64, u64)> {
+            if !self.enabled {
+                return None;
+            }
+            self.painted = Some(*state);
+            if let Some(ui) = target.ui.as_mut() {
+                ui.label(state.to_string());
+            } else {
+                egui::Window::new("Registered fixture").show(target.context(), |ui| {
+                    ui.label(state.to_string());
+                });
+            }
+            self.intent.take()
+        }
+    }
+
+    #[test]
+    fn registered_view_routes_intents() {
+        let mut registry = Surfaces::default();
+        registry.second.view.enabled = true;
+        registry.second.view.intent = Some((4, 17));
+        let ctx = egui::Context::default();
+        let mut effects = SurfaceResponse::default();
+        let output = ctx.run(Default::default(), |ctx| {
+            assert!(!registry.draw_all(ctx, &env()).undo_drawing);
+            assert_eq!(
+                registry.second.model_state, 0,
+                "other slots cannot consume an intent"
+            );
+            egui::CentralPanel::default().show(ctx, |ui| {
+                effects = registry.draw_slot(
+                    quantick_ui_model::Slot::Toolbar,
+                    &mut ViewContext { ctx, ui: Some(ui) },
+                    &env(),
+                );
+            });
+        });
+        assert!(!output.shapes.is_empty());
+        assert_eq!(registry.second.view.painted, Some(0));
+        assert_eq!(registry.second.model_state, 8);
+        assert_eq!(registry.first.model_state, 0);
+        assert!(effects.undo_drawing);
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assert!(
+                    !registry
+                        .draw_slot(
+                            quantick_ui_model::Slot::Toolbar,
+                            &mut ViewContext { ctx, ui: Some(ui) },
+                            &env()
+                        )
+                        .undo_drawing
+                );
+            });
+        });
+        assert_eq!(registry.second.view.painted, Some(8));
+        assert_eq!(
+            registry.second.model_state, 8,
+            "painting does not run update"
+        );
+    }
 
     /// The second implementation of the port, which is what proves it is a
     /// port at all: a surface written entirely outside this module, wired in
@@ -591,7 +694,7 @@ mod tests {
     #[test]
     fn a_shipped_surface_and_a_fake_take_the_same_path() {
         let ctx = egui::Context::default();
-        let mut real = AgentPopupSurface::default();
+        let mut real = agent_popup::AgentPopupSurface::default();
         let mut fake = FakeSurface::default();
         let quiet_real = ctx.run(Default::default(), |ctx| {
             let _ = drive(&mut real, ctx, &env());
