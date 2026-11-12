@@ -275,7 +275,7 @@ impl QuantickApp {
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.runtime.footprint_config,
-            chart_settings: &mut self.surfaces.chart_settings,
+            chart_settings: &mut self.surfaces.chart_settings.model_state,
         }
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {

@@ -11,7 +11,6 @@ macro_rules! surface_catalog {
             legacy {
                 indicator_picker: IndicatorPickerSurface => Surface::draw, indicator_picker::IndicatorPickerSurface::capture_keyboard;
                 script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
-                chart_settings: ChartSettingsSurface => Surface::draw, ignore_keyboard;
                 indicator_preview: IndicatorPreviewSurface => Surface::draw, ignore_keyboard;
                 market_palette: MarketPaletteSurface => Surface::draw, ignore_keyboard;
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
@@ -19,6 +18,8 @@ macro_rules! surface_catalog {
             }
             modules { drawing_chrome; home; remove_chart; }
             models {
+                [] []
+                chart_settings: ChartSettings => chart_settings = "chart_settings.rs", chart_settings = "chart_settings/mod.rs", chart_settings::effects, Overlay, Host;
                 [] []
                 bar_switch: BarSwitch => bar_switch = "bar_switch.rs", bar_switch = "bar_switch.rs", bar_switch::effects, Overlay, Local;
                 [] []

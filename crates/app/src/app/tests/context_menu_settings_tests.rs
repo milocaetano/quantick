@@ -100,6 +100,7 @@ fn the_footprint_entry_opens_the_footprint_window() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Footprint)
     );
 }
@@ -157,6 +158,7 @@ fn a_context_charts_footprint_door_edits_that_chart() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Footprint)
     );
     assert_eq!(

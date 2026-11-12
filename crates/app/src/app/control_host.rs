@@ -1007,7 +1007,7 @@ impl LayersPort for QuantickApp {
             style: &mut self.runtime.style,
             style_revision: &mut self.runtime.style_revision,
             footprint_config: &mut self.runtime.footprint_config,
-            chart_settings: &mut self.surfaces.chart_settings,
+            chart_settings: &mut self.surfaces.chart_settings.model_state,
             appearance: &self.runtime.appearance,
         }
     }

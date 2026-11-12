@@ -73,8 +73,9 @@ pub(super) fn draw_surfaces(
     // inside `draw_all`: it is not open yet when this runs, but it is about
     // to be, and it must not draw its first frame against an empty
     // environment.
+    super::super::chart_settings_wiring::initialize(&mut registry.chart_settings.model_state);
     let staging = registry.hooks_pending();
-    let pinned = registry.chart_settings.editor.target;
+    let pinned = registry.chart_settings.model_state.editor.target;
     let target_tab = pinned.and_then(|target| tabs.by_id(target.tab_id));
     let target_pane = pinned.and_then(|target| {
         target_tab.and_then(|tab| {
@@ -84,7 +85,7 @@ pub(super) fn draw_surfaces(
         })
     });
     if let Some(target) = pinned {
-        registry.chart_settings.editor.observe(
+        registry.chart_settings.model_state.editor.observe(
             target,
             target_pane.map(|pane| pane.presentation.candles.context()),
         );
@@ -135,8 +136,8 @@ pub(super) fn draw_surfaces(
         .presentation
         .candles
         .resolve(style, &palette.resolved);
-    registry.chart_settings.target_label =
-        if let Some(target) = pinned.filter(|_| registry.chart_settings.editor.stale) {
+    registry.chart_settings.model_state.target_label =
+        if let Some(target) = pinned.filter(|_| registry.chart_settings.model_state.editor.stale) {
             format!(
                 "Unavailable chart / tab {} / pane {}",
                 target.tab_id, target.pane_id
@@ -155,6 +156,14 @@ pub(super) fn draw_surfaces(
                 editor_pane.id
             )
         };
+    registry.update(crate::surfaces::HostIntent::ChartSettings(Box::new(
+        quantick_ui_model::chart_settings::Intent::Refresh {
+            style: editor_style,
+            footprint: focused_pane.footprint_config(footprint_config).clone(),
+            target: format!("{} chart", focused_side.title().to_lowercase()),
+            customized: focused_pane.presentation.footprint.config.is_own(),
+        },
+    )));
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
@@ -168,10 +177,7 @@ pub(super) fn draw_surfaces(
                 indicators.indicator_settings_target,
             ),
             focused_chart_area: focused_pane.frame.chart_area,
-            style: &editor_style,
             style_surface: editor_pane.surface(),
-            footprint: focused_pane.footprint_config(footprint_config),
-            footprint_customized: focused_pane.presentation.footprint.config.is_own(),
             focused_side,
             markets,
             active_tab: tabs.active_id(),
@@ -180,17 +186,33 @@ pub(super) fn draw_surfaces(
         },
     );
     // A surface hook may have opened the editor inside draw_all.
-    if registry.chart_settings.is_open() && registry.chart_settings.editor.target.is_none() {
-        let target = quantick_chart::pane_style::StyleTarget {
-            tab_id: tabs.active_id(),
-            pane_id: editor_pane.id,
-        };
-        registry.chart_settings.editor.pin(target);
+    if registry.chart_settings.model_state.is_open() && pinned.is_none() {
+        let target = registry.chart_settings.model_state.editor.target.unwrap_or(
+            quantick_chart::pane_style::StyleTarget {
+                tab_id: tabs.active_id(),
+                pane_id: editor_pane.id,
+            },
+        );
+        registry.chart_settings.model_state.editor.pin(target);
         registry
             .chart_settings
+            .model_state
             .editor
             .observe(target, Some(editor_pane.presentation.candles.context()));
     }
+    let mut retained = Vec::new();
+    for effect in std::mem::take(&mut asks.model_effects) {
+        match effect {
+            quantick_ui_model::HostEffect::ChartSettings(effects) => {
+                super::super::chart_settings_wiring::persist(
+                    &mut registry.chart_settings.model_state,
+                    effects.persistence,
+                )
+            }
+            other => retained.push(other),
+        }
+    }
+    asks.model_effects = retained;
     super::super::script_editor_wiring::frame(
         registry,
         indicators,

@@ -10,6 +10,7 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+quantick-control-handlers = { path = "../control-handlers" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-stores = { path = "../stores" }
 quantick-control-schema = { path = "../control-schema" }

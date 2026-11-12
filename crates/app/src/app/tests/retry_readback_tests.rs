@@ -1248,7 +1248,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             }
             "annotate.drawing_magnet.set" => {
                 // The settings window an earlier row opened would eat the click.
-                app.surfaces.chart_settings.close();
+                app.surfaces.chart_settings.model_state.close();
                 run_frame(&mut app, &ctx);
                 let at = app
                     .active_tab()
@@ -1267,7 +1267,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 })
             }
             "annotate.drawing_scope.set" => {
-                app.surfaces.chart_settings.close();
+                app.surfaces.chart_settings.model_state.close();
                 run_frame(&mut app, &ctx);
                 place_level(&mut app, PaneSide::Flow, 100.0);
                 run_frame(&mut app, &ctx);

@@ -232,7 +232,7 @@ impl WorkspaceBundleAdapter<'_> {
             drawings::presets::PresetStore::load_from(drawings::presets::default_path());
         *self.footprint_config =
             crate::footprint_config::load(self.arrangement.workspace.footprint_settings_path());
-        self.chart_settings.reload_presets();
+        super::chart_settings_wiring::reload(self.chart_settings);
         self.arrangement.indicators.indicator_presets =
             preset_file::PresetStore::load(self.arrangement.workspace.indicator_presets_path());
 

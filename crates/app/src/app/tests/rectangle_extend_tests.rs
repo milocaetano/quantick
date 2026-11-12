@@ -152,7 +152,7 @@ fn a_double_click_inside_puts_back_the_original_size() {
         "a double click in the band ends at the original size"
     );
     assert!(
-        !app.surfaces.chart_settings.is_open(),
+        !app.surfaces.chart_settings.model_state.is_open(),
         "a drawing's double click is the drawing's, not the chart settings'"
     );
 }
