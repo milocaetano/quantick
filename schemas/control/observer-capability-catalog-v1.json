@@ -15531,7 +15531,7 @@
         "additionalProperties": false,
         "properties": {
           "from_symbol": {
-            "description": "The contract the caller read in feed.status. Naming it is what makes a\nretry safe: a second call cannot roll a contract further.",
+            "description": "The contract the caller read in feed.status: the tab's active_symbol,\nwhich is its notice.unlisted_symbol for the notice's Roll (the scene's\nfeed_status.roll). Naming it is what makes a retry safe: a second call\ncannot roll a contract further.",
             "type": "string"
           },
           "tab_id": {
@@ -31360,11 +31360,18 @@
                   "null"
                 ]
               },
+              "rolled_from": {
+                "description": "The contract the tab rolled off because the venue no longer lists it,\nonto `active_symbol`: the note the status bar shows beside the status\nword. Not a notice: it stands beside whatever `kind` says, through the\nnew feed's progress, connect and any trouble, until the tab's next\nswitch, reconnect or reload. Absent otherwise; additive to v1.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "text_availability": {
                 "type": "string"
               },
               "unlisted_symbol": {
-                "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals. With `kind` `info` the tab already\nrolled off it onto `active_symbol`, and the note stays through a connect\nuntil any later notice or switch replaces it. Absent\notherwise; an optional field is an additive change to the v1 payload.",
+                "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals, and the `from_symbol` it takes.\nAbsent otherwise; an optional field is an additive change to the v1\npayload.",
                 "type": [
                   "string",
                   "null"

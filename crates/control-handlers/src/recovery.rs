@@ -22,13 +22,9 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::journal::NewEvent;
-use quantick_control_schema::contract_roll::CONTRACT_ROLL_CAPABILITY_ID;
 use quantick_control_schema::recovery::{
     RECONNECT_CAPABILITY_ID, RECOVERY_MODULE_ID, RELOAD_CAPABILITY_ID, RELOAD_EVENT_KIND,
     RecoveryInput, RecoveryResult, descriptor,
-};
-use quantick_control_schema::scene::{
-    FEED_RECONNECT_CONTROL_ID, FEED_RELOAD_CONTROL_ID, FEED_ROLL_CONTROL_ID,
 };
 use quantick_sources::recovery::Recovery;
 use serde_json::{Value, json};
@@ -66,64 +62,6 @@ pub const fn capability_id(recovery: Recovery) -> &'static str {
     match recovery {
         Recovery::Reconnect => RECONNECT_CAPABILITY_ID,
         Recovery::Reload => RELOAD_CAPABILITY_ID,
-    }
-}
-
-/// A control on the feed's status chip or in the popup it opens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FeedStatusControl {
-    /// The roll off a contract the venue no longer lists.
-    Roll,
-    Recover(Recovery),
-}
-
-impl FeedStatusControl {
-    /// The scene's stable name for it.
-    #[must_use]
-    pub const fn control_id(self) -> &'static str {
-        match self {
-            Self::Roll => FEED_ROLL_CONTROL_ID,
-            Self::Recover(Recovery::Reconnect) => FEED_RECONNECT_CONTROL_ID,
-            Self::Recover(Recovery::Reload) => FEED_RELOAD_CONTROL_ID,
-        }
-    }
-
-    /// The capability a press calls.
-    #[must_use]
-    pub const fn capability_id(self) -> &'static str {
-        match self {
-            Self::Roll => CONTRACT_ROLL_CAPABILITY_ID,
-            Self::Recover(recovery) => capability_id(recovery),
-        }
-    }
-}
-
-/// The feed-status controls on screen, in painted order, with their labels.
-///
-/// `roll_label` is the roll on offer's label, `None` while none is. Inside
-/// the popup that roll leads Reconnect and Reload; outside it the one-click
-/// act stands alone when `offered` — the roll on offer, else Reconnect, as
-/// the chip chooses — so the scene names what the screen shows.
-#[must_use]
-pub fn feed_status_controls(
-    roll_label: Option<String>,
-    popup_open: bool,
-    offered: bool,
-) -> Vec<(FeedStatusControl, String)> {
-    let roll = roll_label.map(|label| (FeedStatusControl::Roll, label));
-    let recoveries = [Recovery::Reconnect, Recovery::Reload].map(|recovery| {
-        (
-            FeedStatusControl::Recover(recovery),
-            recovery.label().to_owned(),
-        )
-    });
-    if popup_open {
-        roll.into_iter().chain(recoveries).collect()
-    } else if offered {
-        let [reconnect, _] = recoveries;
-        vec![roll.unwrap_or(reconnect)]
-    } else {
-        Vec::new()
     }
 }
 

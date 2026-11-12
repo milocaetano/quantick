@@ -194,7 +194,9 @@ fn the_scene_names_the_corner_and_what_operates_it() {
         })
         .filter_map(|control| control["capability_id"].as_str().map(str::to_owned))
         .collect();
-    assert_eq!(calls, ["feed.reconnect", "feed.reload"]);
+    // A connected feed gone silent leads with Reload: the popup fills and
+    // paints it first, and the scene lists it first.
+    assert_eq!(calls, ["feed.reload", "feed.reconnect"]);
 }
 
 /// The toolbar's heatmap lamp answers "is this switched on", not "is the

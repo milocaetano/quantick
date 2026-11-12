@@ -247,7 +247,11 @@ impl<'a> StatusLead<'a> {
                 .filter(crate::feed_notice::Report::is_offline)
                 .map(|report| report.with_roll(tab.link.roll_note())),
             action: tab.link.quick_action(),
-            note: tab.link.notice.rolled_text(),
+            note: tab
+                .link
+                .rolled
+                .as_ref()
+                .map(quantick_feed::link::Rolled::sentence),
         }
     }
 }

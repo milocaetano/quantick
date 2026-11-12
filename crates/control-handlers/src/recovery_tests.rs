@@ -112,38 +112,3 @@ fn a_reload_journals_who_threw_the_timeline_away() {
         );
     }
 }
-
-/// The scene names what the chip and the popup paint: a roll on offer stands
-/// where Reconnect would and leads the popup, under the roll's capability.
-#[test]
-fn a_roll_on_offer_stands_in_the_scene_as_the_roll() {
-    let named = |roll: Option<&str>, popup_open, offered| -> Vec<(&str, String, &str)> {
-        feed_status_controls(roll.map(str::to_owned), popup_open, offered)
-            .into_iter()
-            .map(|(control, label)| (control.control_id(), label, control.capability_id()))
-            .collect()
-    };
-    let roll = || {
-        (
-            "feed_status.roll",
-            "Roll to WINZ26".to_owned(),
-            "feed.contract.roll",
-        )
-    };
-    let reconnect = || {
-        (
-            "feed_status.reconnect",
-            "Reconnect".to_owned(),
-            "feed.reconnect",
-        )
-    };
-    let reload = ("feed_status.reload", "Reload".to_owned(), "feed.reload");
-    assert_eq!(named(Some("Roll to WINZ26"), false, true), [roll()]);
-    assert_eq!(named(None, false, true), [reconnect()]);
-    assert_eq!(named(Some("Roll to WINZ26"), false, false), []);
-    assert_eq!(
-        named(Some("Roll to WINZ26"), true, false),
-        [roll(), reconnect(), reload.clone()]
-    );
-    assert_eq!(named(None, true, true), [reconnect(), reload]);
-}

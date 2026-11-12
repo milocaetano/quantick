@@ -123,7 +123,7 @@ impl<'a> Report<'a> {
     pub fn next_step_text(&self) -> Option<String> {
         let step = self.next_step?;
         Some(match self.roll {
-            Some(RollNote::Refused(reason)) => format!("{step}\n{ROLL_REFUSED_PREFIX}{reason}."),
+            Some(RollNote::Refused(reason)) => format!("{step}\n{}", roll_refused_sentence(reason)),
             _ => step.to_owned(),
         })
     }
@@ -156,14 +156,9 @@ pub const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it clo
 pub const ROLL_CAPTION: &str = "Roll starts the chart on the next contract: it keeps the workspace and \
      drawings, and disarms the tab's strategies.";
 
-/// What heads a refused roll's reason under the next step.
-pub const ROLL_REFUSED_PREFIX: &str = "Cannot roll to the next contract: ";
-
-/// The label of the control that rolls to `target`.
-#[must_use]
-pub fn roll_label(target: &str) -> String {
-    format!("Roll to {target}")
-}
+/// The roll's words, owned below the control plane so the scene names the
+/// roll as the popup paints it.
+pub use quantick_sources::recovery::{ROLL_REFUSED_PREFIX, roll_label, roll_refused_sentence};
 
 /// Build the report for a feed, or `None` when there is nothing to say.
 ///
@@ -201,10 +196,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
         });
     }
     match notice {
-        FeedNotice::Connected
-        | FeedNotice::Clear
-        | FeedNotice::Attention { .. }
-        | FeedNotice::Rolled { .. } => None,
+        FeedNotice::Connected | FeedNotice::Clear | FeedNotice::Attention { .. } => None,
         FeedNotice::Reconnecting { headline } | FeedNotice::Working { headline } => Some(Report {
             headline,
             next_step: None,
@@ -214,6 +206,15 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             roll: None,
         }),
     }
+}
+
+/// The recovery the popup fills and paints first: its report's, or
+/// Reconnect while the door stays latched open over a report that is gone.
+#[must_use]
+pub fn popup_primary(notice: &FeedNotice, stall: Option<&Stall>) -> Recovery {
+    report(notice, stall)
+        .filter(Report::is_offline)
+        .map_or(Recovery::Reconnect, |report| report.primary)
 }
 
 /// Whether the recovery popup is still up after a frame.
@@ -365,18 +366,19 @@ mod tests {
         assert_eq!(RollNote::from(Ok("WINZ26")), RollNote::To("WINZ26"));
     }
 
+    /// The popup's filled control: the stall's own pick, Reconnect for a
+    /// named reason, and Reconnect over a door held open on nothing.
     #[test]
-    fn a_roll_note_reports_nothing_to_recover() {
-        let note = FeedNotice::Rolled {
-            from: "WINV26".to_owned(),
-            to: "WINZ26".to_owned(),
-        };
-        assert_eq!(plain(&note), None, "no alarm, no controls");
-        assert_eq!(note.summary(), ("info", true, false));
+    fn the_popup_leads_with_the_stall_s_recovery() {
+        let silent = silent_stall();
+        assert_eq!(popup_primary(&CLEAR, Some(&silent)), Recovery::Reload);
+        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Open it.");
         assert_eq!(
-            note.rolled_text().as_deref(),
-            Some("WINV26 is no longer listed; rolled to WINZ26")
+            popup_primary(&attention, Some(&silent)),
+            Recovery::Reconnect
         );
+        let working = FeedNotice::working("starting the MetaTrader bridge");
+        assert_eq!(popup_primary(&working, None), Recovery::Reconnect);
     }
     /// The consequence of the destructive control is on the popup, so a trader
     /// learns it before pressing rather than from a journal afterwards.

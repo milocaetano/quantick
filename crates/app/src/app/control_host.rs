@@ -613,11 +613,6 @@ impl<'a> ChromeReads<'a> {
         tab.connection.state().link == quantick_chart::connection_state::Link::Offline
     }
 
-    /// The one-click act the chip and the overlay offer on the active tab.
-    pub(crate) fn feed_quick_action(self) -> crate::feed_notice::NoticeAction {
-        self.tabs[self.tabs.active_index()].link.quick_action()
-    }
-
     /// Whether the recovery popup that chip opens is showing, on the chart
     /// the trader is looking at.
     pub(crate) fn feed_popup_open(self) -> bool {

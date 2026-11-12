@@ -316,10 +316,9 @@ pub struct FeedNoticeSnapshot {
     /// The contract the venue reported it does not list, from the feed's
     /// structured report — not from the redacted words. When it is the tab's
     /// `active_symbol`, `feed.contract.roll` from it is the popup's Roll
-    /// button: same rule, same refusals. With `kind` `info` the tab already
-    /// rolled off it onto `active_symbol`, and the note stays through a connect
-    /// until any later notice or switch replaces it. Absent
-    /// otherwise; an optional field is an additive change to the v1 payload.
+    /// button: same rule, same refusals, and the `from_symbol` it takes.
+    /// Absent otherwise; an optional field is an additive change to the v1
+    /// payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlisted_symbol: Option<String>,
     /// The contract the notice's Roll moves the tab to: the popup's first
@@ -332,6 +331,13 @@ pub struct FeedNoticeSnapshot {
     /// itself once the reason clears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roll_refused: Option<String>,
+    /// The contract the tab rolled off because the venue no longer lists it,
+    /// onto `active_symbol`: the note the status bar shows beside the status
+    /// word. Not a notice: it stands beside whatever `kind` says, through the
+    /// new feed's progress, connect and any trouble, until the tab's next
+    /// switch, reconnect or reload. Absent otherwise; additive to v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolled_from: Option<String>,
 }
 
 impl FeedNoticeSnapshot {
@@ -343,6 +349,15 @@ impl FeedNoticeSnapshot {
             unlisted_symbol: symbol.map(str::to_owned),
             roll_to: roll.and_then(Result::ok).map(str::to_owned),
             roll_refused: roll.and_then(Result::err).map(str::to_owned),
+            ..self
+        }
+    }
+
+    /// The same view, naming the contract the tab rolled off, if it did.
+    #[must_use]
+    pub fn with_rolled_from(self, from: Option<&str>) -> Self {
+        Self {
+            rolled_from: from.map(str::to_owned),
             ..self
         }
     }
@@ -365,6 +380,7 @@ impl FeedNoticeSnapshot {
             unlisted_symbol: None,
             roll_to: None,
             roll_refused: None,
+            rolled_from: None,
         }
     }
 }

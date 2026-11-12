@@ -33,6 +33,7 @@ pub mod dock;
 pub mod drawing_magnet;
 pub mod drawing_scope;
 pub mod feed_source;
+pub mod feed_status;
 pub mod history;
 pub mod home_tab;
 pub mod journal_sessions;

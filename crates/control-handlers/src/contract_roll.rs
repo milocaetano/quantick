@@ -50,6 +50,15 @@ pub enum RollRefusal {
 }
 
 impl RollRefusal {
+    /// Every refusal, for reading one back from its sentence.
+    const ALL: [Self; 5] = [
+        Self::Replay,
+        Self::NotConfigured,
+        Self::TargetNotOffered,
+        Self::PaperNotFlat,
+        Self::GestureInFlight,
+    ];
+
     /// The sentence the trader and the caller both read.
     #[must_use]
     pub fn reason(self) -> &'static str {
@@ -61,33 +70,49 @@ impl RollRefusal {
             Self::GestureInFlight => "Finish the drawing gesture first",
         }
     }
+
+    /// The precondition a call fails on: the stable code a client branches on.
+    #[must_use]
+    pub const fn precondition(self) -> &'static str {
+        match self {
+            Self::Replay => LIVE_SOURCE_PRECONDITION,
+            Self::NotConfigured => ROLL_CONFIGURED_PRECONDITION,
+            Self::TargetNotOffered => TARGET_OFFERED_PRECONDITION,
+            Self::PaperNotFlat => PAPER_FLAT_PRECONDITION,
+            Self::GestureInFlight => NO_GESTURE_PRECONDITION,
+        }
+    }
+
+    /// The refusal [`Self::reason`] words as `reason`, read back from a roll
+    /// offer that kept only the sentence.
+    #[must_use]
+    pub fn from_reason(reason: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|refusal| refusal.reason() == reason)
+    }
 }
 
 impl From<RollRefusal> for ControlError {
     fn from(refusal: RollRefusal) -> Self {
-        let (precondition, next_step) = match refusal {
-            RollRefusal::Replay => (
-                LIVE_SOURCE_PRECONDITION,
-                "close the recorded session and roll the live tab",
-            ),
-            RollRefusal::NotConfigured => (
-                ROLL_CONFIGURED_PRECONDITION,
-                "name the next contract in the feed config (contract_rolls)",
-            ),
-            RollRefusal::TargetNotOffered => (
-                TARGET_OFFERED_PRECONDITION,
-                "offer the next contract on this feed (symbols) or add it in Open market",
-            ),
-            RollRefusal::PaperNotFlat => (
-                PAPER_FLAT_PRECONDITION,
-                "close the paper position and cancel working orders, then roll",
-            ),
-            RollRefusal::GestureInFlight => (
-                NO_GESTURE_PRECONDITION,
-                "finish the drawing gesture, then roll",
-            ),
+        let next_step = match refusal {
+            RollRefusal::Replay => "close the recorded session and roll the live tab",
+            RollRefusal::NotConfigured => {
+                "name the next contract in the feed config (contract_rolls)"
+            }
+            RollRefusal::TargetNotOffered => {
+                "offer the next contract on this feed (symbols) or add it in Open market"
+            }
+            RollRefusal::PaperNotFlat => {
+                "close the paper position and cancel working orders, then roll"
+            }
+            RollRefusal::GestureInFlight => "finish the drawing gesture, then roll",
         };
-        crate::bubble_scale::refused_precondition(precondition, refusal.reason(), next_step)
+        crate::bubble_scale::refused_precondition(
+            refusal.precondition(),
+            refusal.reason(),
+            next_step,
+        )
     }
 }
 
