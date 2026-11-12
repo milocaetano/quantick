@@ -1,8 +1,65 @@
-use super::*;
 use crate::style::ChartStyle;
+use crate::surfaces::Surface;
+use crate::surfaces::chart_settings::*;
+use crate::surfaces::{SurfaceEnv, SurfaceResponse};
+use eframe::egui;
+use quantick_ui_model::chart_settings::{Intent, Model};
+use std::time::Instant;
+type ChartSettingsSurface = crate::surfaces::Adapter<Model, View>;
+fn surface() -> ChartSettingsSurface {
+    let mut surface = ChartSettingsSurface::new(View::default(), effects);
+    crate::app::chart_settings_wiring::initialize(&mut surface.model_state);
+    surface
+}
+fn open(surface: &mut ChartSettingsSurface, tab: ChartSettingsTab, style: ChartStyle) {
+    surface.update(Intent::Open {
+        tab,
+        target: None,
+        style,
+    });
+}
+struct TestTab {
+    surface: ChartSettingsSurface,
+    tab: ChartSettingsTab,
+}
+impl TestTab {
+    fn new(tab: ChartSettingsTab) -> Self {
+        Self {
+            surface: surface(),
+            tab,
+        }
+    }
+    fn opened(&mut self, env: &SurfaceEnv<'_>) {
+        open(&mut self.surface, self.tab, *env.style);
+    }
+    fn draw(&mut self, ui: &mut egui::Ui, env: &SurfaceEnv<'_>) {
+        self.surface.update(Intent::Refresh {
+            style: *env.style,
+            footprint: env.footprint.clone(),
+            target: "Flow chart".into(),
+            customized: env.footprint_customized,
+        });
+        let mut response = SurfaceResponse::default();
+        self.surface.with_updates(
+            |effects| response.model_effects.extend(effects.model_effects),
+            |_, session| match self.tab {
+                ChartSettingsTab::Candles => candles::draw(ui, session, env, 0),
+                ChartSettingsTab::Footprint => footprint::draw(ui, session),
+            },
+        );
+        for effect in response.model_effects {
+            if let quantick_ui_model::HostEffect::ChartSettings(effects) = effect {
+                crate::app::chart_settings_wiring::persist(
+                    &mut self.surface.model_state,
+                    effects.persistence,
+                );
+            }
+        }
+    }
+}
 
 fn preset_frame(
-    tab: &mut dyn SettingsTab,
+    tab: &mut TestTab,
     ctx: &egui::Context,
     env: &SurfaceEnv<'_>,
     events: Vec<egui::Event>,
@@ -58,11 +115,11 @@ fn actual_preset_owners_accept_selection_save_duplicates_and_reject_disabled_inp
     for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
         for (mut tab, hint) in [
             (
-                Box::new(CandlesTab::default()) as Box<dyn SettingsTab>,
+                Box::new(TestTab::new(ChartSettingsTab::Candles)),
                 "name this look",
             ),
             (
-                Box::new(FootprintTab::default()) as Box<dyn SettingsTab>,
+                Box::new(TestTab::new(ChartSettingsTab::Footprint)),
                 "name this setup",
             ),
         ] {
@@ -211,8 +268,8 @@ fn settings_persistence_endpoints_are_reachable_through_the_real_scroll_area() {
                 crate::theme::sync(&ctx, &appearance);
                 let style = ChartStyle::default();
                 let env = env(&style, Instant::now());
-                let mut surface = ChartSettingsSurface::default();
-                surface.open(tab, style);
+                let mut surface = surface();
+                open(&mut surface, tab, style);
                 let mut reached = false;
                 for frame in 0..120 {
                     let mut events = vec![];
@@ -273,10 +330,10 @@ fn supporting_guidance_fits_narrow_surfaces() {
                 let mut appearance = quantick_appearance::Appearance::default();
                 appearance.apply(source).unwrap();
                 crate::theme::sync(&ctx, &appearance);
-                let mut surface = ChartSettingsSurface::default();
                 let style = ChartStyle::default();
                 let env = env(&style, Instant::now());
-                for tab in surface.tabs() {
+                for which in ChartSettingsTab::ALL {
+                    let mut tab = TestTab::new(which);
                     let mut input = egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -332,161 +389,64 @@ fn env(style: &ChartStyle, now: Instant) -> SurfaceEnv<'_> {
     }
 }
 
-fn draw(
-    surface: &mut ChartSettingsSurface,
-    ctx: &egui::Context,
-    env: &SurfaceEnv<'_>,
-) -> SurfaceResponse {
-    let mut response = SurfaceResponse::default();
-    let _ = ctx.run(Default::default(), |ctx| {
-        response = surface.draw(ctx, env);
-    });
-    response
-}
-
-fn pending(open: bool, now: Instant) -> ChartSettingsSurface {
-    ChartSettingsSurface {
-        session: quantick_control_handlers::chart_settings::ChartSettingsSession {
-            open,
-            ..Default::default()
-        },
-        log_pending: true,
-        last_change: Some(now),
-        ..ChartSettingsSurface::default()
-    }
-}
-
-/// A closed window reads nothing and asks for nothing.
 #[test]
 fn a_closed_window_asks_for_nothing() {
     let ctx = egui::Context::default();
-    let style = ChartStyle::default();
-    let mut surface = ChartSettingsSurface::default();
-    let response = draw(&mut surface, &ctx, &env(&style, Instant::now()));
-    assert_eq!(response, SurfaceResponse::default());
-    assert!(!surface.is_open());
+    let mut surface = surface();
+    let mut result = SurfaceResponse::default();
+    let _ = ctx.run(Default::default(), |ctx| {
+        result = surface.draw(ctx, &SurfaceEnv::quiet(Instant::now()));
+    });
+    assert_eq!(result, SurfaceResponse::default());
 }
-
-/// An open window on a frame nobody touched reports no edit on either tab —
-/// otherwise every open window would bump the style or rewrite the footprint
-/// file at the refresh rate.
 #[test]
 fn an_untouched_window_reports_no_edit_on_either_tab() {
-    let ctx = egui::Context::default();
-    let style = ChartStyle::default();
     for tab in ChartSettingsTab::ALL {
-        let mut surface = ChartSettingsSurface::default();
-        surface.open(tab, style);
-        let response = draw(&mut surface, &ctx, &env(&style, Instant::now()));
-        assert_eq!(response, SurfaceResponse::default(), "{tab:?}");
-        assert!(surface.is_open_on(tab));
+        let ctx = egui::Context::default();
+        let mut surface = surface();
+        open(&mut surface, tab, ChartStyle::default());
+        let mut result = SurfaceResponse::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            result = surface.draw(ctx, &SurfaceEnv::quiet(Instant::now()));
+        });
+        assert_eq!(result, SurfaceResponse::default());
+        assert!(surface.model_state.is_open_on(tab));
     }
 }
 
-/// One window, one flag: the doors switch the tab rather than stacking a
-/// second window, and closing remembers the tab for the next opening.
 #[test]
-fn every_door_reaches_the_one_window() {
-    let style = ChartStyle::default();
-    let mut surface = ChartSettingsSurface::default();
-    surface.open(ChartSettingsTab::Footprint, style);
-    assert!(surface.is_open_on(ChartSettingsTab::Footprint));
-    surface.open(ChartSettingsTab::Candles, style);
-    assert!(
-        surface.is_open_on(ChartSettingsTab::Candles),
-        "switched to candles"
-    );
-    surface.close();
-    assert!(!surface.is_open());
-    assert_eq!(surface.tab(), ChartSettingsTab::Candles, "remembered");
-}
-
-/// Opening starts the sitting on the style in force, before any frame is
-/// drawn; Reset returns there however far the chart moved; closing forgets
-/// it.
-#[test]
-fn reset_returns_to_the_look_the_window_opened_on() {
-    let ctx = egui::Context::default();
-    let opened_on = ChartStyle::default();
-    let mut surface = ChartSettingsSurface::default();
-    surface.open(ChartSettingsTab::Candles, opened_on);
-    let mut moved = opened_on;
-    moved.candles = crate::style::CandlePreset::Glass.style();
-    moved.canvas.grid_enabled = !opened_on.canvas.grid_enabled;
-    assert_eq!(
-        surface.candles.reset(&moved),
-        Some(opened_on),
-        "the sitting began at the door, not at the first frame"
-    );
-    // A later frame over the moved style does not move the starting point.
-    draw(&mut surface, &ctx, &env(&moved, Instant::now()));
-    assert_eq!(surface.candles.reset(&moved), Some(opened_on));
-    surface.close();
-    assert_eq!(
-        surface.candles.reset(&moved),
-        None,
-        "closing ends the sitting"
-    );
-    surface.open(ChartSettingsTab::Footprint, moved);
-    assert_eq!(
-        surface.candles.reset(&opened_on),
-        Some(moved),
-        "a new sitting starts on the look in force, whichever tab opened it"
-    );
-}
-
-/// The debounce holds a change back while the gesture runs, lets it go once
-/// the trader stops, then stays quiet however many frames follow.
-#[test]
-fn the_log_waits_for_the_gesture_to_settle() {
-    let ctx = egui::Context::default();
-    let style = ChartStyle::default();
-    let start = Instant::now();
-    let mut surface = pending(true, start);
-    let response = draw(
-        &mut surface,
-        &ctx,
-        &env(&style, start + STYLE_LOG_DEBOUNCE / 2),
-    );
-    assert!(response.log_style_change.is_none(), "still mid-gesture");
-    let response = draw(&mut surface, &ctx, &env(&style, start + STYLE_LOG_DEBOUNCE));
-    assert!(response.log_style_change.is_some(), "the gesture settled");
-    let response = draw(
-        &mut surface,
-        &ctx,
-        &env(&style, start + STYLE_LOG_DEBOUNCE * 4),
-    );
-    assert!(response.log_style_change.is_none(), "one change, one line");
-}
-
-/// Closing does not make the record wait out a timer; an open window
-/// mid-gesture does wait; nothing pending logs nothing.
-#[test]
-fn closing_the_window_logs_without_waiting() {
-    let now = Instant::now();
-    assert!(!pending(true, now).should_log(now), "the debounce holds");
-    assert!(pending(false, now).should_log(now), "the window left");
-    assert!(!ChartSettingsSurface::default().should_log(now));
-}
-
-/// Closed between frames, the window still flushes the
-/// edit on its next draw, once, naming the preset a click applied.
-#[test]
-fn closing_between_frames_still_records_the_edit() {
-    let ctx = egui::Context::default();
-    let style = ChartStyle::default();
-    let now = Instant::now();
-    let mut surface = pending(true, now);
-    surface.pending_preset = Some(crate::style::CandlePreset::Classic);
-    surface.close();
-    assert!(!surface.is_open());
-    let response = draw(&mut surface, &ctx, &env(&style, now));
-    assert_eq!(
-        response.log_style_change,
-        Some(StyleLogRequest {
-            applied_preset: Some(crate::style::CandlePreset::Classic)
-        })
-    );
-    let response = draw(&mut surface, &ctx, &env(&style, now));
-    assert!(response.log_style_change.is_none(), "recorded once");
+fn registered_settings_hooks_pin_before_first_paint_and_run_once() {
+    for (hook, tab) in [
+        ("QUANTICK_STYLE_PANEL", ChartSettingsTab::Candles),
+        ("QUANTICK_FOOTPRINT_PANEL", ChartSettingsTab::Footprint),
+    ] {
+        let mut registry = crate::surfaces::Surfaces::default();
+        crate::app::chart_settings_wiring::initialize(&mut registry.chart_settings.model_state);
+        let ctx = egui::Context::default();
+        let style = ChartStyle::default();
+        let env = SurfaceEnv {
+            picker_pane_id: 123,
+            active_tab: 7,
+            style: &style,
+            ..SurfaceEnv::quiet(Instant::now())
+        };
+        crate::hooks::captured::set_on_this_thread(Some(&[(hook, "1")]));
+        let _ = ctx.run(Default::default(), |ctx| {
+            registry.draw_all(ctx, &env);
+        });
+        crate::hooks::captured::set_on_this_thread(None);
+        assert!(registry.chart_settings.model_state.is_open_on(tab));
+        assert_eq!(
+            registry.chart_settings.model_state.editor.target,
+            Some(quantick_chart::pane_style::StyleTarget {
+                tab_id: 7,
+                pane_id: 123
+            })
+        );
+        registry.chart_settings.update(Intent::Close);
+        let _ = ctx.run(Default::default(), |ctx| {
+            registry.draw_all(ctx, &env);
+        });
+        assert!(!registry.chart_settings.model_state.is_open());
+    }
 }

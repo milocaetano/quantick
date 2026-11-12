@@ -26,7 +26,6 @@
 
 feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
 backpressure consumed by `app` only; the owner-to-worker admission discipline (park, fold, never drop) moved out of `app` in #542, told the time. Open: `feed` workers still use their own channels.
-control-handlers consumed by `app` only; the control handler families over headless ports, moved out of `app` so the window keeps one adapter per family. Open: `mcp` or a test host could drive the same handlers over a fake window.
 platform consumed by `app` only; the OS-window exception: the native window calls egui does not supply (DPI adapter, hidden-root paint pump, exposed-window lookup) behind safe functions, so `app` holds no `unsafe` for them. One consumer is the design: only the window draws native windows.
 operability consumed by `app` only; the behaviour-to-capability table and its drift check, pure data by design (#542). Open: a generator or `mcp` could read it without the window.
 

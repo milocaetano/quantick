@@ -7,10 +7,12 @@ use std::time::Instant;
 use eframe::egui;
 
 pub(crate) use bar_switch::BarSwitchRequest;
-pub(crate) use chart_settings::{ChartSettingsSurface, ChartSettingsTab};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
 pub(crate) use market_palette::MarketPaletteSurface;
 pub(crate) use quantick_ui_model::HostEffect;
+pub(crate) use quantick_ui_model::chart_settings::{
+    ChartSettingsTab, State as ChartSettingsSurface,
+};
 pub(crate) use strategy_popup::StrategyPopupSurface;
 pub(crate) use toast::ToastSurface;
 

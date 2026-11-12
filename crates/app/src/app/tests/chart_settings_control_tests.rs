@@ -64,7 +64,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
             app.runtime.style, original,
             "a refused call changes nothing"
         );
-        assert!(!app.surfaces.chart_settings.is_open());
+        assert!(!app.surfaces.chart_settings.model_state.is_open());
     }
 
     let opened = success_result(&settings_call(
@@ -79,6 +79,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Footprint)
     );
     let again = success_result(&settings_call(
@@ -181,13 +182,15 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     let unwritable = gateway_test_directory("chart-settings-unwritable")
         .join(crate::candle_presets::PRESETS_FILE);
     std::fs::create_dir_all(unwritable.parent().unwrap()).unwrap();
-    let mut held =
-        crate::surfaces::chart_settings::CandlesTab::with_presets_path(unwritable.clone());
+    let mut held = quantick_stores::candle_settings::CandleSettings::open(unwritable.clone());
     held.save("dawn", addressed_style(&mut app))
         .expect("written while the path is a file");
     std::fs::remove_file(&unwritable).unwrap();
     std::fs::create_dir_all(&unwritable).unwrap();
-    let working = std::mem::replace(&mut app.surfaces.chart_settings.candles, held);
+    let working = std::mem::replace(
+        &mut app.surfaces.chart_settings.model_state.candles,
+        Some(held),
+    );
     for unwritten in [
         json!({"action": "save_candle_preset", "name": "dusk"}),
         json!({"action": "delete_candle_preset", "name": "dawn"}),
@@ -200,11 +203,17 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         );
     }
     assert_eq!(
-        app.surfaces.chart_settings.candles.custom_names(),
+        app.surfaces
+            .chart_settings
+            .model_state
+            .candles
+            .as_ref()
+            .unwrap()
+            .custom_names(),
         ["dawn"],
         "neither change outlived its failed write"
     );
-    app.surfaces.chart_settings.candles = working;
+    app.surfaces.chart_settings.model_state.candles = working;
     std::fs::remove_dir_all(unwritable.parent().unwrap()).ok();
 
     let deleted = success_result(&settings_call(
@@ -219,7 +228,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         json!({"action": "close"}),
     ));
     assert_eq!(closed["open"], false);
-    assert!(!app.surfaces.chart_settings.is_open());
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
     assert_eq!(
         app.runtime.style, legacy,
         "local settings preserve the legacy global seed"
@@ -239,7 +248,7 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     let pane = &app.active_tab().flow_pane;
     let pane_id = pane.id;
     let chart = pane.frame.chart_area.expect("the canvas laid out");
-    assert!(!app.surfaces.chart_settings.is_open());
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
     // On a candle's body, through the geometry the frame painted.
     let (right, total) = (
         pane.frame.candles_right.unwrap_or(chart.right()),
@@ -267,6 +276,7 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Candles),
         "the double click at {at:?} opened the chart settings"
     );
@@ -293,9 +303,7 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
 #[test]
 fn the_footprint_entry_points_open_the_footprint_tab() {
     let (mut app, _commands) = app_with_history(20);
-    app.surfaces
-        .chart_settings
-        .open(ChartSettingsTab::Candles, app.runtime.style);
+    app.layer_wiring().open_settings(ChartSettingsTab::Candles);
     // The pane's layer menu, drained by the window.
     app.runtime
         .workspace
@@ -306,10 +314,11 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Footprint),
         "one window, switched to the Footprint tab"
     );
-    app.surfaces.chart_settings.close();
+    app.surfaces.chart_settings.model_state.close();
     // The footprint glyph's right click on the pane's header.
     app.active_tab_mut().flow_pane.apply_header_intent(
         quantick_chart::pane_header::HeaderIntent::OpenLayerSettings(
@@ -322,6 +331,7 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Footprint)
     );
     // Settings → Appearance… flips the same window to the Candles tab.
@@ -329,6 +339,7 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     assert!(
         app.surfaces
             .chart_settings
+            .model_state
             .is_open_on(ChartSettingsTab::Candles)
     );
 }
@@ -498,7 +509,7 @@ fn a_double_click_on_the_lane_divider_opens_no_settings() {
     click_sized(&mut app, &ctx, TEST_WINDOW, at);
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
     assert!(
-        !app.surfaces.chart_settings.is_open(),
+        !app.surfaces.chart_settings.model_state.is_open(),
         "the double click at {at:?} on the divider at {divider} opened the settings"
     );
 }

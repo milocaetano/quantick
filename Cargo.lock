@@ -3388,6 +3388,7 @@ dependencies = [
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
+ "quantick-control-handlers",
  "quantick-control-schema",
  "quantick-engine",
  "quantick-orderflow",
