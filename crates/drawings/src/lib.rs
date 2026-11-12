@@ -18,6 +18,8 @@
 
 use quantick_chart::geometry as chart;
 
+pub mod alert_geometry;
+pub mod alerts;
 pub mod avwap;
 pub mod context_bar;
 pub mod frvp;
@@ -130,3 +132,5 @@ pub struct Px {
 pub(crate) mod test_prelude {
     pub(crate) use crate::{MarkScene, MarkShape, Px, PxRect, vec2};
 }
+
+mod identity;

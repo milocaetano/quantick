@@ -56,6 +56,7 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
+    ("alerts", &["civil", "workspace"]),
     ("appearance", &[]),
     ("anchored-studies", &["engine", "indicators"]),
     // Queue discipline and progress counts between an owner and a worker;
@@ -90,6 +91,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "drawings",
         &[
+            "alerts",
             "appearance",
             "anchored-studies",
             "chart",
@@ -132,6 +134,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "control-handlers",
         &[
+            "alerts",
             "chart",
             "chart-interaction",
             "civil",
@@ -196,6 +199,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "stores",
         &[
+            "alerts",
             "appearance",
             "chart",
             "engine",
@@ -219,7 +223,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("layers", &[]),
     ("workspace", &[]),
     // `workspace` for the one store-write gate the preset bank asks (DS7).
-    ("strategy", &["engine", "sim", "workspace"]),
+    ("strategy", &["alerts", "engine", "sim", "workspace"]),
     ("indicators", &["engine"]),
     ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),

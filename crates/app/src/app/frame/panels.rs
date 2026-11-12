@@ -75,12 +75,14 @@ pub(super) fn draw_dock(
     tabs: &mut ArrangementHost,
     replay_view: &mut ReplayView,
     tz: TzOffset,
+    alerts_open: bool,
 ) -> DockResponse {
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
     let mut response = crate::dock::draw(
         dock,
         ctx,
         &mut DockEnv {
+            alerts_open,
             replay_view,
             replay: link.replay.as_ref(),
             paper,

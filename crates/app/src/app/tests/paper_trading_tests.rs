@@ -642,7 +642,12 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     bar(&mut app, &mut id, "100", "101");
     bar(&mut app, &mut id, "101", "102");
     bar(&mut app, &mut id, "102", "103");
-    app.audio.play_pending(&mut app.runtime.tabs);
+    app.audio.play_pending(
+        app.runtime
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+    );
     assert!(
         recorder.sounds().is_empty(),
         "a warming ruler has nothing to announce: {:?}",
@@ -658,7 +663,12 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..33 {
         print(&mut app, &mut id, "107");
     }
-    app.audio.play_pending(&mut app.runtime.tabs);
+    app.audio.play_pending(
+        app.runtime
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+    );
     assert!(
         recorder.sounds().is_empty(),
         "before 70% of the bar the alarm holds its tongue: {:?}",
@@ -667,7 +677,12 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
 
     // Print 35 crosses the share. The bar has not closed.
     print(&mut app, &mut id, "107");
-    app.audio.play_pending(&mut app.runtime.tabs);
+    app.audio.play_pending(
+        app.runtime
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+    );
     assert_eq!(
         recorder.cues(),
         vec![crate::audio::Cue::cut_after(clip, 3)],
@@ -696,7 +711,12 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..15 {
         print(&mut app, &mut id, "107");
     }
-    app.audio.play_pending(&mut app.runtime.tabs);
+    app.audio.play_pending(
+        app.runtime
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+    );
     assert_eq!(
         recorder.sounds(),
         vec![clip],

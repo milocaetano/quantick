@@ -416,9 +416,16 @@ impl QuantickApp {
                 super::frame_tail::clean_up_background_strategies(&mut self.runtime.tabs);
             }
             FrameStage::PlayAlerts => {
-                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
-                    self.alerts().show_toast(note);
-                }
+                super::alerts_runtime::deliver(
+                    &mut self.runtime.alerts,
+                    &mut self.audio,
+                    &mut self.surfaces.toast,
+                    &mut self.surfaces.agent_popup,
+                    self.runtime
+                        .tabs
+                        .iter_mut()
+                        .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+                );
             }
             FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(
                 &mut self.runtime.tabs,
@@ -494,6 +501,8 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
+                alerts: &mut self.runtime.alerts,
+                display_offset_minutes: self.runtime.tz.minutes(),
                 indicators: &mut self.runtime.indicators,
                 store: self.runtime.workspace.layouts(),
                 alert_failure: self.audio.alert_failure.as_deref(),
@@ -503,6 +512,9 @@ impl QuantickApp {
                 markets: markets.as_ref(),
             },
         );
+        if let Some(request) = asks.alerts {
+            super::alerts_runtime::apply_alert_request(self, *request);
+        }
         for action in asks.indicator_actions {
             self.apply_toolbar_action(action);
         }
@@ -603,7 +615,12 @@ impl QuantickApp {
             &mut self.runtime.tabs,
             &mut self.replay_view,
             self.runtime.tz,
+            self.surfaces.alerts.is_open(),
         );
+        if response.open_alerts {
+            self.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+        }
+        super::alerts_runtime::draw_manager_panel(self, ctx);
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
@@ -713,13 +730,13 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        if scratch.canvas.begin_text_edit {
-            self.drawings.chrome.request_text_edit();
-        }
+        let (chrome, open) = (&mut self.drawings.chrome, self.surfaces.alerts.is_open());
+        chrome.frame_facts(scratch.canvas.begin_text_edit, open);
         let ask = self.drawings.draw_drawing_chrome(
             ctx,
             &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),
             &self.toolrail,
+            &self.runtime.alerts.core.book,
         );
         self.resolve_drawing_response(ask, now);
     }
@@ -800,6 +817,15 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
+        if let Some(selector) = ask.alert_target.take() {
+            match self.layout_adapter().resolve_alert_target(selector) {
+                Ok(target) => self.surfaces.alerts.open_drawing(Some(target)),
+                Err(error) => self
+                    .surfaces
+                    .toast
+                    .note(format!("Alert target unavailable: {error:?}"), now),
+            }
+        }
         if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;
             let result = self.control_action(

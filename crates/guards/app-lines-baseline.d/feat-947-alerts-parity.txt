@@ -1,0 +1,4 @@
+# #947 authorized desktop rail, docked Alerts manager, drawing bell painting and scene/native dispatch wiring.
+# Predicates, attachment counting, cadence and expiry remain headless; no UI-free or root increase.
+crates/app +236
+!budget +236

@@ -81,6 +81,7 @@ mod tests {
             payload: None,
             text: None,
             id: None,
+            durable_identity: None,
             origin: None,
             bars: None,
         }

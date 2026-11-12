@@ -482,3 +482,31 @@ amendment for the PR's CI completion, not recalibration: calibration history,
 limits, host, toolchain, jobs, protocol, selection and representatives are
 unchanged. A fresh ordinary exact-final-head run must still pass every ceiling;
 this amendment does not authorize automatic future identity refreshes.
+
+
+#### Alerts member-only applicability amendment (PR #867)
+
+The scoped [#858 amendment](https://github.com/milocaetano/quantick/issues/858)
+binds the active root-manifest SHA256 to
+`6a723dc22f754631f58c6d9117754c6a5e5892dcaa6092f265949051297b5425`.
+Relative to `bd725cf788426050f6fa5e48c7780696715eaf6a`, only `crates/alerts`
+is added to the root workspace members; all other parsed manifest values,
+including build profiles, are equal. Calibration identity/history, numerical
+ceilings, host, toolchain, jobs, protocol and representatives remain unchanged.
+
+The [retained run](https://github.com/milocaetano/quantick/actions/runs/42761366116)
+at `f63656948c8232914570b5dbdcd4cf2c5e890acc` completed all five-sample series
+and failed the old manifest identity. Its loop maxima were app 49.144 seconds
+(limit 82.126), orderflow 44.086 (limit 38.703), and pine 2.174 (limit 2.653).
+The orderflow result is an actual over-budget measurement, not a PASS hidden
+by the identity failure: its package test run took 41.897 seconds, with only
+0.12 seconds reported by Cargo before test execution.
+
+Orderflow, appearance, engine and orderbook source/manifest trees are unchanged
+from the pinned base. The lockfile adds only alerts and incoming references
+from app/control-handlers/stores/strategy; no external versions or orderflow
+resolution entries change. No timing ceiling is raised. The next ordinary
+exact-final-head run is the **one authorized outside-diff retry (count 1)**;
+this count does not reset with the metadata commit. It must pass every existing
+ceiling, or the timing failure remains a blocker. This scoped amendment does
+not authorize automatic future identity refreshes or additional retries.
