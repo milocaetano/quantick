@@ -21,6 +21,7 @@ use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage}
 use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::stall::Stall;
+use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
 use quantick_workspace::market_list::PaletteIntent;
 use std::time::{Duration, Instant};
 
@@ -129,10 +130,14 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
     match quantick_control_handlers::market_palette::settle(port, intent) {
         Ok(None) => {}
         Ok(Some(note)) => {
-            app.surfaces.market_palette.close();
+            app.surfaces.market_palette.update(PaletteUiIntent::Close);
             app.surfaces.toast.note(note, std::time::Instant::now());
         }
-        Err(reason) => app.surfaces.market_palette.refuse(reason),
+        Err(reason) => {
+            app.surfaces
+                .market_palette
+                .update(PaletteUiIntent::Refuse(reason));
+        }
     }
 }
 
@@ -183,7 +188,9 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
         background,
         &mut app.surfaces,
     ) {
-        app.surfaces.market_palette.open("", None);
+        app.surfaces
+            .market_palette
+            .update(PaletteUiIntent::open("", None));
     }
 }
 
@@ -501,7 +508,8 @@ impl QuantickApp {
     /// chip that says the same thing. Two surfaces the trader reads as one is
     /// this repo's own bug class.
     fn draw_surface_stage(&mut self, ctx: &egui::Context, now: Instant) {
-        let markets = (self.surfaces.hooks_pending() || self.surfaces.market_palette.is_open())
+        let palette = &self.surfaces.market_palette.model_state;
+        let markets = (self.surfaces.hooks_pending() || palette.is_open())
             .then(|| MarketPaletteHost::market_snapshot(self));
         let asks = surfaces::draw_surfaces(
             ctx,

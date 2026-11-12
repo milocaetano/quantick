@@ -27,8 +27,10 @@ use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
+use quantick_control_handlers::market_switch;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
+use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, OpenChoice};
 
 use super::deal_recording_wiring as deals;
@@ -848,14 +850,13 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
                 trades_per_s: None,
             })
             .collect();
-        let workspaces = book.book().list().into_iter().map(|row| row.name);
         list::MarketSnapshot {
             venues,
             markets,
             open,
-            recent: self.surfaces.market_palette.recent.clone(),
+            recent: self.surfaces.market_palette.model_state.recent.clone(),
             starter_feed: self.config.default_feed.clone(),
-            workspaces: workspaces.collect(),
+            workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
             inherited_bar: Some(self.active_tab().flow_pane.state.spec().to_config_string()),
         }
     }
@@ -886,10 +887,10 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
     }
     /// Show the palette; `switch` puts it in switch mode on the active tab.
     fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
-        let port = self as &dyn ControlPort;
-        let target = switch.then(|| quantick_control_handlers::market_switch::target(port));
+        let target = switch.then(|| market_switch::target(self as &dyn ControlPort));
         let target = target.transpose().map_err(ControlError::invalid_request)?;
-        self.surfaces.market_palette.open(query, target);
+        let intent = Intent::open(query, target);
+        self.surfaces.market_palette.update(intent);
         Ok(())
     }
     fn set_flow_bar(&mut self, tab: u64, bar: Bars) -> Result<(), String> {

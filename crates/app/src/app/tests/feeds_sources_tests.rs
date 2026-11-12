@@ -2255,7 +2255,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     press_in_palette(&mut app, &ctx, egui::Key::Enter);
 
     assert!(
-        !app.surfaces.market_palette.is_open(),
+        !app.surfaces.market_palette.model_state.is_open(),
         "adding closes the palette, because it opened the market"
     );
     assert_eq!(app.runtime.tabs.len(), tabs_before + 1);
@@ -2276,7 +2276,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     // stays open around the reason.
     type_into_palette(&mut app, &ctx, "winq26");
     press_in_palette(&mut app, &ctx, egui::Key::Delete);
-    let refusal = (app.surfaces.market_palette.open.as_mut())
+    let refusal = (app.surfaces.market_palette.model_state.open.as_mut())
         .and_then(|palette| palette.refusal().map(str::to_owned));
     assert_eq!(
         refusal.as_deref(),
@@ -2343,8 +2343,8 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     };
     let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
     super::super::frame::apply_palette_intent(&mut app, add);
-    let palette =
-        (app.surfaces.market_palette.open.as_mut()).expect("the palette stays open on a refusal");
+    let palette = (app.surfaces.market_palette.model_state.open.as_mut())
+        .expect("the palette stays open on a refusal");
     assert!(
         palette
             .refusal()
@@ -2383,14 +2383,27 @@ fn a_market_enters_recent_only_once_its_tab_has_closed() {
     let (mut app, _cmd_rx) = app_with_history(50);
     app.apply_tab_action(TabAction::Close(0));
     assert_eq!(app.runtime.tabs.len(), 1, "the last tab stays");
-    assert!(app.surfaces.market_palette.recent.entries().is_empty());
+    assert!(
+        app.surfaces
+            .market_palette
+            .model_state
+            .recent
+            .entries()
+            .is_empty()
+    );
     let spec = quantick_engine::bar_registry::BUILTIN_BARS.parse("tick:77");
     let market = ("binance".to_owned(), "ETHUSDT".to_owned());
     (app.arrangement_adapter()).open_tab(market.0, market.1, Some(spec.unwrap()));
     app.apply_tab_action(TabAction::Close(1));
-    let closed: Vec<(String, String)> = (app.surfaces.market_palette.recent.entries().iter())
-        .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
-        .collect();
+    let closed: Vec<(String, String)> = (app
+        .surfaces
+        .market_palette
+        .model_state
+        .recent
+        .entries()
+        .iter())
+    .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
+    .collect();
     assert_eq!(closed, [("ETHUSDT".to_owned(), "tick:77".to_owned())]);
     let snapshot = MarketPaletteHost::market_snapshot(&app);
     let world = snapshot.world();
@@ -2413,7 +2426,7 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     type_into_palette(&mut app, &ctx, "ETHUSDT");
     let snapshot = MarketPaletteHost::market_snapshot(&app);
     let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
-    let palette = (app.surfaces.market_palette.open.as_mut()).expect("open");
+    let palette = (app.surfaces.market_palette.model_state.open.as_mut()).expect("open");
     assert_eq!(
         palette.bar(&listing),
         "volume:13",
@@ -2442,7 +2455,9 @@ fn tab_shortcuts_leave_the_tabs_behind_an_open_palette_alone() {
         (egui::Key::T, egui::Modifiers::COMMAND),
     ];
     for (key, modifiers) in shortcuts {
-        app.surfaces.market_palette.close();
+        app.surfaces
+            .market_palette
+            .update(quantick_ui_model::market_palette::Intent::Close);
         run_frame(&mut app, &ctx);
         app.apply_tab_action(TabAction::New);
         let press = vec![key_press_with(key, modifiers)];
@@ -2453,7 +2468,7 @@ fn tab_shortcuts_leave_the_tabs_behind_an_open_palette_alone() {
             active,
             "{key:?} moved nothing"
         );
-        assert!(app.surfaces.market_palette.is_open(), "{key:?}");
+        assert!(app.surfaces.market_palette.model_state.is_open(), "{key:?}");
         assert!(!app.chrome.title_bar.surface.is_home());
     }
 }
@@ -2468,7 +2483,7 @@ fn a_hook_opened_palette_draws_on_its_first_frame() {
     let (mut app, _cmd_rx) = app_with_history(50);
     run_frame(&mut app, &ctx);
     crate::hooks::captured::set_on_this_thread(None);
-    assert!(app.surfaces.market_palette.is_open());
+    assert!(app.surfaces.market_palette.model_state.is_open());
     let field = egui::Id::new("market_palette").with("query");
     assert_eq!(ctx.memory(|memory| memory.focused()), Some(field));
 }
@@ -2489,15 +2504,18 @@ fn a_market_opened_on_another_workspace_lands_on_it() {
         .save_as(first, "Swing")
         .expect("the first tab saves a workspace");
     type_into_palette(&mut app, &ctx, "ETHUSDT");
-    (app.surfaces.market_palette.open.as_mut())
-        .expect("open")
-        .set_workspace("Swing");
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Workspace(
+            "Swing".into(),
+        ));
     press_in_palette(&mut app, &ctx, egui::Key::Enter);
     assert!(
-        !app.surfaces.market_palette.is_open(),
+        !app.surfaces.market_palette.model_state.is_open(),
         "the open was not refused: {:?}",
         app.surfaces
             .market_palette
+            .model_state
             .open
             .as_ref()
             .and_then(|p| p.refusal())
@@ -2523,7 +2541,7 @@ fn delete_on_a_config_market_shows_why_it_stays() {
     let (mut app, _cmd_rx) = app_with_history(50);
     type_into_palette(&mut app, &ctx, "ETHUSDT");
     press_in_palette(&mut app, &ctx, egui::Key::Delete);
-    let refusal = (app.surfaces.market_palette.open.as_ref()).and_then(|p| p.refusal());
+    let refusal = (app.surfaces.market_palette.model_state.open.as_ref()).and_then(|p| p.refusal());
     assert_eq!(
         refusal,
         Some("ETHUSDT comes from the config file; only a market you added can be removed")
@@ -2534,9 +2552,15 @@ fn delete_on_a_config_market_shows_why_it_stays() {
 fn type_into_palette(app: &mut QuantickApp, ctx: &egui::Context, query: &str) {
     app.apply_tab_action(TabAction::New);
     run_frame(app, ctx);
-    (app.surfaces.market_palette.open.as_mut())
-        .expect("the + opened the palette")
-        .set_query(query);
+    assert!(
+        app.surfaces.market_palette.model_state.is_open(),
+        "the + opened the palette"
+    );
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Query(
+            query.into(),
+        ));
     run_frame(app, ctx);
 }
 

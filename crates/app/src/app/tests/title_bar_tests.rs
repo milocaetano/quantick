@@ -87,7 +87,7 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
     );
     let plus = app.chrome.title_bar.strip.add.unwrap().center();
     click_sized(&mut app, &ctx, egui::vec2(300.0, 760.0), plus);
-    assert!(app.surfaces.market_palette.is_open());
+    assert!(app.surfaces.market_palette.model_state.is_open());
 }
 
 #[test]

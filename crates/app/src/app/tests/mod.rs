@@ -1594,10 +1594,12 @@ struct TabEnds {
 fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
     app.apply_tab_action(TabAction::New);
     assert!(
-        app.surfaces.market_palette.is_open(),
+        app.surfaces.market_palette.model_state.is_open(),
         "the + opens the picker"
     );
-    app.surfaces.market_palette.close();
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Close);
 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);

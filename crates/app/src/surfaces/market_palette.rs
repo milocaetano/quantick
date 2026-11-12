@@ -1,17 +1,19 @@
-//! "Open a market", as a [`Surface`]: `+`, Ctrl+T, Home and
+//! "Open a market", through the shared model/view adapter: `+`, Ctrl+T, Home and
 //! `market.palette.open` put it over the chart. The list, the labels and what
 //! each key means are `quantick_workspace::market_list`'s; this file reads
 //! keys and paints, and the host answers what they ask.
 
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Ui};
-use quantick_control_handlers::market_palette::default_bar_size as default_size;
 use quantick_workspace::market_list::{
-    self as list, BAR_KINDS, MarketListing, MarketPalette, MarketRow, PaletteFocus, PaletteKey,
-    RecentMarkets, StatusTone, VenueKind,
+    self as list, BAR_KINDS, MarketRow, PaletteFocus, PaletteKey, StatusTone, VenueKind,
 };
 
-use super::{Surface, SurfaceEnv, SurfaceResponse};
+#[cfg(test)]
+use super::Surface;
+use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
+type Session<'a> = quantick_ui_model::UpdateSession<'a, Model>;
+use quantick_ui_model::market_palette::{Intent, Model, State};
 
 const WIDTH_PX: f32 = 640.0;
 const TOP_PX: f32 = 56.0;
@@ -27,34 +29,14 @@ const LOCKED: egui::EventFilter = egui::EventFilter {
     escape: false,
 };
 
-type Intent = list::PaletteIntent;
-
+pub(crate) type MarketPaletteSurface = super::Adapter<Model, View>;
 #[derive(Default)]
-pub(crate) struct MarketPaletteSurface {
-    pub open: Option<MarketPalette>,
-    /// The markets the trader closed lately, for Recent.
-    pub recent: RecentMarkets,
-}
+pub(crate) struct View;
 
-impl MarketPaletteSurface {
-    pub fn is_open(&self) -> bool {
-        self.open.is_some()
-    }
-
-    /// Open on `query`; in switch mode when `switching` names a tab.
-    pub fn open(&mut self, query: &str, switching: Option<list::SwitchTarget>) {
-        self.open = Some(MarketPalette::opened(query, switching));
-    }
-
-    pub fn close(&mut self) {
-        self.open = None;
-    }
-
-    /// Show the host's refusal under the field; dropped once closed.
-    pub fn refuse(&mut self, reason: String) {
-        if let Some(palette) = self.open.as_mut() {
-            palette.refuse(reason);
-        }
+pub(crate) fn effects(market: Option<list::PaletteIntent>) -> SurfaceResponse {
+    SurfaceResponse {
+        market,
+        ..SurfaceResponse::default()
     }
 }
 
@@ -103,10 +85,15 @@ fn read_keys(ctx: &egui::Context, removable: bool) -> (bool, Vec<PaletteKey>) {
     })
 }
 
-/// Keep egui's focus and the palette's stop agreeing ([`MarketPalette::settle_focus`]).
-fn focus_stop(palette: &mut MarketPalette, response: &egui::Response, stop: PaletteFocus) {
+/// Keep egui's focus and the palette's stop agreeing ([`list::MarketPalette::settle_focus`]).
+fn focus_stop(session: &mut Session<'_>, response: &egui::Response, stop: PaletteFocus) {
     let idle = response.ctx.memory(|memory| memory.focused().is_none());
-    if palette.settle_focus(stop, response.clicked() || response.gained_focus(), idle) {
+    session.update(Intent::Focus {
+        stop,
+        acquired: response.clicked() || response.gained_focus(),
+        idle,
+    });
+    if session.state().request_focus {
         response.request_focus();
     }
     (response.ctx).memory_mut(|memory| memory.set_focus_lock_filter(response.id, LOCKED));
@@ -210,93 +197,125 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
     }
 }
 
-fn draw_list(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing) -> Option<Intent> {
+fn draw_list(ui: &mut Ui, session: &mut Session<'_>) {
     let colors = theme::get(ui.ctx());
-    let mut chosen = None;
     let moved = ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
     let scroll = egui::ScrollArea::vertical().max_height(LIST_MAX_PX);
     scroll.auto_shrink([false, true]).show(ui, |ui| {
-        for group in &listing.groups {
-            ui.label(faint(&colors, group.heading.to_uppercase()));
-            for row in &group.rows {
-                let response = paint_row(ui, row, palette.is_selected(listing, row));
+        let mut index = 0;
+        for group_index in 0..session.state().listing.groups.len() {
+            ui.label(faint(
+                &colors,
+                session.state().listing.groups[group_index]
+                    .heading
+                    .to_uppercase(),
+            ));
+            for row_index in 0..session.state().listing.groups[group_index].rows.len() {
+                let row = &session.state().listing.groups[group_index].rows[row_index];
+                let response = paint_row(ui, row, session.state().selected(row));
                 if row.selectable() && ((response.hovered() && moved) || response.clicked()) {
-                    palette.select(listing, row);
+                    session.update(Intent::Row {
+                        index,
+                        submit: response.clicked(),
+                    });
                 }
-                if row.selectable() && response.clicked() {
-                    chosen = palette.submit(listing, false);
-                }
+                index += 1;
             }
         }
     });
-    chosen
 }
 
 /// Bars (kind and size) and Workspace, then what Enter does.
-fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing, names: &[&str]) {
+fn draw_footer(ui: &mut Ui, session: &mut Session<'_>, names: &[&str]) {
     let colors = theme::get(ui.ctx());
     // Controls and the variable-length Enter action have independent rows.
     // Each wraps within the measured popup width, including long workspace names.
-    if !palette.commands_mode() {
+    if !session.state().palette().commands_mode() {
         ui.horizontal_wrapped(|ui| {
-            let ((kind, size), changed) = (palette.bar_parts(listing), palette.bar_changed());
+            let ((kind, size), changed) = session.state().bar_parts();
             ui.label(faint(&colors, "BARS"));
             if let Some(kind) = dropdown(ui, "palette_bars", (&kind, changed), &BAR_KINDS).inner {
-                palette.set_bar_kind(&kind, &default_size(&kind));
+                session.update(Intent::BarKind(kind));
             }
             let mut typed = size.clone();
             let color = either(changed, colors.amber(), colors.text_primary());
             let field = egui::TextEdit::singleline(&mut typed).desired_width(56.0);
             let field = ui.add(field.text_color(color));
-            focus_stop(palette, &field, PaletteFocus::Bars);
+            focus_stop(session, &field, PaletteFocus::Bars);
             if typed != size {
-                palette.set_bar_size(listing, &typed);
+                session.update(Intent::BarSize(typed));
             }
             ui.add_space(14.0);
             ui.label(faint(&colors, "WORKSPACE"));
-            if palette.focus() == PaletteFocus::Workspace {
+            if session.state().palette().focus() == PaletteFocus::Workspace {
                 ui.visuals_mut().widgets.inactive.bg_stroke =
                     egui::Stroke::new(1.0_f32, colors.accent());
             }
-            let shown = (palette.workspace().to_owned(), palette.workspace_changed());
+            let shown = session.state().workspace();
             let picked = dropdown(ui, "palette_workspace", (&shown.0, shown.1), names);
-            focus_stop(palette, &picked.response, PaletteFocus::Workspace);
+            focus_stop(session, &picked.response, PaletteFocus::Workspace);
             if let Some(name) = picked.inner {
-                palette.set_workspace(&name);
+                session.update(Intent::Workspace(name));
             }
         });
     }
     ui.horizontal_wrapped(|ui| {
-        if !palette.commands_mode() && palette.switch_target().is_none() {
+        if session.state().offers_background() {
             ui.label(faint(&colors, format!("Ctrl {RETURN} background")));
         }
-        ui.add(egui::Label::new(format!("{}  {RETURN}", palette.primary_label(listing))).wrap());
+        ui.add(egui::Label::new(format!("{}  {RETURN}", session.state().primary_label())).wrap());
     });
 }
 
-impl Surface for MarketPaletteSurface {
+impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "market_palette"
     }
 
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        if let Some(query) = crate::hooks::captured::var("QUANTICK_MARKET_PALETTE") {
-            self.open(if query == "1" { "" } else { &query }, None);
-        }
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<Intent> {
+        let query = crate::hooks::captured::var("QUANTICK_MARKET_PALETTE")?;
+        Some(Intent::Open {
+            query: if query == "1" { String::new() } else { query },
+            switching: None,
+        })
     }
 
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+    fn paint(
+        &mut self,
+        _: &State,
+        _: &mut ViewContext<'_>,
+        _: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        None
+    }
+
+    fn paint_updated(
+        &mut self,
+        session: &mut Session<'_>,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
+    ) {
+        let Some(env) = env else {
+            return;
+        };
+        let ctx = target.context();
         let colors = theme::get(ctx);
         let id = egui::Id::new(self.id());
-        let (Some(palette), Some(data)) = (self.open.as_mut(), env.markets) else {
-            return SurfaceResponse::default();
+        let Some(data) = env.markets.filter(|_| session.state().is_open()) else {
+            return;
         };
+        if session.state().snapshot != *data {
+            session.update(Intent::Refresh(Box::new(data.clone())));
+        }
         let query_id = id.with("query");
         let cursor = egui::TextEdit::load_state(ctx, query_id).and_then(|s| s.cursor.char_range());
         let cursor = cursor.map(|range| (range.primary.index, range.secondary.index));
-        let at_end = list::delete_removes_row(palette.query(), cursor);
-        let (escape, keys) = read_keys(ctx, palette.focus() == PaletteFocus::Field && at_end);
+        let at_end = list::delete_removes_row(session.state().palette().query(), cursor);
+        let (escape, keys) = read_keys(
+            ctx,
+            session.state().palette().focus() == PaletteFocus::Field && at_end,
+        );
         let (screen, window) = (ctx.available_rect(), ctx.screen_rect());
         // A click that only dismisses a footer dropdown leaves the palette up.
         let dropdown_open = ctx.memory(|memory| memory.any_popup_open());
@@ -309,51 +328,44 @@ impl Surface for MarketPaletteSurface {
             ui.painter().rect_filled(rect, 0.0, colors.modal_scrim());
             response
         });
-        let (width, mut market) = (WIDTH_PX.min(screen.width() - 48.0), None);
+        let width = WIDTH_PX.min(screen.width() - 48.0);
         let area = egui::Area::new(id).order(egui::Order::Foreground);
         let at = egui::pos2(screen.center().x - width / 2.0, screen.top() + TOP_PX);
         let shown = area.fixed_pos(at).show(ctx, |ui| {
             let frame = egui::Frame::popup(ui.style()).fill(colors.chrome());
             frame.rounding(10.0_f32).show(ui, |ui| {
                 ui.set_width(width);
-                let before = palette.query().to_owned();
-                let field = egui::TextEdit::singleline(palette.query_mut())
+                let mut query = session.state().palette().query().to_owned();
+                let field = egui::TextEdit::singleline(&mut query)
                     .id(query_id)
                     .hint_text(list::PLACEHOLDER)
                     .font(FontId::proportional(15.0))
                     .frame(false)
                     .desired_width(f32::INFINITY);
                 let field = ui.add(field);
-                focus_stop(palette, &field, PaletteFocus::Field);
-                palette.settle_query(&before);
-                if let Some(target) = palette.switch_target() {
+                focus_stop(session, &field, PaletteFocus::Field);
+                session.update(Intent::Query(query));
+                if let Some(target) = session.state().palette().switch_target() {
                     ui.label(RichText::new(target.caption()).color(colors.text_faint()));
                 }
-                if let Some(reason) = palette.refusal() {
+                if let Some(reason) = session.state().palette().refusal() {
                     ui.label(RichText::new(reason).small().color(colors.sell()));
                 }
                 ui.separator();
-                let listing = palette.listing(&data.world());
-                let pressed = keys.into_iter().fold(None, |asked, key| {
-                    asked.or(palette.press(key, &listing, &data.workspaces, default_size))
-                });
-                let clicked = draw_list(ui, palette, &listing);
-                market = pressed.or(clicked);
+                session.update(Intent::Keys(keys));
+                draw_list(ui, session);
                 ui.separator();
                 let names: Vec<&str> = data.workspaces.iter().map(String::as_str).collect();
-                draw_footer(ui, palette, &listing, &names);
+                draw_footer(ui, session, &names);
             });
         });
         // Right above its scrim, whichever was pressed; dropdowns open above.
         ctx.set_sublayer(scrim.response.layer_id, shown.response.layer_id);
-        if escape || (scrim.inner.clicked() && !dropdown_open) {
-            self.open = None;
-            return SurfaceResponse::default();
-        }
-        SurfaceResponse {
-            market,
-            ..SurfaceResponse::default()
-        }
+        session.update(Intent::Finish {
+            escape,
+            scrim_clicked: scrim.inner.clicked(),
+            dropdown_open,
+        });
     }
 }
 
@@ -498,7 +510,7 @@ mod market_palette_surface_tests {
 
     fn selected(surface: &mut MarketPaletteSurface) -> String {
         let markets = snapshot();
-        let palette = surface.open.as_mut().expect("open");
+        let palette = surface.model_state.open.as_mut().expect("open");
         let listing = list::list_markets(&markets.world(), palette.query());
         palette
             .selected_row(&listing)
@@ -525,12 +537,16 @@ mod market_palette_surface_tests {
                 ">",
             ] {
                 let ctx = egui::Context::default();
-                let mut palette = MarketPalette::opened(query, None);
+                let mut adapter = MarketPaletteSurface::new(View, effects);
+                adapter.update(Intent::Open {
+                    query: query.into(),
+                    switching: None,
+                });
                 let mut data = snapshot();
                 let workspace = "A long workspace name with several words";
                 data.workspaces = vec![workspace.into()];
-                palette.set_workspace(workspace);
-                let listing = palette.listing(&data.world());
+                adapter.update(Intent::Workspace(workspace.into()));
+                adapter.update(Intent::Refresh(Box::new(data)));
                 let output = ctx.run(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
@@ -542,7 +558,10 @@ mod market_palette_surface_tests {
                     |ctx| {
                         egui::CentralPanel::default().show(ctx, |ui| {
                             ui.set_width(width);
-                            draw_footer(ui, &mut palette, &listing, &[workspace]);
+                            adapter.with_updates(
+                                |_| {},
+                                |_, session| draw_footer(ui, session, &[workspace]),
+                            );
                         });
                     },
                 );
@@ -592,8 +611,11 @@ mod market_palette_surface_tests {
     #[test]
     fn a_resting_pointer_leaves_the_keyboard_selection_alone() {
         let ctx = egui::Context::default();
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "".into(),
+            switching: None,
+        });
         let shown = settle(&mut surface, &ctx);
         let eth = text_rect(&shown.output, "ETHUSDT").center();
         frame(
@@ -621,8 +643,11 @@ mod market_palette_surface_tests {
     #[test]
     fn the_keyboard_and_the_focused_stop_move_together() {
         let ctx = egui::Context::default();
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "".into(),
+            switching: None,
+        });
         let shown = settle(&mut surface, &ctx);
         assert_eq!(focused(&ctx), Some(query_id()));
         click(&mut surface, &ctx, text_rect(&shown.output, "50").center());
@@ -645,7 +670,7 @@ mod market_palette_surface_tests {
     }
 
     fn surface_focus(surface: &mut MarketPaletteSurface) -> PaletteFocus {
-        surface.open.as_mut().expect("open").focus()
+        surface.model_state.open.as_mut().expect("open").focus()
     }
 
     /// Delete edits the query while there is text after the cursor; at the
@@ -653,13 +678,19 @@ mod market_palette_surface_tests {
     #[test]
     fn delete_edits_the_query_until_the_cursor_is_at_its_end() {
         let ctx = egui::Context::default();
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("pepe", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "pepe".into(),
+            switching: None,
+        });
         settle(&mut surface, &ctx);
         frame(&mut surface, &ctx, key(Key::ArrowLeft));
         let edited = frame(&mut surface, &ctx, key(Key::Delete));
         assert_eq!(edited.response.market, None);
-        assert_eq!(surface.open.as_mut().expect("open").query(), "pep");
+        assert_eq!(
+            surface.model_state.open.as_mut().expect("open").query(),
+            "pep"
+        );
         frame(&mut surface, &ctx, key(Key::End));
         let removed = frame(&mut surface, &ctx, key(Key::Delete));
         assert_eq!(
@@ -678,8 +709,11 @@ mod market_palette_surface_tests {
     fn a_click_on_the_scrim_closes_the_palette_and_never_reaches_the_window() {
         for target in ["chart", "strip"] {
             let ctx = egui::Context::default();
-            let mut surface = MarketPaletteSurface::default();
-            surface.open("", None);
+            let mut surface = MarketPaletteSurface::new(View, effects);
+            surface.update(Intent::Open {
+                query: "".into(),
+                switching: None,
+            });
             let shown = settle(&mut surface, &ctx);
             let at = match target {
                 "chart" => OUTSIDE,
@@ -692,7 +726,10 @@ mod market_palette_surface_tests {
                 "the {target} saw the click"
             );
             assert_eq!(up.response.market, None);
-            assert!(!surface.is_open(), "a click on the {target}'s scrim closes");
+            assert!(
+                !surface.model_state.is_open(),
+                "a click on the {target}'s scrim closes"
+            );
             settle(&mut surface, &ctx);
             let after = click(&mut surface, &ctx, at);
             assert!(
@@ -707,8 +744,11 @@ mod market_palette_surface_tests {
     #[test]
     fn a_click_off_an_open_dropdown_closes_only_the_dropdown() {
         let ctx = egui::Context::default();
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "".into(),
+            switching: None,
+        });
         let shown = settle(&mut surface, &ctx);
         click(
             &mut surface,
@@ -719,10 +759,10 @@ mod market_palette_surface_tests {
         assert!(painted(&listed.output, "Scalp"), "the dropdown is open");
         click(&mut surface, &ctx, OUTSIDE);
         let after = settle(&mut surface, &ctx);
-        assert!(surface.is_open(), "only the dropdown closed");
+        assert!(surface.model_state.is_open(), "only the dropdown closed");
         assert!(!painted(&after.output, "Scalp"));
         click(&mut surface, &ctx, OUTSIDE);
-        assert!(!surface.is_open());
+        assert!(!surface.model_state.is_open());
     }
 
     /// The key hints are drawn in glyphs the window's fonts carry (egui's
@@ -734,8 +774,11 @@ mod market_palette_surface_tests {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ctx.set_fonts(fonts);
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "".into(),
+            switching: None,
+        });
         let shown = settle(&mut surface, &ctx);
         let font = FontId::proportional(12.0);
         let has = |text: &str| ctx.fonts(|fonts| fonts.has_glyphs(&font, text));
@@ -753,8 +796,11 @@ mod market_palette_surface_tests {
     #[test]
     fn the_list_is_drawn_on_the_frame_a_key_asks_for_something() {
         let ctx = egui::Context::default();
-        let mut surface = MarketPaletteSurface::default();
-        surface.open("", None);
+        let mut surface = MarketPaletteSurface::new(View, effects);
+        surface.update(Intent::Open {
+            query: "".into(),
+            switching: None,
+        });
         settle(&mut surface, &ctx);
         let entered = frame(&mut surface, &ctx, key(Key::Enter));
         assert!(matches!(

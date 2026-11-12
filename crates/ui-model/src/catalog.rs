@@ -10,12 +10,13 @@ macro_rules! surface_catalog {
         $consumer! {
             legacy {
                 script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
-                market_palette: MarketPaletteSurface => Surface::draw, ignore_keyboard;
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
             modules { remove_chart; }
             models {
+                [] []
+                market_palette: MarketPalette => market_palette = "market_palette.rs", market_palette = "market_palette.rs", market_palette::effects, Overlay, Local;
                 [] []
                 indicator_preview: IndicatorPreview => indicator_preview = "indicator_preview.rs", indicator_preview = "indicator_preview.rs", indicator_preview::effects, Overlay, Local;
                 [] []

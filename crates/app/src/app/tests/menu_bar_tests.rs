@@ -308,7 +308,7 @@ fn the_toolbar_market_button_switches_the_symbol_inside_the_same_tab() {
         &format!("TESTUSDT \u{b7} Binance{caret}"),
     );
     run_frame(&mut app, &ctx);
-    let palette = app.surfaces.market_palette.open.as_ref();
+    let palette = app.surfaces.market_palette.model_state.open.as_ref();
     assert!(
         palette
             .and_then(|palette| palette.switch_target())
