@@ -1,6 +1,6 @@
 //! One registration owns module declarations, storage, effects and frame slot.
-//! Migrate a legacy row to `models { field: model_module, view_module,
-//! effect_conversion, Slot; }`. Model files live beside lib.rs; view files
+//! Migrate a legacy row to `models { [] [] field: model_module = "model.rs",
+//! view_module = "view.rs", effect_conversion, Slot; }`. Model files live beside lib.rs; view files
 //! live under app/src/surfaces. Implement View and convert typed effects into
 //! the existing SurfaceResponse; its host dispatch remains authoritative.
 //! No projection is rebuilt by the adapter: the view borrows cached State.
@@ -19,8 +19,13 @@ macro_rules! surface_catalog {
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
-            models { }
-            fixtures { first: Overlay; second: Toolbar; }
+            modules { drawing_chrome; home; remove_chart; }
+            models {
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                first: first = "first.rs", first_view = "fixtures/first.rs", first_view::effects, Overlay;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                second: second = "second.rs", second_view = "fixtures/second.rs", second_view::effects, Toolbar;
+            }
         }
     };
 }

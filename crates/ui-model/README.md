@@ -7,7 +7,10 @@ crates remain authoritative. A refresh intent should carry a revision so the
 model can retain its projection when the source has not changed.
 
 `src/catalog.rs` is the only registration list. Move a legacy entry into
-`models { name: model_module, view_module, view_module::effects, Overlay; }`.
+`models { [] [] name: model_module = "model_module.rs",
+view_module = "view_module.rs", view_module::effects, Overlay; }`.
+The two metadata lists apply to the model and view declarations respectively;
+empty lists ship normally, while fixtures use conditional compilation.
 This declares `src/model_module.rs` here and `app/src/surfaces/view_module.rs`
 in the app, creates the stored adapter, and routes its slot and effects.
 Neither crate root needs another module declaration. The model module exports

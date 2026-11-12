@@ -32,10 +32,11 @@ pub enum Slot {
 }
 
 macro_rules! models {
-    (legacy { $($legacy:tt)* } models { $( $field:ident: $model:ident, $view:ident, $effects:path, $slot:ident; )* }
-     fixtures { $( $fixture:ident: $fixture_slot:ident; )* }) => {
-        $(pub mod $model;)*
-        $(#[cfg(any(test, feature = "test-support"))] pub mod $fixture;)*
+    (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
+     models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
+        $field:ident: $model:ident = $model_file:literal, $view:ident = $view_file:literal,
+        $effects:path, $slot:ident; )* }) => {
+        $($(#[$model_attr])* #[path = $model_file] pub mod $model;)*
     };
 }
 surface_catalog!(models);

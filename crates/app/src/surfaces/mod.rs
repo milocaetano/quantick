@@ -2,10 +2,6 @@
 //! emit intents. Legacy entries keep their behavior until migrated.
 //! See quantick-ui-model/src/catalog.rs for the single registration seam.
 
-pub(crate) mod drawing_chrome;
-pub(crate) mod home;
-pub(crate) mod remove_chart;
-
 use std::time::Instant;
 
 use eframe::egui;
@@ -351,15 +347,17 @@ impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView
 
 macro_rules! register_surfaces {
     (legacy { $( $legacy:ident: $ty:ident => $draw:path, $keyboard:path; )* }
-     models { $( $field:ident: $model:ident, $view:ident, $effects:path, $slot:ident; )* }
-     fixtures { $($fixture:ident: $fixture_slot:ident;)* }) => {
+     modules { $($module:ident;)* }
+     models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
+        $field:ident: $model:ident = $model_file:literal, $view:ident = $view_file:literal,
+        $effects:path, $slot:ident; )* }) => {
         $(pub(crate) mod $legacy;)*
-        $(pub(crate) mod $view;)*
+        $(pub(crate) mod $module;)*
+        $($(#[$view_attr])* #[path = $view_file] pub(crate) mod $view;)*
         pub(crate) struct Surfaces {
             $(pub $legacy: $legacy::$ty,)*
-            $(pub $field: Adapter<quantick_ui_model::$model::Model, $view::View>,)*
+            $($(#[$view_attr])* pub $field: Adapter<quantick_ui_model::$model::Model, $view::View>,)*
             pub widgets: crate::widget_surfaces::WidgetSurfaces,
-            $(#[cfg(test)] pub $fixture: Adapter<quantick_ui_model::$fixture::Model, tests::FixtureView>,)*
             #[cfg(any(feature = "scenario-harness", test))]
             hooks_applied: bool,
         }
@@ -367,9 +365,8 @@ macro_rules! register_surfaces {
             fn default() -> Self {
                 Self {
                     $($legacy: Default::default(),)*
-                    $($field: Adapter { model_state: Default::default(), view: Default::default(), effects: $effects },)*
+                    $($(#[$view_attr])* $field: Adapter { model_state: Default::default(), view: Default::default(), effects: $effects },)*
                     widgets: Default::default(),
-                    $(#[cfg(test)] $fixture: Adapter { model_state: 0, view: Default::default(), effects: |(value, _)| SurfaceResponse { undo_drawing: value > 0, ..Default::default() } },)*
                     #[cfg(any(feature = "scenario-harness", test))]
                     hooks_applied: false,
                 }
@@ -381,7 +378,7 @@ macro_rules! register_surfaces {
                 $(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
                     model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
                 }.capture_keyboard(ctx);)*
-                $(self.$field.capture_keyboard(ctx);)*
+                $($(#[$view_attr])* self.$field.capture_keyboard(ctx);)*
             }
             /// Route only entries belonging to this existing frame location.
             pub fn draw_slot(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
@@ -391,17 +388,13 @@ macro_rules! register_surfaces {
                     if !self.hooks_applied {
                         self.hooks_applied = true;
                         $(self.$legacy.apply_env_hook(env);)*
-                        $(self.$field.apply_env_hook(env);)*
+                        $($(#[$view_attr])* self.$field.apply_env_hook(env);)*
                     }
                     $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _> {
                         model_state: (), view: LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, effects: |response| response,
                     }.draw_in(target, env));)*
                 }
-                $(if slot == quantick_ui_model::Slot::$slot { response.merge(self.$field.draw_in(target, env)); })*
-                $(#[cfg(test)]
-                if slot == quantick_ui_model::Slot::$fixture_slot {
-                    response.merge(self.$fixture.draw_in(target, env));
-                })*
+                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { response.merge(self.$field.draw_in(target, env)); })*
                 response
             }
         }
@@ -445,37 +438,6 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
-
-    #[derive(Default)]
-    pub(crate) struct FixtureView {
-        enabled: bool,
-        painted: Option<i64>,
-        intent: Option<(i64, u64)>,
-    }
-    impl<M: quantick_ui_model::Model<State = i64, Intent = (i64, u64)>> View<M> for FixtureView {
-        fn id(&self) -> &'static str {
-            "fixture"
-        }
-        fn paint(
-            &mut self,
-            state: &i64,
-            target: &mut ViewContext<'_>,
-            _: &SurfaceEnv<'_>,
-        ) -> Option<(i64, u64)> {
-            if !self.enabled {
-                return None;
-            }
-            self.painted = Some(*state);
-            if let Some(ui) = target.ui.as_mut() {
-                ui.label(state.to_string());
-            } else {
-                egui::Window::new("Registered fixture").show(target.context(), |ui| {
-                    ui.label(state.to_string());
-                });
-            }
-            self.intent.take()
-        }
-    }
 
     #[test]
     fn registered_view_routes_intents() {
