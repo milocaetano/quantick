@@ -176,3 +176,37 @@ fn a_stored_duplicate_or_stranger_is_settled_on_load() {
     assert_eq!(book.colour("Scalp"), Some(Steel));
     assert_unique(&book);
 }
+
+#[test]
+fn an_unknown_colour_word_is_dropped_and_the_workspace_gets_a_valid_one() {
+    let text = format!(
+        "version = 1
+{}{}[colours]
+Default = \"cyan\"
+Scalp = \"green\"
+",
+        recipe("Default"),
+        recipe("Scalp")
+    );
+    let book = parse_book(&text).unwrap();
+    assert_eq!(book.list().len(), 2, "every recipe is kept");
+    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(Cyan));
+    assert_eq!(book.colour("Scalp"), Some(Steel));
+    assert_unique(&book);
+}
+
+#[test]
+fn colours_naming_a_missing_workspace_are_dropped_on_load() {
+    let text = format!(
+        "version = 1
+{}[colours]
+Default = \"steel\"
+Ghost = \"violet\"
+",
+        recipe("Default")
+    );
+    let book = parse_book(&text).unwrap();
+    assert_eq!(book.colour("Ghost"), None);
+    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(Steel));
+    assert!(!toml::to_string_pretty(&book).unwrap().contains("Ghost"));
+}

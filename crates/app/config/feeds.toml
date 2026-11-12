@@ -17,8 +17,8 @@ default_symbol = "BTCUSDT"
 #   id            — stable identifier, referenced by `default_feed` (unique).
 #   name          — label shown in the feed selector.
 #   short_name    — optional: the venue's code on a market tab's tag (BIN,
-#                   HL, MT5); the name stays in the tab's hover. Absent, the
-#                   tag reads the name.
+#                   BINF, HL, MT5); the name stays in the tab's hover. Absent,
+#                   the tag takes up to four uppercase initials of the name.
 #   provider      — which backend streams it; maps to a code path.
 #                   Supported: "binance", "binance-futures", "hyperliquid", "metatrader".
 #   symbols       — the assets offered for this feed (first is its fallback).
@@ -126,7 +126,7 @@ default_bars = "tick:50"
 [[feeds]]
 id = "binance-futures"
 name = "Binance USD-M perpetual"
-short_name = "BIN"
+short_name = "BINF"
 provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Crypto default" }

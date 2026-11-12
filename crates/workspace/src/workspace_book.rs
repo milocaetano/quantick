@@ -239,7 +239,11 @@ pub struct WorkspaceBook {
     renamed: BTreeMap<String, String>,
     /// Each workspace's colour ([`workspace_colour`]): unique, kept by
     /// [`Self::settle_colours`] after every change to the set of names.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "lenient_colours"
+    )]
     colours: Colours,
     /// Kept in the desk, on [`SavedTab`], not in this file.
     #[serde(skip)]
@@ -317,6 +321,20 @@ impl Default for WorkspaceBook {
             active: None,
         }
     }
+}
+
+/// Read the `colours` table word by word: a colour this build does not know
+/// (a typo, a later build's slot) is dropped and `settle_colours` re-assigns it,
+/// so one stray word never costs the whole file.
+fn lenient_colours<'de, D>(deserializer: D) -> Result<Colours, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(name, word)| WorkspaceColour::from_key(&word).map(|colour| (name, colour)))
+        .collect())
 }
 
 /// Parse a workspaces file. A file without `Default` gets the factory one back.
