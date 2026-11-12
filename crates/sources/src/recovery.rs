@@ -189,6 +189,21 @@ pub fn rolled_sentence(from: &str, to: &str) -> String {
     format!("{from} is no longer listed; rolled to {to}")
 }
 
+/// The label of the control that rolls to `target`.
+#[must_use]
+pub fn roll_label(target: &str) -> String {
+    format!("Roll to {target}")
+}
+
+/// What heads a refused roll's reason under the popup's next step.
+pub const ROLL_REFUSED_PREFIX: &str = "Cannot roll to the next contract: ";
+
+/// The sentence the popup says about a roll refused for `reason`.
+#[must_use]
+pub fn roll_refused_sentence(reason: &str) -> String {
+    format!("{ROLL_REFUSED_PREFIX}{reason}.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

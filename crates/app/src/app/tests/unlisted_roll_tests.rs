@@ -96,9 +96,63 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
         "a pressed control closes it"
     );
     assert_eq!(
-        app.active_tab().link.notice.rolled_text().as_deref(),
+        status_lead(&app).note.as_deref(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT"),
         "the explanation outlives the toast"
+    );
+}
+
+/// The scene's feed-status actions, as listed.
+fn feed_status_entries(app: &QuantickApp) -> Vec<serde_json::Value> {
+    let scene = observer_scene(app);
+    scene["controls"]
+        .as_array()
+        .expect("the scene reports a control list")
+        .iter()
+        .filter(|control| control["capability_id"].is_string())
+        .filter(|control| control["owner"]["id"] == "feed_status")
+        .cloned()
+        .collect()
+}
+
+/// The scene's feed-status actions: id, label and the capability each calls.
+fn feed_status_actions(app: &QuantickApp) -> Vec<(String, String, String)> {
+    feed_status_entries(app)
+        .iter()
+        .map(|control| {
+            let text = |key: &str| control[key].as_str().unwrap().to_owned();
+            (text("control_id"), text("label"), text("capability_id"))
+        })
+        .collect()
+}
+
+/// While the chip offers the roll, the control plane names the roll, not
+/// Reconnect; the popup lists it ahead of both recoveries.
+#[test]
+fn the_scene_names_the_roll_the_chip_offers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let roll = crate::feed_notice::NoticeAction::Roll("ETHUSDT".to_owned());
+    assert_eq!(status_lead(&app).action, roll, "the chip offers the roll");
+    let named = |id: &str, label: &str, capability: &str| {
+        (id.to_owned(), label.to_owned(), capability.to_owned())
+    };
+    let roll = named("feed_status.roll", "Roll to ETHUSDT", "feed.contract.roll");
+    assert_eq!(feed_status_actions(&app), std::slice::from_ref(&roll));
+
+    popup_over(&mut app, &ctx, unlisted("TESTUSDT"));
+    assert_eq!(
+        feed_status_actions(&app),
+        [
+            roll,
+            named("feed_status.reconnect", "Reconnect", "feed.reconnect"),
+            named("feed_status.reload", "Reload", "feed.reload"),
+        ]
     );
 }
 
@@ -153,6 +207,29 @@ fn a_refused_roll_keeps_reconnect_and_says_why() {
     );
     assert_eq!(lead.action, crate::feed_notice::NoticeAction::Reconnect);
     assert_eq!(notice_view(&app)["roll_refused"], reason);
+
+    // The scene lists the refused roll the popup explains, ahead of the pair,
+    // as a roll that cannot run and why.
+    let entries = feed_status_entries(&app);
+    let ids: Vec<_> = entries.iter().map(|entry| &entry["control_id"]).collect();
+    assert_eq!(
+        ids,
+        [
+            "feed_status.roll",
+            "feed_status.reconnect",
+            "feed_status.reload"
+        ]
+    );
+    assert_eq!(entries[0]["capability_id"], "feed.contract.roll");
+    assert_eq!(entries[0]["availability"]["available"], false);
+    assert_eq!(
+        entries[0]["availability"]["reason"],
+        "feed.contract.paper_flat"
+    );
+    assert_eq!(
+        entries[0]["description"],
+        format!("Cannot roll to the next contract: {reason}.")
+    );
 }
 
 /// Restore (or import) a saved workspace of one TESTUSDT tab.
@@ -209,8 +286,12 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     let view = notice_view(&app);
-    assert_eq!(view["kind"], "info");
-    assert_eq!(view["unlisted_symbol"], "TESTUSDT");
+    assert_eq!(view["kind"], "clear", "the new feed's notice is its own");
+    assert_eq!(view["rolled_from"], "TESTUSDT");
+    assert!(
+        view.get("unlisted_symbol").is_none(),
+        "nothing to roll from"
+    );
     run_frame(&mut app, &ctx);
     assert!(status_lead(&app).note.is_some(), "it is no toast");
 
@@ -228,6 +309,62 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         "TESTUSDT",
         "a configured cycle does not loop: TESTUSDT was decided already"
     );
+}
+
+/// The roll's note and the feed's notice are two slots: the new feed's
+/// progress and trouble reach the status bar and `feed.status` while the
+/// note stands beside them, until the next switch takes it away.
+#[test]
+fn the_roll_note_stands_beside_the_notice_until_the_next_switch() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    restore_testusdt(&mut app);
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    let note = Some("TESTUSDT is no longer listed; rolled to ETHUSDT");
+    for (notice, kind) in [
+        (
+            FeedNotice::working("waiting for a MetaTrader bridge on 127.0.0.1:5555"),
+            "working",
+        ),
+        (FeedNotice::Clear, "clear"),
+        (FeedNotice::working("loading ETHUSDT history"), "working"),
+        (
+            FeedNotice::attention("MetaTrader 5 is not running", "Start it."),
+            "attention",
+        ),
+    ] {
+        app.active_tab_mut().link.notice = notice.clone();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().link.notice,
+            notice,
+            "the notice is the feed's"
+        );
+        assert_eq!(status_lead(&app).note.as_deref(), note, "the note stands");
+        let view = notice_view(&app);
+        assert_eq!(
+            (view["kind"].as_str(), &view["rolled_from"]),
+            (Some(kind), &serde_json::json!("TESTUSDT"))
+        );
+    }
+    let lead = status_lead(&app);
+    assert!(
+        lead.report.is_some(),
+        "the attention is said beside the note"
+    );
+
+    app.active_tab_mut().link.notice = FeedNotice::Clear;
+    app.active_tab_mut().symbol = "TESTUSDT".to_owned();
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "TESTUSDT", "a hand took it back");
+    assert_eq!(
+        status_lead(&app).note,
+        None,
+        "the next switch takes it away"
+    );
+    assert!(notice_view(&app).get("rolled_from").is_none());
 }
 
 /// A bundle imported mid-session adopts a tab that is already streaming: the

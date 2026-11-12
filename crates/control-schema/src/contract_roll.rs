@@ -32,8 +32,10 @@ pub const LIVE_SOURCE_PRECONDITION: &str = "feed.contract.live_source";
 #[serde(deny_unknown_fields)]
 pub struct ContractRollInput {
     pub tab_id: WireU64,
-    /// The contract the caller read in feed.status. Naming it is what makes a
-    /// retry safe: a second call cannot roll a contract further.
+    /// The contract the caller read in feed.status: the tab's active_symbol,
+    /// which is its notice.unlisted_symbol for the notice's Roll (the scene's
+    /// feed_status.roll). Naming it is what makes a retry safe: a second call
+    /// cannot roll a contract further.
     pub from_symbol: String,
 }
 
