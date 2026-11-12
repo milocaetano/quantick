@@ -3,6 +3,7 @@
 use crate::app::arrangement_host::ArrangementHost;
 use crate::drawings;
 use crate::pane::{ChartPane, PaneSide};
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 
 pub(crate) struct DrawingReadAccess<'a> {
     tabs: &'a ArrangementHost,

@@ -8,9 +8,7 @@
 
 use eframe::egui;
 
-use super::{
-    DrawingChromeAsk, DrawingChromeSurface, DrawingEnv, InspectorActions, clamp_into_chart,
-};
+use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
 use crate::drawings::{self, DrawingAuthor};
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
@@ -73,24 +71,14 @@ fn avoid_legend(
 
 /// Draw this frame.
 pub(crate) fn draw(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
     let mut ask = DrawingChromeAsk::default();
     let selection = env.selected_index();
-    if chrome.bar.bar.note_selection(selection) {
-        // A new object is a new question: the panel the last one opened does
-        // not follow the selection around.
-        chrome.shared.open = false;
-    }
-    // …except when the object just placed asked for it. Applied after the
-    // reset above, because the placement that made the request also made the
-    // selection change that clears it.
-    if std::mem::take(&mut chrome.pending_open_settings) {
-        chrome.shared.open = true;
-        chrome.shared.last_selection = None;
-    }
+    let changed = chrome.view.bar.bar.note_selection(selection);
+    chrome.emit(super::Intent::SelectionChanged { changed });
     let Some(selected) = env.selected.as_ref() else {
         return ask;
     };
@@ -107,10 +95,10 @@ pub(crate) fn draw(
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if GestureInput::read(ctx).suppresses(&mut chrome.bar.bar) {
+    if GestureInput::read(ctx).suppresses(&mut chrome.view.bar.bar) {
         return ask;
     }
-    let chart_area = if chrome.bar.bar.manual_position().is_none() {
+    let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
         env.automatic_bar_area.or(env.chart_area)
     } else {
         env.chart_area
@@ -156,9 +144,9 @@ pub(crate) fn draw(
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
         drawings::context_bar::capabilities(&object),
     ));
-    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, size);
+    let placement = Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, size);
     let intent = drawings::context_bar::show(
-        &mut chrome.bar.bar,
+        &mut chrome.view.bar.bar,
         ctx,
         placement.position,
         placement.popover_bounds,
@@ -167,13 +155,14 @@ pub(crate) fn draw(
     let glyph_after = object.glyph_size;
     #[cfg(test)]
     {
-        chrome.bar.last_drawn_rect = chrome.bar.bar.last_rect();
+        chrome.view.bar.last_drawn_rect = chrome.view.bar.bar.last_rect();
     }
 
     if intent.reset_position {
-        chrome.bar.bar.clear_manual();
+        chrome.view.bar.bar.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
         chrome
+            .view
             .bar
             .bar
             .set_manual(placement.position + intent.drag_delta);
@@ -192,9 +181,9 @@ pub(crate) fn draw(
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
     }
     if intent.open_settings {
-        chrome.shared.open = true;
+        chrome.emit(super::Intent::OpenSettings);
         // Place against the object the way a fresh selection would.
-        chrome.shared.last_selection = None;
+        chrome.emit(super::Intent::SelectionChanged { changed: false });
     }
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {

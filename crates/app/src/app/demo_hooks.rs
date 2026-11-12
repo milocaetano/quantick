@@ -18,6 +18,8 @@
     test
 ))]
 
+#[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 #[cfg(any(feature = "control-harness", test))]
 use eframe::egui;
 
@@ -403,7 +405,7 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
 /// disagree about it.
 #[cfg(any(feature = "scenario-harness", test))]
 fn carry_inspector_across_selection(app: &mut QuantickApp) {
-    app.drawings.chrome.carry_across_selection();
+    app.surfaces.drawing_chrome.carry_across_selection();
 }
 
 /// One deterministic prefix generator, shared with the legacy venue scenario.
@@ -449,11 +451,11 @@ fn close(pane: &ChartPane, slot: usize) -> Option<f64> {
 }
 #[cfg(any(feature = "drawing-harness", test))]
 pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
-    if !app.drawings.chrome.demos().gallery_requested() {
+    if !app.surfaces.drawing_chrome.demos().gallery_requested() {
         return;
     }
     let slots = app.active_tab().flow_pane.slots();
-    let Some(request) = app.drawings.chrome.demos_mut().take_gallery(slots) else {
+    let Some(request) = app.surfaces.drawing_chrome.demos_mut().take_gallery(slots) else {
         return;
     };
     if request.shared == Some(true) {
@@ -469,9 +471,9 @@ pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
             .center_on_bar(center, chart.width(), slots);
     }
     plan.apply_bands(&mut pane.drawings);
-    app.drawings.chrome.carry_across_selection();
+    app.surfaces.drawing_chrome.carry_across_selection();
     // Recut follows taking the ready gallery, even if placement made no object.
-    if app.drawings.chrome.demos().recut_requested() {
+    if app.surfaces.drawing_chrome.demos().recut_requested() {
         let pane = &mut app.active_tab_mut().flow_pane;
         let first = pane.slot_open_time(0);
         let base = close(pane, 0);
@@ -486,12 +488,18 @@ pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
 }
 #[cfg(any(feature = "drawing-harness", test))]
 pub(super) fn apply_drawing_draft(app: &mut QuantickApp) {
-    if app.drawings.chrome.demos().draft_requested().is_none() {
+    if app
+        .surfaces
+        .drawing_chrome
+        .demos()
+        .draft_requested()
+        .is_none()
+    {
         return;
     }
     let pane = &app.active_tab().flow_pane;
     let (chart, facts) = (pane.frame.chart_area, facts(pane));
-    let Some(mut plan) = app.drawings.chrome.demos_mut().take_draft(
+    let Some(mut plan) = app.surfaces.drawing_chrome.demos_mut().take_draft(
         app.toolrail.tool().drawing_tool(),
         chart,
         facts,
@@ -505,13 +513,18 @@ pub(super) fn apply_drawing_draft(app: &mut QuantickApp) {
 }
 #[cfg(any(feature = "drawing-harness", test))]
 pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
-    let Some(request) = app.drawings.chrome.demos().profile_requested() else {
+    let Some(request) = app.surfaces.drawing_chrome.demos().profile_requested() else {
         return;
     };
     let index = usize::from(request.stress);
     // Optional access proves the target exists; pane_mut's fallback cannot.
     let slots = app.active_tab().pane_at(index).map(ChartPane::slots);
-    match app.drawings.chrome.demos_mut().prepare_profile(slots) {
+    match app
+        .surfaces
+        .drawing_chrome
+        .demos_mut()
+        .prepare_profile(slots)
+    {
         ProfilePreparation::Wait => return,
         ProfilePreparation::Ready => {}
         ProfilePreparation::Prefix { candles } => {
@@ -532,7 +545,12 @@ pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
         slots: pane.slots(),
         prefix: pane.history_prefix.len(),
     };
-    let Some(geometry) = app.drawings.chrome.demos_mut().finish_profile(facts) else {
+    let Some(geometry) = app
+        .surfaces
+        .drawing_chrome
+        .demos_mut()
+        .finish_profile(facts)
+    else {
         return;
     };
     let Some(pane) = app.active_tab_mut().pane_at_mut(index) else {
@@ -543,16 +561,16 @@ pub(super) fn apply_frvp_demo(app: &mut QuantickApp) {
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
     if plan.carries_inspector() {
-        app.drawings.chrome.carry_across_selection();
+        app.surfaces.drawing_chrome.carry_across_selection();
     }
 }
 #[cfg(any(feature = "drawing-harness", test))]
 pub(super) fn apply_avwap_demo(app: &mut QuantickApp) {
-    if !app.drawings.chrome.demos().avwap_requested() {
+    if !app.surfaces.drawing_chrome.demos().avwap_requested() {
         return;
     }
     let slots = app.active_tab().flow_pane.slots();
-    let Some(geometry) = app.drawings.chrome.demos_mut().take_avwap(slots) else {
+    let Some(geometry) = app.surfaces.drawing_chrome.demos_mut().take_avwap(slots) else {
         return;
     };
     let pane = &mut app.active_tab_mut().flow_pane;
@@ -560,5 +578,5 @@ pub(super) fn apply_avwap_demo(app: &mut QuantickApp) {
     let mut plan = geometry.plan(price);
     plan.project_times(|slot| pane.slot_open_time(slot));
     plan.apply(&mut pane.drawings);
-    app.drawings.chrome.carry_across_selection();
+    app.surfaces.drawing_chrome.carry_across_selection();
 }

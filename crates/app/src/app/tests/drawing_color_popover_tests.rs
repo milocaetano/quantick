@@ -17,15 +17,15 @@ fn rectangle_with_open_palette() -> (QuantickApp, egui::Context) {
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
     let slot = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .color_rect()
         .expect("the bar renders its colour slot");
     click_chart(&mut app, &ctx, slot.center());
     // A second frame lets the popover settle the size it opens with.
     run_frame(&mut app, &ctx);
-    assert!(app.drawings.chrome.context_bar().popover_open());
+    assert!(app.surfaces.drawing_chrome.context_bar().popover_open());
     (app, ctx)
 }
 
@@ -46,18 +46,24 @@ fn the_palette_offers_pure_red_green_blue_and_their_mixes() {
     let (mut app, ctx) = rectangle_with_open_palette();
     // The theme row holds eight; the additive row follows it.
     let red = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .swatch_rect(8)
         .expect("the additive row is rendered");
     let white = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .swatch_rect(14)
         .expect("white closes the additive row");
-    assert!(app.drawings.chrome.context_bar().swatch_rect(15).is_none());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .context_bar()
+            .swatch_rect(15)
+            .is_none()
+    );
     click_chart(&mut app, &ctx, red.center());
     run_frame(&mut app, &ctx);
     assert_eq!(
@@ -75,8 +81,8 @@ fn dragging_the_fill_slider_changes_the_fill_and_keeps_the_popover() {
     let before = rectangle_style(&app).fill_alpha;
     let points = rectangle_points(&app);
     let slider = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .fill_slider_rect()
         .expect("a rectangle has an interior, so the fill row is shown");
@@ -86,7 +92,7 @@ fn dragging_the_fill_slider_changes_the_fill_and_keeps_the_popover() {
     run_frame(&mut app, &ctx);
     assert_ne!(rectangle_style(&app).fill_alpha, before, "the fill moved");
     assert!(
-        app.drawings.chrome.context_bar().popover_open(),
+        app.surfaces.drawing_chrome.context_bar().popover_open(),
         "a drag on the slider is not a drag of the chart"
     );
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
@@ -100,8 +106,8 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
     let points = rectangle_points(&app);
     let toggle = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .custom_toggle_rect()
         .expect("the custom row is rendered");
@@ -115,8 +121,8 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
         "opening the picker is not an edit"
     );
     let picker = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .custom_picker_rect()
         .expect("custom expands the picker inside the popover");
@@ -128,10 +134,10 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     run_frame(&mut app, &ctx);
     assert_ne!(rectangle_style(&app).color32(), before, "the colour moved");
     assert_eq!(rectangle_points(&app), points, "the rectangle did not move");
-    assert!(app.drawings.chrome.context_bar().popover_open());
+    assert!(app.surfaces.drawing_chrome.context_bar().popover_open());
     assert!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar()
             .custom_picker_rect()
             .is_some(),
@@ -140,5 +146,5 @@ fn the_custom_picker_opens_inline_and_recolours_without_closing() {
     // A plain click inside the picker must not dismiss it either.
     click_chart(&mut app, &ctx, end);
     run_frame(&mut app, &ctx);
-    assert!(app.drawings.chrome.context_bar().popover_open());
+    assert!(app.surfaces.drawing_chrome.context_bar().popover_open());
 }

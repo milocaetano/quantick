@@ -11,20 +11,18 @@
 use eframe::egui;
 
 use super::{
-    DrawingChromeAsk, DrawingChromeSurface, DrawingEnv, INSPECTOR_AREA_ID,
-    INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX,
-    INSPECTOR_LEVELS_WIDTH_PX, INSPECTOR_MAX_WIDTH_PX, INSPECTOR_MIN_WIDTH_PX,
-    INSPECTOR_OBJECT_GAP_PX, INSPECTOR_TITLE_GRIP_GLYPH_PX, INSPECTOR_TITLE_HEIGHT_PX,
-    INSPECTOR_TITLE_PAD_X_PX, INSPECTOR_TITLE_TEXT_PX, INSPECTOR_TITLE_TEXT_X_PX, InspectorActions,
-    InspectorTab, RecordingPresetHost, clamp_into_chart,
+    Chrome as DrawingChromeSurface, DrawingChromeAsk, DrawingEnv, INSPECTOR_AREA_ID,
+    INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX, INSPECTOR_LEVELS_WIDTH_PX,
+    INSPECTOR_MAX_WIDTH_PX, INSPECTOR_MIN_WIDTH_PX, INSPECTOR_OBJECT_GAP_PX,
+    INSPECTOR_TITLE_GRIP_GLYPH_PX, INSPECTOR_TITLE_HEIGHT_PX, INSPECTOR_TITLE_PAD_X_PX,
+    INSPECTOR_TITLE_TEXT_PX, INSPECTOR_TITLE_TEXT_X_PX, InspectorActions, RecordingPresetHost,
+    clamp_into_chart,
 };
 use crate::drawings::Drawing;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use egui_phosphor::regular as icons;
-use quantick_chart_interaction::panel_placement::{
-    Area, NEIGHBOURHOOD_PX, PanelPlacement, PanelSpacing, place_beside,
-};
+use quantick_chart_interaction::panel_placement::{Area, NEIGHBOURHOOD_PX, PanelPlacement};
 
 mod sections;
 
@@ -34,96 +32,18 @@ use sections::body;
 /// has a size and a bbox to place it from.
 const DEFAULT_POSITION: egui::Pos2 = super::DRAWING_INSPECTOR_DEFAULT_POSITION;
 
-/// The inspector's own state. What it shares with the context bar lives in
-/// [`super::Shared`]; this is what only it reads.
+use quantick_ui_model::drawing_chrome::{Intent, inspector as model};
+
 #[derive(Default)]
-pub(crate) struct Inspector {
-    /// Which tab is open, remembered across selections so a trader working
-    /// through coordinates does not land back on Style every time.
-    pub tab: InspectorTab,
-    /// Whether the user moved the floating window this session. A manual
-    /// position wins over automatic placement from then on.
-    pub(super) moved: bool,
-    /// The parked point, in screen coordinates. What the file remembers.
-    pub(super) pos: Option<egui::Pos2>,
-    /// The parked point changed and the workspace file has not caught up.
-    pub(super) position_dirty: bool,
-    /// How wide the window may be where it was placed — `Some` only when it
-    /// had to be narrowed into a gutter beside an object too big to walk
-    /// around.
+pub(crate) struct View {
     pub(super) max_width: Option<f32>,
-    /// The size it was last drawn at, which beats every guess about it.
     pub(super) size: Option<egui::Vec2>,
-    /// The panel as drawn last frame reached into its drawing's
-    /// neighbourhood — drawn wider than the placement assumed, or grown by a
-    /// taller tab — so automatic placement runs again with the drawn size.
     pub(super) crowding: bool,
-    /// Whether the pin button has been pressed either way. The auto-pin width
-    /// rule stops firing once the user has expressed a preference.
-    pub(super) pin_touched: bool,
-    /// The unpin happened this frame: skip one before placing, so the
-    /// placement measures settled geometry rather than the pinned era's.
-    pub(super) settle_frame: bool,
     #[cfg(test)]
     pub pin_rect: Option<egui::Rect>,
 }
 
-impl Inspector {
-    /// Park the window where a hand put it. The flag and the point move
-    /// together: a position without the flag would be overwritten by the next
-    /// automatic placement, and the narrowing a placement computed does not
-    /// survive a move the trader made.
-    ///
-    /// Deliberately *not* a file write. The drag calls this every frame the
-    /// hand moves; the write is owed when the hand comes off, which is where
-    /// [`Self::position_dirty`] is raised.
-    pub fn place_by_hand(&mut self, position: egui::Pos2) {
-        self.pos = Some(position);
-        self.moved = true;
-        self.max_width = None;
-    }
-
-    /// The popup position a workspace should record: the one a hand placed,
-    /// never one the app computed.
-    ///
-    /// Automatic placement is a *rule* — beside the object, on the side with
-    /// room. Writing down the pixel that rule produced for yesterday's drawing
-    /// would freeze a stale answer into the file and stop the rule from ever
-    /// running again, which is the same bug as never forgetting a drag.
-    pub fn remembered_position(&self) -> Option<[f32; 2]> {
-        self.pos
-            .filter(|_| self.moved)
-            .map(|position| [position.x, position.y])
-    }
-
-    /// Adopt what a workspace remembers about the popup, including its
-    /// silence: no recorded position hands the window back to automatic
-    /// placement rather than leaving the previous cockpit's position behind.
-    ///
-    /// A non-finite pair is silence too. The file is hand-editable and TOML
-    /// spells `nan`, and NaN is the one value the repair cannot walk back:
-    /// every comparison against it is false, so `f32::clamp` returns it
-    /// unchanged and the popup goes somewhere with no pixels — where its own
-    /// title bar, and with it the double-click that would undo this, cannot
-    /// be reached. It would then be written straight back at the next save.
-    /// The env hook already refuses the same input
-    /// ([`super::parse_point`]); this is the door the file comes through.
-    pub fn restore_position(&mut self, remembered: Option<[f32; 2]>) {
-        match remembered.filter(|[x, y]| x.is_finite() && y.is_finite()) {
-            Some([x, y]) => self.place_by_hand(egui::pos2(x, y)),
-            None => {
-                self.pos = None;
-                self.moved = false;
-                self.max_width = None;
-            }
-        }
-    }
-
-    /// Whether a file write is owed, taken so it is owed once.
-    pub fn take_position_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.position_dirty)
-    }
-
+impl View {
     /// How big the floating inspector is, best answer available: the size it
     /// was last drawn at, then egui's area memory, then the assumed default.
     fn size(&self, ctx: &egui::Context) -> egui::Vec2 {
@@ -140,24 +60,19 @@ impl Inspector {
 }
 
 /// The inspector placement rule (`docs/ux/drawing-tools-2026-08.md` §D3),
-/// owned by [`place_beside`]: beside the object, clear of its neighbourhood.
+/// owned by [`quantick_chart_interaction::panel_placement::place_beside`]: beside the object, clear of its neighbourhood.
 /// A dragged panel never comes here: a hand's position wins from then on
-/// (see [`Inspector::place_by_hand`]).
+/// (see [`model::State::place_by_hand`]).
 pub(crate) fn placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) -> PanelPlacement {
     let area = |rect: egui::Rect| Area::new(rect.left(), rect.top(), rect.right(), rect.bottom());
-    let spacing = PanelSpacing {
-        neighbourhood: NEIGHBOURHOOD_PX,
-        gap: INSPECTOR_OBJECT_GAP_PX,
-        min_width: INSPECTOR_MIN_WIDTH_PX,
-    };
-    place_beside(area(chart), area(bbox), size.x, size.y, spacing)
+    model::placement(area(chart), area(bbox), [size.x, size.y])
 }
 
 /// Where a freshly opened floating inspector should sit, and how wide it may
 /// be there (see [`placement`]). Measured in the candles' area, which an object's span
 /// is computed from, so the popup leaves the axes, lane and rail clear.
 fn target_placement(
-    inspector: &Inspector,
+    inspector: &View,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> Option<PanelPlacement> {
@@ -180,7 +95,7 @@ pub(crate) fn draw_pinned(
         return ask;
     };
     let index = selected.index;
-    chrome.shared.last_selection = Some(index);
+    chrome.emit(Intent::InspectorClaim(index));
     let mut edited = selected.drawing.clone();
     let mut recorder = RecordingPresetHost::new(env.presets);
     let mut actions = InspectorActions::default();
@@ -218,52 +133,20 @@ pub(crate) fn draw_floating(
         return ask;
     };
     let index = selected.index;
-    // Selecting an object no longer opens this window — the context bar does.
-    // The gear on that bar is the one door, so the panel only covers the
-    // chart when the trader asked for the panel.
-    if !chrome.shared.open {
+    chrome.emit(Intent::InspectorPrepare {
+        index,
+        width: env.chart_area.map(|chart| chart.width()),
+    });
+    let Some(selection_changed) = chrome.state().inspector.prepared else {
         return ask;
-    }
-    if std::mem::take(&mut chrome.inspector.settle_frame) {
-        // The unpin happened this frame: the side panel still occupies this
-        // frame's layout and the drawing projects against the pinned-era
-        // chart. Wait one frame and place against the settled geometry.
-        return ask;
-    }
-    let selection_changed = chrome.shared.last_selection != Some(index);
-    // The auto-pin (§4.2): a fresh selection on a chart too narrow for a
-    // floating window opens pinned instead — decided here because this host
-    // is the one that would otherwise claim the selection. Stops firing once
-    // the user touches the pin.
-    //
-    // A parked window stops it too, and for the same reason: the rule reads
-    // "no floating position here would leave the geometry alone", and a
-    // trader who chose where the floating window goes has answered that.
-    // Without this clause the everyday layout never reaches the remembered
-    // position at all — a split canvas puts the pane a drawing lives on under
-    // the threshold, so every selection would re-dock the panel. The pin flag
-    // itself is left alone: it records that the *pin button* was pressed, and
-    // borrowing it here would leak a placement into the next workspace
-    // opened, which carries no pin preference.
-    if selection_changed
-        && !chrome.inspector.pin_touched
-        && !chrome.inspector.moved
-        && env
-            .chart_area
-            .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX)
-    {
-        chrome.shared.pinned = true;
-        // The pinned panel draws from the next frame on.
-        return ask;
-    }
-    chrome.shared.last_selection = Some(index);
+    };
     // Automatic placement only while the window is untouched.
-    if (selection_changed || std::mem::take(&mut chrome.inspector.crowding))
-        && !chrome.inspector.moved
-        && let Some(placed) = target_placement(&chrome.inspector, ctx, env)
+    if (selection_changed || std::mem::take(&mut chrome.view.inspector.crowding))
+        && !chrome.state().inspector.moved
+        && let Some(placed) = target_placement(&chrome.view.inspector, ctx, env)
     {
-        chrome.inspector.pos = Some(egui::pos2(placed.left, placed.top));
-        chrome.inspector.max_width = placed.max_width;
+        chrome.emit(Intent::InspectorPosition(Some([placed.left, placed.top])));
+        chrome.view.inspector.max_width = placed.max_width;
     }
     // Repair for drawing, never overwrite: a position that does not fit the
     // chart pane is clamped into it *for this frame*, and the point the
@@ -277,8 +160,9 @@ pub(crate) fn draw_floating(
     // ratchet the parked point away a little at a time, with no way back to
     // where the hand put it. The file records what the trader did; this line
     // decides only where it is drawn today.
-    let inspector_size = chrome.inspector.size(ctx);
-    let draw_at = chrome.inspector.pos.map(|position| {
+    let inspector_size = chrome.view.inspector.size(ctx);
+    let draw_at = chrome.state().inspector.pos.map(|[x, y]| {
+        let position = egui::pos2(x, y);
         env.chart_area.map_or(position, |chart| {
             clamp_into_chart(position, inspector_size, chart)
         })
@@ -309,6 +193,7 @@ pub(crate) fn draw_floating(
         .min_width(INSPECTOR_MIN_WIDTH_PX)
         .max_width(
             chrome
+                .view
                 .inspector
                 .max_width
                 .map_or(INSPECTOR_MAX_WIDTH_PX, |width| {
@@ -332,13 +217,13 @@ pub(crate) fn draw_floating(
         actions
     });
     let drawn = response.as_ref().map(|response| response.response.rect);
-    chrome.inspector.size = drawn.map(|rect| rect.size());
+    chrome.view.inspector.size = drawn.map(|rect| rect.size());
     // Placed again next frame if it reaches into the drawing's neighbourhood.
     // egui's first frame of a window is an invisible sizing pass, so a panel
     // drawn wider than assumed is corrected before it is seen. Not while a
     // hand holds the pointer (a resize), nor for a gutter-narrowed panel.
-    chrome.inspector.crowding = !chrome.inspector.moved
-        && chrome.inspector.max_width.is_none()
+    chrome.view.inspector.crowding = !chrome.state().inspector.moved
+        && chrome.view.inspector.max_width.is_none()
         && !ctx.input(|input| input.pointer.any_down())
         && drawn.zip(env.selected_bbox).is_some_and(|(rect, bbox)| {
             rect.intersect(bbox.expand(NEIGHBOURHOOD_PX - 1.0))
@@ -362,16 +247,8 @@ fn prologue<'a>(
     env: &'a DrawingEnv<'a>,
     ask: &mut DrawingChromeAsk,
 ) -> Option<&'a super::SelectedDrawing<'a>> {
-    let Some(selected) = env.selected.as_ref() else {
-        chrome.shared.delete_confirm = false;
-        ask.commit_edit_gesture = chrome.shared.edit_baseline.take().map(Box::new);
-        chrome.shared.last_selection = None;
-        return None;
-    };
-    if chrome.baseline_is_stale(Some(selected.index)) {
-        ask.commit_edit_gesture = chrome.shared.edit_baseline.take().map(Box::new);
-    }
-    Some(selected)
+    ask.merge(chrome.emit(Intent::InspectorPrologue(env.selected_index())));
+    env.selected.as_ref()
 }
 
 /// Fold one host's frame into the ask: the edited copy when something changed,
@@ -493,7 +370,7 @@ fn title_bar(
                 .show(ui);
             #[cfg(test)]
             {
-                chrome.inspector.pin_rect = Some(pin.rect);
+                chrome.view.inspector.pin_rect = Some(pin.rect);
             }
             if pin.clicked() {
                 actions.toggle_pin = true;
@@ -516,50 +393,35 @@ fn title_bar(
     if floating {
         let bar = bar.on_hover_text("Drag to move · double-click to reposition automatically");
         if bar.double_clicked() {
-            // The reset path: back to automatic placement.
-            chrome.inspector.moved = false;
-            let placed = target_placement(&chrome.inspector, ui.ctx(), env);
-            chrome.inspector.pos = placed.map(|placed| egui::pos2(placed.left, placed.top));
-            chrome.inspector.max_width = placed.and_then(|placed| placed.max_width);
-            // Giving the placement back is a decision too, and it has to
-            // reach the file: a reset that lived only until the next launch
-            // would hand the trader back the very position they discarded.
-            chrome.inspector.position_dirty = true;
+            let placed = target_placement(&chrome.view.inspector, ui.ctx(), env);
+            chrome.emit(Intent::InspectorReset(
+                placed.map(|placed| [placed.left, placed.top]),
+            ));
+            chrome.view.inspector.max_width = placed.and_then(|placed| placed.max_width);
         } else if bar.dragged() {
-            // The gesture starts from where the window actually is, in
-            // preference to where it is remembered: the two differ whenever
-            // the pane is too small for the parked point and the host is
-            // drawing a clamped copy. Dragging the clamped window from the
-            // un-clamped point would make it jump the whole difference on the
-            // first pixel — and the trader is dragging what they can see.
-            if bar.drag_started()
-                && let Some(drawn) = ui
-                    .ctx()
-                    .memory(|memory| memory.area_rect(egui::Id::new(INSPECTOR_AREA_ID)))
-                    .map(|rect| rect.min)
-            {
-                chrome.inspector.pos = Some(drawn);
-            }
-            // From there the delta accumulates on the *remembered* point,
-            // never on the drawn one. The window is positioned from `pos`
-            // before this bar is laid out, so the drawn rect is always one
-            // frame behind it: adding this frame's delta to that rect throws
-            // the previous frame's away, and the popup travels at half the
-            // speed of the hand — which is what "ela treme" was, reported
-            // from the running app.
-            match chrome.inspector.pos {
-                Some(position) => chrome.inspector.place_by_hand(position + bar.drag_delta()),
-                // No position to move yet — the window has not been laid out.
-                // The hand is still down, so the flag alone records that
-                // placement is no longer the app's to decide.
-                None => chrome.inspector.moved = true,
+            let drawn_start = bar
+                .drag_started()
+                .then(|| {
+                    ui.ctx()
+                        .memory(|memory| memory.area_rect(egui::Id::new(INSPECTOR_AREA_ID)))
+                        .map(|rect| [rect.min.x, rect.min.y])
+                })
+                .flatten();
+            let delta = bar.drag_delta();
+            let had_position = drawn_start.is_some() || chrome.state().inspector.pos.is_some();
+            chrome.emit(Intent::InspectorDrag {
+                start: drawn_start,
+                delta: [delta.x, delta.y],
+            });
+            if had_position {
+                chrome.view.inspector.max_width = None;
             }
         }
         // Written when the hand comes off the window, not while it is still
         // moving: one file write per gesture, and the position it records is
         // the one the trader stopped at.
         if bar.drag_stopped() {
-            chrome.inspector.position_dirty = true;
+            chrome.emit(Intent::InspectorPositionDirty);
         }
     }
     ui.separator();
@@ -589,41 +451,5 @@ mod tests {
         assert_eq!(closed.top, open.top, "the same side either way");
         assert!(closed.top >= bbox.bottom(), "below the band: {closed:?}");
         assert_eq!(closed.max_width, open.max_width);
-    }
-
-    /// Automatic placement is not a preference, so it is not written down.
-    /// Only a hand — or the hook standing in for one — makes a position the
-    /// file has to remember.
-    #[test]
-    fn only_a_hand_placed_position_reaches_the_file() {
-        let mut inspector = Inspector::default();
-        assert_eq!(inspector.remembered_position(), None);
-        inspector.pos = Some(egui::pos2(10.0, 20.0));
-        assert_eq!(
-            inspector.remembered_position(),
-            None,
-            "a placed position is the app's decision, not the trader's"
-        );
-        inspector.place_by_hand(egui::pos2(30.0, 40.0));
-        assert_eq!(inspector.remembered_position(), Some([30.0, 40.0]));
-        assert!(
-            !inspector.take_position_dirty(),
-            "parking alone owes nothing: the drag calls it on every frame the              hand moves, and the file write is owed when the hand comes off"
-        );
-        inspector.position_dirty = true;
-        assert!(inspector.take_position_dirty(), "and then exactly once");
-        assert!(!inspector.take_position_dirty());
-    }
-
-    /// A file with a nonsense position leaves automatic placement in charge
-    /// rather than parking the panel at an invented pixel.
-    #[test]
-    fn a_nonsense_remembered_position_is_refused() {
-        let mut inspector = Inspector::default();
-        inspector.place_by_hand(egui::pos2(30.0, 40.0));
-        inspector.restore_position(Some([f32::NAN, 0.0]));
-        assert_eq!(inspector.remembered_position(), None);
-        inspector.restore_position(Some([12.0, 34.0]));
-        assert_eq!(inspector.remembered_position(), Some([12.0, 34.0]));
     }
 }

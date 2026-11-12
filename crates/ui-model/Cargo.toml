@@ -10,6 +10,9 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+quantick-drawings = { path = "../drawings" }
+quantick-appearance = { path = "../appearance" }
+toml.workspace = true
 quantick-control-handlers = { path = "../control-handlers" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-stores = { path = "../stores" }
@@ -24,6 +27,9 @@ quantick-paper = { path = "../paper" }
 quantick-replay = { path = "../replay" }
 quantick-sources = { path = "../sources" }
 quantick-workspace = { path = "../workspace" }
+
+[dev-dependencies]
+quantick-drawings = { path = "../drawings", features = ["test-support"] }
 
 [lints]
 workspace = true

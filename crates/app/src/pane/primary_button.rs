@@ -9,6 +9,7 @@
 //! before pan.
 //! The pane-chrome classifier is shared with placement and the gesture owner.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 
 use crate::bands::{self, Bands};
@@ -100,7 +101,7 @@ impl PaperArbitration<'_> {
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
         // A live quick range (not a raw right button) owns the hand and Shift
         // levels it (`quick_range.rs`): the aim stands down, no press places.
-        let range_held = chrome.drawing_chrome.quick_range.held();
+        let range_held = chrome.drawing_chrome.quick_range_read().held();
         let canvas_claimed = chrome.toolrail.tool() == Tool::Pointer
             && !on_chrome
             && pointer_position

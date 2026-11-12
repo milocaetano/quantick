@@ -1,6 +1,8 @@
 //! Intent-driven UI state. Domain decisions remain in their owning crates.
 //! Time, snapshots and completion results arrive as intents; no clock is read.
 mod catalog;
+#[cfg(test)]
+mod scratch;
 
 /// A deterministic transition over cached presentation state.
 pub trait Model {
@@ -18,6 +20,13 @@ pub struct UpdateSession<'a, M: Model> {
     sink: &'a mut dyn FnMut(M::Effects),
 }
 impl<M: Model> UpdateSession<'_, M> {
+    /// Reborrow a bounded transaction for a view helper without exposing mutable state.
+    pub fn reborrow(&mut self) -> UpdateSession<'_, M> {
+        UpdateSession {
+            state: self.state,
+            sink: self.sink,
+        }
+    }
     pub fn state(&self) -> &M::State {
         self.state
     }
@@ -32,6 +41,7 @@ pub struct Adapter<M: Model, V, E> {
     pub model_state: M::State,
     pub view: V,
     effects: fn(M::Effects) -> E,
+    slots: &'static [Slot],
     scopes: std::collections::BTreeMap<u64, (M::State, V)>,
 }
 impl<M: Model, V, E> Adapter<M, V, E> {
@@ -43,8 +53,28 @@ impl<M: Model, V, E> Adapter<M, V, E> {
             model_state: Default::default(),
             view,
             effects,
+            slots: &[],
             scopes: Default::default(),
         }
+    }
+    /// Bind the existing frame locations declared by this adapter's catalog row.
+    pub fn in_slots(mut self, slots: &'static [Slot]) -> Self {
+        self.slots = slots;
+        self
+    }
+    pub fn supports_pass(&self, slot: Slot) -> bool {
+        self.slots.contains(&slot)
+    }
+    /// Borrow host-specific facts for one declared pass without storing or
+    /// cloning them. Every pass updates the same state and delivers each effect once.
+    pub fn with_pass<R>(
+        &mut self,
+        slot: Slot,
+        sink: impl FnMut(E),
+        paint: impl FnOnce(&mut V, &mut UpdateSession<'_, M>) -> R,
+    ) -> Option<R> {
+        self.supports_pass(slot)
+            .then(|| self.with_updates(sink, paint))
     }
     pub fn update(&mut self, intent: M::Intent) -> E {
         (self.effects)(M::update(&mut self.model_state, intent))
@@ -121,13 +151,15 @@ pub enum Slot {
     MenuBar,
     TabStrip,
     StatusLine,
+    PinnedInspector,
+    DrawingChrome,
 }
 
 macro_rules! models {
     (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
-        $effects:path, $slot:ident, $dispatch:ident; )* }) => {
+        $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
         $($(#[$model_attr])* #[path = $model_file] pub mod $model;)*
         /// Typed host effects can grow when a new catalog row docks.
         #[non_exhaustive]

@@ -2,17 +2,13 @@
 //! Only toolkit geometry, ruler appearance and feature-gated demo setup live here.
 
 use super::{DrawingChromeAsk, DrawingEnv};
-use crate::drawings::{self, ChartPoint, DrawingBand, DrawingPayload, NewDrawing};
-use crate::pane::PaneSide;
+use crate::drawings::{self, ChartPoint, DrawingBand, NewDrawing};
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
 use core::PRICE_ONLY_REASON;
-use core::conversion_plan::{
-    ConversionInput, ConversionReadback, PendingConversion, PlacementOutcome,
-    QuickRangeConversionPlan, StartedConversion,
-};
+use core::conversion_plan::{ConversionReadback, PendingConversion, PlacementOutcome};
 use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
-use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
+use quantick_chart_interaction::quick_range::{self as core, Phase};
 use quantick_control::annotation as ids;
 
 // Gated inside the file (`#![cfg]`), so the file itself says it is harness.
@@ -25,10 +21,6 @@ pub(crate) use launch::QuickRangeLaunch;
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
-
-#[cfg(test)]
-#[path = "quick_range/tests/conversion.rs"]
-mod conversion_tests;
 
 /// The model owns operation identity and its names; the adapter binds each
 /// action to its drawing tool and its registry capability.
@@ -74,39 +66,11 @@ impl ActionUi for Action {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Owner {
-    pub tab: u64,
-    pub side: PaneSide,
-    pub pane: u64,
-    pub revision: u64,
-    pub layout: Option<u64>,
-}
-
-impl Owner {
-    fn context(self) -> core::RangeContext {
-        core::RangeContext {
-            owner: core::Owner {
-                tab: self.tab,
-                pane: self.pane,
-                layout: self.layout,
-            },
-            revision: self.revision,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct PendingRangePlacement {
-    pub conversion: PendingConversion,
-    pub side: PaneSide,
-}
-
-pub(crate) struct Paint<'a> {
-    pub anchors: [ChartPoint; 2],
-    pub style: drawings::DrawingStyle,
-    pub payload: &'a dyn DrawingPayload,
-}
+pub(crate) use quantick_ui_model::drawing_chrome::quick_range::{Owner, PendingRangePlacement};
+use quantick_ui_model::drawing_chrome::{
+    self as model,
+    quick_range::{Intent, State},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Control {
@@ -124,10 +88,7 @@ struct Geometry {
 }
 
 #[derive(Default)]
-pub(crate) struct QuickRange {
-    model: core::QuickRangeModel,
-    side: Option<PaneSide>,
-    look: Option<NewDrawing>,
+pub(crate) struct View {
     geometry: Option<Geometry>,
     action_rects: [Option<egui::Rect>; ACTION_COUNT],
     #[cfg(any(feature = "quick-range-harness", test))]
@@ -136,60 +97,34 @@ pub(crate) struct QuickRange {
     pending_launch: Option<QuickRangeLaunch>,
 }
 
-fn anchor(point: ChartPoint) -> core::Anchor {
-    core::Anchor {
-        bar: point.bar,
-        price: point.price,
-        time_ms: point.time_ms,
+pub(crate) struct QuickRange<'a> {
+    session: super::Session<'a>,
+    pub view: &'a mut View,
+}
+
+impl<'a> QuickRange<'a> {
+    pub(super) fn new(session: super::Session<'a>, view: &'a mut View) -> Self {
+        Self { session, view }
+    }
+    fn model(&self) -> &State {
+        &self.session.state().quick_range
+    }
+    fn emit(&mut self, intent: Intent) -> DrawingChromeAsk {
+        self.session.emit(model::Intent::QuickRange(intent))
     }
 }
 
-fn point(anchor: core::Anchor) -> ChartPoint {
-    ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms)
-}
-
-impl QuickRange {
+impl QuickRange<'_> {
     /// Read-only application adapter. The model handles removal, layout and revision changes.
     pub fn reconcile(&mut self, owner: Option<Owner>) {
-        match owner {
-            Some(owner) => self.reconcile_owner(owner),
-            None => self.remove_owner(),
-        }
+        self.emit(Intent::Reconcile(owner));
     }
     pub fn owner(&self) -> Option<Owner> {
-        let context = self.model.context()?;
-        Some(Owner {
-            tab: context.owner.tab,
-            side: self.side?,
-            pane: context.owner.pane,
-            revision: context.revision,
-            layout: context.owner.layout,
-        })
-    }
-
-    pub fn reconcile_owner(&mut self, owner: Owner) {
-        self.model.observe(Event::Reconcile, owner.context());
-        if self
-            .model
-            .context()
-            .is_some_and(|c| c.owner.pane == owner.pane)
-        {
-            self.side = Some(owner.side);
-        }
-    }
-
-    pub fn remove_owner(&mut self) {
-        if let Some(context) = self.model.context() {
-            self.model
-                .observe(Event::PaneRemoved(context.owner.pane), context);
-        }
+        self.model().owner()
     }
 
     pub fn note_selection(&mut self, pane: u64, selected: Option<u64>) {
-        self.model.observe(
-            Event::Selection(selected.map(|drawing| core::Selection { pane, drawing })),
-            self.model.context().unwrap_or_default(),
-        );
+        self.emit(Intent::Selection { pane, selected });
     }
 
     pub fn press(
@@ -200,19 +135,16 @@ impl QuickRange {
         eligibility: core::GestureEligibility,
         band: DrawingBand,
     ) {
-        self.model.update(
-            Command::Press {
-                position: [position.x, position.y],
-                anchor: anchor(value),
-                eligibility,
-                band,
-            },
-            owner.context(),
-        );
-        if self.model.context() == Some(owner.context()) && self.model.view().is_none() {
-            self.side = Some(owner.side);
-            self.geometry = None;
-            self.action_rects = [None; ACTION_COUNT];
+        self.emit(Intent::Press {
+            owner,
+            position: [position.x, position.y],
+            value,
+            eligibility,
+            band,
+        });
+        if self.model().owner() == Some(owner) && self.model().view().is_none() {
+            self.view.geometry = None;
+            self.view.action_rects = [None; ACTION_COUNT];
         }
     }
 
@@ -225,66 +157,47 @@ impl QuickRange {
         level: bool,
         opening: impl FnOnce() -> NewDrawing,
     ) {
-        let transition = self.model.update(
-            Command::Drag {
-                position: [position.x, position.y],
-                anchor: anchor(value),
-                threshold_px,
-                level,
-            },
-            owner.context(),
-        );
-        if transition.opened {
-            self.look = Some(opening());
+        let was_open = self.model().view().is_some();
+        self.emit(Intent::Drag {
+            owner,
+            position: [position.x, position.y],
+            value,
+            threshold_px,
+            level,
+        });
+        if !was_open && self.model().view().is_some() {
+            self.emit(Intent::Opened(opening()));
         }
-    }
-
-    pub fn held(&self) -> bool {
-        self.model.held()
     }
 
     /// The band the current range was pressed on.
     pub fn band(&self) -> Option<&DrawingBand> {
-        self.model.band()
+        self.model().band()
     }
 
     /// Why `action` cannot run on the current range, by the model's rule and
     /// the tool's own [`drawings::DrawingTool::holds_band`].
     fn unavailable_reason(&self, action: Action) -> Option<&'static str> {
-        self.model.action_unavailable(|band| {
-            drawings::DrawingTool::by_id(action.tool_id()).is_none_or(|tool| tool.holds_band(band))
-        })
+        self.model().unavailable_reason(action.tool_id())
     }
 
     pub fn release(&mut self, owner: Owner) {
-        self.model.update(Command::Release, owner.context());
+        self.emit(Intent::Release(owner));
     }
 
     pub fn dismiss(&mut self) -> bool {
-        let result = self
-            .model
-            .update(Command::Dismiss, self.model.context().unwrap_or_default());
-        self.geometry = None;
-        self.action_rects = [None; ACTION_COUNT];
-        result.consumed
+        self.view.geometry = None;
+        self.view.action_rects = [None; ACTION_COUNT];
+        let consumed = self.model().present();
+        self.emit(Intent::Dismiss);
+        consumed
     }
 
     pub fn reconcile_tab(&mut self, tab: u64) -> Option<bool> {
-        self.model.observe(
-            Event::ActiveTab(tab),
-            self.model.context().unwrap_or_default(),
-        );
-        self.model.view().map(|view| view.phase != Phase::Dragging)
-    }
-
-    pub fn paint(&self, owner: Owner) -> Option<Paint<'_>> {
-        let view = self.model.view()?;
-        let look = self.look.as_ref()?;
-        (view.paintable() && view.context.owner == owner.context().owner).then(|| Paint {
-            anchors: view.anchors.map(point),
-            style: look.style,
-            payload: look.payload.as_ref(),
-        })
+        self.emit(Intent::ActiveTab(tab));
+        self.model()
+            .view()
+            .map(|view| view.phase != Phase::Dragging)
     }
 
     pub fn remember_geometry(
@@ -294,10 +207,10 @@ impl QuickRange {
         bounds: egui::Rect,
         right_limit: f32,
     ) {
-        if let Some(view) = self.model.view()
+        if let Some(view) = self.model().view()
             && view.context.owner == owner.context().owner
         {
-            self.geometry = Some(Geometry {
+            self.view.geometry = Some(Geometry {
                 chart,
                 right_limit,
                 bounds: if view.paintable() {
@@ -309,40 +222,8 @@ impl QuickRange {
         }
     }
 
-    pub fn stale(&self, owner: Owner) -> bool {
-        self.model.view().is_some_and(|view| {
-            view.context.owner == owner.context().owner && view.phase == Phase::Stale
-        })
-    }
-
-    pub fn controls(&self, tab: u64) -> Option<[Control; ACTION_COUNT]> {
-        let view = self.model.view()?;
-        if view.context.owner.tab != tab
-            || view.phase == Phase::Dragging
-            || self.action_rects.iter().any(Option::is_none)
-        {
-            return None;
-        }
-        Some(Action::ALL.map(|action| {
-            let unavailable_reason = self.unavailable_reason(action);
-            Control {
-                action,
-                rect: self.action_rects[action.index()].expect("checked rectangles"),
-                enabled: unavailable_reason.is_none(),
-                unavailable_reason,
-            }
-        }))
-    }
-
-    pub(crate) fn convert(&mut self, action: Action) -> Option<PendingRangePlacement> {
-        let context = self.model.context()?;
-        let side = self.side?;
-        let StartedConversion::Awaiting(conversion) =
-            QuickRangeConversionPlan::start(&mut self.model, ConversionInput { action, context })
-        else {
-            return None;
-        };
-        Some(PendingRangePlacement { conversion, side })
+    pub(crate) fn convert(&mut self, action: Action) -> Option<Box<PendingRangePlacement>> {
+        self.emit(Intent::Convert(action)).place_quick_range
     }
 
     pub fn finish_conversion(
@@ -350,21 +231,13 @@ impl QuickRange {
         conversion: PendingConversion,
         outcome: PlacementOutcome,
     ) -> ConversionReadback {
-        let context = self.model.context().unwrap_or_default();
-        conversion.finish(&mut self.model, context, outcome)
-    }
-}
-
-#[cfg(test)]
-impl QuickRange {
-    pub fn paint_anchors(&self) -> Option<[ChartPoint; 2]> {
-        self.model.view().map(|view| view.anchors.map(point))
-    }
-
-    pub fn control(&self, tab: u64) -> Option<Control> {
-        self.controls(tab)?
-            .into_iter()
-            .find(|control| control.action == Action::Profile)
+        *self
+            .emit(Intent::FinishConversion {
+                conversion,
+                outcome,
+            })
+            .quick_range_readback
+            .expect("conversion completion is a host operation")
     }
 }
 
@@ -374,16 +247,16 @@ pub(super) fn draw(
     _env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
     let palette = crate::theme::get(ctx);
-    let Some(view) = quick.model.view() else {
+    let Some(view) = quick.model().view() else {
         return DrawingChromeAsk::default();
     };
     let Some(Geometry {
         chart,
         bounds,
         right_limit,
-    }) = quick.geometry.take()
+    }) = quick.view.geometry.take()
     else {
-        quick.action_rects = [None; ACTION_COUNT];
+        quick.view.action_rects = [None; ACTION_COUNT];
         return DrawingChromeAsk::default();
     };
     let tools = Action::ALL.map(|action| drawings::DrawingTool::by_id(action.tool_id()));
@@ -430,7 +303,7 @@ pub(super) fn draw(
                 });
             });
         });
-    quick.action_rects = action_rects;
+    quick.view.action_rects = action_rects;
     let dismiss = clicked.is_none()
         && ctx.input(|input| {
             input.pointer.primary_pressed()
@@ -446,5 +319,44 @@ pub(super) fn draw(
         place_quick_range: clicked.and_then(|action| quick.convert(action)),
         dismiss_quick_range: dismiss,
         ..DrawingChromeAsk::default()
+    }
+}
+
+/// Immutable projection of model state and the last painted action geometry.
+pub(crate) struct Read<'a> {
+    pub(super) state: &'a State,
+    pub(super) view: &'a View,
+}
+impl std::ops::Deref for Read<'_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        self.state
+    }
+}
+impl Read<'_> {
+    pub fn controls(&self, tab: u64) -> Option<[Control; ACTION_COUNT]> {
+        let view = self.state.view()?;
+        if view.context.owner.tab != tab
+            || view.phase == Phase::Dragging
+            || self.view.action_rects.iter().any(Option::is_none)
+        {
+            return None;
+        }
+        Some(Action::ALL.map(|action| {
+            let unavailable_reason = self.state.unavailable_reason(action.tool_id());
+            Control {
+                action,
+                rect: self.view.action_rects[action.index()].expect("checked rectangles"),
+                enabled: unavailable_reason.is_none(),
+                unavailable_reason,
+            }
+        }))
+    }
+
+    #[cfg(test)]
+    pub fn control(&self, tab: u64) -> Option<Control> {
+        self.controls(tab)?
+            .into_iter()
+            .find(|control| control.action == Action::Profile)
     }
 }

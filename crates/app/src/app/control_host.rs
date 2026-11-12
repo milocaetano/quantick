@@ -22,6 +22,7 @@
 //! as code that belongs below `app` — which code reading `QuantickApp`'s
 //! fields cannot be.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
@@ -639,7 +640,7 @@ impl<'a> ChromeReads<'a> {
             crate::surfaces::drawing_chrome::QUICK_RANGE_ACTION_COUNT],
     > {
         self.drawing_chrome
-            .quick_range
+            .quick_range_read()
             .controls(self.tabs.id_at(self.tabs.active_index()))
     }
 }
@@ -944,7 +945,7 @@ impl ChromePort for QuantickApp {
             feed_popup_tab: self.chrome.feed_popup_tab,
             replay_day_before: self.replay_view.day_before(),
         };
-        let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
+        let (rail, chrome) = (&self.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
@@ -1137,9 +1138,9 @@ pub(super) struct ControlState {
 pub(crate) fn control_quick_range(
     app: &QuantickApp,
 ) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
-    app.drawings
-        .chrome
-        .quick_range
+    app.surfaces
+        .drawing_chrome
+        .quick_range_read()
         .control(app.runtime.tabs.id_at(app.runtime.tabs.active_index()))
 }
 

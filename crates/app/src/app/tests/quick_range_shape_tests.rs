@@ -80,7 +80,12 @@ fn rectangle_and_trend_line_take_the_legs_two_anchors() {
             _commands,
             ..
         } = ruler(false);
-        let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+        let leg = app
+            .surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .unwrap();
         click_quick_range_action(&mut app, &ctx, action);
         let placed = drawings(&app);
         assert_eq!(placed.len(), 1, "{action:?}");
@@ -101,7 +106,12 @@ fn horizontal_marks_the_ranges_top_and_bottom() {
         _commands,
         ..
     } = ruler(false);
-    let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+    let leg = app
+        .surfaces
+        .drawing_chrome
+        .quick_range_read()
+        .paint_anchors()
+        .unwrap();
     click_quick_range_action(&mut app, &ctx, Action::Horizontal);
     let prices: Vec<f64> = drawings(&app).iter().map(|d| d.points[0].price).collect();
     assert!(
@@ -126,7 +136,12 @@ fn a_levelled_range_marks_one_horizontal_line() {
         _commands,
         ..
     } = ruler(true);
-    let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+    let leg = app
+        .surfaces
+        .drawing_chrome
+        .quick_range_read()
+        .paint_anchors()
+        .unwrap();
     assert_eq!(leg[0].price, leg[1].price);
     click_quick_range_action(&mut app, &ctx, Action::Horizontal);
     assert_eq!(drawings(&app).len(), 1);
@@ -143,7 +158,12 @@ fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
             end,
             _commands,
         } = ruler(false);
-        let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+        let leg = app
+            .surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .unwrap();
         click_quick_range_action(&mut app, &ctx, Action::Channel);
         run_frame(&mut app, &ctx);
         let pane = &app.active_tab().flow_pane;

@@ -406,8 +406,8 @@ fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
     );
     // The selected drawing's context bar can cover the stroke's midpoint.
     assert!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar_rect()
             .is_none_or(|rect| !rect.contains(grab)),
         "the body grab must be outside the selected drawing toolbar"
@@ -619,8 +619,8 @@ fn the_context_bar_flips_the_selected_drawings_own_magnet() {
     run_frame(&mut app, &ctx);
     for expected in [true, false] {
         let slot = app
-            .drawings
-            .chrome
+            .surfaces
+            .drawing_chrome
             .context_bar()
             .magnet_rect()
             .expect("a pointer-anchored drawing renders the magnet slot");

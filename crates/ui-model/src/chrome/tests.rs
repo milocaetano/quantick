@@ -3,8 +3,8 @@ macro_rules! registry {
     (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
-        $effects:path, $slot:ident, $dispatch:ident; )* }) => {
-        fn entries() -> Vec<(&'static str, Slot)> { vec![$((stringify!($field), Slot::$slot),)*] }
+        $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
+        fn entries() -> Vec<(&'static str, Slot)> { vec![$((stringify!($field), Slot::$slot), $((stringify!($field), Slot::$additional_slot),)* )*] }
     };
 }
 crate::surface_catalog!(registry);

@@ -111,7 +111,7 @@ impl FakeWindow {
             style: ChartStyle::default(),
             tool_rail: ToolRail::default(),
             dock: Dock::new(),
-            drawing_chrome: Default::default(),
+            drawing_chrome: crate::surfaces::drawing_chrome::new_owner(),
             health: super::super::super::health::HealthCounters::new(),
             history: quantick_session::HistorySettings {
                 progressive_history: true,

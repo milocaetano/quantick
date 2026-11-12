@@ -187,5 +187,11 @@ fn draft_uses_the_tool_selected_during_construction() {
     let points = &pane.drawings.draft().unwrap().points;
     assert_eq!(points[0], ChartPoint::at_time(141.5, 99.4, Some(15_200)));
     assert_eq!(points[1], ChartPoint::at_time(168.5, 100.6, Some(17_900)));
-    assert!(app.drawings.chrome.demos().draft_requested().is_none());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .demos()
+            .draft_requested()
+            .is_none()
+    );
 }
