@@ -95,7 +95,7 @@ pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
         PaneMenuItem::Maximize
     };
     let folded = state.mode(slot) == Some(PaneMode::Minimized);
-    let (first, fold) = if folded {
+    let (first, first_offered) = if folded {
         (PaneMenuItem::Restore, true)
     } else {
         (
@@ -110,7 +110,7 @@ pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
             .is_ok();
     let remove = state.clone().remove(slot).is_ok();
     let rows = [
-        (first, fold),
+        (first, first_offered),
         (second, maximize),
         (PaneMenuItem::OpenInNewWindow, pop_out),
         (PaneMenuItem::ReturnToCanvas, windowed),

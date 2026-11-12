@@ -214,6 +214,19 @@ fn picking_a_flow_layout_while_the_flow_floats_keeps_one_flow_pane() {
     let before = crowded.clone();
     assert!(!crowded.apply_preset(preset("charts-8").unwrap()));
     assert_eq!(crowded, before);
+
+    // A chart over the canvas is taken before one on another monitor.
+    let mut popped = canvas("time+time+flow");
+    let window = CanvasRect::new(2000.0, 0.0, 800.0, 600.0);
+    popped.pop_out(0, "DISPLAY2", window).unwrap();
+    popped.float(1, rect).unwrap();
+    assert!(popped.apply_preset(preset("time+flow").unwrap()));
+    assert_eq!(popped.mode(1), Some(PaneMode::Docked));
+    assert_eq!(
+        popped.mode(0),
+        Some(PaneMode::OsWindow),
+        "left on its monitor"
+    );
 }
 
 /// Folding every chart of a stack folds the stack itself to one strip, so

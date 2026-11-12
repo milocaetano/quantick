@@ -107,7 +107,10 @@ fn collect(
 /// Whether `child` is folded to a strip its split holds: a folded pane, or a
 /// split whose every pane is folded.
 fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
-    (child.panes().iter()).all(|(slot, _)| state.minimized().contains(slot))
+    match child {
+        PaneTree::Pane { slot, .. } => state.minimized().contains(slot),
+        PaneTree::Split { children, .. } => children.iter().all(|child| pinned(state, child)),
+    }
 }
 
 /// The two open children the seam after child `index` trades between: the

@@ -206,7 +206,7 @@ impl PaneTree {
             SplitAxis::Row => area.w,
             SplitAxis::Column => area.h,
         };
-        let pinned: Vec<Option<f32>> = children
+        let mut pinned: Vec<Option<f32>> = children
             .iter()
             .map(|child| {
                 (children.len() > 1)
@@ -214,17 +214,14 @@ impl PaneTree {
                     .flatten()
             })
             .collect();
-        let pinned_total: f32 = pinned.iter().flatten().sum();
+        let mut pinned_total: f32 = pinned.iter().flatten().sum();
         // Every child folded: this split is itself a strip its parent pinned,
         // so its strips share whatever it was given in proportion.
-        let pinned: Vec<Option<f32>> =
-            if pinned.iter().all(Option::is_some) && pinned_total > f32::EPSILON {
-                let scale = extent / pinned_total;
-                pinned.iter().map(|pin| pin.map(|px| px * scale)).collect()
-            } else {
-                pinned
-            };
-        let pinned_total: f32 = pinned.iter().flatten().sum();
+        if pinned.iter().all(Option::is_some) && pinned_total > f32::EPSILON {
+            let scale = extent / pinned_total;
+            pinned.iter_mut().flatten().for_each(|px| *px *= scale);
+            pinned_total = extent;
+        }
         let free = (extent - pinned_total).max(0.0);
         let open_share: f32 = shares
             .iter()
