@@ -271,6 +271,19 @@ pub fn bar_outline(
 /// at a workspace menu row's left edge with the indent its name takes past
 /// it, in points.
 pub const WORKSPACE_UNDERLINE_PT: f32 = 3.0;
+/// The capsule's bottom band the underline fills: its 1 pt border and the line.
+pub const WORKSPACE_UNDERLINE_BAND_PT: f32 = 1.0 + WORKSPACE_UNDERLINE_PT;
+
+/// How far the capsule's content rises so it centres in the room above its
+/// underline: half the line when the workspace has a colour, else none.
+#[must_use]
+pub fn underline_lift(coloured: bool) -> f32 {
+    if coloured {
+        WORKSPACE_UNDERLINE_PT / 2.0
+    } else {
+        0.0
+    }
+}
 pub const WORKSPACE_ROW_BAR_PT: f32 = 7.0;
 pub const WORKSPACE_ROW_INDENT_PT: f32 = 8.0;
 /// The workspace menu's colour swatches: 22 pt squares 8 pt apart, one held
