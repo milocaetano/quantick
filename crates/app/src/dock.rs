@@ -39,6 +39,7 @@ pub fn tab_icon(tab: DockTab) -> &'static str {
 /// What the dock's tabs need from the app, split by field so the dock can be
 /// borrowed mutably alongside them.
 pub struct DockEnv<'a> {
+    pub alerts_open: bool,
     /// The replay browser the Session tab opens.
     pub replay_view: &'a mut ReplayView,
     /// The playing session, if any.
@@ -52,6 +53,7 @@ pub struct DockEnv<'a> {
 /// What drawing the dock asked the app to do.
 #[derive(Default)]
 pub struct DockResponse {
+    pub open_alerts: bool,
     /// The Session tab asked to close the replay.
     pub replay_action: Option<ReplayAction>,
     /// The Trades tab asked to center the chart on a round trip
@@ -78,19 +80,25 @@ pub struct DockResponse {
 /// they were last laid out. Read before the dock draws: Del there is the
 /// dock's (the Trades ledger deletes a session with it), not the chart's.
 #[must_use]
-pub fn holds_pointer(dock: &Dock, ctx: &egui::Context) -> bool {
-    let Some(pointer) = ctx.pointer_latest_pos().filter(|_| dock.visible()) else {
+pub fn holds_pointer(dock: &Dock, ctx: &egui::Context, alerts_open: bool) -> bool {
+    let Some(pointer) = ctx.pointer_latest_pos() else {
         return false;
     };
     let viewport = ctx.viewport_id();
     let body = dock
         .tab()
+        .filter(|_| dock.visible())
         .map(|tab| egui::Id::new((viewport, "dock_body", tab.index())));
-    [Some(egui::Id::new((viewport, "dock_strip"))), body]
-        .into_iter()
-        .flatten()
-        .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
-        .any(|panel| panel.rect.contains(pointer))
+    [
+        dock.visible()
+            .then(|| egui::Id::new((viewport, "dock_strip"))),
+        body,
+        alerts_open.then(|| egui::Id::new((viewport, "alerts_manager_panel"))),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
+    .any(|panel| panel.rect.contains(pointer))
 }
 
 /// Draw the strip and, when a tab is open, its body panel.
@@ -115,6 +123,12 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
         )
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
+            response.open_alerts = IconButton::new(icons::BELL, RAIL_ICON)
+                .strong()
+                .active(env.alerts_open)
+                .hover_text("Alerts")
+                .show(ui)
+                .clicked();
             let position = env.paper.position_summary();
             for tab in DockTab::ALL {
                 // Only the Trading-with-position hover is dynamic; the
@@ -342,6 +356,7 @@ mod tests {
                         &mut dock,
                         ctx,
                         &mut DockEnv {
+                            alerts_open: false,
                             replay_view: &mut replay_view,
                             replay: None,
                             paper: &mut paper,
@@ -359,6 +374,7 @@ mod tests {
                 &mut dock,
                 ctx,
                 &mut DockEnv {
+                    alerts_open: false,
                     replay_view: &mut replay_view,
                     replay: None,
                     paper: &mut paper,
@@ -386,6 +402,7 @@ mod tests {
                         dock,
                         ctx,
                         &mut DockEnv {
+                            alerts_open: false,
                             replay_view: &mut ReplayView::new(None, None),
                             replay: None,
                             paper,
@@ -419,5 +436,69 @@ mod tests {
             open > flat,
             "an open position must add the badge circle: {open} vs {flat}"
         );
+    }
+}
+
+#[cfg(test)]
+mod alerts_parity_tests {
+    use super::*;
+    #[test]
+    fn alerts_right_rail_entry() {
+        for width in [640.0, 1280.0] {
+            let ctx = egui::Context::default();
+            let mut dock = Dock::new();
+            let mut paper = PaperTrading::new();
+            let mut replay_view = ReplayView::new(None, None);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 360.0));
+            let mut frame = |events| {
+                let mut opened = false;
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        opened = draw(
+                            &mut dock,
+                            ctx,
+                            &mut DockEnv {
+                                alerts_open: false,
+                                replay_view: &mut replay_view,
+                                replay: None,
+                                paper: &mut paper,
+                                tz: TzOffset::default(),
+                            },
+                        )
+                        .open_alerts;
+                    },
+                );
+                (output, opened)
+            };
+            frame(vec![]);
+            let (output, _) = frame(vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == icons::BELL => {
+                        Some(text.pos + text.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .expect("permanent bell painted");
+            assert!(pos.x > width - TAB_STRIP_WIDTH);
+            let event = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame(vec![egui::Event::PointerMoved(pos), event(true)]);
+            assert!(
+                frame(vec![event(false)]).1,
+                "rail click opens the same manager"
+            );
+        }
     }
 }

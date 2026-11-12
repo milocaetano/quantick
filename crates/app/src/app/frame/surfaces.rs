@@ -43,6 +43,8 @@ pub(super) fn open_requested_strategy_popups(
 
 /// What the surfaces' environment is read from.
 pub(super) struct SurfaceOwners<'a> {
+    pub display_offset_minutes: i32,
+    pub alerts: &'a mut super::super::alerts_runtime::Runtime,
     pub indicators: &'a mut IndicatorState,
     pub store: &'a crate::workspace_store::LayoutStore,
     pub alert_failure: Option<&'a str>,
@@ -61,6 +63,8 @@ pub(super) fn draw_surfaces(
     owners: SurfaceOwners<'_>,
 ) -> SurfaceResponse {
     let SurfaceOwners {
+        alerts,
+        display_offset_minutes,
         indicators,
         store,
         alert_failure,
@@ -155,9 +159,20 @@ pub(super) fn draw_surfaces(
                 editor_pane.id
             )
         };
+    let alert_context = (staging || registry.alerts.is_open()).then(|| {
+        super::super::alerts_runtime::context(
+            focused_tab,
+            focused_pane,
+            tabs.active_id(),
+            display_offset_minutes,
+        )
+    });
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
+            alerts: Some(&alerts.core.book),
+            alert_error: alerts.core.error.as_ref(),
+            alert_context: alert_context.as_ref(),
             picker_pane_id: focused_pane.id,
             picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
@@ -201,6 +216,16 @@ pub(super) fn draw_surfaces(
     );
     if let Some(request) = asks.bar_switch.take() {
         apply_bar_switch(tabs, &mut registry.toast, request);
+    }
+    if let Some(request) = asks.alerts.as_mut()
+        && let Some(command) = request.command.take()
+    {
+        let result = alerts
+            .core
+            .command(command, crate::metrics::wall_clock_ms())
+            .map(|_| ())
+            .map_err(|error| format!("{error:?}"));
+        registry.alerts.settle_command(result);
     }
     asks
 }

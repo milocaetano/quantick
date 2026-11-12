@@ -30,6 +30,7 @@ pub(crate) use quantick_control_host::authority::{ANNOTATE_PERMISSION_ID, ANNOTA
 /// and one handler here; nothing else opens.
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
+    quantick_control_handlers::alerts::register(&mut registry)?;
     quantick_control_handlers::attention::register(&mut registry)?;
     quantick_control_handlers::appearance::register_actions(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;

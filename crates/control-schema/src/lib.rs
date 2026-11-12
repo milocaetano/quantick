@@ -7,6 +7,7 @@
 //! Nothing here holds application state, reads a clock or names a renderer:
 //! every function is a total function of what it is handed.
 
+pub mod alerts;
 pub mod analysis;
 pub mod attention;
 pub mod bubble_preset;

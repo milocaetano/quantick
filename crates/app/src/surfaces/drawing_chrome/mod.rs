@@ -253,6 +253,7 @@ pub(crate) struct ManagerRow {
 /// one subsystem's slice, and eleven more fields on the shared env would move
 /// the loose-field problem out one level instead of solving it.
 pub(crate) struct DrawingEnv<'a> {
+    pub linked_alerts: usize,
     pub pane_id: u64,
     /// The selected object on the pane the chrome speaks for, if any.
     pub selected: Option<SelectedDrawing<'a>>,
@@ -549,6 +550,7 @@ impl PresetHost for RecordingPresetHost<'_> {
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct DrawingChromeAsk {
+    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
     /// Replace the temporary secondary-drag ruler with the chosen durable
     /// drawing through its registered annotation action.
     pub place_quick_range: Option<quick_range::PendingRangePlacement>,
@@ -644,6 +646,7 @@ impl DrawingChromeAsk {
         );
         self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
+        self.alert_target = self.alert_target.take().or(other.alert_target);
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
             .commit_edit_gesture
@@ -723,6 +726,8 @@ pub(crate) struct DrawingChromeSurface {
     /// *after* the new-selection reset, because the placement that made the
     /// request also made the selection change that clears it.
     pending_open_settings: bool,
+    /// A floating surface (Alerts) owns the pointer; the context bar stands down.
+    surface_over: bool,
     /// One window-level snapshot, kept here so copy/paste crosses panes and
     /// tabs without adding feature state to `QuantickApp`.
     clipboard: Option<Drawing>,
@@ -821,10 +826,10 @@ impl DrawingChromeSurface {
         self.pending_open_settings |= self.shared.open;
     }
 
-    /// Ask for the caret on the next frame — the placement that just happened
-    /// wants its note typed.
-    pub fn request_text_edit(&mut self) {
-        self.pending_text_edit = true;
+    /// The window's facts: a placed note wants the caret; Alerts owns the pointer.
+    pub fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
+        self.pending_text_edit |= text_edit;
+        self.surface_over = surface_over;
     }
 
     /// The host placed the note the `QUANTICK_TEXT_NOTE` hook asked for.

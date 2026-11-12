@@ -7,7 +7,7 @@
 **Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
 --client claude` (or `codex`), enable **Tools → Local agent access**, and call
 `quantick_describe` first. Tools and authority:
-[crates/mcp/README.md](crates/mcp/README.md); capabilities: the generated
+[crates/mcp/README.md](crates/mcp/README.md); capabilities:
 [capability inventory](docs/control-plane/capability-inventory.md) and
 [capability catalog](schemas/control/observer-capability-catalog-v1.json).
 
@@ -19,19 +19,20 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | Crate | Depends on | What it owns |
 | --- | --- | --- |
 | `app` | every crate but the other leaves, `trading` and `sources` | The desktop chart (egui). |
-| `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions in, performance out, over the chart's engine and indicators. |
+| `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions to performance, using the chart engine. |
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
-| `control-handlers` | control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port-bound handlers. |
+| `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port-bound handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
-| `stores` | appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `appearance` | — | Versioned colors and typography. |
+| `stores` | alerts, appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
+| `alerts` | civil, workspace | Alerts and sounds. |
+| `appearance` | — | Colors and typography. |
 | `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
-| `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
-| `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
+| `indicator-session` | pine, indicators, engine | Bindings, batches, deltas. |
+| `anchored-studies` | indicators, engine | Resumable profile/anchored-average state; caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |
-| `strategy` | sim, workspace, engine | Armed regions, brackets, the armed-instance state machine, `SignalAlarm` and sounds, preset bank, drawing anchors. |
-| `control-local` | control | Instance-descriptor directory and blocking loopback client, under one ownership check. |
+| `strategy` | alerts, sim, workspace, engine | Regions, brackets, `SignalAlarm`, presets, drawing anchors. |
+| `control-local` | control | Instance directory and blocking loopback client; one ownership check. |
 | `control-host` | control, engine | Projection registry, admission, idempotency store, event journal. Told the time. |
 | `indicators` | engine | The `Indicator` trait (commit/preview, rollback), incremental `ta.*` kernels, draw objects. |
 | `replay` | civil, engine | Recorded sessions: CSV, folder scan, deal recorder, playback clock; told the time. Test support is `replay::test_support`. |

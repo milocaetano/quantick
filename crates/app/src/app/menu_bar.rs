@@ -291,6 +291,13 @@ impl QuantickApp {
             return;
         }
         match command {
+            MenuCommand::OpenAlerts => super::alerts_runtime::apply_alert_request(
+                self,
+                crate::surfaces::alerts::Request {
+                    open: true,
+                    ..Default::default()
+                },
+            ),
             MenuCommand::OpenReplayBrowser => self.replay_view.open_browser(),
             MenuCommand::CloseReplay => {
                 let (tab, config) = self.active_with_config();

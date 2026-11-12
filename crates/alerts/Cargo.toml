@@ -1,0 +1,18 @@
+[package]
+name = "quantick-alerts"
+description = "Deterministic drawing and price alert contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-workspace = { path = "../workspace" }
+quantick-civil = { path = "../civil" }
+serde = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }
+
+[lints]
+workspace = true
