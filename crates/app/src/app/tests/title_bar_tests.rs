@@ -119,6 +119,93 @@ fn title_bar_window_requests_emit_native_commands_without_mutating_markets() {
 }
 
 #[test]
+fn title_bar_native_clicks_traverse_registered_view_model_and_host() {
+    for (control, maximized, clicks, expected) in [
+        ("minimize", false, 1, egui::ViewportCommand::Minimized(true)),
+        ("maximize", false, 1, egui::ViewportCommand::Maximized(true)),
+        ("maximize", true, 1, egui::ViewportCommand::Maximized(false)),
+        ("drag", false, 2, egui::ViewportCommand::Maximized(true)),
+        ("drag", true, 2, egui::ViewportCommand::Maximized(false)),
+    ] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        let identity = app.runtime.tabs.active_id();
+        fn frame(
+            app: &mut QuantickApp,
+            ctx: &egui::Context,
+            maximized: bool,
+            events: Vec<egui::Event>,
+            time: f64,
+        ) -> egui::FullOutput {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 760.0),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .maximized = Some(maximized);
+            ctx.run(input, |ctx| {
+                let _ = super::super::title_bar::draw(
+                    ctx,
+                    &app.runtime.tabs,
+                    &mut app.chrome.title_bar,
+                    &mut app.surfaces,
+                );
+            })
+        }
+        frame(&mut app, &ctx, maximized, Vec::new(), 1.0);
+        let at = app
+            .chrome
+            .title_bar
+            .controls
+            .iter()
+            .find(|(id, _)| *id == control)
+            .unwrap()
+            .1
+            .center();
+        let mut native = Vec::new();
+        for click in 0..clicks {
+            for pressed in [true, false] {
+                let output = frame(
+                    &mut app,
+                    &ctx,
+                    maximized,
+                    vec![egui::Event::PointerMoved(at), pointer_button(at, pressed)],
+                    1.1 + f64::from(click) * 0.1 + if pressed { 0.0 } else { 0.02 },
+                );
+                native.extend(
+                    output
+                        .viewport_output
+                        .into_values()
+                        .flat_map(|viewport| viewport.commands),
+                );
+            }
+        }
+        assert_eq!(
+            native
+                .iter()
+                .filter(|command| **command == expected)
+                .count(),
+            1,
+            "{control}, maximized={maximized}: {native:?}"
+        );
+        if control != "minimize" {
+            assert!(native.contains(&egui::ViewportCommand::Minimized(false)));
+        }
+        assert!(!native.contains(&egui::ViewportCommand::Close));
+        assert_eq!(app.runtime.tabs.active_id(), identity);
+        assert_eq!(app.runtime.tabs.len(), 1);
+    }
+}
+
+#[test]
 fn title_bar_drag_space_never_covers_market_widgets_and_close_keeps_last_market() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
