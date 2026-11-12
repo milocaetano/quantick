@@ -325,8 +325,13 @@ impl OrderflowView {
         changed
     }
 
-    pub(crate) fn apply_tick_preset(&mut self, name: Option<&str>) -> Result<bool, String> {
-        let style = self.look.tick_style(name)?;
+    pub(crate) fn apply_tick_preset(
+        &mut self,
+        name: Option<&str>,
+        tuning: quantick_orderflow::TickTuning,
+    ) -> Result<bool, String> {
+        let worn = self.config.volume_dots.tick_bubbles;
+        let style = self.look.tick_style_tuned(name, tuning, worn)?;
         Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
     }
 
@@ -349,17 +354,37 @@ impl OrderflowView {
                     .selectable_label(current.is_none(), "Regional FLOW")
                     .clicked()
                 {
-                    let _ = self.apply_tick_preset(None);
+                    let _ = self.apply_tick_preset(None, Default::default());
                 }
                 for name in &choices {
                     if ui
                         .selectable_label(selected.as_ref() == Some(name), name)
                         .clicked()
                     {
-                        let _ = self.apply_tick_preset(Some(name));
+                        let _ = self.apply_tick_preset(Some(name), Default::default());
                     }
                 }
             });
+        let tune = rule.tune(selected.as_deref());
+        if let Some(style) = &mut self.config.volume_dots.tick_bubbles {
+            ui.add_enabled_ui(tune.is_ok(), |ui| {
+                let mut peaks = style.peaks();
+                let hint = "one sphere per peak of each zoom region's volume by price; \
+                            sized by rank among the spheres on screen, vivid when one-sided";
+                if ui
+                    .checkbox(&mut peaks, "Peak spheres")
+                    .on_hover_text(hint)
+                    .changed()
+                {
+                    style.peak_spheres = Some(peaks);
+                }
+                let range = quantick_orderflow::config::controls::OPACITY_RANGE;
+                ui.add(egui::Slider::new(&mut style.opacity, range).text("sphere opacity"));
+            });
+            if let Err(refusal) = tune {
+                ui.small(refusal.reason());
+            }
+        }
         ui.small(self.look.tick_hint());
     }
 }

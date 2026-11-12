@@ -11,11 +11,17 @@ impl TickBubblePort for dyn ControlPort {
         let tick_chart = pane.state.tick_membership().is_some();
         Ok(TickSpherePane::new(tick_chart, asset_mode))
     }
-    fn wear_tick_spheres(&mut self, tab: u64, id: u64, name: Option<&str>) -> WornSpheres {
+    fn wear_tick_spheres(
+        &mut self,
+        tab: u64,
+        id: u64,
+        name: Option<&str>,
+        tuning: quantick_orderflow::TickTuning,
+    ) -> WornSpheres {
         let pane = pane(self, WireU64::new(tab), WireU64::new(id))?;
         let missing = || invalid("The pane has no order-flow view");
         let owner = pane.orderflow.as_mut().ok_or_else(missing)?;
-        let changed = owner.apply_tick_preset(name).map_err(invalid)?;
+        let changed = owner.apply_tick_preset(name, tuning).map_err(invalid)?;
         let worn = owner.cached_config().volume_dots.tick_bubbles;
         Ok((changed, worn.map(Into::into)))
     }
