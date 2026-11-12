@@ -178,8 +178,9 @@ impl Tab {
     /// draws, whose collapse flags hold.
     pub fn drawn_panes(&self) -> DrawnPanes {
         let canvas = &self.canvas;
-        let model = |seat| seat_drawn(&canvas.state, &canvas.seats, seat);
         if !canvas.column_painted() {
+            let seats = canvas.seats.current(&canvas.state);
+            let model = |seat| seat_drawn(&canvas.state, &seats, seat);
             let time = (0..self.time_panes.len()).map(|seat| model(Some(seat)));
             return DrawnPanes::new(model(None), time);
         }

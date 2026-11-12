@@ -438,6 +438,7 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let area = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
     };
     let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
     let resize = |slot, dimension, share| CanvasAct::Resize {
@@ -493,7 +494,7 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
 
 /// C16: "1 TF + Flow" is drawn by the column painter, whose split is the
 /// tree's row share: the same resize a tree layout takes moves it, and the
-/// readback shows the share sent.
+/// readback shows the share sent. Its stacked heights stay its own.
 #[test]
 fn resize_works_on_a_column_layout() {
     use crate::canvas::{Drawn, act, view};
@@ -501,6 +502,7 @@ fn resize_works_on_a_column_layout() {
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let drawn = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: true,
     };
     let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
     let resize = CanvasAct::Resize {
@@ -519,6 +521,25 @@ fn resize_works_on_a_column_layout() {
     assert_eq!(width(0).as_deref(), Some("0.6"));
     assert_eq!(width(1).as_deref(), Some("0.4"));
     assert_eq!(read.preset_id.as_deref(), Some("time+flow"));
+
+    // The stacked charts' heights are the column painter's own: a height
+    // resize is refused, naming the call that moves them, and none reads back.
+    let mut stacked = CanvasState::from_preset(preset("stack2+flow").unwrap());
+    let before = stacked.clone();
+    let tall = CanvasAct::Resize {
+        slot: 0,
+        dimension: CanvasDimension::Height,
+        share: 0.7,
+    };
+    let error = act(&mut stacked, None, drawn, tall).unwrap_err();
+    assert_eq!(
+        error.context.details.unwrap()["refusal"],
+        json!("canvas.column_layout")
+    );
+    assert!((error.context.next_steps.iter()).any(|step| step.contains("layout.pane.resize_pair")));
+    assert_eq!(stacked, before, "nothing moved");
+    let read = view(&stacked, drawn);
+    assert!(read.panes.iter().all(|pane| pane.height_share.is_none()));
 }
 
 /// C19: with nine panes on the canvas, floats counted, a pick that needs one
@@ -535,7 +556,16 @@ fn a_pick_over_the_pane_cap_is_refused() {
     let pick = CanvasAct::PickLayout {
         preset_id: "charts-8".to_owned(),
     };
-    let error = act(&mut state, None, Drawn { area }, pick).unwrap_err();
+    let error = act(
+        &mut state,
+        None,
+        Drawn {
+            area,
+            columns: false,
+        },
+        pick,
+    )
+    .unwrap_err();
     assert_eq!(
         error.context.details.unwrap()["refusal"],
         json!("canvas.full")
@@ -545,7 +575,15 @@ fn a_pick_over_the_pane_cap_is_refused() {
         preset_id: "flow".to_owned(),
     };
     assert_eq!(
-        act(&mut state, None, Drawn { area }, same),
+        act(
+            &mut state,
+            None,
+            Drawn {
+                area,
+                columns: false
+            },
+            same
+        ),
         Ok((false, None)),
         "the layout it already is reads as unchanged, not refused"
     );
@@ -559,6 +597,7 @@ fn a_tree_share_reads_back_what_the_screen_shows() {
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
     let drawn = Drawn {
         area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
     };
     let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
     state.minimize(1).unwrap();

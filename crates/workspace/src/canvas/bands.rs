@@ -41,6 +41,15 @@ impl Seats {
     pub fn held(&self) -> &[(PaneSlot, usize)] {
         &self.held
     }
+
+    /// These seats brought up to date for `state` as the next frame seats
+    /// them, so a read between an edit and that frame is not stale.
+    #[must_use]
+    pub fn current(&self, state: &CanvasState) -> Self {
+        let mut seats = self.clone();
+        seated(state, &mut seats);
+        seats
+    }
 }
 
 /// One docked pane of the tree, ready to paint.
@@ -102,8 +111,8 @@ pub fn seat_slot(state: &CanvasState, seats: &mut Seats, seat: Option<usize>) ->
     slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
 }
 
-/// How built chart `seat` (`None` for the flow pane) shows, by the seats the
-/// last drawn frame gave out; `None` when the canvas holds no pane for it.
+/// How built chart `seat` (`None` for the flow pane) shows by `seats`, as
+/// [`Seats::current`] reads them; `None` when the canvas holds no pane for it.
 #[must_use]
 pub fn seat_mode(state: &CanvasState, seats: &Seats, seat: Option<usize>) -> Option<PaneMode> {
     let slot = match seat {

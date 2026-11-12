@@ -33,10 +33,11 @@ pub(super) fn tab_area(canvas: &crate::tab::layout::TabCanvas) -> CanvasRect {
     }
 }
 
-/// `tab` as the window draws it: its area.
+/// `tab` as the window draws it: its area and whether the column painter
+/// draws it.
 pub(crate) fn drawn(tab: &crate::tab::layout::TabCanvas) -> canvas::Drawn {
-    let area = tab_area(tab);
-    canvas::Drawn { area }
+    let (area, columns) = (tab_area(tab), tab.column_painted());
+    canvas::Drawn { area, columns }
 }
 
 /// The active tab's workspace as last saved, if it has a save.

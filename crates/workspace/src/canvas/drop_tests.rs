@@ -99,4 +99,9 @@ fn a_parked_float_never_covers_a_strip() {
     );
     let free = park_rect(CANVAS, Corner::BottomRight, size, &[top, strip]);
     assert_eq!(free, park_rect(CANVAS, Corner::BottomRight, size, &[]));
+
+    // A strip mid-canvas never pushes a wide pane off the canvas.
+    let middle = CanvasRect::new(CANVAS.x + 800.0, CANVAS.y, 24.0, CANVAS.h);
+    let wide = park_rect(CANVAS, Corner::TopLeft, (1000.0, 300.0), &[middle]);
+    assert!(wide.x >= CANVAS.x && wide.right() <= CANVAS.right() - PARK_MARGIN_PX);
 }

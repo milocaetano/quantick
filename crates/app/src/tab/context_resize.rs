@@ -41,8 +41,8 @@ impl TabCanvas {
     /// Folded by the canvas model, or by the column flags while they draw.
     pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
         if !self.column_painted() {
-            let seat = side.index().checked_sub(1);
-            return seat_mode(&self.state, &self.seats, seat) == Some(PaneMode::Minimized);
+            let (seat, seats) = (side.index().checked_sub(1), self.seats.current(&self.state));
+            return seat_mode(&self.state, &seats, seat) == Some(PaneMode::Minimized);
         }
         let heights = &self.context_stack.heights;
         match side {

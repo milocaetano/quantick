@@ -562,9 +562,10 @@ impl CanvasState {
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
 ///
 /// Compared by slot, the pane's identity for its life: a save keeps the
-/// canvas whenever it is not [`CanvasState::numbered_as`] its preset, so a
-/// saved tab and the live one always number their panes alike, and a slot
-/// added since the save is one the save never held.
+/// canvas whenever its preset and split do not rebuild it
+/// ([`CanvasState::saved_form`]), so a saved tab and the live one always
+/// number their panes alike, and a slot added since the save is one the
+/// save never held.
 #[must_use]
 pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
     saved.holds(slot) && live.holds(slot)

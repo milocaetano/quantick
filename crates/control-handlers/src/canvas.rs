@@ -79,11 +79,25 @@ pub enum CanvasAct {
     },
 }
 
-/// A tab's canvas as the window draws it: its area. The tree's shares are
-/// the one geometry every painter draws, the column painter's split included.
+/// A tab's canvas as the window draws it: its area, and whether the column
+/// painter draws it. The tree's row share is the column painter's split, so
+/// a width resize moves it; the stacked charts' heights are the painter's own.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Drawn {
     pub area: CanvasRect,
+    pub columns: bool,
+}
+
+/// A height resize on a column-painted tab: its stacked charts' heights are
+/// not the tree's.
+fn column_heights() -> ControlError {
+    let mut error = ControlError::invalid_request(
+        "the column painter stacks these charts by its own heights: a tree height resize moves nothing on screen",
+    );
+    error.context.details = Some(serde_json::json!({ "refusal": "canvas.column_layout" }));
+    error.context.next_steps =
+        vec!["Move the boundary between stacked charts with layout.pane.resize_pair.".to_owned()];
+    error
 }
 
 fn unavailable() -> ControlError {
@@ -365,8 +379,9 @@ pub fn pick_on(
 
 /// Apply `act` to `state`, a canvas `drawn` as the window draws it. An
 /// unconfirmed removal of a pane the `saved` workspace holds is refused, as
-/// the trader's dialog asks first. Answers whether the canvas changed and
-/// the slot acted on. A window whose pick lays out more than the model (a
+/// the trader's dialog asks first, and so is a height resize on a
+/// column-painted tab. Answers whether the canvas changed and the slot acted
+/// on. A window whose pick lays out more than the model (a
 /// split, its painter) applies [`CanvasAct::PickLayout`] itself.
 pub fn act(
     state: &mut CanvasState,
@@ -374,6 +389,16 @@ pub fn act(
     drawn: Drawn,
     act: CanvasAct,
 ) -> Result<(bool, Option<u32>), ControlError> {
+    let height = matches!(
+        act,
+        CanvasAct::Resize {
+            dimension: CanvasDimension::Height,
+            ..
+        }
+    );
+    if drawn.columns && height {
+        return Err(column_heights());
+    }
     let area = drawn.area;
     if let CanvasAct::Remove {
         slot,
@@ -804,13 +829,16 @@ pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
 }
 
 /// `slot`'s share along `dimension` as the screen shows it, as the wire
-/// writes it.
+/// writes it; no height on a column-painted tab, whose stack is its own.
 fn share_on(
     state: &CanvasState,
     slot: u32,
     dimension: CanvasDimension,
     drawn: Drawn,
 ) -> Option<quantick_control::wire::CanonicalDecimal> {
+    if drawn.columns && dimension == CanvasDimension::Height {
+        return None;
+    }
     let share = state.pane_share(slot, axis_of(dimension), drawn.area)?;
     canonical_f32(share, SHARE_DECIMAL_PLACES)
 }

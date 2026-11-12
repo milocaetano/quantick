@@ -123,5 +123,8 @@ pub fn park_rect(
             (false, _, false) => at.y = strip.y - PARK_MARGIN_PX - h,
         }
     }
+    // Never pushed off the canvas: its grip has to stay in reach.
+    at.x = at.x.min(right).max(left);
+    at.y = at.y.min(bottom).max(top);
     at
 }
