@@ -643,9 +643,35 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
     let output = frame(&mut app, &ctx);
     let open = painted_text_center(&output, "Open a market").expect("the page offers a market");
     assert!(painted_text_center(&output, "Market Shelf not built yet").is_some());
-    click_sized(&mut app, &ctx, WINDOW, open);
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(open), pointer_button(open, true)],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(open), pointer_button(open, false)],
+    );
     assert!(app.surfaces.market_palette.is_open());
+    frame(&mut app, &ctx);
+    let query = egui::Id::new("market_palette").with("query");
+    assert!(
+        egui::TextEdit::load_state(&ctx, query).is_some(),
+        "the earlier overlay stage paints the query on the following frame"
+    );
     assert!(on_home(&app), "the picker alone does not leave Home");
+
+    press(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!app.surfaces.market_palette.is_open());
+    assert!(on_home(&app), "cancelling the picker keeps Home visible");
+    click_sized(&mut app, &ctx, WINDOW, open);
+    assert!(
+        app.surfaces.market_palette.is_open(),
+        "the page can reopen it"
+    );
 
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     frame(&mut app, &ctx);

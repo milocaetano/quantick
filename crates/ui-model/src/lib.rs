@@ -145,6 +145,7 @@ impl<E> Model for Legacy<E> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Overlay,
+    HomeCanvas,
     PaneHeader,
     TitleBar,
     Toolbar,
