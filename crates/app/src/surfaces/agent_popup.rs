@@ -97,3 +97,7 @@ pub(crate) fn effects((): ()) -> SurfaceResponse {
 
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_AGENT_POPUP"];
+
+#[cfg(test)]
+#[path = "agent_popup/tests.rs"]
+mod tests;
