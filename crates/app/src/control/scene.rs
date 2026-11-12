@@ -56,11 +56,11 @@ use quantick_control::{
 
 use eframe::egui;
 use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
+use quantick_control_handlers::recovery::feed_status_controls;
 use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
     dock::DockTab,
-    feed::stall::Recovery,
     pane::{ChartPane, PaneSide},
     tab::Tab,
     toolrail::{RailControl, RailControlKind},
@@ -762,34 +762,26 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         // human something would be a second way to say the same thing.
         capability_id: None,
     });
-    // Both inside the popup. Outside it, the one-click Reconnect standing on
-    // screen: the overlay's or the status bar's, never both.
-    let recoveries = [
-        (FEED_RECONNECT_CONTROL_ID, Recovery::Reconnect),
-        (FEED_RELOAD_CONTROL_ID, Recovery::Reload),
-    ];
-    let shown = if popup_open {
-        2
-    } else {
-        usize::from(app.chrome_reads().feed_reconnect_offered())
-    };
-    for (control_id, recovery) in recoveries.into_iter().take(shown) {
+    // All inside the popup. Outside it, the one-click act standing on screen:
+    // the overlay's or the status bar's, never both.
+    let quick = app.chrome_reads().feed_quick_action();
+    let roll = matches!(quick, crate::feed_notice::NoticeAction::Roll(_)).then(|| quick.label());
+    let offered = app.chrome_reads().feed_reconnect_offered();
+    for (control, label) in feed_status_controls(roll, popup_open, offered) {
         controls.push(SceneControlSnapshot {
-            control_id: control_id.to_owned(),
-            label: recovery.label().to_owned(),
+            control_id: control.control_id().to_owned(),
+            label,
             description: None,
             role: SceneRoleDto::Action,
             owner: owner(),
-            // Which of the two leads is the application's judgement about
+            // Which one leads is the application's judgement about
             // *this* stall, and it is a matter of emphasis rather than of
             // state: neither control is chosen until it is pressed.
             selected: false,
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: Some(
-                quantick_control_handlers::recovery::capability_id(recovery).to_owned(),
-            ),
+            capability_id: Some(control.capability_id().to_owned()),
         });
     }
 }

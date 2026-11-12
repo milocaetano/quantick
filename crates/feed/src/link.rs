@@ -202,8 +202,10 @@ impl FeedLink {
     /// A contract the venue does not list stays named through the retries
     /// until a session connects or another attention replaces it: an
     /// attention names its own contract or none, so the roll off it never
-    /// outlives the report it answers. A roll's explanation stands through a
-    /// plain clear or a connect, and yields to any other notice.
+    /// outlives the report it answers. A roll's explanation stands through the
+    /// new feed's start-up — its progress, a clear, the connect — and yields
+    /// at once to a reconnect or an attention, and to progress once that feed
+    /// has connected: a real problem is never hidden behind it.
     pub fn drain_notices_at(&mut self, now_ms: i64) {
         while let Ok(notice) = self.notices.try_recv() {
             let held = matches!(
@@ -231,7 +233,9 @@ impl FeedLink {
                     }
                     notice
                 }
-                FeedNotice::Working { .. } if held => continue,
+                FeedNotice::Working { .. } if held || (rolled && !self.rolled_feed_connected()) => {
+                    continue;
+                }
                 FeedNotice::Clear if held || rolled => continue,
                 FeedNotice::Clear => FeedNotice::Clear,
                 FeedNotice::Working { .. }
@@ -240,6 +244,12 @@ impl FeedLink {
             };
             self.notice = next;
         }
+    }
+
+    /// The feed a roll attached has connected since: the connect is the only
+    /// way in, and a reconnect replaces the roll's note on its way out.
+    fn rolled_feed_connected(&self) -> bool {
+        self.feed_connection == FeedConnectionState::Connected
     }
 
     /// A saved workspace opened this tab on `symbol`: it may roll itself off
@@ -546,29 +556,63 @@ mod tests {
         assert_eq!(link.quick_action(), NoticeAction::Reconnect);
     }
 
-    #[test]
-    fn a_roll_leaves_a_note_that_yields_to_any_later_notice() {
-        let note = FeedNotice::Rolled {
+    fn rolled_note() -> FeedNotice {
+        FeedNotice::Rolled {
             from: "WINV26".to_owned(),
             to: "WINZ26".to_owned(),
-        };
-        for later in [
-            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+        }
+    }
+
+    /// A link that just rolled WINV26 to WINZ26, speaking for the new feed.
+    fn rolled_link() -> (FeedLink, mpsc::Sender<FeedNotice>) {
+        let (mut link, _old) = link();
+        link.auto_roll.rolling("WINV26", "WINZ26", true);
+        let (next, notices) = handle();
+        link.attach(next, 5);
+        assert_eq!(link.notice, rolled_note());
+        (link, notices)
+    }
+
+    /// The new feed's start-up says nothing the note has to make room for.
+    #[test]
+    fn a_roll_note_stands_through_the_new_feed_s_start_up() {
+        let (mut link, notices) = rolled_link();
+        for quiet in [
+            FeedNotice::working("waiting for the QuantickBridge EA"),
+            FeedNotice::Clear,
             FeedNotice::working("starting the MetaTrader bridge"),
-            FeedNotice::attention("MetaTrader is not running", "Start it."),
         ] {
-            let (mut link, _old) = link();
-            link.auto_roll.rolling("WINV26", "WINZ26", true);
-            let (next, notices) = handle();
-            link.attach(next, 5);
-            assert_eq!(link.notice, note);
-            for quiet in [FeedNotice::Connected, FeedNotice::Clear] {
-                say(&mut link, &notices, quiet);
-                assert_eq!(link.notice, note, "a connect or a clear leaves it standing");
+            say(&mut link, &notices, quiet);
+            assert_eq!(link.notice, rolled_note(), "start-up progress leaves it");
+            // What `feed.status` publishes in that window.
+            assert_eq!(link.notice.summary().0, "info");
+        }
+        say(&mut link, &notices, FeedNotice::Connected);
+        assert_eq!(link.notice, rolled_note(), "the connect leaves it standing");
+        say(&mut link, &notices, FeedNotice::Clear);
+        assert_eq!(link.notice, rolled_note());
+        assert_eq!(link.notice.unlisted_symbol(), Some("WINV26"));
+        let later = FeedNotice::working("re-subscribing WINZ26");
+        say(&mut link, &notices, later.clone());
+        assert_eq!(link.notice, later, "progress after the connect is news");
+    }
+
+    /// A reconnect or an attention is never hidden, before or after the
+    /// connect.
+    #[test]
+    fn a_roll_note_yields_to_trouble_at_any_time() {
+        for connected in [false, true] {
+            for later in [
+                FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+                FeedNotice::attention("MetaTrader is not running", "Start it."),
+            ] {
+                let (mut link, notices) = rolled_link();
+                if connected {
+                    say(&mut link, &notices, FeedNotice::Connected);
+                }
+                say(&mut link, &notices, later.clone());
+                assert_eq!(link.notice, later, "connected: {connected}");
             }
-            assert_eq!(link.notice.unlisted_symbol(), Some("WINV26"));
-            say(&mut link, &notices, later.clone());
-            assert_eq!(link.notice, later, "a later notice is never hidden");
         }
 
         let (mut link, _notices) = link();

@@ -80,10 +80,14 @@ pub const FEED_STATUS_OWNER_ID: &str = "feed_status";
 /// The chip itself.
 pub const FEED_CHIP_CONTROL_ID: &str = "feed_status.chip";
 
-/// The popup's two controls, named for the capability each one calls.
+/// The popup's recovery controls, named for the capability each one calls.
 pub const FEED_RECONNECT_CONTROL_ID: &str = "feed_status.reconnect";
 
 pub const FEED_RELOAD_CONTROL_ID: &str = "feed_status.reload";
+
+/// The roll off a contract the venue no longer lists, standing where the
+/// one-click Reconnect would and leading the popup while it is on offer.
+pub const FEED_ROLL_CONTROL_ID: &str = "feed_status.roll";
 
 /// The compact action bar raised by a completed secondary-button range.
 pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";

@@ -102,6 +102,52 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
     );
 }
 
+/// The scene's feed-status actions: id, label and the capability each calls.
+fn feed_status_actions(app: &QuantickApp) -> Vec<(String, String, String)> {
+    let scene = observer_scene(app);
+    scene["controls"]
+        .as_array()
+        .expect("the scene reports a control list")
+        .iter()
+        .filter(|control| control["capability_id"].is_string())
+        .filter(|control| control["owner"]["id"] == "feed_status")
+        .map(|control| {
+            let text = |key: &str| control[key].as_str().unwrap().to_owned();
+            (text("control_id"), text("label"), text("capability_id"))
+        })
+        .collect()
+}
+
+/// While the chip offers the roll, the control plane names the roll, not
+/// Reconnect; the popup lists it ahead of both recoveries.
+#[test]
+fn the_scene_names_the_roll_the_chip_offers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let roll = crate::feed_notice::NoticeAction::Roll("ETHUSDT".to_owned());
+    assert_eq!(status_lead(&app).action, roll, "the chip offers the roll");
+    let named = |id: &str, label: &str, capability: &str| {
+        (id.to_owned(), label.to_owned(), capability.to_owned())
+    };
+    let roll = named("feed_status.roll", "Roll to ETHUSDT", "feed.contract.roll");
+    assert_eq!(feed_status_actions(&app), std::slice::from_ref(&roll));
+
+    popup_over(&mut app, &ctx, unlisted("TESTUSDT"));
+    assert_eq!(
+        feed_status_actions(&app),
+        [
+            roll,
+            named("feed_status.reconnect", "Reconnect", "feed.reconnect"),
+            named("feed_status.reload", "Reload", "feed.reload"),
+        ]
+    );
+}
+
 #[test]
 fn no_successor_keeps_today_s_notice_and_its_reconnect() {
     let ctx = egui::Context::default();
