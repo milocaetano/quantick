@@ -1,6 +1,6 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
-use crate::Token;
+use crate::{PremultipliedRgba, Token, contrast::contrast_ratio};
 
 /// The mark beside a tab's symbol. Which one a tab wears is the caller's
 /// rule (`quantick_workspace`'s tab feed state); this is only how it looks.
@@ -203,6 +203,60 @@ pub const WORKSPACE_TOKENS: [Token; 8] = [
     Token::WorkspaceCobalt,
 ];
 
+/// The least a bar or ring must contrast with what it sits on, in the
+/// graphics floor of WCAG 1.4.11.
+pub const WORKSPACE_EDGE_CONTRAST: f32 = 3.0;
+
+/// Whether a workspace's bar needs a 1 px outline along its strip-facing
+/// edges: it falls short of [`WORKSPACE_EDGE_CONTRAST`] against the strip, as
+/// Light's Chalk does. The outline is the strip's `TextPrimary`.
+#[must_use]
+pub fn bar_needs_outline(bar: [u8; 4], strip: [u8; 4]) -> bool {
+    let [bar, strip] = [bar, strip].map(PremultipliedRgba::from_premultiplied);
+    contrast_ratio(bar, strip) < WORKSPACE_EDGE_CONTRAST
+}
+
+/// The ink of the current swatch's ring: `TextPrimary` unless that falls short
+/// of [`WORKSPACE_EDGE_CONTRAST`] on the swatch, then the theme's tab-strip
+/// ground, the other primary ink.
+#[must_use]
+pub fn swatch_ring_token(swatch: [u8; 4], text_primary: [u8; 4]) -> Token {
+    let [swatch, ink] = [swatch, text_primary].map(PremultipliedRgba::from_premultiplied);
+    if contrast_ratio(swatch, ink) < WORKSPACE_EDGE_CONTRAST {
+        Token::TabStrip
+    } else {
+        Token::TextPrimary
+    }
+}
+
+/// The bar's strip-facing edges as a polyline, in points: up the left side of
+/// a tab whose box is `left`, `top` to `bottom`, then round its top-left curve
+/// of `radius`, inset half a point so a 1 px stroke stays inside the tab.
+#[must_use]
+pub fn bar_edge_points(left: f32, top: f32, bottom: f32, radius: f32) -> Vec<[f32; 2]> {
+    let (left, top) = (left + 0.5, top + 0.5);
+    let arc = (0..=6).map(|step| {
+        let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 6.0;
+        [
+            left + radius - radius * angle.cos(),
+            top + radius - radius * angle.sin(),
+        ]
+    });
+    std::iter::once([left, bottom]).chain(arc).collect()
+}
+
+/// The polyline of a bar's outline when it needs one against the strip (see
+/// [`bar_needs_outline`]): `[left, top, bottom]` is the tab's box edge.
+#[must_use]
+pub fn bar_outline(
+    bar: [u8; 4],
+    strip: [u8; 4],
+    [left, top, bottom]: [f32; 3],
+    radius: f32,
+) -> Option<Vec<[f32; 2]>> {
+    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, radius))
+}
+
 /// The line in the workspace's colour under the toolbar capsule, and the bar
 /// at a workspace menu row's left edge with the indent its name takes past
 /// it, in points.
@@ -218,7 +272,7 @@ pub const WORKSPACE_SWATCH_USED_ALPHA: f32 = 0.38;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
+    use crate::{LIGHT, ResolvedTheme};
 
     #[test]
     fn each_feed_state_has_its_own_shape_or_colour() {
@@ -347,6 +401,67 @@ mod tests {
                 assert!((180.0..=330.0).contains(&hue), "{}: {hue}", token.key());
             }
         }
+    }
+
+    /// Each bar reaches 3:1 on the strip or is outlined in an ink that does;
+    /// Light's bars all fall short on its slate strip and are outlined, Chalk
+    /// (1.04:1) the worst; Dark's Violet needs none.
+    #[test]
+    fn a_bar_lost_on_the_strip_is_outlined_in_an_ink_that_reads_there() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let strip = theme.title_strip();
+            let ground = strip.color(Token::TabStrip);
+            for token in WORKSPACE_TOKENS {
+                let bar = theme.color(token);
+                let lost = bar_needs_outline(bar.to_array(), ground.to_array());
+                let ratio = contrast_ratio(strip.color(Token::TextPrimary), ground);
+                assert!(
+                    !lost || ratio >= WORKSPACE_EDGE_CONTRAST,
+                    "{} {}: {ratio}",
+                    theme.name,
+                    token.key()
+                );
+            }
+        }
+        let chalk = light.color(Token::WorkspaceChalk);
+        assert!(bar_needs_outline(
+            chalk.to_array(),
+            light.title_strip().color(Token::TabStrip).to_array()
+        ));
+        // Dark's bright colours reach 3:1 on its strip unaided.
+        let violet = dark.color(Token::WorkspaceViolet);
+        assert!(!bar_needs_outline(
+            violet.to_array(),
+            dark.title_strip().color(Token::TabStrip).to_array()
+        ));
+    }
+
+    /// The current swatch's ring reads on every colour in both themes.
+    #[test]
+    fn the_current_swatch_ring_reads_on_every_colour_in_both_themes() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let ink = theme.color(Token::TextPrimary);
+            for token in WORKSPACE_TOKENS {
+                let swatch = theme.color(token);
+                let ring = theme.color(swatch_ring_token(swatch.to_array(), ink.to_array()));
+                let ratio = contrast_ratio(ring, swatch);
+                assert!(
+                    ratio >= WORKSPACE_EDGE_CONTRAST,
+                    "{} {}: {ratio}",
+                    theme.name,
+                    token.key()
+                );
+            }
+        }
+        let chalk = dark.color(Token::WorkspaceChalk);
+        assert_eq!(
+            swatch_ring_token(chalk.to_array(), dark.color(Token::TextPrimary).to_array()),
+            Token::TabStrip
+        );
     }
 
     #[test]

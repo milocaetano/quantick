@@ -7,7 +7,8 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
-    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
+    FeedMark, MarkShape, bar_outline, feed_shape, feed_token, glow_mesh, home_glow_strength,
+    tab_ink, tab_layers,
 };
 use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, FaceSource};
 use quantick_workspace::arrangement::strip::{
@@ -465,12 +466,16 @@ fn paint_tab_surface(
     let bar = rect.with_max_x(rect.left() + face_layout::BAR_PT);
     let mut corner = egui::Rounding::ZERO;
     corner.nw = CHIP_ROUNDING_PX;
-    shapes.push(
-        match colour.and_then(|colour| palette.workspace(colour.index())) {
-            Some(fill) => egui::Shape::rect_filled(bar, corner, fill),
-            None => egui::Shape::rect_stroke(bar.shrink(0.5), corner, (1.0, palette.text_faint())),
-        },
-    );
+    let fill = colour.and_then(|colour| palette.workspace(colour.index()));
+    shapes.push(match fill {
+        Some(fill) => egui::Shape::rect_filled(bar, corner, fill),
+        None => egui::Shape::rect_stroke(bar.shrink(0.5), corner, (1.0, palette.text_faint())),
+    });
+    let strip = palette.get(Token::TabStrip).to_array();
+    let edge = [rect.left(), rect.top(), rect.bottom()];
+    let outline = fill.and_then(|c| bar_outline(c.to_array(), strip, edge, CHIP_ROUNDING_PX));
+    let ink = (1.0, palette.text_primary());
+    shapes.extend(outline.map(|p| egui::Shape::line(p.into_iter().map(Into::into).collect(), ink)));
     ui.painter().set(slot, egui::Shape::Vec(shapes));
     if focused {
         let ring = (2.0_f32, palette.accent());

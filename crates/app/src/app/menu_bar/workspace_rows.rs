@@ -126,7 +126,10 @@ impl<'a> WorkspaceRows<'a> {
                     [1.0, sizes::WORKSPACE_SWATCH_USED_ALPHA][usize::from(swatch.owner.is_some())];
                 let ring = (
                     if swatch.current { 2.0 } else { 0.0 },
-                    palette.text_primary(),
+                    *palette.get(sizes::swatch_ring_token(
+                        ink.to_array(),
+                        palette.text_primary().to_array(),
+                    )),
                 );
                 let initials = egui::RichText::new(&swatch.initials).size(10.0).strong();
                 let button = egui::Button::new(initials.color(palette.text_primary()))
