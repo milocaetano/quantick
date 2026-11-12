@@ -119,10 +119,13 @@ impl Drawing<crate::DrawingTool> {
     /// Geometry families that the alert target contract can address.
     #[must_use]
     pub fn supports_alert_target(&self) -> bool {
-        matches!(
-            self.tool.id(),
-            "trend-line" | "parallel-channel" | "rectangle"
-        )
+        self.alert_target_kind().is_some()
+    }
+
+    /// The alert target family this drawing projects to, if any.
+    #[must_use]
+    pub fn alert_target_kind(&self) -> Option<quantick_alerts::TargetKind> {
+        crate::alerts::target_kind(self.tool.id())
     }
 
     /// Whether the OHLC magnet moves this object's anchors at all: a tool
