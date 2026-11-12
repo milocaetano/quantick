@@ -5,7 +5,9 @@
 //! window paints it as a divider and drags it to move the boundary. The move
 //! trades share between those two neighbours only, so the split's other
 //! children keep their place and the shares keep their sum; each neighbour
-//! keeps [`MIN_TREE_PANE_PX`] per pane it lays along the split's axis.
+//! keeps [`MIN_TREE_PANE_PX`] per pane it lays along the split's axis. A
+//! folded strip beside a seam is skipped: the seam trades with the nearest
+//! open child past it, and the strip slides along.
 
 use super::bands::inset_seams;
 use super::state::{CanvasRefusal, CanvasState};
@@ -34,7 +36,9 @@ pub struct TreeSeam {
     pub axis: SplitAxis,
     /// The gap between the two neighbours' bands, `divider` thick.
     pub rect: CanvasRect,
-    /// Whether it moves: false beside a folded chart, whose strip is pinned.
+    /// Whether it moves: it pairs the nearest open children on each side,
+    /// sliding any folded strip between them along; false when one side has
+    /// only folded charts up to the split's end.
     pub resizable: bool,
 }
 
@@ -76,16 +80,13 @@ fn collect(
     };
     let cross = inset_seams(boxes.iter().copied().fold(*first, union), area, divider);
     let half = divider / 2.0;
-    for index in 0..children.len().saturating_sub(1) {
+    let before_seams = boxes.iter().take(children.len().saturating_sub(1));
+    for (index, before) in before_seams.enumerate() {
         let rect = match axis {
-            SplitAxis::Row => {
-                CanvasRect::new(boxes[index].right() - half, cross.y, divider, cross.h)
-            }
-            SplitAxis::Column => {
-                CanvasRect::new(cross.x, boxes[index].bottom() - half, cross.w, divider)
-            }
+            SplitAxis::Row => CanvasRect::new(before.right() - half, cross.y, divider, cross.h),
+            SplitAxis::Column => CanvasRect::new(cross.x, before.bottom() - half, cross.w, divider),
         };
-        let resizable = !pinned(state, &children[index]) && !pinned(state, &children[index + 1]);
+        let resizable = partners(state, children, index).is_some();
         out.push(TreeSeam {
             address: SeamAddress {
                 path: path.clone(),
@@ -103,9 +104,21 @@ fn collect(
     }
 }
 
-/// Whether `child` is a folded pane its split holds to a strip.
+/// Whether `child` is folded to a strip its split holds: a folded pane, or a
+/// split whose every pane is folded.
 fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
-    matches!(child, PaneTree::Pane { slot, .. } if state.minimized().contains(slot))
+    (child.panes().iter()).all(|(slot, _)| state.minimized().contains(slot))
+}
+
+/// The two open children the seam after child `index` trades between: the
+/// nearest unfolded one at or before it and the nearest after it. A strip
+/// between them keeps its extent and slides along. `None` when either side
+/// is folded to the split's end.
+fn partners(state: &CanvasState, children: &[PaneTree], index: usize) -> Option<(usize, usize)> {
+    let open = |at: &usize| !pinned(state, &children[*at]);
+    let first = (0..=index).rev().find(open)?;
+    let second = (index + 1..children.len()).find(open)?;
+    Some((first, second))
 }
 
 /// The rectangle `node`'s panes cover.
@@ -189,9 +202,12 @@ fn branch(tree: &PaneTree, slot: PaneSlot, axis: SplitAxis) -> Option<(Vec<usize
     found
 }
 
-/// The two neighbours a seam divides, as a canvas lays them out: their
-/// stored shares, and how much share one point of extent is worth.
+/// The two open children a seam trades between, as a canvas lays them out:
+/// their indices, stored shares, and how much share one point of extent is
+/// worth.
 struct Pair {
+    first: usize,
+    second: usize,
     first_share: f32,
     pair_share: f32,
     /// Share per point along the split's axis.
@@ -216,15 +232,14 @@ impl CanvasState {
         else {
             return Err(CanvasRefusal::NoSeam);
         };
-        let (Some(first), Some(second)) = (children.get(seam.index), children.get(seam.index + 1))
-        else {
-            return Err(CanvasRefusal::NoSeam);
-        };
-        if shares.len() != children.len() || pinned(self, first) || pinned(self, second) {
+        if seam.index + 1 >= children.len() || shares.len() != children.len() {
             return Err(CanvasRefusal::NoSeam);
         }
-        let first_share = shares[seam.index].max(0.0);
-        let pair_share = first_share + shares[seam.index + 1].max(0.0);
+        let (at_first, at_second) =
+            partners(self, children, seam.index).ok_or(CanvasRefusal::NoSeam)?;
+        let (first, second) = (&children[at_first], &children[at_second]);
+        let first_share = shares[at_first].max(0.0);
+        let pair_share = first_share + shares[at_second].max(0.0);
         if pair_share <= f32::EPSILON {
             return Err(CanvasRefusal::NoSeam);
         }
@@ -239,6 +254,8 @@ impl CanvasState {
         }
         let unit = pair_share / pair_px;
         Ok(Pair {
+            first: at_first,
+            second: at_second,
             first_share,
             pair_share,
             unit,
@@ -267,8 +284,8 @@ impl CanvasState {
             return Err(CanvasRefusal::NoSeam);
         };
         let shares = shares.to_mut();
-        shares[seam.index] = first;
-        shares[seam.index + 1] = pair.pair_share - first;
+        shares[pair.first] = first;
+        shares[pair.second] = pair.pair_share - first;
         Ok(true)
     }
 
@@ -279,7 +296,7 @@ impl CanvasState {
     ///
     /// # Errors
     /// [`CanvasRefusal::NoSeam`] when the tree holds no such seam, a chart is
-    /// maximized, or a neighbour is folded; [`CanvasRefusal::NoRoom`] when
+    /// maximized, or one side holds only folded charts; [`CanvasRefusal::NoRoom`] when
     /// the pair is narrower than both minimums together.
     pub fn move_seam(
         &mut self,
@@ -296,8 +313,9 @@ impl CanvasState {
 
     /// Give `slot`'s branch `share` (0..1) of the extent of the deepest split
     /// along `axis` that holds it, as [`Self::pane_share`] reads it back. It
-    /// trades with the neighbour whose seam a hand could drag: the next one,
-    /// else the previous, never a folded chart; held to the minimum a drag
+    /// trades with the open child whose seam a hand could drag: the next one,
+    /// else the previous, past any folded strip; a folded chart itself never
+    /// resizes. Held to the minimum a drag
     /// keeps. Answers whether anything moved.
     ///
     /// # Errors
@@ -314,6 +332,12 @@ impl CanvasState {
     ) -> Result<bool, CanvasRefusal> {
         self.docked(slot)?;
         let (path, index) = branch(self.tree(), slot, axis).ok_or(CanvasRefusal::NoSeam)?;
+        let split = node_at(self.tree(), &path).ok_or(CanvasRefusal::NoSeam)?;
+        if let PaneTree::Split { children, .. } = split
+            && children.get(index).is_none_or(|child| pinned(self, child))
+        {
+            return Err(CanvasRefusal::NoSeam);
+        }
         let (seam, pair) = [Some(index), index.checked_sub(1)]
             .into_iter()
             .flatten()
@@ -329,9 +353,8 @@ impl CanvasState {
             .ok_or(CanvasRefusal::NoSeam)?;
         let pair = pair?;
         let rects = self.rects(area);
-        let split = node_at(self.tree(), &path).ok_or(CanvasRefusal::NoSeam)?;
         let own = share.clamp(0.0, 1.0) * extent(bounds(split, &rects), axis) * pair.unit;
-        let first = if seam.index == index {
+        let first = if pair.first == index {
             own
         } else {
             pair.pair_share - own

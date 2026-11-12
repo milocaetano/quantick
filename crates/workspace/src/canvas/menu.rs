@@ -81,10 +81,11 @@ pub fn menu_hook(value: &str) -> Option<(PaneSlot, Option<PaneMenuItem>)> {
 }
 
 /// The rows of `slot`'s menu, top to bottom; a separator stands before
-/// Remove. A maximized chart offers "Restore size" where Maximize stood, a
-/// chart in its own window offers "Return to canvas" instead of folding or
-/// filling, and a row the canvas would refuse (folding or removing its last
-/// open chart) is left out rather than offered and refused.
+/// Remove. A folded chart offers "Restore size" where Minimize stood and a
+/// maximized one where Maximize stood; a chart in its own window offers
+/// "Return to canvas" instead of folding or filling, and a row the canvas
+/// would refuse or that would change nothing (folding a folded chart, or
+/// folding or removing its last open chart) is left out rather than offered.
 #[must_use]
 pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
     let windowed = state.mode(slot) == Some(PaneMode::OsWindow);
@@ -93,7 +94,15 @@ pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
     } else {
         PaneMenuItem::Maximize
     };
-    let minimize = state.clone().minimize(slot).is_ok();
+    let folded = state.mode(slot) == Some(PaneMode::Minimized);
+    let (first, fold) = if folded {
+        (PaneMenuItem::Restore, true)
+    } else {
+        (
+            PaneMenuItem::Minimize,
+            state.clone().minimize(slot) == Ok(true),
+        )
+    };
     let maximize = state.clone().maximize(slot).is_ok() || second == PaneMenuItem::Restore;
     let pop_out = !windowed
         && (state.clone())
@@ -101,7 +110,7 @@ pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
             .is_ok();
     let remove = state.clone().remove(slot).is_ok();
     let rows = [
-        (PaneMenuItem::Minimize, minimize),
+        (first, fold),
         (second, maximize),
         (PaneMenuItem::OpenInNewWindow, pop_out),
         (PaneMenuItem::ReturnToCanvas, windowed),

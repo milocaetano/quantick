@@ -225,29 +225,40 @@ impl CanvasState {
         })
     }
 
-    /// Lay the docked panes out as `preset`. Panes already docked keep their
-    /// slots where the preset has a place of their kind, in reading order; a
-    /// place left over opens a new pane. Folds and the maximized pane are
-    /// cleared; floating panes stay.
+    /// Lay the docked panes out as `preset`. Each place of the preset takes a
+    /// pane of its kind: a docked one first, in reading order, then a
+    /// floating one, which comes back into the tree; only a place left over
+    /// opens a new pane, so a floating flow pane is never doubled. Folds and
+    /// the maximized pane are cleared; floating panes no place took stay.
+    ///
+    /// Refused, answering `false` with nothing changed, when the new tree and
+    /// the panes still floating would hold more than [`MAX_CANVAS_PANES`].
     pub fn apply_preset(&mut self, preset: &LayoutPreset) -> bool {
-        let mut existing = self.tree.panes();
+        let mut docked = self.tree.panes();
+        let mut floating = self.floating.clone();
         let mut next = self.next_slot;
-        let slots: Vec<PaneSlot> = preset
-            .kinds
-            .iter()
-            .map(
-                |kind| match existing.iter().position(|(_, held)| held == kind) {
-                    Some(index) => existing.remove(index).0,
-                    None => {
-                        next += 1;
-                        next - 1
-                    }
-                },
-            )
+        let slots: Vec<PaneSlot> = (preset.kinds.iter())
+            .map(|kind| {
+                if let Some(index) = docked.iter().position(|(_, held)| held == kind) {
+                    docked.remove(index).0
+                } else if let Some(index) = floating.iter().position(|pane| pane.kind == *kind) {
+                    floating.remove(index).slot
+                } else {
+                    next += 1;
+                    next - 1
+                }
+            })
             .collect();
+        if slots.len() + floating.len() > MAX_CANVAS_PANES {
+            return false;
+        }
         let tree = preset.tree.relabelled(&|slot| slots[slot as usize]);
-        let changed = tree != self.tree || self.maximized.is_some() || !self.minimized.is_empty();
+        let changed = tree != self.tree
+            || floating != self.floating
+            || self.maximized.is_some()
+            || !self.minimized.is_empty();
         self.tree = tree;
+        self.floating = floating;
         self.next_slot = next;
         self.maximized = None;
         self.minimized.clear();

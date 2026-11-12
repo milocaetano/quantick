@@ -208,11 +208,22 @@ impl PaneTree {
         };
         let pinned: Vec<Option<f32>> = children
             .iter()
-            .map(|child| match child {
-                Self::Pane { slot, .. } if children.len() > 1 => fixed(*slot),
-                _ => None,
+            .map(|child| {
+                (children.len() > 1)
+                    .then(|| child.folded_extent(axis, fixed))
+                    .flatten()
             })
             .collect();
+        let pinned_total: f32 = pinned.iter().flatten().sum();
+        // Every child folded: this split is itself a strip its parent pinned,
+        // so its strips share whatever it was given in proportion.
+        let pinned: Vec<Option<f32>> =
+            if pinned.iter().all(Option::is_some) && pinned_total > f32::EPSILON {
+                let scale = extent / pinned_total;
+                pinned.iter().map(|pin| pin.map(|px| px * scale)).collect()
+            } else {
+                pinned
+            };
         let pinned_total: f32 = pinned.iter().flatten().sum();
         let free = (extent - pinned_total).max(0.0);
         let open_share: f32 = shares
@@ -247,6 +258,34 @@ impl PaneTree {
             };
             child.carve(piece, fixed, out);
             start = end;
+        }
+    }
+
+    /// How far this node reaches along `axis` when `fixed` pins every pane
+    /// it holds: a pinned pane its strip, a split of pinned panes one strip
+    /// across `axis` or its strips end to end along it. `None` while any
+    /// pane it holds is open.
+    fn folded_extent(
+        &self,
+        axis: SplitAxis,
+        fixed: &dyn Fn(PaneSlot) -> Option<f32>,
+    ) -> Option<f32> {
+        match self {
+            Self::Pane { slot, .. } => fixed(*slot),
+            Self::Split {
+                axis: own,
+                children,
+                ..
+            } => {
+                let extents = (children.iter())
+                    .map(|child| child.folded_extent(axis, fixed))
+                    .collect::<Option<Vec<f32>>>()?;
+                if *own == axis {
+                    Some(extents.iter().sum())
+                } else {
+                    extents.into_iter().reduce(f32::max)
+                }
+            }
         }
     }
 

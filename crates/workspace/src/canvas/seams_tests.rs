@@ -317,9 +317,38 @@ fn a_resize_trades_with_the_neighbour_whose_seam_moves_as_a_drag_does() {
     first.minimize(1).unwrap();
     assert_eq!(
         first.resize_pane(0, SplitAxis::Row, 0.5, AREA),
-        Err(CanvasRefusal::NoSeam),
-        "its only neighbour is folded"
+        Ok(true),
+        "it trades across the folded strip with the next open chart"
     );
+    assert!((rect_of(&first, 0).w - 800.0).abs() < EPS, "half the row");
+    assert_eq!(rect_of(&first, 1).w, MINIMIZED_STRIP_PX, "the strip held");
+    assert_eq!(
+        first.resize_pane(1, SplitAxis::Row, 0.5, AREA),
+        Err(CanvasRefusal::NoSeam),
+        "a folded chart is still pinned"
+    );
+}
+
+#[test]
+fn a_seam_beside_a_middle_strip_still_resizes_its_open_neighbours() {
+    let mut state = canvas("charts-3");
+    state.minimize(1).unwrap();
+    let (first, strip, last) = (rect_of(&state, 0), rect_of(&state, 1), rect_of(&state, 2));
+    let seams = tree_seams(&state, AREA, DIVIDER);
+    assert!(
+        seams.iter().all(|seam| seam.resizable),
+        "each seam pairs across the strip"
+    );
+    assert_eq!(state.move_seam(&root(0), 50.0, AREA), Ok(true));
+    assert!((rect_of(&state, 0).w - (first.w + 50.0)).abs() < EPS);
+    assert!((rect_of(&state, 2).w - (last.w - 50.0)).abs() < EPS);
+    assert_eq!(rect_of(&state, 1).w, MINIMIZED_STRIP_PX, "the strip held");
+    assert!(
+        (rect_of(&state, 1).x - (strip.x + 50.0)).abs() < EPS,
+        "and slid along"
+    );
+    assert_eq!(state.move_seam(&root(1), -50.0, AREA), Ok(true));
+    assert!((rect_of(&state, 0).w - first.w).abs() < EPS, "back again");
 }
 
 #[test]
