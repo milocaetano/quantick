@@ -19663,6 +19663,11 @@
               "opacity": {
                 "type": "string"
               },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
+              },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
                 "default": "fixed"
@@ -19685,7 +19690,7 @@
               },
               "zoom_regions": {
                 "default": false,
-                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many. True\nwhenever `peak_spheres` is, which divides those same regions.",
                 "type": "boolean"
               }
             },
@@ -20029,6 +20034,11 @@
               "opacity": {
                 "type": "string"
               },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
+              },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
                 "default": "fixed"
@@ -20051,7 +20061,7 @@
               },
               "zoom_regions": {
                 "default": false,
-                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many. True\nwhenever `peak_spheres` is, which divides those same regions.",
                 "type": "boolean"
               }
             },
@@ -20425,7 +20435,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Optional peak_spheres and opacity tune the named preset as the settings panel does (omitted keeps what the pane wears of that preset, else the preset's own; refused with a null preset); peak spheres divide zoom regions, so the readback reports zoom_regions true with them. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -20438,6 +20448,10 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -20446,8 +20460,27 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "opacity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sphere fill opacity, a canonical decimal from 0.05 to 1; omitted keeps\nthe preset's own. Needs a preset.",
+            "x-unit": "ratio"
+          },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "peak_spheres": {
+            "description": "Divide the preset's zoom regions at the peaks of their volume profile\n(true) or not (false); omitted keeps the preset's own. Needs a preset.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "preset": {
             "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.",
@@ -20489,6 +20522,11 @@
               "opacity": {
                 "type": "string"
               },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
+              },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
                 "default": "fixed"
@@ -20511,7 +20549,7 @@
               },
               "zoom_regions": {
                 "default": false,
-                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many. True\nwhenever `peak_spheres` is, which divides those same regions.",
                 "type": "boolean"
               }
             },
@@ -29475,6 +29513,11 @@
                 "const": "volume_weighted_with_dim_context",
                 "description": "Ordinary regions remain dim through one quarter of the reference, then\nbrighten gradually up to the reference. Display separation never promotes\na small region. Oversized opening regions keep their faint treatment.",
                 "type": "string"
+              },
+              {
+                "const": "ranked_peak_masses",
+                "description": "Peak spheres: every mass is drawn, its radius by rank among the\nvisible masses (`scale_basis` `ranked_visible_masses`), labels on the\ntop fifth; no mass is held back as dim context.",
+                "type": "string"
               }
             ]
           },
@@ -29542,7 +29585,7 @@
               },
               "radius_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Actual painted circle radius; gross quantity determines its area."
+                "description": "Actual painted circle radius: gross quantity determines its area, or\nunder `ranked_peak_masses` its rank among the visible masses does."
               },
               "sell_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal"
@@ -29603,14 +29646,23 @@
             "type": "object"
           },
           "FlowExecutionScaleBasis": {
-            "enum": [
-              "empty",
-              "visible_region_max",
-              "visible_ordinary_region_max",
-              "opening_only_fallback",
-              "typed_reference"
-            ],
-            "type": "string"
+            "oneOf": [
+              {
+                "enum": [
+                  "empty",
+                  "visible_region_max",
+                  "visible_ordinary_region_max",
+                  "opening_only_fallback",
+                  "typed_reference"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "ranked_visible_masses",
+                "description": "Peak spheres: radius by rank among the visible masses; the frame's\nnotes name how many and from which quantity labels are drawn.",
+                "type": "string"
+              }
+            ]
           },
           "FlowExecutionScaleMode": {
             "enum": [
@@ -29992,6 +30044,11 @@
               "opacity": {
                 "type": "string"
               },
+              "peak_spheres": {
+                "default": false,
+                "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+                "type": "boolean"
+              },
               "reference_mode": {
                 "$ref": "#/$defs/TickBubbleReferenceMode",
                 "default": "fixed"
@@ -30014,7 +30071,7 @@
               },
               "zoom_regions": {
                 "default": false,
-                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+                "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many. True\nwhenever `peak_spheres` is, which divides those same regions.",
                 "type": "boolean"
               }
             },

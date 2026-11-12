@@ -6,9 +6,11 @@ use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 
 impl FlowTapeFrame {
     /// Inclusive ordinary-region placement threshold; brightness rises above it.
+    /// None under peak spheres, which hold no mass back however small.
     pub fn large_region_threshold(&self) -> Option<Decimal> {
         self.effective_reference
             .filter(|reference| *reference > Decimal::ZERO)
+            .filter(|_| !self.view.region.divides_at_peaks())
             .map(|reference| reference / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR))
     }
 
@@ -83,6 +85,16 @@ pub fn flow_notes(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) 
                 quantick_engine::display::display_decimal(total),
                 quantick_engine::display::display_decimal(opening),
                 area
+            ));
+        }
+        if let super::FlowScaleBasis::RankedVisibleMasses {
+            masses,
+            labelled_from,
+        } = frame.scale_basis
+        {
+            hints.push(format!(
+                "Peak spheres ranked among {masses} visible masses; labels from {}",
+                quantick_engine::display::display_decimal(labelled_from)
             ));
         }
         if frame.opening_exclusion_effective {
