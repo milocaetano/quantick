@@ -31,14 +31,15 @@ pub use bands::{
 };
 pub use drag::{
     DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, MIN_FLOAT_SIZE, RESIZE_GRIP_PX, ResizeEdges,
+    open_panes,
 };
 pub use drop::{
-    Corner, DOCK_EDGE_BAND_PX, DropTarget, Edge, PARK_CORNER_PX, PARK_MARGIN_PX, drop_target,
-    park_rect,
+    Corner, DOCK_EDGE_BAND_PX, DockTarget, DropTarget, PANE_CENTRE_PX, PANE_SIDE_PX,
+    PARK_CORNER_PX, PARK_MARGIN_PX, dock_zones, drop_target, kept_inside, park_rect,
 };
 pub use menu::{
-    PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, add_menu, menu_hook, pane_menu,
-    remove_prompt, strip_label,
+    AddRow, PANE_MENU_BUTTON_PX, PaneMenuItem, RemoveAnswer, RemovePrompt, SURFACE_UNSERVED,
+    add_menu, menu_hook, pane_menu, remove_prompt, strip_label,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
@@ -48,7 +49,7 @@ pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,
     remove_needs_confirm,
 };
-pub use tree::{CanvasPoint, CanvasRect, PaneSlot, PaneTree, SplitAxis};
+pub use tree::{CanvasPoint, CanvasRect, Edge, PaneSlot, PaneTree, SplitAxis};
 pub use widgets::{WIDGETS, WidgetSpec, widget};
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ pub const CANVAS_CAPABILITY_IDS: &[&str] = &[
     RESIZE_CAPABILITY_ID,
 ];
 
-/// A canvas edge a floating chart docks at.
+/// A side of the canvas, or of a docked chart, a floating chart docks at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CanvasEdge {
@@ -162,11 +162,25 @@ pub struct FloatPaneInput {
     pub rect: Option<CanvasRectDto>,
 }
 
+/// Where a floating chart docks: exactly one of `edge`, `beside` with
+/// `side`, or `swap_with`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DockPaneInput {
     pub slot: u32,
-    pub edge: CanvasEdge,
+    /// A canvas edge: the chart takes a fair share of the canvas there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<CanvasEdge>,
+    /// A docked chart's slot: that chart splits, this one on its `side`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beside: Option<u32>,
+    /// The side of `beside` the chart docks on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<CanvasEdge>,
+    /// A docked chart's slot: this chart takes its place, and it floats
+    /// where this one stood.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap_with: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -331,7 +345,7 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
         DOCK_CAPABILITY_ID => canvas_descriptor::<DockPaneInput, CanvasResult>(
             id,
             "Dock a chart",
-            "Inserts a floating chart into the layout at a canvas edge, as a drop on that edge does. The result names the preset the layout now matches, if any.",
+            "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: that chart splits), or in a docked chart's place (swap_with: that chart floats where this one stood). Name exactly one. The result names the preset the layout now matches, if any.",
         ),
         PARK_CAPABILITY_ID => canvas_descriptor::<ParkPaneInput, CanvasResult>(
             id,
@@ -472,6 +486,19 @@ mod tests {
                 serde_json::json!({"slot": 1, "edge": "middle"})
             )
             .is_err()
+        );
+        let beside = serde_json::json!({"slot": 3, "beside": 1, "side": "bottom"});
+        let beside = serde_json::from_value::<DockPaneInput>(beside).unwrap();
+        assert_eq!(
+            (beside.beside, beside.side),
+            (Some(1), Some(CanvasEdge::Bottom))
+        );
+        let edge =
+            serde_json::from_value::<DockPaneInput>(serde_json::json!({"slot": 3, "edge": "left"}));
+        assert_eq!(
+            edge.unwrap().edge,
+            Some(CanvasEdge::Left),
+            "edge alone still docks"
         );
         let resize = |share: serde_json::Value| {
             serde_json::from_value::<ResizePaneInput>(

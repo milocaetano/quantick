@@ -6,9 +6,9 @@
 //! other workspace edit. Transitions answer whether anything changed, so a
 //! repeated call is safe and says it did nothing.
 
-use super::drop::{Corner, Edge, park_rect};
+use super::drop::{Corner, DockTarget, park_rect};
 use super::presets::{LayoutPreset, MAX_CANVAS_PANES, PaneKind, matching_preset, timeframes_with};
-use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
+use super::tree::{CanvasRect, PaneSlot, PaneTree};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -64,6 +64,8 @@ pub enum CanvasRefusal {
     LastOpenPane,
     /// The canvas already holds [`MAX_CANVAS_PANES`].
     Full,
+    /// The canvas already holds an order-flow pane, and the window draws one.
+    SecondFlow,
     /// No seam there can move: it needs two unfolded docked neighbours along
     /// a split, and no chart maximized over the canvas.
     NoSeam,
@@ -86,6 +88,7 @@ impl CanvasRefusal {
             Self::LastDockedPane => "canvas.last_docked_pane",
             Self::LastOpenPane => "canvas.last_open_pane",
             Self::Full => "canvas.full",
+            Self::SecondFlow => "canvas.second_flow",
             Self::NoSeam => "canvas.no_seam",
             Self::NoRoom => "canvas.no_room",
         }
@@ -104,6 +107,7 @@ impl std::fmt::Display for CanvasRefusal {
             Self::LastDockedPane => f.write_str("the canvas keeps at least one docked chart"),
             Self::LastOpenPane => f.write_str("the canvas keeps at least one chart unfolded"),
             Self::Full => write!(f, "the canvas holds at most {MAX_CANVAS_PANES} charts"),
+            Self::SecondFlow => f.write_str("the canvas already holds the order flow"),
             Self::NoSeam => f.write_str(
                 "no seam there can move: it needs two unfolded docked charts side by side and none maximized",
             ),
@@ -354,10 +358,11 @@ impl CanvasState {
     /// slot.
     ///
     /// # Errors
-    /// The canvas is full.
+    /// The canvas is full, or `kind` is the order flow and the canvas holds
+    /// one: the window draws one flow pane, so a second would be a phantom.
     pub fn add(&mut self, kind: PaneKind, canvas: CanvasRect) -> Result<PaneSlot, CanvasRefusal> {
-        if self.tree.len() + self.floating.len() >= MAX_CANVAS_PANES {
-            return Err(CanvasRefusal::Full);
+        if let Some(refusal) = self.add_refusal(kind) {
+            return Err(refusal);
         }
         let slot = self.next_slot;
         self.next_slot += 1;
@@ -377,6 +382,18 @@ impl CanvasState {
         Ok(slot)
     }
 
+    /// Why a pane of `kind` cannot be added now, if it cannot.
+    #[must_use]
+    pub fn add_refusal(&self, kind: PaneKind) -> Option<CanvasRefusal> {
+        if self.tree.len() + self.floating.len() >= MAX_CANVAS_PANES {
+            return Some(CanvasRefusal::Full);
+        }
+        let flow = |held: &PaneKind| *held == PaneKind::Flow;
+        let has_flow = self.tree.panes().iter().any(|(_, held)| flow(held))
+            || self.floating.iter().any(|pane| flow(&pane.kind));
+        (kind == PaneKind::Flow && has_flow).then_some(CanvasRefusal::SecondFlow)
+    }
+
     /// Float a pane over the canvas at `rect`: a docked one leaves the tree, a
     /// floating one moves, one in its own window comes back to the canvas.
     ///
@@ -386,24 +403,48 @@ impl CanvasState {
         self.set_host(slot, FloatHost::Canvas { rect })
     }
 
-    /// Insert a floating pane into the docked tree at `edge`.
+    /// Insert a floating pane into the docked tree at `target`: at a canvas
+    /// edge, beside a docked pane, or in a docked pane's place, which then
+    /// floats where this one stood.
     ///
     /// # Errors
-    /// The pane is not floating.
-    pub fn dock(&mut self, slot: PaneSlot, edge: Edge) -> Result<bool, CanvasRefusal> {
+    /// The pane is not floating, or the pane `target` names is not docked.
+    pub fn dock(&mut self, slot: PaneSlot, target: DockTarget) -> Result<bool, CanvasRefusal> {
         let index = self
             .floating_index(slot)
             .ok_or_else(|| self.missing_or(slot, CanvasRefusal::NotFloating(slot)))?;
-        let pane = self.floating.remove(index);
-        let (axis, at_start) = match edge {
-            Edge::Left => (SplitAxis::Row, true),
-            Edge::Right => (SplitAxis::Row, false),
-            Edge::Top => (SplitAxis::Column, true),
-            Edge::Bottom => (SplitAxis::Column, false),
+        let pane = PaneTree::pane(slot, self.floating[index].kind);
+        let tree = match target {
+            DockTarget::Canvas(edge) => {
+                let (axis, at_start) = edge.placing();
+                self.tree.docked(pane, axis, at_start)
+            }
+            DockTarget::Beside { slot: beside, side } => {
+                self.docked(beside)?;
+                (self.tree.docked_beside(beside, pane, side))
+                    .ok_or(CanvasRefusal::NotDocked(beside))?
+            }
+            DockTarget::Swap(other) => {
+                let kind = self.docked(other)?;
+                let floated = FloatingPane {
+                    slot: other,
+                    kind,
+                    host: self.floating[index].host.clone(),
+                };
+                let tree = (self.tree).replaced(&|held, held_kind| {
+                    if held == other {
+                        (slot, self.floating[index].kind)
+                    } else {
+                        (held, held_kind)
+                    }
+                });
+                self.minimized.remove(&other);
+                self.floating.push(floated);
+                tree
+            }
         };
-        self.tree = self
-            .tree
-            .docked(PaneTree::pane(pane.slot, pane.kind), axis, at_start);
+        self.floating.retain(|pane| pane.slot != slot);
+        self.tree = tree;
         self.maximized = None;
         Ok(true)
     }

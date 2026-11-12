@@ -111,7 +111,9 @@ fn calls() -> Vec<(&'static str, Value, Option<CanvasAct>)> {
             json!({"slot": 2, "edge": "left"}),
             Some(CanvasAct::Dock {
                 slot: 2,
-                edge: CanvasEdge::Left,
+                target: quantick_workspace::canvas::DockTarget::Canvas(
+                    quantick_workspace::canvas::Edge::Left,
+                ),
             }),
         ),
         (
@@ -213,6 +215,16 @@ fn malformed_canvas_calls_never_reach_the_canvas() {
         (MINIMIZE_CAPABILITY_ID, json!({"slot": 1, "tab_id": "1"})),
         (MINIMIZE_CAPABILITY_ID, json!({"slot": -1})),
         (DOCK_CAPABILITY_ID, json!({"slot": 1, "edge": "middle"})),
+        (DOCK_CAPABILITY_ID, json!({"slot": 1})),
+        (DOCK_CAPABILITY_ID, json!({"slot": 1, "beside": 0})),
+        (
+            DOCK_CAPABILITY_ID,
+            json!({"slot": 1, "edge": "left", "swap_with": 0}),
+        ),
+        (
+            DOCK_CAPABILITY_ID,
+            json!({"slot": 1, "beside": 0, "side": "top", "swap_with": 0}),
+        ),
         (PARK_CAPABILITY_ID, json!({"slot": 1})),
         (
             FLOAT_CAPABILITY_ID,
@@ -328,15 +340,18 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         PRIMARY_MONITOR, drop_act, drop_targets, held_by_hook, hook_acts, moved, placed_pop_out,
         settled, surface_widget, window_act,
     };
-    use quantick_control_schema::canvas::{CanvasCorner, CanvasEdge};
+    use quantick_control_schema::canvas::CanvasCorner;
     use quantick_workspace::canvas::{
-        CanvasRect, CanvasState, Corner, DropOutcome, Edge, PaneKind, preset,
+        CanvasRect, CanvasState, Corner, DockTarget, DropOutcome, Edge, PaneKind, preset,
     };
     let area = CanvasRect::new(0.0, 40.0, 1200.0, 800.0);
     let named = |_: CanvasRect| Some("DISPLAY2".to_owned());
-    let dock = drop_act(3, DropOutcome::Dock(Edge::Left), (0.0, 0.0), named);
-    let edge = CanvasEdge::Left;
-    assert_eq!(dock, CanvasAct::Dock { slot: 3, edge });
+    let target = DockTarget::Beside {
+        slot: 0,
+        side: Edge::Top,
+    };
+    let dock = drop_act(3, DropOutcome::Dock(target), (0.0, 0.0), named);
+    assert_eq!(dock, CanvasAct::Dock { slot: 3, target });
     let park = drop_act(3, DropOutcome::Park(Corner::TopRight), (0.0, 0.0), named);
     let corner = CanvasCorner::TopRight;
     assert_eq!(park, CanvasAct::Park { slot: 3, corner });
@@ -395,12 +410,19 @@ fn drops_windows_and_hooks_become_canvas_acts() {
     assert!(drop_targets(&state, area).is_empty(), "nothing floats");
     let added = state.add(PaneKind::Time, area).unwrap();
     let targets = drop_targets(&state, area);
-    assert_eq!(targets.len(), 8, "four edges dock, four corners park");
-    assert!(
-        targets
-            .iter()
-            .any(|(id, ..)| id == "canvas.park.bottom_right")
+    assert_eq!(
+        targets.len(),
+        8 + 2 * 5,
+        "four edges dock, four corners park, each docked chart offers four sides and a centre"
     );
+    let ids: Vec<_> = targets.iter().map(|(id, ..)| id.as_str()).collect();
+    for id in [
+        "canvas.park.bottom_right",
+        "canvas.dock.beside.1.bottom",
+        "canvas.dock.swap.0",
+    ] {
+        assert!(ids.contains(&id), "{id} in {ids:?}");
+    }
     let (held, share) = held_by_hook(&state, &format!("{added}:0.02,0.5")).unwrap();
     assert_eq!((held.slot(), share), (added, (0.02, 0.5)));
     assert!(
@@ -408,15 +430,18 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         "a docked chart is not held"
     );
 
-    let acts = hook_acts("add:timeframe-chart; dock:2:left;park:2:bottom_right;pop_out:2;nonsense");
-    assert_eq!(acts.len(), 4, "{acts:?}");
-    assert_eq!(
-        acts[1],
-        CanvasAct::Dock {
-            slot: 2,
-            edge: CanvasEdge::Left
-        }
+    let acts = hook_acts(
+        "add:timeframe-chart; dock:2:left;park:2:bottom_right;pop_out:2;nonsense;dock:2:beside:0:top;dock:2:swap:1;dock:2:beside:0",
     );
+    assert_eq!(acts.len(), 6, "{acts:?}");
+    let dock = |target| CanvasAct::Dock { slot: 2, target };
+    assert_eq!(acts[1], dock(DockTarget::Canvas(Edge::Left)));
+    let beside = DockTarget::Beside {
+        slot: 0,
+        side: Edge::Top,
+    };
+    assert_eq!(acts[4], dock(beside));
+    assert_eq!(acts[5], dock(DockTarget::Swap(1)));
     let depth = CanvasAct::AddWidget {
         widget_id: "depth".to_owned(),
     };
@@ -563,5 +588,148 @@ fn a_tree_share_reads_back_what_the_screen_shows() {
     assert!(
         read.panes.iter().all(|pane| pane.width_share.is_none()),
         "a maximized chart sits in no split"
+    );
+}
+
+/// A host that acts on a real canvas, as the window does.
+struct LiveCanvas {
+    state: quantick_workspace::canvas::CanvasState,
+    drawn: crate::canvas::Drawn,
+}
+
+impl CanvasHost for LiveCanvas {
+    fn act_on_canvas(&mut self, act: CanvasAct) -> Result<CanvasResult, ControlError> {
+        let (changed, slot) = crate::canvas::act(&mut self.state, None, self.drawn, act)?;
+        Ok(crate::canvas::result(
+            &self.state,
+            changed,
+            slot,
+            false,
+            self.drawn,
+        ))
+    }
+}
+
+/// C13: a docked chart floated, then docked beside a named chart over the
+/// control plane, reads back docked and stands beside it; a swap names its
+/// partner, and a target that is not docked is refused by its stable code.
+#[test]
+fn dock_beside_a_named_pane_round_trips() {
+    use quantick_control_schema::canvas::{DOCK_CAPABILITY_ID, FLOAT_CAPABILITY_ID};
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut host = LiveCanvas {
+        state: CanvasState::from_preset(preset("time+time+flow").unwrap()),
+        drawn: crate::canvas::Drawn {
+            area,
+            columns: false,
+        },
+    };
+    let mut registry = ActionRegistry::<LiveCanvas, ()>::new();
+    register(&mut registry).unwrap();
+    let actor = crate::test_support::FakeWindow::assistant();
+    let call = |host: &mut LiveCanvas, id: &str, input: Value| {
+        let action = registry.lookup(id, CAPABILITY_VERSION).unwrap();
+        action.input.validate(&input).unwrap();
+        (action.handler)(host, &mut (), &actor, &input)
+    };
+    let mode = |read: &Value, slot: u32| {
+        let panes = read["panes"].as_array().unwrap().iter();
+        let pane = panes.clone().find(|pane| pane["slot"] == slot).unwrap();
+        pane["mode"].as_str().unwrap().to_owned()
+    };
+    let read = call(&mut host, FLOAT_CAPABILITY_ID, json!({"slot": 0})).unwrap();
+    assert_eq!(mode(&read, 0), "floating");
+    let beside = json!({"slot": 0, "beside": 2, "side": "bottom"});
+    let read = call(&mut host, DOCK_CAPABILITY_ID, beside).unwrap();
+    assert_eq!(mode(&read, 0), "docked");
+    assert_eq!(read["slot"], 0);
+    let rects = host.state.rects(area);
+    let at = |held| rects.iter().find(|(slot, _)| *slot == held).unwrap().1;
+    let (flow, docked) = (at(2), at(0));
+    assert_eq!((docked.x, docked.w), (flow.x, flow.w), "under the flow");
+    assert_eq!(flow.bottom(), docked.y, "beside the named chart, below it");
+
+    call(&mut host, FLOAT_CAPABILITY_ID, json!({"slot": 1})).unwrap();
+    let swap = json!({"slot": 1, "swap_with": 2});
+    let read = call(&mut host, DOCK_CAPABILITY_ID, swap).unwrap();
+    assert_eq!(
+        (mode(&read, 1), mode(&read, 2)),
+        ("docked".to_owned(), "floating".to_owned())
+    );
+    let gone = json!({"slot": 2, "beside": 9, "side": "left"});
+    let error = call(&mut host, DOCK_CAPABILITY_ID, gone).unwrap_err();
+    assert_eq!(
+        error.context.details.unwrap()["refusal"],
+        json!("canvas.unknown_pane")
+    );
+}
+
+/// The add a second order flow would make is refused by its stable code,
+/// and no pane is added.
+#[test]
+fn a_second_flow_is_refused_over_the_control_plane() {
+    use crate::canvas::{Drawn, act};
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
+    let drawn = Drawn {
+        area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
+    };
+    let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
+    let before = state.clone();
+    let add = CanvasAct::AddWidget {
+        widget_id: "order-flow".to_owned(),
+    };
+    let error = act(&mut state, None, drawn, add).unwrap_err();
+    assert_eq!(
+        error.context.details.unwrap()["refusal"],
+        json!("canvas.second_flow")
+    );
+    assert_eq!(state, before);
+}
+
+/// A dragged ⋯ lifts a docked chart by a float to where it stood and holds
+/// it; a floating chart is only held; the last docked chart is not lifted.
+#[test]
+fn a_dragged_menu_button_lifts_its_chart() {
+    use crate::canvas::lifted;
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, FloatHost, PaneKind, preset};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
+    let stood = state.rects(area)[0].1;
+    let (act, held) = lifted(&state, area, Some(0), Some((30.0, 12.0))).unwrap();
+    let rect = CanvasRectDto {
+        x: stood.x,
+        y: stood.y,
+        w: stood.w,
+        h: stood.h,
+    };
+    let float = CanvasAct::Float {
+        slot: 0,
+        rect: Some(rect),
+    };
+    assert_eq!(act, Some(float));
+    assert_eq!(held.slot(), 0);
+    assert_eq!(
+        held.rect(quantick_workspace::canvas::CanvasPoint::new(30.0, 12.0)),
+        stood
+    );
+    assert!(lifted(&state, area, None, Some((0.0, 0.0))).is_none());
+    assert!(lifted(&state, area, Some(0), None).is_none());
+
+    let added = state.add(PaneKind::Time, area).unwrap();
+    let (act, held) = lifted(&state, area, Some(added), Some((1.0, 1.0))).unwrap();
+    assert_eq!(act, None, "a floating chart is only held");
+    let Some(FloatHost::Canvas { rect }) = state.host(added) else {
+        panic!("floating");
+    };
+    assert_eq!(
+        held.rect(quantick_workspace::canvas::CanvasPoint::new(1.0, 1.0)),
+        *rect
+    );
+    state.float(0, area).unwrap();
+    assert!(
+        lifted(&state, area, Some(1), Some((1.0, 1.0))).is_none(),
+        "the last docked chart stays"
     );
 }

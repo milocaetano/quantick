@@ -5,12 +5,12 @@
 //! drop inside the canvas does is [`drop_target`]'s alone, so the corner rule
 //! has one home. A drop past the window's edge leaves it for an OS window.
 
-use super::drop::{Corner, DropTarget, Edge, drop_target};
-use super::state::CanvasState;
+use super::drop::{Corner, DockTarget, DropTarget, drop_target, kept_inside};
+use super::state::{CanvasState, PaneMode};
 use super::tree::{CanvasPoint, CanvasRect, PaneSlot};
 
 /// The hint the canvas shows while a pane is dragged.
-pub const DOCK_HINT: &str = "Drop on an edge to dock · anywhere else to float";
+pub const DOCK_HINT: &str = "Drop on an edge or a chart to dock · anywhere else to float";
 /// The pill on the slot a drop would dock into.
 pub const DOCK_PILL: &str = "Dock here";
 /// How far in from a floating pane's edge a press resizes it.
@@ -21,14 +21,23 @@ pub const MIN_FLOAT_SIZE: (f32, f32) = (240.0, 160.0);
 /// What letting go of a held pane does.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DropOutcome {
-    /// Insert it into the docked tree at this edge.
-    Dock(Edge),
+    /// Insert it into the docked tree there.
+    Dock(DockTarget),
     /// Snap it floating into this corner.
     Park(Corner),
     /// Leave it floating at this rectangle.
     Float(CanvasRect),
     /// Open it in its own OS window at this rectangle, in window points.
     PopOut(CanvasRect),
+}
+
+/// The docked panes of `state` a drop can dock beside or swap with, where
+/// they stand on `canvas`: every one the canvas lays out but a folded strip.
+#[must_use]
+pub fn open_panes(state: &CanvasState, canvas: CanvasRect) -> Vec<(PaneSlot, CanvasRect)> {
+    let mut panes = state.rects(canvas);
+    panes.retain(|(slot, _)| state.mode(*slot) != Some(PaneMode::Minimized));
+    panes
 }
 
 /// Which edges of a floating pane a press holds.
@@ -133,12 +142,15 @@ impl FloatGesture {
         }
     }
 
-    /// What letting go at `pointer` does: a resize keeps the new size; a
-    /// move past `window` pops the pane out, and inside it the canvas's one
-    /// drop rule decides.
+    /// What letting go at `pointer` over `state`'s `canvas` does: a resize
+    /// keeps the new size; a move past `window` pops the pane out, and inside
+    /// it the canvas's one drop rule decides, over the panes it lays out. A
+    /// pane let go over the window outside the canvas (the toolbar) floats
+    /// kept inside the canvas.
     #[must_use]
     pub fn release(
         &self,
+        state: &CanvasState,
         canvas: CanvasRect,
         window: CanvasRect,
         pointer: CanvasPoint,
@@ -150,8 +162,11 @@ impl FloatGesture {
         if !window.contains(pointer) {
             return DropOutcome::PopOut(rect);
         }
-        match drop_target(canvas, pointer) {
-            DropTarget::Dock(edge) => DropOutcome::Dock(edge),
+        if !canvas.contains(pointer) {
+            return DropOutcome::Float(kept_inside(rect, canvas));
+        }
+        match drop_target(canvas, &open_panes(state, canvas), pointer) {
+            DropTarget::Dock(target) => DropOutcome::Dock(target),
             DropTarget::Park(corner) => DropOutcome::Park(corner),
             DropTarget::Float => DropOutcome::Float(rect),
         }
@@ -167,12 +182,12 @@ impl FloatGesture {
         window: CanvasRect,
         pointer: CanvasPoint,
     ) -> Option<CanvasRect> {
-        let DropOutcome::Dock(edge) = self.release(canvas, window, pointer) else {
+        let DropOutcome::Dock(target) = self.release(state, canvas, window, pointer) else {
             return None;
         };
         let slot = self.slot();
         let mut docked = state.clone();
-        docked.dock(slot, edge).ok()?;
+        docked.dock(slot, target).ok()?;
         let rects = docked.rects(canvas);
         rects
             .into_iter()

@@ -6,7 +6,7 @@
 use eframe::egui::{self, Align2, Color32, Painter, Pos2, Rect, Sense, vec2};
 use egui_phosphor::regular as icons;
 use quantick_control_handlers::canvas::item_capability;
-use quantick_workspace::canvas::{CanvasState, PANE_MENU_BUTTON_PX, PaneMenuItem as Item};
+use quantick_workspace::canvas::{CanvasState, Edge, PANE_MENU_BUTTON_PX, PaneMenuItem as Item};
 use quantick_workspace::canvas::{PaneSlot, pane_menu};
 
 use crate::theme;
@@ -19,12 +19,14 @@ const RULE_PX: f32 = 9.0;
 /// How far below its restore a folded chart's name starts.
 const NAME_GAP_PX: f32 = 40.0;
 
-/// One tab's chart menus: the one open, a press this frame, the dialog up,
-/// and every ⋯, row, restore and dialog button as drawn, for the scene.
+/// One tab's chart menus: the one open, a press this frame, a ⋯ dragged to
+/// lift its chart, the dialog up, and every ⋯, row, restore and dialog
+/// button as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct PaneMenus {
     pub(crate) open: Option<PaneSlot>,
     pub(crate) picked: Option<(PaneSlot, Item)>,
+    pub(crate) lift: Option<PaneSlot>,
     pub(crate) removing: Option<PaneSlot>,
     pub(crate) drawn: Vec<DrawnControl>,
 }
@@ -55,7 +57,8 @@ fn glyph(painter: &Painter, at: Pos2, (text, size): (&str, f32), ink: Color32) {
     painter.text(at, Align2::CENTER_CENTER, text, font, ink);
 }
 
-/// The ⋯ at `strip`'s right end, in `ink`, and its menu while open.
+/// The ⋯ at `strip`'s right end, in `ink`, and its menu while open. It is
+/// the chart's grip too: dragging it lifts the chart to float and move.
 pub(crate) fn button(
     ui: &egui::Ui,
     strip: Rect,
@@ -67,16 +70,18 @@ pub(crate) fn button(
     let side = PANE_MENU_BUTTON_PX.min(strip.height());
     let centre = egui::pos2(strip.right() - side / 2.0 - 4.0, strip.center().y);
     let rect = Rect::from_center_size(centre, vec2(side, side));
-    let response = ui.interact(rect, ui.id().with(("pane_menu", slot)), Sense::click());
+    let id = ui.id().with(("pane_menu", slot));
+    let response = ui.interact(rect, id, Sense::click_and_drag());
     if response.clicked() {
         menus.open = (menus.open != Some(slot)).then_some(slot);
     }
+    menus.lift = menus.lift.or(response.drag_started().then_some(slot));
     let open = menus.open == Some(slot);
     if response.hovered() || open {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());
     }
     glyph(ui.painter(), rect.center(), (icons::DOTS_THREE, 15.0), ink);
-    let response = response.on_hover_text("Chart options");
+    let response = response.on_hover_text("Chart options · drag to move");
     menus.publish(format!("pane_menu.{slot}"), "Chart options", rect, None);
     if open {
         hang(ui.ctx(), rect, (slot, state), menus, &response);
@@ -138,6 +143,11 @@ fn row(ui: &mut egui::Ui, item: Item, (slot, menus): (PaneSlot, &mut PaneMenus))
         Item::Minimize => icons::MINUS,
         Item::Maximize => icons::CORNERS_OUT,
         Item::Restore => icons::CORNERS_IN,
+        Item::Float => icons::PICTURE_IN_PICTURE,
+        Item::Dock(Edge::Left) => icons::ARROW_LINE_LEFT,
+        Item::Dock(Edge::Right) => icons::ARROW_LINE_RIGHT,
+        Item::Dock(Edge::Top) => icons::ARROW_LINE_UP,
+        Item::Dock(Edge::Bottom) => icons::ARROW_LINE_DOWN,
         Item::OpenInNewWindow => icons::ARROW_SQUARE_OUT,
         Item::ReturnToCanvas => icons::ARROW_SQUARE_IN,
         Item::Remove => icons::X,

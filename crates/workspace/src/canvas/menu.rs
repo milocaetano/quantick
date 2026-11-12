@@ -5,7 +5,7 @@
 
 use super::presets::PaneKind;
 use super::state::{CanvasState, PaneMode};
-use super::tree::{CanvasRect, PaneSlot};
+use super::tree::{CanvasRect, Edge, PaneSlot};
 use super::widgets::{WIDGETS, WidgetSpec};
 
 /// How wide the ⋯ stands at a header's right end, in points.
@@ -20,6 +20,10 @@ pub enum PaneMenuItem {
     Maximize,
     /// Back to its place: from the strip, or from filling the canvas.
     Restore,
+    /// Out of the docked layout, floating over the canvas.
+    Float,
+    /// From floating into the layout at this canvas edge.
+    Dock(Edge),
     /// Into its own OS window.
     OpenInNewWindow,
     /// From its own OS window back over the canvas.
@@ -28,6 +32,21 @@ pub enum PaneMenuItem {
 }
 
 impl PaneMenuItem {
+    /// Every row, in menu order.
+    pub const ALL: [Self; 11] = [
+        Self::Minimize,
+        Self::Maximize,
+        Self::Restore,
+        Self::Float,
+        Self::Dock(Edge::Left),
+        Self::Dock(Edge::Right),
+        Self::Dock(Edge::Top),
+        Self::Dock(Edge::Bottom),
+        Self::OpenInNewWindow,
+        Self::ReturnToCanvas,
+        Self::Remove,
+    ];
+
     /// The words the row shows.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -35,6 +54,11 @@ impl PaneMenuItem {
             Self::Minimize => "Minimize",
             Self::Maximize => "Maximize",
             Self::Restore => "Restore size",
+            Self::Float => "Float",
+            Self::Dock(Edge::Left) => "Dock left",
+            Self::Dock(Edge::Right) => "Dock right",
+            Self::Dock(Edge::Top) => "Dock top",
+            Self::Dock(Edge::Bottom) => "Dock bottom",
             Self::OpenInNewWindow => "Open in new window",
             Self::ReturnToCanvas => "Return to canvas",
             Self::Remove => "Remove chart",
@@ -48,6 +72,11 @@ impl PaneMenuItem {
             Self::Minimize => "minimize",
             Self::Maximize => "maximize",
             Self::Restore => "restore",
+            Self::Float => "float",
+            Self::Dock(Edge::Left) => "dock_left",
+            Self::Dock(Edge::Right) => "dock_right",
+            Self::Dock(Edge::Top) => "dock_top",
+            Self::Dock(Edge::Bottom) => "dock_bottom",
             Self::OpenInNewWindow => "open_in_new_window",
             Self::ReturnToCanvas => "return_to_canvas",
             Self::Remove => "remove",
@@ -57,15 +86,7 @@ impl PaneMenuItem {
     /// The row an [`Self::id`] names.
     #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
-        const ALL: [PaneMenuItem; 6] = [
-            PaneMenuItem::Minimize,
-            PaneMenuItem::Maximize,
-            PaneMenuItem::Restore,
-            PaneMenuItem::OpenInNewWindow,
-            PaneMenuItem::ReturnToCanvas,
-            PaneMenuItem::Remove,
-        ];
-        ALL.into_iter().find(|item| item.id() == id.trim())
+        Self::ALL.into_iter().find(|item| item.id() == id.trim())
     }
 }
 
@@ -82,13 +103,18 @@ pub fn menu_hook(value: &str) -> Option<(PaneSlot, Option<PaneMenuItem>)> {
 
 /// The rows of `slot`'s menu, top to bottom; a separator stands before
 /// Remove. A folded chart offers "Restore size" where Minimize stood and a
-/// maximized one where Maximize stood; a chart in its own window offers
-/// "Return to canvas" instead of folding or filling, and a row the canvas
-/// would refuse or that would change nothing (folding a folded chart, or
-/// folding or removing its last open chart) is left out rather than offered.
+/// maximized one where Maximize stood; a docked chart offers "Float" and one
+/// floating over the canvas a "Dock" row per canvas edge; a chart in its own
+/// window offers "Return to canvas" instead of folding or filling, and a row
+/// the canvas would refuse or that would change nothing (folding a folded
+/// chart, or folding, floating or removing its last open chart) is left out
+/// rather than offered.
 #[must_use]
 pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
     let windowed = state.mode(slot) == Some(PaneMode::OsWindow);
+    let floating = state.mode(slot) == Some(PaneMode::Floating);
+    let unit = CanvasRect::new(0.0, 0.0, 1.0, 1.0);
+    let float = !floating && !windowed && state.clone().float(slot, unit).is_ok();
     let second = if state.maximized() == Some(slot) {
         PaneMenuItem::Restore
     } else {
@@ -104,19 +130,20 @@ pub fn pane_menu(state: &CanvasState, slot: PaneSlot) -> Vec<PaneMenuItem> {
         )
     };
     let maximize = state.clone().maximize(slot).is_ok() || second == PaneMenuItem::Restore;
-    let pop_out = !windowed
-        && (state.clone())
-            .pop_out(slot, "", CanvasRect::new(0.0, 0.0, 1.0, 1.0))
-            .is_ok();
+    let pop_out = !windowed && state.clone().pop_out(slot, "", unit).is_ok();
     let remove = state.clone().remove(slot).is_ok();
+    let docks = Edge::ALL.map(|edge| (PaneMenuItem::Dock(edge), floating));
     let rows = [
         (first, first_offered),
         (second, maximize),
+        (PaneMenuItem::Float, float),
+    ];
+    let tail = [
         (PaneMenuItem::OpenInNewWindow, pop_out),
         (PaneMenuItem::ReturnToCanvas, windowed),
         (PaneMenuItem::Remove, remove),
     ];
-    rows.into_iter()
+    (rows.into_iter().chain(docks).chain(tail))
         .filter_map(|(item, offered)| offered.then_some(item))
         .collect()
 }
@@ -202,23 +229,27 @@ pub fn remove_prompt(
     }
 }
 
+/// What the add menu says of a widget surface its feed does not serve.
+pub const SURFACE_UNSERVED: &str = "this feed does not serve it";
+
+/// One add menu row: the widget, and whether it can be added now or, in
+/// the canvas's own words, why not.
+pub type AddRow = (&'static WidgetSpec, Result<(), String>);
+
 /// The add menu's rows, in registry order, each with whether it can be
-/// added now: a chart while the canvas has room, the order flow while the
-/// canvas holds none, and a widget surface when `surface_ready` says its
-/// feed serves it.
+/// added now or, in the canvas's own words, why not: a chart while the
+/// canvas has room, the order flow while the canvas holds none, and a widget
+/// surface when `surface_ready` says its feed serves it.
 #[must_use]
-pub fn add_menu(
-    state: &CanvasState,
-    surface_ready: impl Fn(&WidgetSpec) -> bool,
-) -> Vec<(&'static WidgetSpec, bool)> {
-    let full = state.panes().len() >= super::presets::MAX_CANVAS_PANES;
-    let has_flow = (state.panes().iter()).any(|(_, kind, _)| *kind == PaneKind::Flow);
+pub fn add_menu(state: &CanvasState, surface_ready: impl Fn(&WidgetSpec) -> bool) -> Vec<AddRow> {
     (WIDGETS.iter())
         .map(|widget| {
             let ready = match widget.kind {
-                Some(PaneKind::Flow) => !full && !has_flow,
-                Some(_) => !full,
-                None => surface_ready(widget),
+                Some(kind) => state
+                    .add_refusal(kind)
+                    .map_or(Ok(()), |no| Err(no.to_string())),
+                None if surface_ready(widget) => Ok(()),
+                None => Err(SURFACE_UNSERVED.to_owned()),
             };
             (widget, ready)
         })

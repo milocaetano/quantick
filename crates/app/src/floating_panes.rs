@@ -130,11 +130,7 @@ pub(crate) fn frame(
     floats: &mut FloatingPanes,
 ) -> (f32, Rect) {
     let palette = theme::get(ui.ctx());
-    let outline = if ui.visuals().dark_mode {
-        palette.accent()
-    } else {
-        LIGHT_OUTLINE
-    };
+    let outline = [LIGHT_OUTLINE, palette.accent()][usize::from(ui.visuals().dark_mode)];
     let shadow = egui::epaint::Shadow {
         offset: vec2(0.0, 6.0),
         blur: 18.0,
@@ -150,9 +146,8 @@ pub(crate) fn frame(
     let edge = ui.interact(ring, ui.id().with("edges"), Sense::drag());
     let held = grip(ui, content);
     let (id, float) = (format!("floating.{slot}.grip"), FLOAT_CAPABILITY_ID);
-    floats
-        .drawn
-        .push((id, "Move chart".to_owned(), model_rect(held.rect), float));
+    let label = "Move chart".to_owned();
+    floats.drawn.push((id, label, model_rect(held.rect), float));
     let pressed = ui
         .input(|input| input.pointer.press_origin())
         .map(model_point);
@@ -202,28 +197,27 @@ fn resize_cursor(edges: ResizeEdges) -> egui::CursorIcon {
 }
 
 /// While a chart is held: the slot a drop would dock it into, lit with its
-/// pill, and the hint; on letting go, what the drop does. The canvas's four
-/// edges and corners are published as the drop targets they are.
+/// pill, and the hint; on letting go, what the drop does. The canvas's edges
+/// and corners and each docked chart's sides and centre are published as the
+/// drop targets they are.
 pub(crate) fn preview(
     ctx: &egui::Context,
     floats: &mut FloatingPanes,
     state: &CanvasState,
     canvas: Rect,
 ) {
-    publish_targets(floats, state, canvas);
+    let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas));
+    floats.drawn.extend(targets);
     let (Some(held), Some(pointer)) = (floats.held, floats.pointer(ctx)) else {
         return;
     };
-    let (area, window, at) = (
-        model_rect(canvas),
-        model_rect(ctx.screen_rect()),
-        model_point(pointer),
-    );
+    let (area, at) = (model_rect(canvas), model_point(pointer));
+    let window = model_rect(ctx.screen_rect());
     let released = ctx.input(|input| !input.pointer.primary_down());
     #[cfg(any(feature = "scenario-harness", test))]
     let released = released && floats.pinned.is_none();
     if released {
-        floats.dropped = Some((held.slot(), held.release(area, window, at)));
+        floats.dropped = Some((held.slot(), held.release(state, area, window, at)));
         floats.held = None;
         return;
     }
@@ -235,26 +229,14 @@ pub(crate) fn preview(
     let painter = ctx.layer_painter(layer);
     if let Some(slot) = held.dock_preview(state, area, window, at) {
         let slot = screen_rect(slot);
-        let tint = if ctx.style().visuals.dark_mode {
-            TINT.1
-        } else {
-            TINT.0
-        };
+        let tint = [TINT.0, TINT.1][usize::from(ctx.style().visuals.dark_mode)];
         painter.rect_filled(slot, 0.0, palette.accent().gamma_multiply(tint));
-        pill(
-            &painter,
-            slot.center(),
-            DOCK_PILL,
-            (palette.accent(), Color32::WHITE),
-        );
+        let plate = (palette.accent(), Color32::WHITE);
+        pill(&painter, slot.center(), DOCK_PILL, plate);
     }
+    let words = (palette.chrome(), palette.text_primary());
     let hint = pos2(canvas.center().x, canvas.bottom() - 28.0);
-    pill(
-        &painter,
-        hint,
-        DOCK_HINT,
-        (palette.chrome(), palette.text_primary()),
-    );
+    pill(&painter, hint, DOCK_HINT, words);
 }
 
 /// `text` on a rounded plate centred on `at`.
@@ -263,13 +245,6 @@ fn pill(painter: &egui::Painter, at: egui::Pos2, text: &str, (fill, ink): (Color
     let plate = Rect::from_center_size(at, galley.size() + vec2(20.0, 10.0));
     painter.rect_filled(plate, plate.height() / 2.0, fill);
     painter.galley(plate.center() - galley.size() / 2.0, galley, ink);
-}
-
-/// The canvas's edges (dock) and corners (park) while a chart floats over
-/// it, as the scene's controls.
-fn publish_targets(floats: &mut FloatingPanes, state: &CanvasState, canvas: Rect) {
-    let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas));
-    floats.drawn.extend(targets);
 }
 
 /// A chart in its own OS window at `rect` (desktop points), drawn by

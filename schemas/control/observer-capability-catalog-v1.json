@@ -5461,7 +5461,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Inserts a floating chart into the layout at a canvas edge, as a drop on that edge does. The result names the preset the layout now matches, if any.",
+      "description": "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: that chart splits), or in a docked chart's place (swap_with: that chart floats where this one stood). Name exactly one. The result names the preset the layout now matches, if any.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5475,7 +5475,7 @@
       "input_schema": {
         "$defs": {
           "CanvasEdge": {
-            "description": "A canvas edge a floating chart docks at.",
+            "description": "A side of the canvas, or of a docked chart, a floating chart docks at.",
             "enum": [
               "left",
               "right",
@@ -5487,19 +5487,56 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
+        "description": "Where a floating chart docks: exactly one of `edge`, `beside` with\n`side`, or `swap_with`.",
         "properties": {
+          "beside": {
+            "description": "A docked chart's slot: that chart splits, this one on its `side`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "edge": {
-            "$ref": "#/$defs/CanvasEdge"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanvasEdge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A canvas edge: the chart takes a fair share of the canvas there."
+          },
+          "side": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CanvasEdge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The side of `beside` the chart docks on."
           },
           "slot": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "swap_with": {
+            "description": "A docked chart's slot: this chart takes its place, and it floats\nwhere this one stood.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
-          "slot",
-          "edge"
+          "slot"
         ],
         "title": "DockPaneInput",
         "type": "object"

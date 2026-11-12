@@ -20,8 +20,9 @@ use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
 };
 use quantick_workspace::canvas::{
-    self, CanvasRect, CanvasRefusal, CanvasState, Corner, DropOutcome, Edge, FloatGesture,
-    FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer, SplitAxis, WidgetSpec,
+    self, CanvasRect, CanvasRefusal, CanvasState, Corner, DockTarget, DropOutcome, Edge,
+    FloatGesture, FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer,
+    SplitAxis, WidgetSpec,
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde::de::DeserializeOwned;
@@ -57,7 +58,7 @@ pub enum CanvasAct {
     },
     Dock {
         slot: u32,
-        edge: CanvasEdge,
+        target: DockTarget,
     },
     Park {
         slot: u32,
@@ -241,8 +242,40 @@ fn dock<H: CanvasHost + ?Sized, A>(
     _: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let DockPaneInput { slot, edge } = parse(value)?;
-    answer(app, CanvasAct::Dock { slot, edge })
+    let input: DockPaneInput = parse(value)?;
+    let target = dock_target(&input)?;
+    answer(
+        app,
+        CanvasAct::Dock {
+            slot: input.slot,
+            target,
+        },
+    )
+}
+
+/// The one place `input` names: an edge, a chart to dock beside with its
+/// side, or a chart to swap with.
+fn dock_target(input: &DockPaneInput) -> Result<DockTarget, ControlError> {
+    match (input.edge, input.beside, input.side, input.swap_with) {
+        (Some(edge), None, None, None) => Ok(DockTarget::Canvas(edge_of(edge))),
+        (None, Some(slot), Some(side), None) => Ok(DockTarget::Beside {
+            slot,
+            side: edge_of(side),
+        }),
+        (None, None, None, Some(slot)) => Ok(DockTarget::Swap(slot)),
+        _ => Err(ControlError::invalid_request(
+            "name exactly one place: edge, beside with side, or swap_with",
+        )),
+    }
+}
+
+const fn edge_of(edge: CanvasEdge) -> Edge {
+    match edge {
+        CanvasEdge::Left => Edge::Left,
+        CanvasEdge::Right => Edge::Right,
+        CanvasEdge::Top => Edge::Top,
+        CanvasEdge::Bottom => Edge::Bottom,
+    }
 }
 
 fn park<H: CanvasHost + ?Sized, A>(
@@ -415,15 +448,7 @@ pub fn act(
             let rect = rect.map_or_else(|| half.centred_in(area), rect_of);
             state.float(slot, rect).map(on(slot))
         }
-        CanvasAct::Dock { slot, edge } => {
-            let edge = match edge {
-                CanvasEdge::Left => Edge::Left,
-                CanvasEdge::Right => Edge::Right,
-                CanvasEdge::Top => Edge::Top,
-                CanvasEdge::Bottom => Edge::Bottom,
-            };
-            state.dock(slot, edge).map(on(slot))
-        }
+        CanvasAct::Dock { slot, target } => state.dock(slot, target).map(on(slot)),
         CanvasAct::Park { slot, corner } => {
             let corner = match corner {
                 CanvasCorner::TopLeft => Corner::TopLeft,
@@ -495,6 +520,11 @@ pub fn menu_step(
             rect: None,
         },
         PaneMenuItem::ReturnToCanvas => CanvasAct::Return { slot },
+        PaneMenuItem::Float => CanvasAct::Float { slot, rect: None },
+        PaneMenuItem::Dock(edge) => CanvasAct::Dock {
+            slot,
+            target: DockTarget::Canvas(edge),
+        },
         PaneMenuItem::Remove
             if saved.is_some_and(|saved| canvas::remove_needs_confirm(saved, state, slot)) =>
         {
@@ -517,6 +547,8 @@ pub const fn item_capability(item: PaneMenuItem) -> &'static str {
         PaneMenuItem::Restore => RESTORE_CAPABILITY_ID,
         PaneMenuItem::OpenInNewWindow => POP_OUT_CAPABILITY_ID,
         PaneMenuItem::ReturnToCanvas => RETURN_CAPABILITY_ID,
+        PaneMenuItem::Float => FLOAT_CAPABILITY_ID,
+        PaneMenuItem::Dock(_) => DOCK_CAPABILITY_ID,
         PaneMenuItem::Remove => REMOVE_CAPABILITY_ID,
     }
 }
@@ -542,15 +574,7 @@ pub fn drop_act(
     monitor: impl Fn(CanvasRect) -> Option<String>,
 ) -> CanvasAct {
     match outcome {
-        DropOutcome::Dock(edge) => CanvasAct::Dock {
-            slot,
-            edge: match edge {
-                Edge::Left => CanvasEdge::Left,
-                Edge::Right => CanvasEdge::Right,
-                Edge::Top => CanvasEdge::Top,
-                Edge::Bottom => CanvasEdge::Bottom,
-            },
-        },
+        DropOutcome::Dock(target) => CanvasAct::Dock { slot, target },
         DropOutcome::Park(corner) => CanvasAct::Park {
             slot,
             corner: match corner {
@@ -653,8 +677,9 @@ pub fn placed_pop_out(
 }
 
 /// The canvas's drop targets while a chart floats over it: each edge band
-/// docks, each corner parks. Answers each target's scene id, label, place
-/// and the capability that does what a drop there does.
+/// docks, each corner parks, each docked chart's sides dock beside it and
+/// its centre swaps. Answers each target's scene id, label, place and the
+/// capability that does what a drop there does.
 #[must_use]
 pub fn drop_targets(
     state: &CanvasState,
@@ -692,7 +717,22 @@ pub fn drop_targets(
     let parks = parks
         .into_iter()
         .map(|(at, place)| (named("park", "Park in", at), place, PARK_CAPABILITY_ID));
-    (docks.chain(parks))
+    let panes = canvas::dock_zones(area, &canvas::open_panes(state, area));
+    let panes = panes.into_iter().map(|(target, place)| {
+        let (id, label) = match target {
+            DockTarget::Beside { slot, side } => (
+                format!("canvas.dock.beside.{slot}.{}", side.id()),
+                format!("Dock beside chart {slot}, {}", side.id()),
+            ),
+            DockTarget::Swap(slot) => (
+                format!("canvas.dock.swap.{slot}"),
+                format!("Swap with chart {slot}"),
+            ),
+            DockTarget::Canvas(edge) => named("dock", "Dock at", edge.id()),
+        };
+        ((id, label), place, DOCK_CAPABILITY_ID)
+    });
+    (docks.chain(parks).chain(panes))
         .map(|((id, label), place, capability)| (id, label, place, capability))
         .collect()
 }
@@ -822,6 +862,7 @@ fn share_on(
 
 /// A `QUANTICK_CANVAS_ACTS` value: canvas acts split by `;`, each
 /// `add:<widget>`, `float:<slot>`, `dock:<slot>:<edge>`,
+/// `dock:<slot>:beside:<slot>:<side>`, `dock:<slot>:swap:<slot>`,
 /// `park:<slot>:<corner>`, `pop_out:<slot>`, `return:<slot>`,
 /// `minimize:<slot>`, `maximize:<slot>`, `restore:<slot>`, `remove:<slot>`
 /// or `resize:<slot>:<dimension>:<share>`, edges, corners and dimensions
@@ -841,9 +882,16 @@ pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
         let slot: u32 = words.next()?.trim().parse().ok()?;
         Some(match (verb, words.next()) {
             ("float", None) => CanvasAct::Float { slot, rect: None },
-            ("dock", Some(edge)) => CanvasAct::Dock {
+            ("dock", Some(place)) => CanvasAct::Dock {
                 slot,
-                edge: named(edge)?,
+                target: match place.trim() {
+                    "beside" => DockTarget::Beside {
+                        slot: words.next()?.trim().parse().ok()?,
+                        side: edge_of(named(words.next()?)?),
+                    },
+                    "swap" => DockTarget::Swap(words.next()?.trim().parse().ok()?),
+                    edge => DockTarget::Canvas(edge_of(named(edge)?)),
+                },
             },
             ("park", Some(corner)) => CanvasAct::Park {
                 slot,
@@ -871,6 +919,34 @@ pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
         })
     };
     value.split(';').filter_map(one).collect()
+}
+
+/// The chart `slot` whose ⋯ was dragged, the pointer pressed at `start`:
+/// the float that takes a docked one out of the layout where it stood, and
+/// the hold the pointer has on it, as its grip holds it. `None` without both,
+/// or for a chart that cannot float over the canvas (the last docked one, or
+/// one in its own window).
+#[must_use]
+pub fn lifted(
+    state: &CanvasState,
+    area: CanvasRect,
+    slot: Option<u32>,
+    start: Option<(f32, f32)>,
+) -> Option<(Option<CanvasAct>, FloatGesture)> {
+    let (slot, (x, y)) = slot.zip(start)?;
+    let start = canvas::CanvasPoint::new(x, y);
+    let held = |from| FloatGesture::Move { slot, from, start };
+    if let Some(FloatHost::Canvas { rect }) = state.host(slot) {
+        return Some((None, held(*rect)));
+    }
+    let from = state
+        .rects(area)
+        .into_iter()
+        .find(|(held, _)| *held == slot)?
+        .1;
+    state.clone().float(slot, from).ok()?;
+    let rect = Some(dto(from));
+    Some((Some(CanvasAct::Float { slot, rect }), held(from)))
 }
 
 /// A `QUANTICK_CANVAS_HOLD` value, `<slot>:<x>,<y>`, on `state`: once that
