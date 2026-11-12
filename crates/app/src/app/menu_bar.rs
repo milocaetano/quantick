@@ -317,7 +317,7 @@ impl QuantickApp {
             }
             MenuCommand::ToggleContextCharts => {
                 let canvas = &mut self.active_tab_mut().canvas;
-                canvas.set_context_collapsed(!canvas.context_collapsed);
+                canvas.set_context_collapsed(!canvas.context_collapsed && canvas.column_painted());
             }
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {

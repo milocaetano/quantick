@@ -36,22 +36,22 @@ fn a_held_pane_follows_the_pointer_and_lands_where_the_drop_rule_says() {
 
     let middle = CanvasPoint::new(800.0, 500.0);
     assert_eq!(
-        grip.release(CANVAS, WINDOW, middle),
+        grip.release(&state, CANVAS, WINDOW, middle),
         DropOutcome::Float(grip.rect(middle))
     );
     let left = CanvasPoint::new(10.0, 500.0);
     assert_eq!(
-        grip.release(CANVAS, WINDOW, left),
-        DropOutcome::Dock(Edge::Left)
+        grip.release(&state, CANVAS, WINDOW, left),
+        DropOutcome::Dock(DockTarget::Canvas(Edge::Left))
     );
     let corner = CanvasPoint::new(1590.0, 935.0);
     assert_eq!(
-        grip.release(CANVAS, WINDOW, corner),
+        grip.release(&state, CANVAS, WINDOW, corner),
         DropOutcome::Park(Corner::BottomRight)
     );
     let past = CanvasPoint::new(1700.0, 500.0);
     assert_eq!(
-        grip.release(CANVAS, WINDOW, past),
+        grip.release(&state, CANVAS, WINDOW, past),
         DropOutcome::PopOut(grip.rect(past)),
         "past the window's edge the pane leaves for its own window"
     );
@@ -88,7 +88,12 @@ fn an_edge_resizes_and_never_below_the_floor() {
     };
     let pointer = CanvasPoint::new(2000.0, 400.0);
     assert_eq!(
-        gesture.release(CANVAS, WINDOW, pointer),
+        gesture.release(
+            &CanvasState::from_preset(preset("time").unwrap()),
+            CANVAS,
+            WINDOW,
+            pointer
+        ),
         DropOutcome::Float(gesture.rect(pointer)),
         "a resize never docks or pops out"
     );

@@ -6,7 +6,7 @@
 use eframe::egui::{self, Align2, Color32, Painter, Pos2, Rect, Sense, vec2};
 use egui_phosphor::regular as icons;
 use quantick_control_handlers::canvas::item_capability;
-use quantick_workspace::canvas::{CanvasState, PANE_MENU_BUTTON_PX, PaneMenuItem as Item};
+use quantick_workspace::canvas::{CanvasState, Edge, PANE_MENU_BUTTON_PX, PaneMenuItem as Item};
 use quantick_workspace::canvas::{PaneSlot, pane_menu};
 
 use crate::theme;
@@ -18,13 +18,17 @@ const ROW_PX: f32 = 26.0;
 const RULE_PX: f32 = 9.0;
 /// How far below its restore a folded chart's name starts.
 const NAME_GAP_PX: f32 = 40.0;
+/// How far in from its door's right end a ⋯ sits.
+const DOOR_INSET_PX: f32 = 4.0;
 
-/// One tab's chart menus: the one open, a press this frame, the dialog up,
-/// and every ⋯, row, restore and dialog button as drawn, for the scene.
+/// One tab's chart menus: the one open, a press this frame, a ⋯ dragged
+/// this frame to lift its chart, the dialog up, and every ⋯, row, restore
+/// and dialog button as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct PaneMenus {
     pub(crate) open: Option<PaneSlot>,
     pub(crate) picked: Option<(PaneSlot, Item)>,
+    pub(crate) lift: Option<PaneSlot>,
     pub(crate) removing: Option<PaneSlot>,
     pub(crate) drawn: Vec<DrawnControl>,
 }
@@ -55,7 +59,8 @@ fn glyph(painter: &Painter, at: Pos2, (text, size): (&str, f32), ink: Color32) {
     painter.text(at, Align2::CENTER_CENTER, text, font, ink);
 }
 
-/// The ⋯ at `strip`'s right end, in `ink`, and its menu while open.
+/// The ⋯ at `strip`'s right end, in `ink`, and its menu while open. It is
+/// the chart's grip too: dragging it lifts the chart to float and move.
 pub(crate) fn button(
     ui: &egui::Ui,
     strip: Rect,
@@ -65,18 +70,20 @@ pub(crate) fn button(
 ) {
     let palette = theme::get(ui.ctx());
     let side = PANE_MENU_BUTTON_PX.min(strip.height());
-    let centre = egui::pos2(strip.right() - side / 2.0 - 4.0, strip.center().y);
+    let centre = egui::pos2(strip.right() - side / 2.0 - DOOR_INSET_PX, strip.center().y);
     let rect = Rect::from_center_size(centre, vec2(side, side));
-    let response = ui.interact(rect, ui.id().with(("pane_menu", slot)), Sense::click());
+    let id = ui.id().with(("pane_menu", slot));
+    let response = ui.interact(rect, id, Sense::click_and_drag());
     if response.clicked() {
         menus.open = (menus.open != Some(slot)).then_some(slot);
     }
+    menus.lift = menus.lift.or(response.dragged().then_some(slot));
     let open = menus.open == Some(slot);
     if response.hovered() || open {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());
     }
     glyph(ui.painter(), rect.center(), (icons::DOTS_THREE, 15.0), ink);
-    let response = response.on_hover_text("Chart options");
+    let response = response.on_hover_text("Chart options · drag to move");
     menus.publish(format!("pane_menu.{slot}"), "Chart options", rect, None);
     if open {
         hang(ui.ctx(), rect, (slot, state), menus, &response);
@@ -138,17 +145,18 @@ fn row(ui: &mut egui::Ui, item: Item, (slot, menus): (PaneSlot, &mut PaneMenus))
         Item::Minimize => icons::MINUS,
         Item::Maximize => icons::CORNERS_OUT,
         Item::Restore => icons::CORNERS_IN,
+        Item::Float => icons::PICTURE_IN_PICTURE,
+        Item::Dock(Edge::Left) => icons::ARROW_LINE_LEFT,
+        Item::Dock(Edge::Right) => icons::ARROW_LINE_RIGHT,
+        Item::Dock(Edge::Top) => icons::ARROW_LINE_UP,
+        Item::Dock(Edge::Bottom) => icons::ARROW_LINE_DOWN,
         Item::OpenInNewWindow => icons::ARROW_SQUARE_OUT,
         Item::ReturnToCanvas => icons::ARROW_SQUARE_IN,
         Item::Remove => icons::X,
     };
     let painter = ui.painter();
-    glyph(
-        painter,
-        rect.left_center() + vec2(18.0, 0.0),
-        (icon, 13.0),
-        icon_ink,
-    );
+    let at = rect.left_center() + vec2(18.0, 0.0);
+    glyph(painter, at, (icon, 13.0), icon_ink);
     let font = egui::FontId::proportional(13.0);
     let words = rect.left_center() + vec2(34.0, 0.0);
     painter.text(words, Align2::LEFT_CENTER, item.label(), font, ink);
@@ -169,9 +177,16 @@ pub(crate) fn danger_ink(ui: &egui::Ui) -> Color32 {
     }
 }
 
-/// A minimized chart's strip: its restore on top and its `name` written
-/// along it, upwards in a tall strip, across in a flat one.
-pub(crate) fn strip(ui: &egui::Ui, rect: Rect, name: &str, slot: PaneSlot, menus: &mut PaneMenus) {
+/// A minimized chart's strip: the whole of it restores, its » on top, and
+/// its `name` written along it, upwards in a tall strip, across in a flat
+/// one. Answers the door its [`button`] takes, in the far square.
+pub(crate) fn strip(
+    ui: &egui::Ui,
+    rect: Rect,
+    name: &str,
+    slot: PaneSlot,
+    menus: &mut PaneMenus,
+) -> Rect {
     let palette = theme::get(ui.ctx());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, palette.chrome());
@@ -184,27 +199,17 @@ pub(crate) fn strip(ui: &egui::Ui, rect: Rect, name: &str, slot: PaneSlot, menus
     let side = rect.width().min(rect.height());
     let restore = Rect::from_min_size(rect.min, vec2(side, side));
     let id = ui.id().with(("pane_strip", slot));
-    let response = ui.interact(restore, id, Sense::click());
+    let response = ui.interact(rect, id, Sense::click());
     if response.hovered() {
         painter.rect_filled(restore.shrink(2.0), 4.0, palette.hover_fill());
     }
-    let ink = palette.text_primary();
-    glyph(
-        &painter,
-        restore.center(),
-        (icons::CARET_DOUBLE_RIGHT, 13.0),
-        ink,
-    );
+    let (ink, icon) = (palette.text_primary(), (icons::CARET_DOUBLE_RIGHT, 13.0));
+    glyph(&painter, restore.center(), icon, ink);
     if response.on_hover_text("Restore").clicked() {
         menus.picked = Some((slot, Item::Restore));
     }
     let restores = Some(item_capability(Item::Restore));
-    menus.publish(
-        format!("pane_menu.{slot}.strip"),
-        "Restore",
-        restore,
-        restores,
-    );
+    menus.publish(format!("pane_menu.{slot}.strip"), "Restore", rect, restores);
     let (font, muted) = (egui::FontId::proportional(12.0), palette.text_muted());
     let galley = painter.layout_no_wrap(name.to_owned(), font, muted);
     let (w, h) = (galley.size().x, galley.size().y);
@@ -217,4 +222,7 @@ pub(crate) fn strip(ui: &egui::Ui, rect: Rect, name: &str, slot: PaneSlot, menus
         egui::epaint::TextShape::new(at, galley, muted)
     };
     painter.add(shape);
+    // The ⋯ fills the far square: its door reaches past it by the inset.
+    let far = rect.max + vec2(DOOR_INSET_PX, 0.0);
+    Rect::from_min_max(rect.max - vec2(side, side), far)
 }
