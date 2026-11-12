@@ -90,6 +90,12 @@ groups are:
 | `flow_bulb_lit` | The bulb beside the gear while the flow pane's lights are on; at rest it wears `flow_gear_ink` |
 | `paper_tag_gain`, `paper_tag_loss` | Light's paper plates: the edge of a white plate under a buy or sell level under the hand, the aim or a pending leg, and the fill of its price-axis chip (white digits); Dark mirrors `buy` and `sell` and lays no paper plate |
 | `readout_edge` | The edge of Light's measurement readout plate; Dark's is transparent |
+| `panel_ground`, `panel_block`, `panel_block_edge` | The settings panels' ground, their section blocks (and trade cards) and the blocks' border |
+| `panel_plate`, `panel_plate_ink`, `panel_footer`, `panel_strong_ink` | The full-bleed title and footer plates and their words; the strong ink also writes the ledger's session captions |
+| `panel_band`, `panel_band_state` | A section header's band (and the ledger's date row) and its state words; the band's words are `panel_plate_ink` |
+| `panel_caption`, `panel_caption_rule` | A subgroup's uppercase caption and the rule under it |
+| `panel_filter_bar`, `panel_live_row`, `panel_stripe_loss` | The ledger's filter bar, its Live row and a losing trade card's stripe (a win's is `buy_ink`) |
+| `panel_gain_ink` | A gain on the panels' grey plates (the footer, a lit session row), where `buy_ink` falls short |
 | `flow_key_down_rim`, `flow_key_down_ink`, `flow_key_up_top`, `flow_key_up_bottom`, `flow_key_up_lip`, `flow_key_up_edge`, `flow_key_up_shadow` | Accepted legacy v1 keys; the band's keys no longer paint a body |
 | `bare_hover`, `float_shadow` | Control hover and floating surface shadows |
 | `capsule_fill`, `capsule_border`, `capsule_shadow` | Accepted legacy v1 keys; docked layer capsules no longer paint a separate case |

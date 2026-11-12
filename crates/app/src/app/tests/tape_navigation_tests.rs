@@ -1802,3 +1802,83 @@ fn the_divider_drags_from_its_header_part_and_a_header_never_pans() {
         "one header runs the full width"
     );
 }
+
+/// With the order-flow panel open on its bubble settings, the wheel over the
+/// tape still zooms the tape's window and never the candles beside it.
+#[test]
+fn the_wheel_over_the_tape_zooms_it_with_the_bubble_settings_open() {
+    for preset in ["mini index regions", "Crypto default"] {
+        wheel_over_the_tape_with_the_bubble_settings_open(preset);
+    }
+}
+
+fn wheel_over_the_tape_with_the_bubble_settings_open(preset: &str) {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    // `split_app` already wears the mini index look; any other one is put on.
+    if preset != "mini index regions" {
+        assert!(app.active_tab_mut().tape_mut().apply_preset(preset, false));
+    }
+    run_frame(&mut app, &ctx);
+    crate::orderflow_panel::open_on(app.active_tab_mut(), crate::ui_state::PanelSection::Bubbles);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().settings_panel.is_open());
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let divider = pane.frame.lane_divider_x.expect("the divider");
+    let tape = egui::pos2((divider + chart.right()) / 2.0, chart.center().y);
+    let window = app.active_tab().tape().live_lane_window();
+    let before = candles_view(&app);
+    // The pointer comes off the panel onto the tape, as the hand does, and
+    // the panel is still open when the wheel lands.
+    let panel = egui::pos2(chart.right() + 40.0, chart.center().y);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(panel)]);
+    assert!(app.active_tab().tape().settings_panel.is_open());
+    wheel(&mut app, &ctx, tape);
+    assert_ne!(
+        app.active_tab().tape().live_lane_window(),
+        window,
+        "the wheel over the tape zooms its window with the panel open"
+    );
+    assert!(app.active_tab().tape().settings_panel.is_open());
+    assert_eq!(candles_view(&app), before, "and leaves the candles alone");
+}
+
+/// The panel's "Native tape" switch off leaves the ordinary lane beside the
+/// candles: the wheel over it still zooms the lane's window, never the
+/// candles, with the bubble settings open.
+#[test]
+fn the_wheel_over_the_ordinary_lane_zooms_its_window_not_the_candles() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    crate::orderflow_panel::open_on(app.active_tab_mut(), crate::ui_state::PanelSection::Bubbles);
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .edit_config(|config| config.live_lane.native_tape = false)
+    );
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let config = app.active_tab().tape().cached_config();
+    assert!(
+        config.lane_enabled() && !config.native_tape(),
+        "the ordinary lane"
+    );
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let divider = pane
+        .frame
+        .lane_divider_x
+        .expect("the lane keeps its divider");
+    let lane = egui::pos2((divider + chart.right()) / 2.0, chart.center().y);
+    let window = app.active_tab().tape().live_lane_window();
+    let before = candles_view(&app);
+    wheel(&mut app, &ctx, lane);
+    assert_ne!(
+        app.active_tab().tape().live_lane_window(),
+        window,
+        "the wheel over the lane zooms its window"
+    );
+    assert_eq!(candles_view(&app), before, "and leaves the candles alone");
+}

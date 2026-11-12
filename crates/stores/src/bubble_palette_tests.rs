@@ -181,7 +181,10 @@ fn shipped_feed_declared_looks_inherit_authored_and_manual_selection_captures_it
     let feeds = super::bubble_asset_store_tests::shipped_config();
     let store = AssetBubblesStore::default().shared();
     for (feed, symbol, expected) in [
-        ("binance", "BTCUSDT", "Binance BTC Spot spheres"),
+        ("binance", "BTCUSDT", "Crypto default"),
+        ("binance", "ETHUSDT", "Crypto default"),
+        ("binance-futures", "BTCUSDT.p", "Crypto default"),
+        ("hyperliquid", "ETH", "Crypto default"),
         ("metatrader-b3", "WINV26", "mini index regions"),
     ] {
         let (_, settings) =
@@ -190,6 +193,7 @@ fn shipped_feed_declared_looks_inherit_authored_and_manual_selection_captures_it
         assert_eq!(settings.look.palette, PaletteChoice::Inherited);
     }
     for name in [
+        "Crypto default",
         "Binance BTC Spot spheres",
         "Binance BTC perpetual spheres",
         "live lane pie",

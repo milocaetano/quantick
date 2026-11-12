@@ -14,6 +14,7 @@ mod error;
 pub mod heat;
 pub mod orderflow;
 pub mod palette;
+pub mod panel_chrome;
 pub mod paper;
 mod state;
 pub mod tab_strip;

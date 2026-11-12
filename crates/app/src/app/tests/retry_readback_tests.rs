@@ -1085,8 +1085,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     assert!(tape.apply_preset("dense tape", false));
                     ids
                 } else {
+                    // The look BTC already wears: the pick acts on nothing.
                     let mut payload = ids;
-                    payload["preset"] = json!("Binance BTC Spot spheres");
+                    payload["preset"] = json!("Crypto default");
                     payload
                 }
             }

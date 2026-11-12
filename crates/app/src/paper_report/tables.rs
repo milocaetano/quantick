@@ -8,7 +8,8 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_sim::{PerformanceReport, SideReport, history};
+use quantick_paper::report::metric_rows::{metric_rows, side_rows};
+use quantick_sim::{PerformanceReport, history};
 use rust_decimal::Decimal;
 
 use super::rows::text_width;
@@ -381,145 +382,21 @@ fn trade_cells(
 }
 
 /// The metric grid: one metric per row, the explanation on hover, honest
-/// blanks (`—`) where a ratio has no denominator. Every value here has a
+/// blanks (`—`) where a ratio has no denominator
+/// ([`quantick_paper::report::metric_rows`]). Every value here has a
 /// structurally fixed sign, so none of them is coloured.
 pub(super) fn draw_report_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
     let palette = theme::get(ui.ctx());
-    let blank = || "—".to_owned();
-    let pts = |value: Decimal| format!("{} pts", fmt_points(value));
-    let opt_pts = |value: Option<Decimal>| {
-        value.map_or_else(blank, |value| format!("{} pts", fmt_points(value)))
-    };
-    let opt_plain = |value: Option<Decimal>| value.map_or_else(blank, fmt_points);
-    let duration = |value: Option<i64>| value.map_or_else(blank, fmt_duration_ms);
     egui::Grid::new("paper_report_grid")
         .num_columns(2)
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
-            let mut row = |label: &str, value: String, explain: &str| {
+            for (label, value, explain) in metric_rows(report) {
                 ui.label(egui::RichText::new(label).color(palette.text_muted()))
-                    .on_hover_text(explain.to_owned());
+                    .on_hover_text(explain);
                 ui.label(value);
                 ui.end_row();
-            };
-            row(
-                "trades",
-                format!(
-                    "{} ({} long / {} short)",
-                    report.trades, report.long_trades, report.short_trades
-                ),
-                "closed round trips under the current filter",
-            );
-            row(
-                "max drawdown",
-                pts(report.max_drawdown_points),
-                "deepest drop of realized equity below its running peak, in closing order",
-            );
-            row(
-                "max run-up",
-                pts(report.max_runup_points),
-                "highest rise of realized equity above its running trough — the drawdown's mirror",
-            );
-            row(
-                "recovery factor",
-                opt_plain(report.recovery_factor),
-                "net profit divided by the max drawdown; blank while nothing drew down",
-            );
-            row(
-                "gross profit / loss",
-                format!(
-                    "{} / {} pts",
-                    fmt_points(report.gross_profit),
-                    fmt_points(report.gross_loss)
-                ),
-                "winners' points and losers' magnitude, before netting",
-            );
-            row(
-                "avg win / loss",
-                format!(
-                    "{} / {} pts",
-                    opt_plain(report.avg_win),
-                    opt_plain(report.avg_loss),
-                ),
-                "mean winner and mean loser magnitude",
-            );
-            row(
-                "payoff ratio",
-                opt_plain(report.payoff_ratio),
-                "average win divided by average loss — how much a winner pays for a loser",
-            );
-            row(
-                "expectancy",
-                report
-                    .expectancy_points
-                    .map_or_else(blank, |value| format!("{} pts/trade", fmt_points(value))),
-                "net profit per trade: what one average trade pays",
-            );
-            row(
-                "std deviation",
-                opt_pts(report.stddev_points),
-                "sample standard deviation of trade points (N−1); blank below two trades",
-            );
-            row(
-                "longest streaks",
-                format!(
-                    "{} wins / {} losses",
-                    report.max_consecutive_wins, report.max_consecutive_losses
-                ),
-                "longest consecutive runs, in closing order; a scratch breaks both",
-            );
-            row(
-                "avg / median duration",
-                format!(
-                    "{} / {}",
-                    duration(report.avg_duration_ms),
-                    duration(report.median_duration_ms),
-                ),
-                "trade lifetimes in venue time",
-            );
-            row(
-                "winner vs loser duration",
-                format!(
-                    "{} / {}",
-                    duration(report.avg_win_duration_ms),
-                    duration(report.avg_loss_duration_ms),
-                ),
-                "how long winners run against how long losers are held",
-            );
-            row(
-                "largest win / loss",
-                format!(
-                    "{} / {} pts",
-                    fmt_points(report.largest_win),
-                    fmt_points(report.largest_loss)
-                ),
-                "best single trade and worst single trade magnitude",
-            );
-            row(
-                "avg winner MAE",
-                report.avg_winner_mae_points.map_or_else(blank, |value| {
-                    format!(
-                        "{} pts (over {} of {})",
-                        fmt_points(value),
-                        report.winners_with_mae,
-                        report.wins
-                    )
-                }),
-                "how far the average winner first ran against you; only trades that \
-                 recorded an excursion count, and the denominator says how many did",
-            );
-            row(
-                "avg loser MFE",
-                report.avg_loser_mfe_points.map_or_else(blank, |value| {
-                    format!(
-                        "{} pts (over {} of {})",
-                        fmt_points(value),
-                        report.losers_with_mfe,
-                        report.losses
-                    )
-                }),
-                "how far the average loser was in profit before it lost; same disclosure",
-            );
+            }
         });
 }
 
@@ -528,35 +405,7 @@ pub(super) fn draw_side_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
     let palette = theme::get(ui.ctx());
     ui.add_space(8.0);
     ui.label(caption(&palette, "LONG VS SHORT"));
-    fn opt_plain(value: Option<Decimal>) -> String {
-        value.map_or_else(|| "—".to_owned(), fmt_points)
-    }
-    /// One side-by-side row's value, computed per column.
-    type SideValue = Box<dyn Fn(&SideReport) -> String>;
-    let side_rows: [(&str, SideValue); 7] = [
-        ("trades", Box::new(|side| side.trades.to_string())),
-        (
-            "net",
-            Box::new(|side| format!("{} pts", fmt_signed_points(side.net_points))),
-        ),
-        (
-            "win rate",
-            Box::new(|side| {
-                side.win_rate_pct
-                    .map_or_else(|| "—".to_owned(), |rate| format!("{}%", fmt_points(rate)))
-            }),
-        ),
-        (
-            "profit factor",
-            Box::new(|side| opt_plain(side.profit_factor)),
-        ),
-        ("avg win", Box::new(|side| opt_plain(side.avg_win))),
-        ("avg loss", Box::new(|side| opt_plain(side.avg_loss))),
-        (
-            "expectancy",
-            Box::new(|side| opt_plain(side.expectancy_points)),
-        ),
-    ];
+    let side_rows = side_rows();
     egui::Grid::new("paper_report_sides")
         .num_columns(3)
         .spacing([16.0, 4.0])

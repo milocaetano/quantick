@@ -12,6 +12,8 @@ use crate::scratch::ScratchDir;
 use quantick_orderflow::HeatmapConfig;
 
 const SPOT_SPHERES: &str = "Binance BTC Spot spheres";
+/// The look every crypto market opens on and resets to.
+const CRYPTO_DEFAULT: &str = "Crypto default";
 
 fn shipped() -> AppConfig {
     toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap()
@@ -28,10 +30,24 @@ fn feed<'a>(config: &'a mut AppConfig, id: &str) -> &'a mut crate::config::FeedC
     config.feeds.iter_mut().find(|feed| feed.id == id).unwrap()
 }
 
-/// The shipped config, with ETHUSDT and Hyperliquid's BTC switched on by
+/// The shipped config with the mode switched off for ETHUSDT and
+/// Hyperliquid's BTC and ETH: the assets these tests use as "no mode".
+fn mode_less() -> AppConfig {
+    let mut config = shipped();
+    feed(&mut config, "binance")
+        .symbol_asset_modes
+        .remove("ETHUSDT");
+    let hyperliquid = feed(&mut config, "hyperliquid");
+    for symbol in ["BTC", "ETH"] {
+        hyperliquid.symbol_asset_modes.remove(symbol);
+    }
+    config
+}
+
+/// [`mode_less`], with ETHUSDT and Hyperliquid's BTC switched back on by
 /// config alone.
 fn opted_in() -> AppConfig {
-    let mut config = shipped();
+    let mut config = mode_less();
     let binance = feed(&mut config, "binance");
     binance
         .symbol_asset_modes
@@ -118,7 +134,7 @@ fn open(path: &std::path::Path, config: &AppConfig) -> SharedAssetBubbles {
 }
 
 #[test]
-fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() {
+fn the_shipped_config_switches_the_mode_on_for_every_crypto_market_and_the_mini_index() {
     let config = shipped();
     let spot = config.bubble_asset("binance", "BTCUSDT");
     let perp = config.bubble_asset("binance-futures", "BTCUSDT.p");
@@ -131,13 +147,26 @@ fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() 
     );
     assert_eq!(mini.preset.as_deref(), Some("mini index regions"));
     assert_eq!(mini.mode.as_ref().unwrap().quantity_unit, "contracts");
-    assert_eq!(spot.preset.as_deref(), Some(SPOT_SPHERES));
-    assert_eq!(
-        perp.preset.as_deref(),
-        Some("Binance BTC perpetual spheres")
-    );
-    for asset in [&spot, &perp] {
-        assert_eq!(asset.mode.as_ref().unwrap().quantity_unit, "BTC");
+    let eth = config.bubble_asset("binance", "ETHUSDT");
+    let hyperliquid_eth = config.bubble_asset("hyperliquid", "ETH");
+    for (asset, unit) in [
+        (&spot, "BTC"),
+        (&perp, "BTC"),
+        (&eth, "ETH"),
+        (&hyperliquid_eth, "ETH"),
+    ] {
+        assert_eq!(
+            asset.preset.as_deref(),
+            Some(CRYPTO_DEFAULT),
+            "{}",
+            asset.key
+        );
+        assert_eq!(
+            asset.mode.as_ref().unwrap().quantity_unit,
+            unit,
+            "{}",
+            asset.key
+        );
     }
     let mut on = Vec::new();
     for offering in &config.feeds {
@@ -151,7 +180,13 @@ fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() 
         on,
         [
             "binance/BTCUSDT",
+            "binance/ETHUSDT",
             "binance-futures/BTCUSDT.p",
+            "hyperliquid/BTC",
+            "hyperliquid/ETH",
+            "hyperliquid/HYPE",
+            "hyperliquid/SOL",
+            "hyperliquid/ZEC",
             "metatrader-b3/WIN$N",
             "metatrader-b3/WINV26",
             "metatrader-b3/WINZ26",
@@ -173,8 +208,13 @@ fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() 
 
 #[test]
 fn any_other_asset_gets_the_mode_by_config_alone() {
-    assert!(shipped().bubble_asset("binance", "ETHUSDT").mode.is_none());
-    assert_eq!(shipped().bubble_asset("hyperliquid", "BTC").key, "BTC");
+    assert!(
+        mode_less()
+            .bubble_asset("binance", "ETHUSDT")
+            .mode
+            .is_none()
+    );
+    assert_eq!(mode_less().bubble_asset("hyperliquid", "BTC").key, "BTC");
     let config = opted_in();
     let eth = config.bubble_asset("binance", "ETHUSDT");
     assert_eq!(eth.key, "binance:ETHUSDT");
@@ -262,7 +302,7 @@ fn tick_choices_and_the_unit_follow_the_mode() {
 /// wears as they were; it never takes the preset's in their place.
 #[test]
 fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
-    let config = shipped();
+    let config = mode_less();
     for (feed, symbol, spheres) in [
         ("binance", "BTCUSDT", true),
         ("binance-futures", "BTCUSDT.p", false),
@@ -280,7 +320,7 @@ fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
             "{feed}/{symbol}"
         );
     }
-    let mut declared = shipped();
+    let mut declared = mode_less();
     feed(&mut declared, "binance")
         .symbol_bubble_presets
         .insert("ETHUSDT".to_owned(), SPOT_SPHERES.to_owned());
@@ -303,7 +343,7 @@ fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
 /// (the picker's and the control call's) leave the same screen.
 #[test]
 fn whole_preset_without_the_sphere_verdict_leaves_the_looks_own() {
-    let (config, presets) = (shipped(), bubble_presets::embedded());
+    let (config, presets) = (mode_less(), bubble_presets::embedded());
     for market in [
         ("binance", "BTCUSDT"),
         ("binance-futures", "BTCUSDT.p"),
@@ -377,7 +417,7 @@ fn volume_chart_whole_preset_pick_leaves_the_tick_charts_spheres() {
 /// the asset to file, no status.
 #[test]
 fn reapplying_a_sphere_preset_without_its_spheres_changes_nothing() {
-    let (mut look, mut screen) = look(&shipped(), "binance", "ETHUSDT");
+    let (mut look, mut screen) = look(&mode_less(), "binance", "ETHUSDT");
     let pick = |look: &mut BubbleLook, screen: &mut HeatmapConfig| {
         look.apply_named_preset(SPOT_SPHERES, screen, false)
     };
@@ -401,7 +441,7 @@ fn venue_identity_is_market_specific_and_current_feed_presets_cannot_leak() {
     assert_eq!(other.key, "hyperliquid:BTCUSDT");
     assert_ne!(other.key, spot.key);
     assert_eq!(other.preset.as_deref(), Some("dense tape"));
-    assert_eq!(spot.preset.as_deref(), Some(SPOT_SPHERES));
+    assert_eq!(spot.preset.as_deref(), Some(CRYPTO_DEFAULT));
 }
 
 #[test]
@@ -546,6 +586,9 @@ fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
         .get(SPOT_SPHERES)
         .unwrap()
         .tick_bubbles;
+    // Calibrated off the shipped spheres, which the perpetual opens on too:
+    // what reaches only spot is told apart from what every crypto market wears.
+    spheres.look.tick_bubbles.as_mut().unwrap().max_radius = 40.0;
     spot.note_edit();
     assert!(spot.file(spheres.clone()));
     assert_eq!(store.borrow_mut().flush(), Some(Ok(())));

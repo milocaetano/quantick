@@ -283,7 +283,7 @@ fn open_controls(view: &mut OrderflowView) -> (egui::Context, PaintedText) {
         style.interaction.show_tooltips_only_when_still = false;
     });
     let mut text = paint(view, &ctx, Vec::new());
-    for title in ["live lane", "labels", "colours"] {
+    for title in ["LIVE LANE", "LABELS", "COLOURS"] {
         let pos = text
             .iter()
             .find(|(label, _)| label == title)

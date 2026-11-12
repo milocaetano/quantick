@@ -108,6 +108,8 @@ mod tests {
                 | Token::PaperTagGain
                 | Token::PaperTagLoss
                 | Token::ReadoutEdge => light.color(token).to_array(),
+                // So are the settings panels' blocks and plates.
+                _ if token.key().starts_with("panel_") => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

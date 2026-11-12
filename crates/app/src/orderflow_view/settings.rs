@@ -14,6 +14,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
 use crate::orderflow_render::draw_preview;
+use crate::panel_chrome;
 use crate::ui_state::PanelSection;
 
 use super::OrderflowView;
@@ -177,41 +178,38 @@ impl OrderflowView {
         draw_preview(ui, &self.config, self.settings_panel.lights_on()).on_hover_text(
                     "Deterministic preview: persistent wall, aligned depletion, full withdrawal and clustered trades.",
                 );
-        ui.separator();
 
         LiquidityRangesSection {
             config: &mut self.config,
         }
         .show(ui);
-        ui.separator();
         VisualLayersSection {
             config: &mut self.config,
         }
         .show(ui);
-        ui.separator();
         LiquidityResponseSection {
             config: &mut self.config,
         }
         .show(ui);
-        ui.separator();
         ScaleHistorySection {
             config: &mut self.config,
             capture_grouping_draft: &mut self.capture_grouping_draft,
         }
         .show(ui);
-        ui.separator();
-        BookHealthSection {
-            published: &self.published,
-        }
-        .show(ui);
-        if ui.button("reset L2 visuals").clicked() {
-            self.config.reset_l2_visuals();
-            self.capture_grouping_draft = self
-                .config
-                .price_grouping
-                .to_f64()
-                .unwrap_or(self.capture_grouping_draft);
-        }
+        panel_chrome::block_footer(ui, |ui| {
+            BookHealthSection {
+                published: &self.published,
+            }
+            .show(ui);
+            if ui.button("reset L2 visuals").clicked() {
+                self.config.reset_l2_visuals();
+                self.capture_grouping_draft = self
+                    .config
+                    .price_grouping
+                    .to_f64()
+                    .unwrap_or(self.capture_grouping_draft);
+            }
+        });
         self.commit_config_changes(before)
     }
 
@@ -229,12 +227,11 @@ impl OrderflowView {
         draw_preview(ui, &self.config, self.settings_panel.lights_on()).on_hover_text(
                     "Deterministic preview: every control below shows its effect here, without waiting for a trade.",
                 );
-        ui.separator();
-
+        panel_chrome::caption(ui, "preset");
         let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
         self.draw_bubble_presets(ui, rule.may_choose());
         self.draw_tick_bubbles(ui, rule);
-        ui.separator();
+        panel_chrome::caption(ui, "clustering");
 
         ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
             .on_hover_text(
@@ -245,23 +242,24 @@ impl OrderflowView {
             self.draw_bubble_controls(ui);
         });
 
-        ui.separator();
-        BubbleHealthSection {
-            health: &self.published.health,
-            show_aggressions: self.config.show_aggressions,
-        }
-        .show(ui);
-        if ui
-            .button("reset bubble visuals")
-            .on_hover_text(
-                "restores this asset's factory look; saved for the asset like any change here; \
-                 L2 and history settings stay as they are",
-            )
-            .clicked()
-        {
-            // Committed with the rest of the panel's changes below.
-            self.look.restore_factory(&mut self.config);
-        }
+        panel_chrome::block_footer(ui, |ui| {
+            BubbleHealthSection {
+                health: &self.published.health,
+                show_aggressions: self.config.show_aggressions,
+            }
+            .show(ui);
+            if ui
+                .button("reset bubble visuals")
+                .on_hover_text(
+                    "restores this asset's factory look; saved for the asset like any change here; \
+                     L2 and history settings stay as they are",
+                )
+                .clicked()
+            {
+                // Committed with the rest of the panel's changes below.
+                self.look.restore_factory(&mut self.config);
+            }
+        });
         self.commit_config_changes(before)
     }
 
