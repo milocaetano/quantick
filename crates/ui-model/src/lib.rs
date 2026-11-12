@@ -28,6 +28,8 @@ pub enum Slot {
     PaneHeader,
     TitleBar,
     Toolbar,
+    MenuBar,
+    TabStrip,
     StatusLine,
 }
 

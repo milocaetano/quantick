@@ -448,10 +448,23 @@ mod tests {
         let mut effects = SurfaceResponse::default();
         let output = ctx.run(Default::default(), |ctx| {
             assert!(!registry.draw_all(ctx, &env()).undo_drawing);
-            assert_eq!(
-                registry.second.model_state, 0,
-                "other slots cannot consume an intent"
-            );
+            for slot in [
+                quantick_ui_model::Slot::PaneHeader,
+                quantick_ui_model::Slot::TitleBar,
+                quantick_ui_model::Slot::MenuBar,
+                quantick_ui_model::Slot::TabStrip,
+                quantick_ui_model::Slot::StatusLine,
+            ] {
+                assert!(
+                    !registry
+                        .draw_slot(slot, &mut ViewContext { ctx, ui: None }, &env())
+                        .undo_drawing
+                );
+                assert_eq!(
+                    registry.second.model_state, 0,
+                    "other slots cannot consume an intent"
+                );
+            }
             egui::CentralPanel::default().show(ctx, |ui| {
                 effects = registry.draw_slot(
                     quantick_ui_model::Slot::Toolbar,

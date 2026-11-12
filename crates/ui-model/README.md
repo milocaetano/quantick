@@ -25,7 +25,7 @@ The existing frame surface host applies that response through domain ports;
 do not add another dispatcher or make a model reach into the application.
 
 `Surfaces::draw_all` drives overlays. Existing chrome owners call `draw_slot`
-with `Slot::{PaneHeader,TitleBar,Toolbar,StatusLine}`, a `ViewContext` containing
+with `Slot::{PaneHeader,TitleBar,Toolbar,MenuBar,TabStrip,StatusLine}`, a `ViewContext` containing
 their borrowed `Ui`, and explicit `SurfaceEnv` inputs. Forward the returned
 response to the existing host effect application. Slot calls do not consume
 another slot's intents. Keyboard capture and capture hooks are registered by
