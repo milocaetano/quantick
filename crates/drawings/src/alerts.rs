@@ -22,51 +22,93 @@ pub fn fact<'a, T: crate::ToolCatalog>(
     })
 }
 
+/// How a tool reaches past the anchors it was drawn through, as it paints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// A segment: it stops at its anchors.
+    Segment,
+    /// A ray: on past the second anchor, whichever way it was drawn.
+    PastSecond,
+    /// An infinite line: past both anchors.
+    Both,
+}
+
+/// What an addressable tool projects to. [`shape`] is the single owner of
+/// "which drawings take an alert, and as what".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// A flat level named by one anchor; `left` when it also runs left of it.
+    Level { left: bool },
+    /// Geometry through two or more anchors.
+    Through(Anchored),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Anchored {
+    Line(Reach),
+    Channel,
+    Rectangle,
+}
+
+fn shape(tool: &str) -> Option<Shape> {
+    Some(match tool {
+        "trend-line" | "arrow" => Shape::Through(Anchored::Line(Reach::Segment)),
+        "ray" => Shape::Through(Anchored::Line(Reach::PastSecond)),
+        "extended-line" => Shape::Through(Anchored::Line(Reach::Both)),
+        "horizontal-line" => Shape::Level { left: true },
+        "horizontal-ray" => Shape::Level { left: false },
+        "parallel-channel" => Shape::Through(Anchored::Channel),
+        "rectangle" => Shape::Through(Anchored::Rectangle),
+        _ => return None,
+    })
+}
+
 /// The alert target family a drawing tool projects to, or `None` when alerts
-/// cannot address it. The single owner of "which drawings take an alert".
+/// cannot address it.
 #[must_use]
 pub fn target_kind(tool: &str) -> Option<TargetKind> {
-    match tool {
-        "trend-line" | "ray" | "extended-line" | "horizontal-line" | "horizontal-ray" => {
-            Some(TargetKind::Line)
-        }
-        "parallel-channel" => Some(TargetKind::Channel),
-        "rectangle" => Some(TargetKind::Rectangle),
-        _ => None,
-    }
+    shape(tool).map(|shape| match shape {
+        Shape::Level { .. } | Shape::Through(Anchored::Line(_)) => TargetKind::Line,
+        Shape::Through(Anchored::Channel) => TargetKind::Channel,
+        Shape::Through(Anchored::Rectangle) => TargetKind::Rectangle,
+    })
 }
 
 pub fn project<T: crate::ToolCatalog>(
     drawing: &crate::Drawing<T>,
 ) -> Result<Geometry, Unavailable> {
-    if drawing.foreign_market || drawing.off_series {
+    if drawing.foreign_market {
+        return Err(Unavailable::OutsideTimeDomain);
+    }
+    let shape = shape(drawing.tool.id()).ok_or(Unavailable::UnsupportedDrawing)?;
+    // A level that runs edge to edge keeps its exact price when its anchor's
+    // bar is off the loaded series; everything else is placed in time.
+    if drawing.off_series && shape != (Shape::Level { left: true }) {
         return Err(Unavailable::OutsideTimeDomain);
     }
     let point = |point: &crate::ChartPoint| Point {
         coordinate: f64::from(point.bar),
         price: point.price,
     };
-    let tool = drawing.tool.id();
-    if target_kind(tool).is_none() {
-        return Err(Unavailable::UnsupportedDrawing);
-    }
     let [first, rest @ ..] = drawing.points.as_slice() else {
         return Err(Unavailable::InvalidGeometry);
     };
-    if let "horizontal-line" | "horizontal-ray" = tool {
-        // One anchor names the level; a second point one bar on gives the
-        // flat line a direction. The ray starts at its anchor and runs right.
-        let first = point(first);
-        return Ok(Geometry::Line(Line {
-            first,
-            second: Point {
-                coordinate: first.coordinate + 1.0,
-                price: first.price,
-            },
-            extend_left: tool == "horizontal-line",
-            extend_right: true,
-        }));
-    }
+    let anchored = match shape {
+        Shape::Level { left } => {
+            // A second point one bar on gives the flat line a direction.
+            let first = point(first);
+            return Ok(Geometry::Line(Line {
+                first,
+                second: Point {
+                    coordinate: first.coordinate + 1.0,
+                    price: first.price,
+                },
+                extend_left: left,
+                extend_right: true,
+            }));
+        }
+        Shape::Through(anchored) => anchored,
+    };
     let [second, rest @ ..] = rest else {
         return Err(Unavailable::InvalidGeometry);
     };
@@ -76,23 +118,14 @@ pub fn project<T: crate::ToolCatalog>(
         extend_left: false,
         extend_right: false,
     };
-    match tool {
-        "trend-line" => Ok(Geometry::Line(line)),
-        // A ray runs past its second anchor, whichever way it was drawn.
-        "ray" => {
-            if line.second.coordinate < line.first.coordinate {
-                line.extend_left = true;
-            } else {
-                line.extend_right = true;
-            }
+    match anchored {
+        Anchored::Line(reach) => {
+            let backwards = line.second.coordinate < line.first.coordinate;
+            line.extend_left = reach == Reach::Both || (reach == Reach::PastSecond && backwards);
+            line.extend_right = reach == Reach::Both || (reach == Reach::PastSecond && !backwards);
             Ok(Geometry::Line(line))
         }
-        "extended-line" => {
-            line.extend_left = true;
-            line.extend_right = true;
-            Ok(Geometry::Line(line))
-        }
-        "rectangle" => {
+        Anchored::Rectangle => {
             let (mut first, mut second) = (point(first), point(second));
             if first.coordinate > second.coordinate {
                 std::mem::swap(&mut first, &mut second);
@@ -111,7 +144,7 @@ pub fn project<T: crate::ToolCatalog>(
             }
             Ok(Geometry::Rectangle { first, second })
         }
-        "parallel-channel" => {
+        Anchored::Channel => {
             let third = rest.first().ok_or(Unavailable::InvalidGeometry)?;
             if let Some(payload) = drawing
                 .payload
@@ -134,7 +167,6 @@ pub fn project<T: crate::ToolCatalog>(
                 offset: third.price - base,
             })
         }
-        _ => Err(Unavailable::UnsupportedDrawing),
     }
 }
 
@@ -223,6 +255,28 @@ mod tests {
         assert_eq!(ends(backward), (10.0, 100.0, 0.0, 110.0, true, false));
         let infinite = line_of("extended-line", &[(0.0, 100.0), (10.0, 110.0)]);
         assert_eq!(ends(infinite), (0.0, 100.0, 10.0, 110.0, true, true));
+        let arrow = line_of("arrow", &[(0.0, 100.0), (10.0, 110.0)]);
+        assert_eq!(ends(arrow), (0.0, 100.0, 10.0, 110.0, false, false));
+    }
+    #[test]
+    fn alert_projection_off_series_keeps_only_the_full_width_level() {
+        let mut level = drawing("horizontal-line", &[(4.0, 105.5)]);
+        level.off_series = true;
+        assert!(matches!(project(&level), Ok(Geometry::Line(_))));
+        level.foreign_market = true;
+        assert_eq!(project(&level), Err(Unavailable::OutsideTimeDomain));
+        for (tool, anchors) in [
+            ("horizontal-ray", &[(4.0, 105.5)][..]),
+            ("ray", &[(0.0, 100.0), (10.0, 110.0)][..]),
+        ] {
+            let mut mark = drawing(tool, anchors);
+            mark.off_series = true;
+            assert_eq!(
+                project(&mark),
+                Err(Unavailable::OutsideTimeDomain),
+                "{tool}"
+            );
+        }
     }
     #[test]
     fn alert_projection_horizontal_tools_need_one_anchor() {
@@ -322,6 +376,7 @@ mod tests {
     fn alert_target_kind_names_every_addressable_tool() {
         for tool in [
             "trend-line",
+            "arrow",
             "ray",
             "extended-line",
             "horizontal-line",

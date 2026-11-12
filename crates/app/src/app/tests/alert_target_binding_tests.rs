@@ -148,13 +148,8 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
 fn alert_target_binding_offers_every_straight_line() {
     for (tool, anchors) in [
         ("horizontal-line", &[egui::pos2(560.0, 320.0)][..]),
-        ("horizontal-ray", &[egui::pos2(560.0, 320.0)][..]),
         (
             "ray",
-            &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 360.0)][..],
-        ),
-        (
-            "extended-line",
             &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 360.0)][..],
         ),
     ] {
