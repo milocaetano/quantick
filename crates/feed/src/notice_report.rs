@@ -19,6 +19,28 @@ pub enum NoticeAction {
     Roll(String),
 }
 
+impl NoticeAction {
+    /// The word on the control that asks for this.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Roll(target) => roll_label(target),
+            Self::Reload => Recovery::Reload.label().to_owned(),
+            Self::None | Self::Reconnect => Recovery::Reconnect.label().to_owned(),
+        }
+    }
+
+    /// What it costs, on the control's own hover.
+    #[must_use]
+    pub fn cost(&self) -> &'static str {
+        match self {
+            Self::Roll(_) => ROLL_CAPTION,
+            Self::Reload => Recovery::Reload.cost(),
+            Self::None | Self::Reconnect => Recovery::Reconnect.cost(),
+        }
+    }
+}
+
 impl From<Recovery> for NoticeAction {
     fn from(recovery: Recovery) -> Self {
         match recovery {
@@ -59,14 +81,15 @@ pub struct Report<'a> {
     /// The control offered first. The other is always beside it.
     pub primary: Recovery,
     /// What a contract roll can do about a contract the venue no longer
-    /// lists; `None` leaves the report exactly as it was without one.
+    /// lists; `None` leaves the report exactly as it was without one. An
+    /// offered roll comes before the pair, which stays whole.
     pub roll: Option<RollNote<'a>>,
 }
 
 /// The contract roll a report about an unlisted contract carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollNote<'a> {
-    /// The configured next contract: offered first, in Reconnect's place.
+    /// The configured next contract: offered first, ahead of the pair.
     To(&'a str),
     /// Why the configured roll cannot run now, said under the next step.
     Refused(&'a str),
@@ -85,7 +108,7 @@ impl<'a> Report<'a> {
         Self { roll, ..self }
     }
 
-    /// The roll this report offers in place of Reconnect, if any.
+    /// The roll this report offers ahead of Reconnect and Reload, if any.
     #[must_use]
     pub fn roll_target(&self) -> Option<&'a str> {
         match self.roll {
@@ -104,56 +127,11 @@ impl<'a> Report<'a> {
             _ => step.to_owned(),
         })
     }
-
-    /// The sentence under the buttons: what a roll keeps when one is
-    /// offered, otherwise what Reload ends.
-    #[must_use]
-    pub fn caption(&self) -> &'static str {
-        if self.roll_target().is_some() {
-            ROLL_CAPTION
-        } else {
-            RELOAD_CAPTION
-        }
-    }
-
-    /// The control offered second. A roll takes the first place, and the act
-    /// it displaced stays beside it.
-    #[must_use]
-    pub fn secondary(&self) -> Recovery {
-        if self.roll_target().is_some() {
-            self.primary
-        } else {
-            self.primary.other()
-        }
-    }
-
-    /// The word on the control offered first.
-    #[must_use]
-    pub fn primary_label(&self) -> String {
-        self.roll_target()
-            .map_or_else(|| self.primary.label().to_owned(), roll_label)
-    }
-
-    /// What the control offered first costs, on its own hover.
-    #[must_use]
-    pub fn primary_cost(&self) -> &'static str {
-        self.roll_target()
-            .map_or_else(|| self.primary.cost(), |_| ROLL_CAPTION)
-    }
-
-    /// What a press of the control offered first asks.
-    #[must_use]
-    pub fn primary_action(&self) -> NoticeAction {
-        self.roll_target().map_or_else(
-            || self.primary.into(),
-            |target| NoticeAction::Roll(target.to_owned()),
-        )
-    }
 }
 
-impl<'a> From<&'a Result<String, &'static str>> for RollNote<'a> {
+impl<'a> From<Result<&'a str, &'a str>> for RollNote<'a> {
     /// The roll on offer, or the reason it is refused.
-    fn from(roll: &'a Result<String, &'static str>) -> Self {
+    fn from(roll: Result<&'a str, &'a str>) -> Self {
         match roll {
             Ok(target) => Self::To(target),
             Err(reason) => Self::Refused(reason),
@@ -173,7 +151,8 @@ impl<'a> From<&'a Result<String, &'static str>> for RollNote<'a> {
 pub const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
      disarms every strategy.";
 
-/// What a roll off an unlisted contract does, under the button that runs it.
+/// What a roll off an unlisted contract does, on the hover of the control
+/// that runs it.
 pub const ROLL_CAPTION: &str =
     "Rolling keeps the workspace and drawings; the chart starts on the next contract.";
 
@@ -222,7 +201,10 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
         });
     }
     match notice {
-        FeedNotice::Connected | FeedNotice::Clear | FeedNotice::Attention { .. } => None,
+        FeedNotice::Connected
+        | FeedNotice::Clear
+        | FeedNotice::Attention { .. }
+        | FeedNotice::Rolled { .. } => None,
         FeedNotice::Reconnecting { headline } | FeedNotice::Working { headline } => Some(Report {
             headline,
             next_step: None,
@@ -341,7 +323,7 @@ mod tests {
         );
     }
     #[test]
-    fn a_roll_offer_takes_the_place_of_nothing_but_its_own_words() {
+    fn a_roll_offer_comes_first_and_the_pair_stays_whole() {
         let notice = FeedNotice::attention("MetaTrader does not list WINV26", "Add it.")
             .with_unlisted(Some("WINV26".to_owned()));
         let bare = plain(&notice).expect("an attention speaks");
@@ -353,23 +335,17 @@ mod tests {
         assert_eq!(roll_label("WINZ26"), "Roll to WINZ26");
         assert_eq!(offered.next_step_text().as_deref(), Some("Add it."));
         assert_eq!(offered.headline, bare.headline, "today's words stay");
-        assert_eq!(offered.primary_label(), "Roll to WINZ26");
-        assert_eq!(offered.primary_cost(), ROLL_CAPTION);
-        assert_eq!(offered.caption(), ROLL_CAPTION);
         assert_eq!(
-            offered.primary_action(),
-            NoticeAction::Roll("WINZ26".to_owned())
+            (offered.primary, offered.primary.other()),
+            (Recovery::Reconnect, Recovery::Reload),
+            "Reconnect and Reload both stay reachable beside the roll"
         );
-        assert_eq!(
-            offered.secondary(),
-            Recovery::Reconnect,
-            "the act the roll displaced stays beside it"
-        );
-        assert_eq!(bare.primary_label(), "Reconnect");
-        assert_eq!(bare.primary_cost(), Recovery::Reconnect.cost());
-        assert_eq!(bare.caption(), RELOAD_CAPTION);
-        assert_eq!(bare.primary_action(), NoticeAction::Reconnect);
-        assert_eq!(bare.secondary(), Recovery::Reload);
+        let roll = NoticeAction::Roll("WINZ26".to_owned());
+        assert_eq!(roll.label(), "Roll to WINZ26");
+        assert_eq!(roll.cost(), ROLL_CAPTION);
+        assert_eq!(NoticeAction::Reconnect.label(), "Reconnect");
+        assert_eq!(NoticeAction::Reconnect.cost(), Recovery::Reconnect.cost());
+        assert_eq!(NoticeAction::Reload.label(), "Reload");
 
         let refused = bare.with_roll(Some(RollNote::Refused("Finish the drawing gesture first")));
         assert_eq!(
@@ -382,12 +358,24 @@ mod tests {
             Some("Add it.\nCannot roll to the next contract: Finish the drawing gesture first.")
         );
         assert_eq!(refused.primary, Recovery::Reconnect);
-        assert_eq!(refused.primary_action(), NoticeAction::Reconnect);
-        assert_eq!(refused.caption(), RELOAD_CAPTION);
-        let refusal: Result<String, &'static str> = Err("Finish the drawing gesture first");
         assert_eq!(
-            RollNote::from(&refusal),
+            RollNote::from(Err("Finish the drawing gesture first")),
             RollNote::Refused("Finish the drawing gesture first")
+        );
+        assert_eq!(RollNote::from(Ok("WINZ26")), RollNote::To("WINZ26"));
+    }
+
+    #[test]
+    fn a_roll_note_reports_nothing_to_recover() {
+        let note = FeedNotice::Rolled {
+            from: "WINV26".to_owned(),
+            to: "WINZ26".to_owned(),
+        };
+        assert_eq!(plain(&note), None, "no alarm, no controls");
+        assert_eq!(note.summary(), ("info", true, false));
+        assert_eq!(
+            note.rolled_text().as_deref(),
+            Some("WINV26 is no longer listed; rolled to WINZ26")
         );
     }
     /// The consequence of the destructive control is on the popup, so a trader

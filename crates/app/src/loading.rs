@@ -26,8 +26,6 @@ const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
 const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
-/// The label a press on the overlay answers to: same word as the popup's.
-pub const RECONNECT_LABEL: &str = "Reconnect";
 
 /// The chip: 10 pt monospace in a 1 px pill.
 const CHIP_PT: f32 = 10.0;
@@ -205,7 +203,7 @@ fn lay_out_overlay(
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
-    with_control: bool,
+    control: Option<&str>,
 ) -> OverlayGroup {
     let palette = crate::theme::get(ctx);
     let mut title = egui::text::LayoutJob::default();
@@ -227,9 +225,9 @@ fn lay_out_overlay(
         (
             fonts.layout_job(title),
             steady(meta_ink, fonts, &words.meta, mono, rect.width()),
-            with_control.then(|| {
+            control.map(|label| {
                 fonts.layout_no_wrap(
-                    RECONNECT_LABEL.to_owned(),
+                    label.to_owned(),
                     palette.body_font(CONTROL_PT),
                     egui::Color32::PLACEHOLDER,
                 )
@@ -260,14 +258,15 @@ fn lay_out_overlay(
     }
 }
 
-/// A clipped control is omitted; the status bar then offers Reconnect instead.
+/// A clipped control is omitted; the status bar then offers it instead.
 pub fn reconnect_fits(
     ctx: &egui::Context,
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
+    label: &str,
 ) -> bool {
-    lay_out_overlay(ctx, rect, symbol, words, true)
+    lay_out_overlay(ctx, rect, symbol, words, Some(label))
         .control
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
@@ -279,13 +278,14 @@ pub fn draw_overlay(
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
+    label: &str,
     (now_ms, tab): (i64, u64),
 ) -> (Option<egui::Rect>, bool) {
     let palette = crate::theme::get(ui.ctx());
     let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
-    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
-    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
+    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words, label);
+    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits.then_some(label));
     let mut y = group.top;
     let centred = |width: f32| rect.center().x - width / 2.0;
     let size = group.title.size();
@@ -488,6 +488,9 @@ pub fn draw_slot(
 mod tests {
     use super::*;
 
+    /// The overlay's control when no roll is on offer: the popup's own word.
+    const RECONNECT_LABEL: &str = "Reconnect";
+
     fn words(reconnect: bool) -> OverlayWords {
         OverlayWords {
             verb: "No connection to",
@@ -512,7 +515,7 @@ mod tests {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.painter().rect_filled(screen, 0.0, CHART);
-                    let _ = draw_overlay(ui, screen, "X", &words(false), (0, 1));
+                    let _ = draw_overlay(ui, screen, "X", &words(false), RECONNECT_LABEL, (0, 1));
                     let slot = Slot {
                         job: false,
                         text: "the slot",
@@ -642,14 +645,28 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let roomy =
                         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
-                    assert!(reconnect_fits(ctx, roomy, "X", &words(true)));
-                    let (control, _) = draw_overlay(ui, roomy, "X", &words(true), (0, 1));
+                    assert!(reconnect_fits(
+                        ctx,
+                        roomy,
+                        "X",
+                        &words(true),
+                        RECONNECT_LABEL
+                    ));
+                    let (control, _) =
+                        draw_overlay(ui, roomy, "X", &words(true), RECONNECT_LABEL, (0, 1));
                     assert!(roomy.contains_rect(control.expect("it fits")));
 
                     let short =
                         egui::Rect::from_min_size(egui::pos2(0.0, 500.0), egui::vec2(800.0, 40.0));
-                    assert!(!reconnect_fits(ctx, short, "X", &words(true)));
-                    let (control, pressed) = draw_overlay(ui, short, "X", &words(true), (0, 1));
+                    assert!(!reconnect_fits(
+                        ctx,
+                        short,
+                        "X",
+                        &words(true),
+                        RECONNECT_LABEL
+                    ));
+                    let (control, pressed) =
+                        draw_overlay(ui, short, "X", &words(true), RECONNECT_LABEL, (0, 1));
                     assert!(control.is_none() && !pressed);
                 });
             },
@@ -690,7 +707,14 @@ mod tests {
                     },
                     |ctx| {
                         egui::CentralPanel::default().show(ctx, |ui| {
-                            answer = draw_overlay(ui, ui.max_rect(), "X", &words(true), (0, 1));
+                            answer = draw_overlay(
+                                ui,
+                                ui.max_rect(),
+                                "X",
+                                &words(true),
+                                RECONNECT_LABEL,
+                                (0, 1),
+                            );
                         });
                     },
                 );
@@ -726,6 +750,43 @@ mod tests {
         }
     }
 
+    /// With a roll on offer the overlay's control is the popup's first, word
+    /// for word, and its room is measured for that label, not Reconnect's.
+    #[test]
+    fn the_overlay_offers_the_roll_the_popup_offers() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let label = "Roll to WINFUT_Z26";
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (control, _) = draw_overlay(ui, screen, "X", &words(true), label, (0, 1));
+                    let control = control.expect("it fits");
+                    assert!(control.width() > 100.0, "measured on the long label");
+                    // A pane wide enough for Reconnect but not for the roll.
+                    let narrow =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(90.0, 400.0));
+                    assert!(reconnect_fits(
+                        ctx,
+                        narrow,
+                        "X",
+                        &words(true),
+                        RECONNECT_LABEL
+                    ));
+                    assert!(!reconnect_fits(ctx, narrow, "X", &words(true), label));
+                });
+            },
+        );
+        let painted = output.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == label)
+        });
+        assert!(painted, "the roll is what the overlay says");
+    }
+
     /// Reconnect's ink is chosen at paint time, so a hover reaches the pixels:
     /// the tessellated words change colour, resting in `connection_action`
     /// and lit in `loading_title`, in both themes.
@@ -747,7 +808,8 @@ mod tests {
                 let output = ctx.run(raw, |ctx| {
                     let panel = egui::CentralPanel::default().frame(egui::Frame::none());
                     panel.show(ctx, |ui| {
-                        control = draw_overlay(ui, screen, "X", &words(true), (0, 1)).0;
+                        control =
+                            draw_overlay(ui, screen, "X", &words(true), RECONNECT_LABEL, (0, 1)).0;
                     });
                 });
                 let words: Vec<_> = output
@@ -804,8 +866,15 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        control =
-                            draw_overlay(ui, ui.max_rect(), "DOGEUSDT", &words(true), (0, 1)).0;
+                        control = draw_overlay(
+                            ui,
+                            ui.max_rect(),
+                            "DOGEUSDT",
+                            &words(true),
+                            RECONNECT_LABEL,
+                            (0, 1),
+                        )
+                        .0;
                     });
                 },
             );
@@ -819,8 +888,14 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let (none, pressed) =
-                        draw_overlay(ui, ui.max_rect(), "X", &words(false), (0, 1));
+                    let (none, pressed) = draw_overlay(
+                        ui,
+                        ui.max_rect(),
+                        "X",
+                        &words(false),
+                        RECONNECT_LABEL,
+                        (0, 1),
+                    );
                     assert!(none.is_none() && !pressed, "no control, no region");
                 });
             },
@@ -844,7 +919,7 @@ mod tests {
             let output = ctx.run(raw, |ctx| {
                 let panel = egui::CentralPanel::default().frame(egui::Frame::none());
                 panel.show(ctx, |ui| {
-                    draw_overlay(ui, screen, "X", &words(true), (0, 1))
+                    draw_overlay(ui, screen, "X", &words(true), RECONNECT_LABEL, (0, 1))
                 });
             });
             let shapes: Vec<_> = output.shapes.iter().map(|clipped| &clipped.shape).collect();

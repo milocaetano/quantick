@@ -249,7 +249,9 @@ impl NoticeLatch {
             _ if !self.terminal_down() => vec![notice],
             FeedNotice::Reconnecting { .. } => vec![notice, terminal_not_running()],
             FeedNotice::Attention { .. } => vec![notice],
-            FeedNotice::Working { .. } | FeedNotice::Clear => Vec::new(),
+            FeedNotice::Working { .. } | FeedNotice::Clear | FeedNotice::Rolled { .. } => {
+                Vec::new()
+            }
         }
     }
 }

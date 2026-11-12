@@ -507,6 +507,16 @@ pub enum FeedNotice {
         /// structured report: what a configured contract roll starts from.
         unlisted: Option<String>,
     },
+    /// The tab rolled off a contract the venue no longer lists onto the one
+    /// its config names next. Nothing is wrong and nothing needs a hand: an
+    /// explanation of why the tab shows another contract, kept until the
+    /// trader dismisses it or a real notice takes its place.
+    Rolled {
+        /// The contract the venue does not list.
+        from: String,
+        /// The contract the tab shows now.
+        to: String,
+    },
 }
 
 /// The notice channel of a feed that has nothing to say: closed at birth, so
@@ -591,6 +601,7 @@ impl FeedNotice {
             Self::Clear => ("clear", false, false),
             Self::Working { .. } => ("working", true, false),
             Self::Attention { .. } => ("attention", true, true),
+            Self::Rolled { .. } => ("info", true, false),
         }
     }
 
@@ -639,11 +650,23 @@ impl FeedNotice {
     }
 
     /// The contract the venue reported it does not list, when this notice
-    /// says so.
+    /// says so: the one a roll starts from, or the one it already left.
     #[must_use]
     pub fn unlisted_symbol(&self) -> Option<&str> {
         match self {
             Self::Attention { unlisted, .. } => unlisted.as_deref(),
+            Self::Rolled { from, .. } => Some(from),
+            _ => None,
+        }
+    }
+
+    /// What a [`Self::Rolled`] note says.
+    #[must_use]
+    pub fn rolled_text(&self) -> Option<String> {
+        match self {
+            Self::Rolled { from, to } => {
+                Some(quantick_sources::recovery::rolled_sentence(from, to))
+            }
             _ => None,
         }
     }

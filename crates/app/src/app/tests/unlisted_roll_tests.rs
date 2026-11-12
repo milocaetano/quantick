@@ -30,6 +30,23 @@ fn popup_over(app: &mut QuantickApp, ctx: &egui::Context, notice: FeedNotice) ->
     run_frame(app, ctx)
 }
 
+/// The active tab's notice as `feed.status` publishes it.
+fn notice_view(app: &QuantickApp) -> serde_json::Value {
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [observer_scope("feed.status")];
+    let capture = registry
+        .capture(app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    capture.scopes[&scopes[0]].value["tabs"][0]["notice"].clone()
+}
+
+/// The status bar's lead cell for the active tab.
+fn status_lead(app: &QuantickApp) -> crate::statusbar::StatusLead<'_> {
+    crate::statusbar::StatusLead::of(app.active_tab(), None, 0, false)
+}
+
 fn click(at: egui::Pos2) -> Vec<egui::Event> {
     let press = |pressed| egui::Event::PointerButton {
         pos: at,
@@ -53,9 +70,19 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
     );
     let at = painted_text_center(&output, "Roll to ETHUSDT").expect("the roll is offered first");
     assert!(
-        painted_text_center(&output, "Reconnect").is_some(),
-        "the act it displaced stays beside it"
+        painted_text_center(&output, "Reconnect").is_some()
+            && painted_text_center(&output, "Reload").is_some(),
+        "both acts stay reachable under it"
     );
+    // Every surface offers the same roll: the chip beside the status word,
+    // the empty chart's control, and the control plane.
+    let roll = crate::feed_notice::NoticeAction::Roll("ETHUSDT".to_owned());
+    assert_eq!(app.active_tab().link.quick_action(), roll);
+    assert_eq!(status_lead(&app).action, roll);
+    let view = notice_view(&app);
+    assert_eq!(view["unlisted_symbol"], "TESTUSDT");
+    assert_eq!(view["roll_to"], "ETHUSDT");
+    assert!(view.get("roll_refused").is_none());
     run_frame_with_events(&mut app, &ctx, click(at));
     // The press rolls on the next frame's settle, beside the drawings.
     run_frame(&mut app, &ctx);
@@ -67,6 +94,11 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
     assert_eq!(
         app.chrome.feed_popup_tab, None,
         "a pressed control closes it"
+    );
+    assert_eq!(
+        app.active_tab().link.notice.rolled_text().as_deref(),
+        Some("TESTUSDT is no longer listed; rolled to ETHUSDT"),
+        "the explanation outlives the toast"
     );
 }
 
@@ -112,6 +144,15 @@ fn a_refused_roll_keeps_reconnect_and_says_why() {
             .iter()
             .any(|text| text.starts_with("Roll to"))
     );
+    let reason = "Close the paper position and cancel working orders first";
+    let lead = status_lead(&app);
+    let hover = lead.report.and_then(|report| report.next_step_text());
+    assert!(
+        hover.is_some_and(|step| step.contains(reason)),
+        "the status word's hover says why too"
+    );
+    assert_eq!(lead.action, crate::feed_notice::NoticeAction::Reconnect);
+    assert_eq!(notice_view(&app)["roll_refused"], reason);
 }
 
 #[test]
@@ -148,7 +189,7 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
             }],
             None,
         ));
-    assert!(app.active_tab().link.auto_roll.is_armed());
+    assert!(app.active_tab().link.auto_roll.armed_for("TESTUSDT"));
     app.active_tab_mut().link.notice = unlisted("TESTUSDT");
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
@@ -156,6 +197,17 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         app.surfaces.toast.message(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
+    // The explanation stays on the tab, not alarming, and is readable on the
+    // control plane until the trader puts it away.
+    assert_eq!(
+        status_lead(&app).note.as_deref(),
+        Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
+    );
+    let view = notice_view(&app);
+    assert_eq!(view["kind"], "info");
+    assert_eq!(view["unlisted_symbol"], "TESTUSDT");
+    run_frame(&mut app, &ctx);
+    assert!(status_lead(&app).note.is_some(), "it is no toast");
 
     // The same contract reported again rolls nothing further.
     app.config.feeds[0]
@@ -176,11 +228,26 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
 #[test]
 fn a_feed_that_connected_waits_for_a_hand() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
-    app.active_tab_mut().link.auto_roll.arm();
+    app.active_tab_mut().link.auto_roll.arm("TESTUSDT");
     notices.blocking_send(FeedNotice::Connected).unwrap();
     app.active_tab_mut().link.drain_notices_at(0);
     assert!(
         !app.active_tab().link.auto_roll.is_armed(),
         "a contract that streamed is listed; a later report gets the popup, not a roll"
+    );
+}
+
+#[test]
+fn a_hand_switch_takes_a_restored_tab_over() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().link.auto_roll.arm("TESTUSDT");
+    app.active_tab_mut().symbol = "ETHUSDT".to_owned();
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    assert!(
+        !app.active_tab().link.auto_roll.is_armed(),
+        "the trader picked the contract; it waits for a press from here on"
     );
 }

@@ -18,6 +18,8 @@ struct Window {
     /// unlisted as soon as the tab is on it, and connects on anything else.
     delisted: Vec<String>,
     auto: AutoRoll,
+    /// What the last attach explained: the roll the link's notice now names.
+    explained: Option<(String, String)>,
 }
 
 impl Window {
@@ -32,6 +34,7 @@ impl Window {
             carries: Vec::new(),
             delisted: Vec::new(),
             auto: AutoRoll::default(),
+            explained: None,
         }
     }
 }
@@ -68,7 +71,11 @@ impl FeedSourcePort for Window {
     fn select_feed(&mut self, index: usize, _feed_id: &str, symbol: &str) -> Option<FeedSelection> {
         self.switches += 1;
         self.symbol = symbol.into();
-        // The feed's link disarms on connect; a listed contract connects.
+        // The window's switch, then the link's attach and drain: the licence
+        // follows only its own roll, the attach explains a roll, and a listed
+        // contract connects, which disarms.
+        self.auto.switched_to(symbol);
+        self.explained = self.auto.take_rolled();
         if !self.delisted.contains(&self.symbol) {
             self.auto.disarm();
         }
@@ -215,17 +222,41 @@ fn unlisted_on(symbol: &str, more: &[&str]) -> Window {
     window
 }
 
+fn rolled(from: &str, to: &str) -> Option<(String, String)> {
+    Some((from.to_owned(), to.to_owned()))
+}
+
 #[test]
 fn an_unlisted_contract_offers_its_configured_roll_and_the_click_lands_there() {
     let mut window = unlisted_on("AAAZ26", &[]);
     assert_eq!(notice_roll(&window, 0), Some(Ok("AAAG27".to_owned())));
-    let toast = roll_from_notice(&mut window, 0, "AAAG27").unwrap();
+    let (toast, payload) = roll_from_notice(&mut window, 0, "AAAG27").unwrap();
     assert_eq!(toast, "AAAZ26 is no longer listed; rolled to AAAG27");
     assert_eq!(window.symbol, "AAAG27");
     assert_eq!(
         window.carries,
         [("venue".to_owned(), "AAAZ26".to_owned(), "AAAG27".to_owned())],
         "the same roll the palette runs: the drawings come along"
+    );
+    assert_eq!(
+        window.explained,
+        rolled("AAAZ26", "AAAG27"),
+        "the attach leaves the explanation, not a blank notice"
+    );
+    assert_eq!(
+        payload,
+        json!({
+            "contract_roll": {
+                "tab_id": "7",
+                "feed_id": "venue",
+                "symbol": "AAAG27",
+                "from_symbol": "AAAZ26",
+                "changed": true,
+                "drawings_carried": 3,
+            },
+            "trigger": PRESSED_TRIGGER,
+        }),
+        "feed.contract.roll's own result, and what asked for it"
     );
     assert_eq!(
         roll_from_notice(&mut window, 0, "AAAG27"),
@@ -245,6 +276,8 @@ fn no_usable_successor_leaves_the_notice_as_it_was() {
     let mut window = unlisted_on("AAAZ26", &[]);
     window.offered.retain(|symbol| symbol != "AAAG27");
     assert_eq!(notice_roll(&window, 0), None);
+    assert!(settle_auto_rolls(&mut window).is_empty());
+    assert_eq!(window.auto.offer(), None, "nothing is offered either");
     // A report about a contract the tab no longer shows.
     assert_eq!(unlisted_roll(&Window::on("AAAG27"), 0, "AAAZ26"), None);
     // A recording never rolls.
@@ -270,22 +303,42 @@ fn a_refused_roll_names_its_reason_and_moves_nothing() {
 }
 
 #[test]
-fn a_restored_tab_rolls_itself_along_the_chain_once_per_contract() {
-    let mut window = unlisted_on("AAAZ26", &["AAAG27"]);
+fn every_settle_records_the_offer_the_surfaces_read() {
+    let mut window = unlisted_on("AAAZ26", &[]);
     assert!(
         settle_auto_rolls(&mut window).is_empty(),
-        "a tab the trader opened by hand waits for the click"
+        "a hand tab waits"
     );
-    assert_eq!(window.symbol, "AAAZ26");
-
-    window.auto.arm();
     assert_eq!(
-        settle_auto_rolls(&mut window),
+        window.auto.offer(),
+        Some(&RollOffer {
+            from: "AAAZ26".to_owned(),
+            to: Ok("AAAG27".to_owned()),
+        })
+    );
+    window.gesture = true;
+    settle_auto_rolls(&mut window);
+    assert_eq!(
+        window.auto.offer().map(|offer| offer.to.clone()),
+        Some(Err(RollRefusal::GestureInFlight.reason())),
+        "a refusal is on offer too, with its reason"
+    );
+}
+
+#[test]
+fn a_restored_tab_rolls_itself_along_the_chain_once_per_contract() {
+    let mut window = unlisted_on("AAAZ26", &["AAAG27"]);
+    window.auto.arm("AAAZ26");
+    let settled = settle_auto_rolls(&mut window);
+    assert_eq!(
+        settled.notes,
         ["AAAZ26 is no longer listed; rolled to AAAG27"]
     );
+    assert_eq!(settled.rolls[0]["trigger"], AUTOMATIC_TRIGGER);
+    assert_eq!(window.explained, rolled("AAAZ26", "AAAG27"));
     // The next contract is unlisted too: the next report rolls one more step.
     assert_eq!(
-        settle_auto_rolls(&mut window),
+        settle_auto_rolls(&mut window).notes,
         ["AAAG27 is no longer listed; rolled to AAAJ27"]
     );
     assert_eq!(window.symbol, "AAAJ27");
@@ -298,41 +351,113 @@ fn a_restored_tab_rolls_itself_along_the_chain_once_per_contract() {
 }
 
 #[test]
-fn an_automatic_roll_is_decided_once_even_when_refused() {
+fn only_the_restored_contract_rolls_by_itself() {
+    // Armed for another contract: this one is the trader's.
     let mut window = unlisted_on("AAAZ26", &[]);
-    window.auto.arm();
-    window.gesture = true;
+    window.auto.arm("AAAJ27");
     assert!(settle_auto_rolls(&mut window).is_empty());
-    window.gesture = false;
+    assert_eq!(window.symbol, "AAAZ26");
+
+    // A restored tab that never connected, switched by hand: the contract it
+    // was switched to waits for a press, and so does coming back.
+    let mut window = unlisted_on("AAAZ26", &["AAAG27"]);
+    window.auto.arm("AAAZ26");
+    window.select_feed(0, "venue", "AAAG27");
+    assert!(!window.auto.is_armed(), "a hand switch takes the tab over");
+    assert!(settle_auto_rolls(&mut window).is_empty());
+    window.select_feed(0, "venue", "AAAZ26");
+    assert!(settle_auto_rolls(&mut window).is_empty());
+    assert_eq!(window.symbol, "AAAZ26", "no roll without a press");
+}
+
+#[test]
+fn a_refused_automatic_roll_waits_for_its_reason_to_clear() {
+    let mut window = unlisted_on("AAAZ26", &[]);
+    window.auto.arm("AAAZ26");
+    window.gesture = true;
+    assert_eq!(
+        settle_auto_rolls(&mut window).notes,
+        [waiting_toast(
+            "AAAZ26",
+            RollRefusal::GestureInFlight.reason()
+        )],
+        "the refusal is said once"
+    );
     assert!(
         settle_auto_rolls(&mut window).is_empty(),
-        "the refusal was the decision; the roll is the trader's now"
+        "and not every frame"
+    );
+    window.gesture = false;
+    window.paper_open = true;
+    assert_eq!(
+        settle_auto_rolls(&mut window).notes,
+        [waiting_toast("AAAZ26", RollRefusal::PaperNotFlat.reason())],
+        "another reason is news"
     );
     assert_eq!(window.switches, 0);
-    assert_eq!(notice_roll(&window, 0), Some(Ok("AAAG27".to_owned())));
+    window.paper_open = false;
+    assert_eq!(
+        settle_auto_rolls(&mut window).notes,
+        ["AAAZ26 is no longer listed; rolled to AAAG27"],
+        "a refusal decided nothing: the roll runs once it clears"
+    );
+    assert_eq!(window.symbol, "AAAG27");
+}
+
+#[test]
+fn arming_again_rolls_a_contract_decided_before() {
+    // A restored tab rolled AAAZ26 away; the trader went back to it by hand.
+    let mut window = unlisted_on("AAAZ26", &["AAAG27"]);
+    window.auto.arm("AAAZ26");
+    settle_auto_rolls(&mut window);
+    window.select_feed(0, "venue", "AAAZ26");
+    // A workspace restored onto this runtime tab again arms it afresh.
+    window.auto.arm("AAAZ26");
+    assert_eq!(
+        settle_auto_rolls(&mut window).notes,
+        ["AAAZ26 is no longer listed; rolled to AAAG27"]
+    );
 }
 
 #[test]
 fn a_recording_never_rolls_by_itself() {
     let mut window = unlisted_on("AAAZ26", &[]);
-    window.auto.arm();
+    window.auto.arm("AAAZ26");
     window.replay = true;
-    window.delisted.push("AAAZ26".to_owned());
     assert!(settle_auto_rolls(&mut window).is_empty());
     assert_eq!(unlisted_roll(&window, 0, "AAAZ26"), None);
     assert_eq!(window.switches, 0);
 }
 
 #[test]
-fn a_pressed_roll_runs_on_the_next_settle_once() {
+fn a_pressed_roll_runs_on_the_next_settle_once_and_is_journaled() {
     let mut window = unlisted_on("AAAZ26", &[]);
+    window.auto.arm("AAAZ26");
+    window.paper_open = true;
+    settle_auto_rolls(&mut window);
+    window.paper_open = false;
     window.auto.press("AAAG27");
+    let settled = settle_auto_rolls(&mut window);
     assert_eq!(
-        settle_auto_rolls(&mut window),
+        settled.notes,
         ["AAAZ26 is no longer listed; rolled to AAAG27"],
         "a hand needs no armed tab"
     );
     assert_eq!(window.symbol, "AAAG27");
+    assert!(!window.auto.is_armed(), "a press is a hand");
+    let mut access = FakeAccess::with_budget(0);
+    let actor = FakeWindow::trader();
+    assert_eq!(
+        settled.journal(Some((&mut access, &actor))),
+        ["AAAZ26 is no longer listed; rolled to AAAG27"]
+    );
+    assert_eq!(access.events.len(), 1);
+    assert_eq!(access.events[0].kind.as_str(), CONTRACT_ROLL_EVENT_KIND);
+    assert_eq!(access.events[0].payload["trigger"], PRESSED_TRIGGER);
+    assert_eq!(
+        access.events[0].payload["contract_roll"]["symbol"],
+        "AAAG27"
+    );
     assert!(
         settle_auto_rolls(&mut window).is_empty(),
         "the press ran once"
@@ -341,10 +466,12 @@ fn a_pressed_roll_runs_on_the_next_settle_once() {
     let mut refused = unlisted_on("AAAZ26", &[]);
     refused.paper_open = true;
     refused.auto.press("AAAG27");
+    let settled = settle_auto_rolls(&mut refused);
     assert_eq!(
-        settle_auto_rolls(&mut refused),
+        settled.notes,
         [RollRefusal::PaperNotFlat.reason()],
         "a refused press says why instead"
     );
+    assert!(settled.rolls.is_empty());
     assert_eq!(refused.switches, 0);
 }

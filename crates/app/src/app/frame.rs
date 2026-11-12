@@ -133,11 +133,15 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
 /// Respawn the shown tab's feed if its feed/symbol selection changed
 /// (resets the chart) and apply its spec; a changed market moves its
 /// layouts along.
-fn apply_feed_switch(app: &mut QuantickApp) {
+fn apply_feed_switch(app: &mut QuantickApp, dismiss_note: bool) {
+    if dismiss_note {
+        app.active_tab_mut().link.dismiss_note();
+    }
     // A pressed Roll, and restored tabs on a contract no longer listed.
     let port = app as &mut dyn super::control_host::ControlPort;
-    for note in quantick_control_handlers::contract_roll::settle_auto_rolls(port) {
-        app.surfaces.toast.note(note, Instant::now());
+    let settled = quantick_control_handlers::contract_roll::settle_auto_rolls(port);
+    if !settled.is_empty() {
+        super::tab_workspaces::as_hand(app, |_, journal| settled.journal(journal));
     }
     let (tab, config) = app.active_with_config();
     let changed =
@@ -398,7 +402,7 @@ impl QuantickApp {
                 }
             }
             FrameStage::LayoutSwitches => apply_layout_switches(self),
-            FrameStage::FeedSwitch => apply_feed_switch(self),
+            FrameStage::FeedSwitch => apply_feed_switch(self, scratch.status.dismiss_note),
             FrameStage::MirrorLoadingWaits => {
                 panels::mirror_loading_waits(&self.replay_view, &mut self.runtime.tabs);
             }

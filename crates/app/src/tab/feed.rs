@@ -308,6 +308,7 @@ impl Tab {
         // Dropping the old handle stops the old feed thread. The new feed starts
         // with a fresh backfill in flight.
         let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        self.link.auto_roll.switched_to(&self.symbol);
         self.attach(handle);
 
         // Rebuild every pane from scratch for the new stream, each keeping its

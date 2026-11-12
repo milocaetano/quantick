@@ -6,9 +6,11 @@
 //! here is plain state over the [`FeedHandle`] it was built from; the wall
 //! clock is always handed in, so the judgements below stay deterministic.
 
+use quantick_sources::recovery::AutoRoll;
 use tokio::sync::{mpsc, watch};
 
 use crate::config::{FeedCapabilities, ProviderKind};
+use crate::notice_report::{NoticeAction, RollNote};
 use crate::stall::{self, Stall, StallInput};
 use crate::{
     DepthEvent, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedIntegrity,
@@ -27,9 +29,9 @@ pub struct FeedLink {
     /// left empty will not.
     pub notice: FeedNotice,
     /// Whether this tab, opened from a saved workspace, rolls itself off a
-    /// contract [`Self::notice`] says the venue no longer lists. Kept across
-    /// attaches: the roll it makes is one.
-    pub auto_roll: quantick_sources::recovery::AutoRoll,
+    /// contract [`Self::notice`] says the venue no longer lists, and the roll
+    /// on offer. Kept across attaches: the roll it makes is one.
+    pub auto_roll: AutoRoll,
     /// Wall clock when the running feed session was attached — the floor for
     /// judging a first connection that never lands.
     pub feed_attached_ms: i64,
@@ -140,7 +142,7 @@ impl FeedLink {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
-            auto_roll: quantick_sources::recovery::AutoRoll::default(),
+            auto_roll: AutoRoll::default(),
         }
     }
 
@@ -149,7 +151,8 @@ impl FeedLink {
     ///
     /// The old feed's trouble is not the new feed's, so the notice and the
     /// transport state start clean — switching away from a blocked source must
-    /// not leave its instruction on screen.
+    /// not leave its instruction on screen. A roll off an unlisted contract
+    /// leaves its explanation instead.
     pub fn attach(&mut self, handle: FeedHandle, now_ms: i64) {
         self.feed_generation = self.feed_generation.saturating_add(1);
         self.events = handle.events;
@@ -157,7 +160,13 @@ impl FeedLink {
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
-        self.notice = FeedNotice::Clear;
+        self.notice = self
+            .auto_roll
+            .take_rolled()
+            .map_or(FeedNotice::Clear, |(from, to)| FeedNotice::Rolled {
+                from,
+                to,
+            });
         self.feed_attached_ms = now_ms;
         self.connection_since_ms = self.feed_attached_ms;
         self.feed_connection = FeedConnectionState::Connecting;
@@ -186,23 +195,92 @@ impl FeedLink {
     /// Level-triggered rather than queued: only the latest state matters, and
     /// a burst of bridge output must not queue up cards to show one by one.
     /// A closed channel (a feed with nothing to report) simply yields nothing.
+    ///
+    /// Two notices hold against progress. A contract the venue does not list
+    /// stays named until a session connects: the supervisor's retries and its
+    /// final give-up say other words about the same contract, and the roll
+    /// off it must not flicker back to Reconnect under the trader's pointer.
+    /// A roll's explanation outlives the connect it was waiting for, and
+    /// yields only to a notice that needs a hand.
     pub fn drain_notices_at(&mut self, now_ms: i64) {
         while let Ok(notice) = self.notices.try_recv() {
+            let unlisted = match &self.notice {
+                FeedNotice::Attention { unlisted, .. } => unlisted.clone(),
+                _ => None,
+            };
+            let rolled = matches!(self.notice, FeedNotice::Rolled { .. });
+            let holds = unlisted.is_some() || rolled;
             let next = match notice {
                 FeedNotice::Connected => {
                     // A contract that streams is listed: rolls wait for a hand.
                     self.auto_roll.disarm();
                     self.set_connection(FeedConnectionState::Connected, now_ms);
+                    if rolled {
+                        continue;
+                    }
                     FeedNotice::Clear
                 }
                 FeedNotice::Reconnecting { .. } => {
                     self.set_connection(FeedConnectionState::Reconnecting, now_ms);
+                    if holds {
+                        continue;
+                    }
                     notice
                 }
-                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => notice,
+                FeedNotice::Attention {
+                    headline,
+                    next_step,
+                    unlisted: None,
+                } => FeedNotice::Attention {
+                    headline,
+                    next_step,
+                    unlisted,
+                },
+                FeedNotice::Attention { .. } => notice,
+                _ if holds => continue,
+                FeedNotice::Working { .. } | FeedNotice::Rolled { .. } => notice,
                 FeedNotice::Clear => FeedNotice::Clear,
             };
             self.notice = next;
+        }
+    }
+
+    /// Put a roll's explanation away; any other notice stays.
+    pub fn dismiss_note(&mut self) {
+        if matches!(self.notice, FeedNotice::Rolled { .. }) {
+            self.notice = FeedNotice::Clear;
+        }
+    }
+
+    /// The roll off the unlisted contract the notice names, as the last settle
+    /// found it: the configured next contract, or why it cannot roll now.
+    /// Every surface that offers the roll, and the control plane, read this.
+    #[must_use]
+    pub fn roll_offer(&self) -> Option<Result<&str, &'static str>> {
+        let FeedNotice::Attention {
+            unlisted: Some(from),
+            ..
+        } = &self.notice
+        else {
+            return None;
+        };
+        let offer = self.auto_roll.offer().filter(|offer| &offer.from == from)?;
+        Some(offer.to.as_deref().map_err(|reason| *reason))
+    }
+
+    /// [`Self::roll_offer`] as a report carries it.
+    #[must_use]
+    pub fn roll_note(&self) -> Option<RollNote<'_>> {
+        self.roll_offer().map(RollNote::from)
+    }
+
+    /// The one-click control beside the word and on the empty chart: the roll
+    /// on offer, else Reconnect — what the popup offers first.
+    #[must_use]
+    pub fn quick_action(&self) -> NoticeAction {
+        match self.roll_offer() {
+            Some(Ok(to)) => NoticeAction::Roll(to.to_owned()),
+            _ => NoticeAction::Reconnect,
         }
     }
 
@@ -301,5 +379,160 @@ impl FeedLink {
             Some(source) => format!("side: {source}"),
             None => "side: not recorded".to_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quantick_sources::recovery::RollOffer;
+
+    /// A link over channels the test speaks on.
+    fn link() -> (FeedLink, mpsc::Sender<FeedNotice>) {
+        let (handle, notices) = handle();
+        (FeedLink::new(handle, 0), notices)
+    }
+
+    fn handle() -> (FeedHandle, mpsc::Sender<FeedNotice>) {
+        let (notices, notice_rx) = mpsc::channel(16);
+        let handle = FeedHandle {
+            events: mpsc::channel(1).1,
+            book_events: mpsc::channel(1).1,
+            notices: notice_rx,
+            capabilities: crate::fixed_capabilities(FeedCapabilities::none()),
+            latency: crate::unsplit_latency(),
+            commands: mpsc::channel(1).0,
+            replay: None,
+        };
+        (handle, notices)
+    }
+
+    fn unlisted(symbol: &str) -> FeedNotice {
+        FeedNotice::attention(format!("MetaTrader does not list {symbol}"), "Add it.")
+            .with_unlisted(Some(symbol.to_owned()))
+    }
+
+    fn say(link: &mut FeedLink, notices: &mpsc::Sender<FeedNotice>, notice: FeedNotice) {
+        notices.try_send(notice).expect("room on the channel");
+        link.drain_notices_at(1);
+    }
+
+    #[test]
+    fn an_unlisted_contract_stays_named_through_retries_and_the_give_up() {
+        let (mut link, notices) = link();
+        say(&mut link, &notices, unlisted("WINV26"));
+        link.auto_roll.set_offer(Some(RollOffer {
+            from: "WINV26".to_owned(),
+            to: Ok("WINZ26".to_owned()),
+        }));
+        assert_eq!(link.quick_action(), NoticeAction::Roll("WINZ26".to_owned()));
+
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::working("starting the MetaTrader bridge"),
+        );
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+        );
+        say(&mut link, &notices, FeedNotice::Clear);
+        assert_eq!(link.notice, unlisted("WINV26"), "a retry says nothing new");
+        assert_eq!(link.feed_connection, FeedConnectionState::Reconnecting);
+
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::attention("the MetaTrader bridge would not stay running", "Fix it."),
+        );
+        assert_eq!(
+            link.notice.unlisted_symbol(),
+            Some("WINV26"),
+            "the give-up's words, about the same contract"
+        );
+        assert_eq!(link.roll_offer(), Some(Ok("WINZ26")));
+        assert_eq!(link.roll_note(), Some(RollNote::To("WINZ26")));
+
+        say(&mut link, &notices, FeedNotice::Connected);
+        assert_eq!(
+            link.notice,
+            FeedNotice::Clear,
+            "a session that connects ends it"
+        );
+        assert_eq!(link.roll_offer(), None);
+        assert_eq!(link.quick_action(), NoticeAction::Reconnect);
+    }
+
+    #[test]
+    fn an_offer_about_another_contract_is_not_offered() {
+        let (mut link, notices) = link();
+        say(&mut link, &notices, unlisted("WINV26"));
+        link.auto_roll.set_offer(Some(RollOffer {
+            from: "WINQ26".to_owned(),
+            to: Ok("WINV26".to_owned()),
+        }));
+        assert_eq!(link.roll_offer(), None);
+        link.auto_roll.set_offer(Some(RollOffer {
+            from: "WINV26".to_owned(),
+            to: Err("Finish the drawing gesture first"),
+        }));
+        assert_eq!(
+            link.roll_note(),
+            Some(RollNote::Refused("Finish the drawing gesture first"))
+        );
+        assert_eq!(link.quick_action(), NoticeAction::Reconnect);
+    }
+
+    #[test]
+    fn a_roll_leaves_a_note_that_outlives_the_connect() {
+        let (mut link, notices) = link();
+        link.auto_roll.rolling("WINV26", "WINZ26", true);
+        let (next, notices_next) = handle();
+        drop(notices);
+        link.attach(next, 5);
+        let note = FeedNotice::Rolled {
+            from: "WINV26".to_owned(),
+            to: "WINZ26".to_owned(),
+        };
+        assert_eq!(link.notice, note);
+        for progress in [
+            FeedNotice::working("starting the MetaTrader bridge"),
+            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+            FeedNotice::Connected,
+            FeedNotice::Clear,
+        ] {
+            say(&mut link, &notices_next, progress);
+            assert_eq!(link.notice, note, "progress does not replace it");
+        }
+        assert_eq!(link.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(link.notice.unlisted_symbol(), Some("WINV26"));
+
+        link.dismiss_note();
+        assert_eq!(link.notice, FeedNotice::Clear, "the trader puts it away");
+
+        link.auto_roll.rolling("WINZ26", "WING27", true);
+        let (next, notices) = handle();
+        link.attach(next, 6);
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::attention("MetaTrader is not running", "Start it."),
+        );
+        assert_eq!(
+            link.notice,
+            FeedNotice::attention("MetaTrader is not running", "Start it."),
+            "a notice that needs a hand takes its place"
+        );
+
+        let (next, _notices) = handle();
+        link.attach(next, 7);
+        assert_eq!(
+            link.notice,
+            FeedNotice::Clear,
+            "an attach that rolled nothing is clean"
+        );
+        link.dismiss_note();
+        assert_eq!(link.notice, FeedNotice::Clear);
     }
 }

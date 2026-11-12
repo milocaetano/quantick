@@ -73,35 +73,67 @@ impl Recovery {
 }
 
 /// A tab's licence to roll itself off a contract the venue no longer lists,
-/// and the contracts it already decided.
+/// and what its roll surfaces read.
 ///
-/// State only: the rule that reads it is the contract roll's. Armed when the
-/// tab is opened from a saved workspace and disarmed once its feed connects.
-/// Each missing contract is decided once, rolled or refused, so a chain of
-/// unlisted contracts is walked one step per report and a configured cycle
-/// cannot loop.
+/// State only: the rule that reads it is the contract roll's. Armed for the one
+/// contract a saved workspace restored the tab on, and moved along the chain
+/// only by a roll it made itself; any other switch disarms it, and so does a
+/// feed that connects. A contract is decided once a roll left it, so a
+/// configured cycle cannot loop; a refused roll decides nothing and runs once
+/// the refusal clears, saying the refusal once.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AutoRoll {
-    armed: bool,
+    armed: Option<String>,
     decided: std::collections::BTreeSet<String>,
     pressed: Option<String>,
+    offer: Option<RollOffer>,
+    refusal_said: Option<&'static str>,
+    rolled: Option<(String, String)>,
+}
+
+/// The roll a tab's notice offers off a contract the venue does not list, as
+/// the last settle found it: every surface that offers it reads this one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RollOffer {
+    /// The contract the venue does not list.
+    pub from: String,
+    /// The configured next contract, or why the roll cannot run right now.
+    pub to: Result<String, &'static str>,
 }
 
 impl AutoRoll {
-    /// The tab was opened from a saved workspace.
-    pub fn arm(&mut self) {
-        self.armed = true;
+    /// The tab was opened on `symbol` from a saved workspace: a fresh licence,
+    /// whatever the runtime tab decided before.
+    pub fn arm(&mut self, symbol: &str) {
+        self.armed = Some(symbol.to_owned());
+        self.decided.clear();
+        self.refusal_said = None;
     }
 
     /// The tab's feed connected: from here on a roll waits for a hand.
     pub fn disarm(&mut self) {
-        self.armed = false;
+        self.armed = None;
     }
 
     /// Whether the tab still rolls by itself.
     #[must_use]
     pub fn is_armed(&self) -> bool {
-        self.armed
+        self.armed.is_some()
+    }
+
+    /// Whether the tab rolls itself off `symbol`: the contract it is armed
+    /// for, not decided yet.
+    #[must_use]
+    pub fn armed_for(&self, symbol: &str) -> bool {
+        self.armed.as_deref() == Some(symbol) && !self.decided.contains(symbol)
+    }
+
+    /// The tab switched to `symbol`. Only the roll the licence made itself
+    /// keeps it; a hand that picked another contract took the tab over.
+    pub fn switched_to(&mut self, symbol: &str) {
+        if self.armed.as_deref() != Some(symbol) {
+            self.armed = None;
+        }
     }
 
     /// The trader pressed the notice's Roll to `target`; the roll runs on the
@@ -115,8 +147,97 @@ impl AutoRoll {
         self.pressed.take()
     }
 
-    /// Record the decision about `symbol`; `false` when it was made already.
-    pub fn decide(&mut self, symbol: &str) -> bool {
-        self.decided.insert(symbol.to_owned())
+    /// The tab is rolling off `from` onto `to`: `from` is decided, the attach
+    /// that follows explains the roll, and an `automatic` one carries the
+    /// licence to `to` while a pressed one ends it.
+    pub fn rolling(&mut self, from: &str, to: &str, automatic: bool) {
+        self.decided.insert(from.to_owned());
+        self.armed = automatic.then(|| to.to_owned());
+        self.refusal_said = None;
+        self.offer = None;
+        self.rolled = Some((from.to_owned(), to.to_owned()));
+    }
+
+    /// The roll the attach that follows it explains, once.
+    pub fn take_rolled(&mut self) -> Option<(String, String)> {
+        self.rolled.take()
+    }
+
+    /// Whether `reason` is news: a refusal is said once, until another one
+    /// or a roll.
+    pub fn refusal_is_news(&mut self, reason: &'static str) -> bool {
+        let news = self.refusal_said != Some(reason);
+        self.refusal_said = Some(reason);
+        news
+    }
+
+    /// What the last settle found on offer.
+    pub fn set_offer(&mut self, offer: Option<RollOffer>) {
+        self.offer = offer;
+    }
+
+    /// The roll on offer, as the last settle found it.
+    #[must_use]
+    pub fn offer(&self) -> Option<&RollOffer> {
+        self.offer.as_ref()
+    }
+}
+
+/// What the trader reads after a roll off an unlisted contract.
+#[must_use]
+pub fn rolled_sentence(from: &str, to: &str) -> String {
+    format!("{from} is no longer listed; rolled to {to}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_licence_follows_its_own_rolls_and_no_hand() {
+        let mut roll = AutoRoll::default();
+        roll.arm("WINV26");
+        assert!(roll.armed_for("WINV26") && !roll.armed_for("WINZ26"));
+        roll.switched_to("WINV26");
+        assert!(
+            roll.armed_for("WINV26"),
+            "the restored contract's own spawn"
+        );
+        roll.rolling("WINV26", "WINZ26", true);
+        roll.switched_to("WINZ26");
+        assert!(roll.armed_for("WINZ26"), "its own roll carries it along");
+        assert_eq!(
+            roll.take_rolled(),
+            Some(("WINV26".to_owned(), "WINZ26".to_owned()))
+        );
+        assert_eq!(roll.take_rolled(), None);
+        roll.switched_to("WING27");
+        assert!(!roll.is_armed(), "a hand switch takes the tab over");
+        roll.switched_to("WINZ26");
+        assert!(
+            !roll.armed_for("WINZ26"),
+            "and coming back by hand re-arms nothing"
+        );
+
+        roll.arm("WINV26");
+        assert!(
+            roll.armed_for("WINV26"),
+            "arming again forgets what was decided"
+        );
+        roll.rolling("WINV26", "WINZ26", false);
+        assert!(!roll.is_armed(), "a pressed roll is a hand");
+    }
+
+    #[test]
+    fn a_refusal_is_said_once_until_it_changes() {
+        let mut roll = AutoRoll::default();
+        assert!(roll.refusal_is_news("paper"));
+        assert!(!roll.refusal_is_news("paper"));
+        assert!(roll.refusal_is_news("gesture"));
+        roll.rolling("A", "B", true);
+        assert!(
+            roll.refusal_is_news("gesture"),
+            "a roll starts the count over"
+        );
     }
 }
