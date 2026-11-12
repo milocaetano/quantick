@@ -33,21 +33,8 @@ pub(crate) struct SurfaceEnv<'a> {
     /// out once. Read by the surfaces whose capture hook has to paint
     /// somewhere plausible without a real target to aim at.
     pub focused_chart_area: Option<egui::Rect>,
-    /// The chart appearance in force. Read-only, like everything here: the
-    /// appearance window edits a copy and hands the result back through
-    /// [`SurfaceResponse::style`], because every renderer in the application
-    /// reads this one and a surface holding a `&mut` to it would be holding a
-    /// piece of the trunk.
-    pub style: &'a crate::style::ChartStyle,
     /// The chart surface the candle editor previews.
     pub style_surface: quantick_appearance::ChartSurface,
-    /// The focused chart's effective footprint setup — its own override, or
-    /// the window default it still follows. Read-only for the same reason
-    /// the style is: every footprint frame is reading this one.
-    pub footprint: &'a crate::footprint_config::FootprintConfig,
-    /// Whether that chart has already diverged from the window default, which
-    /// is what decides whether the panel offers to put it back.
-    pub footprint_customized: bool,
     /// Which pane has focus, so a window editing "the focused chart" can say
     /// in its title which chart that is.
     pub focused_side: crate::pane::PaneSide,
@@ -86,12 +73,6 @@ impl SurfaceEnv<'static> {
     /// every surface's test module — which is the difference between an env
     /// that can grow and one nobody wants to touch.
     pub fn quiet(now: Instant) -> Self {
-        /// The appearance a test that does not care about appearance gets.
-        static QUIET_STYLE: std::sync::LazyLock<crate::style::ChartStyle> =
-            std::sync::LazyLock::new(crate::style::ChartStyle::default);
-        /// The footprint setup a test that does not care about it gets.
-        static QUIET_FOOTPRINT: std::sync::LazyLock<crate::footprint_config::FootprintConfig> =
-            std::sync::LazyLock::new(crate::footprint_config::FootprintConfig::default);
         Self {
             picker_pane_id: 0,
             picker_indicators: &[],
@@ -99,10 +80,7 @@ impl SurfaceEnv<'static> {
             now,
             indicator_preview_area: None,
             focused_chart_area: None,
-            style: &QUIET_STYLE,
             style_surface: quantick_appearance::ChartSurface::Paper,
-            footprint: &QUIET_FOOTPRINT,
-            footprint_customized: false,
             focused_side: crate::pane::PaneSide::Flow,
             markets: None,
             active_tab: 0,

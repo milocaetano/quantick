@@ -29,15 +29,15 @@ impl TestTab {
             tab,
         }
     }
-    fn opened(&mut self, env: &SurfaceEnv<'_>) {
-        open(&mut self.surface, self.tab, *env.style);
+    fn opened(&mut self, _env: &SurfaceEnv<'_>) {
+        open(&mut self.surface, self.tab, ChartStyle::default());
     }
     fn draw(&mut self, ui: &mut egui::Ui, env: &SurfaceEnv<'_>) {
         self.surface.update(Intent::Refresh {
-            style: *env.style,
-            footprint: env.footprint.clone(),
+            style: self.surface.model_state.style,
+            footprint: self.surface.model_state.footprint.clone(),
             target: "Flow chart".into(),
-            customized: env.footprint_customized,
+            customized: false,
         });
         let mut response = SurfaceResponse::default();
         self.surface.with_updates(
@@ -382,11 +382,8 @@ fn supporting_guidance_fits_narrow_surfaces() {
     }
 }
 
-fn env(style: &ChartStyle, now: Instant) -> SurfaceEnv<'_> {
-    SurfaceEnv {
-        style,
-        ..SurfaceEnv::quiet(now)
-    }
+fn env(_style: &ChartStyle, now: Instant) -> SurfaceEnv<'_> {
+    SurfaceEnv::quiet(now)
 }
 
 #[test]
@@ -423,11 +420,9 @@ fn registered_settings_hooks_pin_before_first_paint_and_run_once() {
         let mut registry = crate::surfaces::Surfaces::default();
         crate::app::chart_settings_wiring::initialize(&mut registry.chart_settings.model_state);
         let ctx = egui::Context::default();
-        let style = ChartStyle::default();
         let env = SurfaceEnv {
             picker_pane_id: 123,
             active_tab: 7,
-            style: &style,
             ..SurfaceEnv::quiet(Instant::now())
         };
         crate::hooks::captured::set_on_this_thread(Some(&[(hook, "1")]));

@@ -32,13 +32,12 @@ impl super::View<Model> for View {
         } else {
             return None;
         };
-        Some(Intent::Open {
+        Some(Intent::OpenCurrent {
             tab,
-            target: Some(quantick_chart::pane_style::StyleTarget {
+            target: quantick_chart::pane_style::StyleTarget {
                 tab_id: env.active_tab,
                 pane_id: env.picker_pane_id,
-            }),
-            style: *env.style,
+            },
         })
     }
     fn paint_updated(
@@ -100,7 +99,7 @@ impl super::View<Model> for View {
     }
 }
 pub(crate) fn effects(mut effects: Effects) -> SurfaceResponse {
-    let response = SurfaceResponse {
+    SurfaceResponse {
         style: effects.style.take(),
         log_style_change: effects
             .log
@@ -120,8 +119,7 @@ pub(crate) fn effects(mut effects: Effects) -> SurfaceResponse {
             vec![quantick_ui_model::HostEffect::ChartSettings(effects)]
         },
         ..Default::default()
-    };
-    response
+    }
 }
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_STYLE_PANEL", "QUANTICK_FOOTPRINT_PANEL"];

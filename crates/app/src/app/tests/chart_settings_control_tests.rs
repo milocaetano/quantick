@@ -187,10 +187,12 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         .expect("written while the path is a file");
     std::fs::remove_file(&unwritable).unwrap();
     std::fs::create_dir_all(&unwritable).unwrap();
-    let working = std::mem::replace(
-        &mut app.surfaces.chart_settings.model_state.candles,
-        Some(held),
-    );
+    let working = app
+        .surfaces
+        .chart_settings
+        .model_state
+        .candles
+        .replace(held);
     for unwritten in [
         json!({"action": "save_candle_preset", "name": "dusk"}),
         json!({"action": "delete_candle_preset", "name": "dawn"}),

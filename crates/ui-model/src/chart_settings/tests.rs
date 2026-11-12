@@ -219,3 +219,37 @@ fn unchanged_refresh_retains_preset_projection() {
     assert_eq!(Model::update(&mut state, intent), Effects::default());
     assert_eq!(before, state.footprint_rows.as_ptr());
 }
+
+#[test]
+fn startup_hook_preserves_an_existing_pin_and_stale_sitting() {
+    let mut state = ready();
+    let pinned = StyleTarget {
+        tab_id: 1,
+        pane_id: 10,
+    };
+    let focused = StyleTarget {
+        tab_id: 2,
+        pane_id: 20,
+    };
+    Model::update(
+        &mut state,
+        Intent::Open {
+            tab: ChartSettingsTab::Candles,
+            target: Some(pinned),
+            style: ChartStyle::default(),
+        },
+    );
+    state.editor.observe(pinned, Some(10));
+    state.editor.observe(pinned, Some(11));
+    assert!(state.editor.stale);
+    Model::update(
+        &mut state,
+        Intent::OpenCurrent {
+            tab: ChartSettingsTab::Footprint,
+            target: focused,
+        },
+    );
+    assert_eq!(state.editor.target, Some(pinned));
+    assert!(state.editor.stale);
+    assert!(state.is_open_on(ChartSettingsTab::Footprint));
+}

@@ -92,6 +92,10 @@ pub enum Intent {
         target: Option<StyleTarget>,
         style: ChartStyle,
     },
+    OpenCurrent {
+        tab: ChartSettingsTab,
+        target: StyleTarget,
+    },
     Close,
     SelectTab(ChartSettingsTab),
     Refresh {
@@ -152,6 +156,16 @@ impl crate::Model for Model {
                 state.footprint_presets = footprint;
                 state.loaded = true;
                 state.project();
+            }
+            Intent::OpenCurrent { tab, target } => {
+                return Self::update(
+                    state,
+                    Intent::Open {
+                        tab,
+                        target: state.editor.target.is_none().then_some(target),
+                        style: state.style,
+                    },
+                );
             }
             Intent::Open { tab, target, style } => {
                 if let Some(candles) = &mut state.candles {
