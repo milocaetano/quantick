@@ -171,7 +171,10 @@ pub struct DockPaneInput {
     /// A canvas edge: the chart takes a fair share of the canvas there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<CanvasEdge>,
-    /// A docked chart's slot: that chart splits, this one on its `side`.
+    /// A docked chart's slot: this chart docks on its `side`. When that
+    /// chart's split already lays charts that way, this one joins the split
+    /// beside it and every chart in it gives a fair share; otherwise that
+    /// chart splits in half with this one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beside: Option<u32>,
     /// The side of `beside` the chart docks on.
@@ -345,7 +348,7 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
         DOCK_CAPABILITY_ID => canvas_descriptor::<DockPaneInput, CanvasResult>(
             id,
             "Dock a chart",
-            "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: that chart splits), or in a docked chart's place (swap_with: that chart floats where this one stood). Name exactly one. The result names the preset the layout now matches, if any.",
+            "Inserts a floating chart into the layout, as a drop does: at a canvas edge (edge), beside a docked chart (beside with side: it joins that chart's split along that side for a fair share, or that chart splits in half), or in a docked chart's place (swap_with: that chart floats where this one stood over the canvas; a chart in its own window cannot swap). A docked chart named in slot moves there instead, and swapping two docked charts trades their places. Name exactly one. The result names the preset the layout now matches, if any.",
         ),
         PARK_CAPABILITY_ID => canvas_descriptor::<ParkPaneInput, CanvasResult>(
             id,

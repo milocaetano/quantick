@@ -37,11 +37,11 @@ fn left_edge_dock_turns_one_tf_flow_into_two_tf_flow() {
     assert_eq!(matching_preset(custom.tree()), None);
     assert_eq!(custom.preset(), None);
 
-    // Only a floating pane docks.
-    assert_eq!(
-        state.dock(0, DockTarget::Canvas(Edge::Left)),
-        Err(CanvasRefusal::NotFloating(0))
-    );
+    // A docked pane docking elsewhere moves there.
+    assert_eq!(state.dock(0, DockTarget::Canvas(Edge::Left)), Ok(true));
+    let rects = state.rects(CANVAS);
+    let left = rects.iter().find(|(held, _)| *held == 0).unwrap().1;
+    assert_eq!(left.x, 0.0, "pane 0 moved to the left edge");
     assert_eq!(
         state.dock(42, DockTarget::Canvas(Edge::Left)),
         Err(CanvasRefusal::UnknownPane(42))

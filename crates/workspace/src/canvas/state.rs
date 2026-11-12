@@ -403,43 +403,48 @@ impl CanvasState {
         self.set_host(slot, FloatHost::Canvas { rect })
     }
 
-    /// Insert a floating pane into the docked tree at `target`: at a canvas
-    /// edge, beside a docked pane, or in a docked pane's place, which then
-    /// floats where this one stood.
+    /// Put a pane into the docked tree at `target`: at a canvas edge, beside
+    /// a docked pane, or in a docked pane's place. A floating pane docks
+    /// there, and a docked pane it swaps with floats where it stood; a docked
+    /// pane moves there, and swapping two docked panes trades their places.
     ///
     /// # Errors
-    /// The pane is not floating, or the pane `target` names is not docked.
+    /// No such pane; the pane `target` names is not docked; a pane in its
+    /// own window swapping (the docked pane would leave for that window); or
+    /// moving the last docked pane.
     pub fn dock(&mut self, slot: PaneSlot, target: DockTarget) -> Result<bool, CanvasRefusal> {
+        if self.tree.holds(slot) {
+            return self.redock(slot, target);
+        }
         let index = self
             .floating_index(slot)
             .ok_or_else(|| self.missing_or(slot, CanvasRefusal::NotFloating(slot)))?;
-        let pane = PaneTree::pane(slot, self.floating[index].kind);
+        let (kind, host) = (self.floating[index].kind, self.floating[index].host.clone());
+        let pane = PaneTree::pane(slot, kind);
         let tree = match target {
             DockTarget::Canvas(edge) => {
                 let (axis, at_start) = edge.placing();
                 self.tree.docked(pane, axis, at_start)
             }
-            DockTarget::Beside { slot: beside, side } => {
-                self.docked(beside)?;
-                (self.tree.docked_beside(beside, pane, side))
-                    .ok_or(CanvasRefusal::NotDocked(beside))?
-            }
+            DockTarget::Beside { slot: beside, side } => (self.tree)
+                .docked_beside(beside, pane, side)
+                .ok_or_else(|| self.missing_or(beside, CanvasRefusal::NotDocked(beside)))?,
             DockTarget::Swap(other) => {
-                let kind = self.docked(other)?;
-                let floated = FloatingPane {
-                    slot: other,
-                    kind,
-                    host: self.floating[index].host.clone(),
-                };
-                let tree = (self.tree).replaced(&|held, held_kind| {
+                let other_kind = self.docked(other)?;
+                if !matches!(host, FloatHost::Canvas { .. }) {
+                    return Err(CanvasRefusal::NotFloating(slot));
+                }
+                let swapped = |held, held_kind| {
                     if held == other {
-                        (slot, self.floating[index].kind)
+                        (slot, kind)
                     } else {
                         (held, held_kind)
                     }
-                });
+                };
+                let tree = self.tree.replaced(&swapped);
                 self.minimized.remove(&other);
-                self.floating.push(floated);
+                let (slot, kind) = (other, other_kind);
+                self.floating.push(FloatingPane { slot, kind, host });
                 tree
             }
         };
@@ -447,6 +452,29 @@ impl CanvasState {
         self.tree = tree;
         self.maximized = None;
         Ok(true)
+    }
+
+    /// Move the docked pane `slot` to `target`: a swap trades two docked
+    /// panes' places, anything else takes it out of the tree and docks it
+    /// again. Nothing changes when refused.
+    fn redock(&mut self, slot: PaneSlot, target: DockTarget) -> Result<bool, CanvasRefusal> {
+        if let DockTarget::Swap(other) = target {
+            self.docked(other)?;
+            let tree = self.tree.swap(slot, other);
+            let changed = tree != self.tree;
+            self.tree = tree;
+            return Ok(changed);
+        }
+        let mut moved = self.clone();
+        let kind = moved.take_docked(slot)?;
+        let host = FloatHost::Canvas {
+            rect: CanvasRect::new(0.0, 0.0, 0.0, 0.0),
+        };
+        moved.floating.push(FloatingPane { slot, kind, host });
+        moved.dock(slot, target)?;
+        let changed = moved != *self;
+        *self = moved;
+        Ok(changed)
     }
 
     /// Snap a pane floating over the canvas into `corner` of `canvas`,

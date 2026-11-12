@@ -5,7 +5,7 @@
 //! drop inside the canvas does is [`drop_target`]'s alone, so the corner rule
 //! has one home. A drop past the window's edge leaves it for an OS window.
 
-use super::drop::{Corner, DockTarget, DropTarget, drop_target, kept_inside};
+use super::drop::{Corner, DockTarget, DropTarget, drop_target, kept_inside, park_rect};
 use super::state::{CanvasState, PaneMode};
 use super::tree::{CanvasPoint, CanvasRect, PaneSlot};
 
@@ -15,6 +15,9 @@ pub const DOCK_HINT: &str = "Drop on an edge or a chart to dock · anywhere else
 pub const DOCK_PILL: &str = "Dock here";
 /// How far in from a floating pane's edge a press resizes it.
 pub const RESIZE_GRIP_PX: f32 = 6.0;
+/// How far the pointer travels from its press on a docked pane's ⋯ before
+/// the drag lifts the pane: a slow click never moves it.
+pub const LIFT_PX: f32 = 6.0;
 /// The smallest a resize leaves a floating pane, in points.
 pub const MIN_FLOAT_SIZE: (f32, f32) = (240.0, 160.0);
 
@@ -146,7 +149,8 @@ impl FloatGesture {
     /// keeps the new size; a move past `window` pops the pane out, and inside
     /// it the canvas's one drop rule decides, over the panes it lays out. A
     /// pane let go over the window outside the canvas (the toolbar) floats
-    /// kept inside the canvas.
+    /// kept inside the canvas. A held docked pane (lifted by its ⋯) offers no
+    /// zone of its own, and a corner floats it parked there.
     #[must_use]
     pub fn release(
         &self,
@@ -165,8 +169,15 @@ impl FloatGesture {
         if !canvas.contains(pointer) {
             return DropOutcome::Float(kept_inside(rect, canvas));
         }
-        match drop_target(canvas, &open_panes(state, canvas), pointer) {
+        let mut panes = open_panes(state, canvas);
+        panes.retain(|(held, _)| *held != self.slot());
+        let docked = state.tree().holds(self.slot());
+        match drop_target(canvas, &panes, pointer) {
             DropTarget::Dock(target) => DropOutcome::Dock(target),
+            // A docked pane is not floating to park: it floats parked there.
+            DropTarget::Park(corner) if docked => {
+                DropOutcome::Float(park_rect(canvas, corner, (rect.w, rect.h)))
+            }
             DropTarget::Park(corner) => DropOutcome::Park(corner),
             DropTarget::Float => DropOutcome::Float(rect),
         }

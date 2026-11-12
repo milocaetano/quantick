@@ -20,8 +20,8 @@ use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
 };
 use quantick_workspace::canvas::{
-    self, CanvasRect, CanvasRefusal, CanvasState, Corner, DockTarget, DropOutcome, Edge,
-    FloatGesture, FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer,
+    self, CanvasRect, CanvasRefusal, CanvasState, Corner, DockTarget, DropOutcome, DropTarget,
+    Edge, FloatGesture, FloatHost, LayoutPreset, PaneKind, PaneMenuItem, PaneMode, RemoveAnswer,
     SplitAxis, WidgetSpec,
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -676,10 +676,11 @@ pub fn placed_pop_out(
     }
 }
 
-/// The canvas's drop targets while a chart floats over it: each edge band
-/// docks, each corner parks, each docked chart's sides dock beside it and
-/// its centre swaps. Answers each target's scene id, label, place and the
-/// capability that does what a drop there does.
+/// The canvas's drop targets while a chart floats over it, as the canvas
+/// model's one drop rule lays them out: each corner parks, each edge band
+/// docks, each docked chart's sides dock beside it and its centre swaps.
+/// Answers each target's scene id, label, place and the capability that
+/// does what a drop there does.
 #[must_use]
 pub fn drop_targets(
     state: &CanvasState,
@@ -689,51 +690,44 @@ pub fn drop_targets(
     if !state.floating().iter().any(over) {
         return Vec::new();
     }
-    let (band, corner) = (canvas::DOCK_EDGE_BAND_PX, canvas::PARK_CORNER_PX);
-    let (right, bottom) = (area.right() - band, area.bottom() - band);
-    let (far_x, far_y) = (area.right() - corner, area.bottom() - corner);
-    let rect = |x, y, w, h| CanvasRect::new(x, y, w, h);
-    let docks = [
-        ("left", rect(area.x, area.y, band, area.h)),
-        ("right", rect(right, area.y, band, area.h)),
-        ("top", rect(area.x, area.y, area.w, band)),
-        ("bottom", rect(area.x, bottom, area.w, band)),
-    ];
-    let parks = [
-        ("top_left", rect(area.x, area.y, corner, corner)),
-        ("top_right", rect(far_x, area.y, corner, corner)),
-        ("bottom_left", rect(area.x, far_y, corner, corner)),
-        ("bottom_right", rect(far_x, far_y, corner, corner)),
-    ];
-    let named = |verb: &str, words: &str, at: &str| {
-        (
-            format!("canvas.{verb}.{at}"),
-            format!("{words} {}", at.replace('_', " ")),
-        )
+    let zones = canvas::drop_zones(area, &canvas::open_panes(state, area));
+    let named = |target| match target {
+        DropTarget::Park(corner) => {
+            let at = match corner {
+                Corner::TopLeft => "top_left",
+                Corner::TopRight => "top_right",
+                Corner::BottomLeft => "bottom_left",
+                Corner::BottomRight => "bottom_right",
+            };
+            let words = format!("Park in {}", at.replace('_', " "));
+            Some((format!("canvas.park.{at}"), words, PARK_CAPABILITY_ID))
+        }
+        DropTarget::Dock(DockTarget::Canvas(edge)) => {
+            let at = edge.id();
+            Some((
+                format!("canvas.dock.{at}"),
+                format!("Dock at {at}"),
+                DOCK_CAPABILITY_ID,
+            ))
+        }
+        DropTarget::Dock(DockTarget::Beside { slot, side }) => Some((
+            format!("canvas.dock.beside.{slot}.{}", side.id()),
+            format!("Dock beside chart {slot}, {}", side.id()),
+            DOCK_CAPABILITY_ID,
+        )),
+        DropTarget::Dock(DockTarget::Swap(slot)) => Some((
+            format!("canvas.dock.swap.{slot}"),
+            format!("Swap with chart {slot}"),
+            DOCK_CAPABILITY_ID,
+        )),
+        // A drop away from every zone floats: no zone of its own to publish.
+        DropTarget::Float => None,
     };
-    let docks = docks
-        .into_iter()
-        .map(|(at, place)| (named("dock", "Dock at", at), place, DOCK_CAPABILITY_ID));
-    let parks = parks
-        .into_iter()
-        .map(|(at, place)| (named("park", "Park in", at), place, PARK_CAPABILITY_ID));
-    let panes = canvas::dock_zones(area, &canvas::open_panes(state, area));
-    let panes = panes.into_iter().map(|(target, place)| {
-        let (id, label) = match target {
-            DockTarget::Beside { slot, side } => (
-                format!("canvas.dock.beside.{slot}.{}", side.id()),
-                format!("Dock beside chart {slot}, {}", side.id()),
-            ),
-            DockTarget::Swap(slot) => (
-                format!("canvas.dock.swap.{slot}"),
-                format!("Swap with chart {slot}"),
-            ),
-            DockTarget::Canvas(edge) => named("dock", "Dock at", edge.id()),
-        };
-        ((id, label), place, DOCK_CAPABILITY_ID)
-    });
-    (docks.chain(parks).chain(panes))
-        .map(|((id, label), place, capability)| (id, label, place, capability))
+    (zones.into_iter())
+        .filter_map(|(target, place)| {
+            let (id, label, capability) = named(target)?;
+            Some((id, label, place, capability))
+        })
         .collect()
 }
 
@@ -921,32 +915,45 @@ pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
     value.split(';').filter_map(one).collect()
 }
 
-/// The chart `slot` whose ⋯ was dragged, the pointer pressed at `start`:
-/// the float that takes a docked one out of the layout where it stood, and
-/// the hold the pointer has on it, as its grip holds it. `None` without both,
-/// or for a chart that cannot float over the canvas (the last docked one, or
-/// one in its own window).
+/// The hold a drag on chart `slot`'s ⋯ takes, pressed at `press` with the
+/// pointer now at `now`: none until the pointer has travelled
+/// [`canvas::LIFT_PX`], so a slow click never moves the chart. A floating
+/// chart is held where it floats; a docked one stays docked until the drop,
+/// so a swap trades two places, and floats, if the drop floats it, at no
+/// more than half the canvas each way, centred on the press. `None` for a
+/// chart that cannot leave its place (the last docked one, or one in its
+/// own window).
 #[must_use]
 pub fn lifted(
     state: &CanvasState,
     area: CanvasRect,
     slot: Option<u32>,
-    start: Option<(f32, f32)>,
-) -> Option<(Option<CanvasAct>, FloatGesture)> {
-    let (slot, (x, y)) = slot.zip(start)?;
+    press: Option<(f32, f32)>,
+    now: Option<(f32, f32)>,
+) -> Option<FloatGesture> {
+    let (slot, ((x, y), (to_x, to_y))) = slot.zip(press.zip(now))?;
+    if (to_x - x).hypot(to_y - y) < canvas::LIFT_PX {
+        return None;
+    }
     let start = canvas::CanvasPoint::new(x, y);
     let held = |from| FloatGesture::Move { slot, from, start };
     if let Some(FloatHost::Canvas { rect }) = state.host(slot) {
-        return Some((None, held(*rect)));
+        return Some(held(*rect));
     }
-    let from = state
+    let stood = state
         .rects(area)
         .into_iter()
         .find(|(held, _)| *held == slot)?
         .1;
+    let size = CanvasRect::new(
+        0.0,
+        0.0,
+        stood.w.min(area.w / 2.0),
+        stood.h.min(area.h / 2.0),
+    );
+    let from = size.centred_in(CanvasRect::new(x, y, 0.0, 0.0));
     state.clone().float(slot, from).ok()?;
-    let rect = Some(dto(from));
-    Some((Some(CanvasAct::Float { slot, rect }), held(from)))
+    Some(held(from))
 }
 
 /// A `QUANTICK_CANVAS_HOLD` value, `<slot>:<x>,<y>`, on `state`: once that

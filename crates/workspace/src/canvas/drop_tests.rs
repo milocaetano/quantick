@@ -104,12 +104,16 @@ fn centre(rect: CanvasRect) -> CanvasPoint {
 fn every_pane_zone_is_reached_where_it_is_published() {
     let (state, _) = floating_over("charts-4");
     let panes = open_panes(&state, CANVAS);
-    let zones = dock_zones(CANVAS, &panes);
-    assert_eq!(zones.len(), 4 * 5, "four sides and a centre per pane");
+    let zones = drop_zones(CANVAS, &panes);
+    assert_eq!(
+        zones.len(),
+        4 + 4 + 4 * 5,
+        "four corners, four edges, four sides and a centre per pane"
+    );
     for (target, zone) in &zones {
         assert_eq!(
             drop_target(CANVAS, &panes, centre(*zone)),
-            DropTarget::Dock(*target),
+            *target,
             "{target:?} at {zone:?}"
         );
     }
@@ -150,8 +154,8 @@ fn a_drop_on_a_pane_side_splits_that_pane() {
     assert_eq!(top.h + below.h, one.h);
     assert_eq!(
         state.dock(slot, target),
-        Err(CanvasRefusal::NotFloating(slot)),
-        "a repeat is refused: it no longer floats"
+        Ok(false),
+        "a repeat changes nothing"
     );
     let (mut other, floated) = floating_over("charts-2");
     let beside_gone = DockTarget::Beside {
@@ -205,4 +209,68 @@ fn a_centre_drop_swaps_the_two_panes() {
         tree,
         "a pane the tree lacks swaps nothing"
     );
+}
+
+/// A docked pane held by its ⋯ stays docked until the drop: on another
+/// pane's centre the two trade places, on a side it moves there, its own
+/// zones are never offered, and a corner floats it parked there.
+#[test]
+fn a_held_docked_pane_trades_places_or_moves() {
+    let window = CanvasRect::new(0.0, 0.0, CANVAS.right(), CANVAS.bottom());
+    let state = CanvasState::from_preset(preset("time+time+flow").unwrap());
+    let (zero, flow) = (rect_of(&state, 0), rect_of(&state, 2));
+    let start = centre(zero);
+    let held = FloatGesture::Move {
+        slot: 0,
+        from: CanvasRect::new(start.x - 100.0, start.y - 50.0, 200.0, 100.0),
+        start,
+    };
+    assert_eq!(
+        held.release(&state, CANVAS, window, centre(zero)),
+        DropOutcome::Float(held.rect(centre(zero))),
+        "its own centre is no target"
+    );
+    let swap = held.release(&state, CANVAS, window, centre(flow));
+    assert_eq!(swap, DropOutcome::Dock(DockTarget::Swap(2)));
+    let lit = held.dock_preview(&state, CANVAS, window, centre(flow));
+    assert_eq!(lit, Some(flow), "the preview lights the flow's place");
+    let mut traded = state.clone();
+    assert_eq!(traded.dock(0, DockTarget::Swap(2)), Ok(true));
+    assert_eq!((rect_of(&traded, 0), rect_of(&traded, 2)), (flow, zero));
+    assert_eq!(traded.mode(2), Some(PaneMode::Docked), "both stay docked");
+    assert_eq!(traded.dock(0, DockTarget::Swap(0)), Ok(false));
+
+    let corner = CanvasPoint::new(CANVAS.right() - 5.0, CANVAS.y + 5.0);
+    let DropOutcome::Float(parked) = held.release(&state, CANVAS, window, corner) else {
+        panic!("a docked pane floats parked in the corner");
+    };
+    assert_eq!(parked, park_rect(CANVAS, Corner::TopRight, (200.0, 100.0)));
+
+    let mut moved = state.clone();
+    let beside = DockTarget::Beside {
+        slot: 2,
+        side: Edge::Bottom,
+    };
+    assert_eq!(moved.dock(0, beside), Ok(true));
+    assert_eq!(rect_of(&moved, 0).x, rect_of(&moved, 2).x, "under the flow");
+    let mut lone = CanvasState::from_preset(preset("time").unwrap());
+    assert_eq!(
+        lone.dock(0, DockTarget::Canvas(Edge::Left)),
+        Err(CanvasRefusal::LastDockedPane)
+    );
+}
+
+/// A pane in its own window cannot swap: the docked pane would leave for
+/// that window.
+#[test]
+fn a_pane_in_its_own_window_does_not_swap() {
+    let (mut state, slot) = floating_over("charts-2");
+    let window = CanvasRect::new(2000.0, 0.0, 800.0, 600.0);
+    state.pop_out(slot, "DISPLAY2", window).unwrap();
+    let before = state.clone();
+    assert_eq!(
+        state.dock(slot, DockTarget::Swap(0)),
+        Err(CanvasRefusal::NotFloating(slot))
+    );
+    assert_eq!(state, before);
 }

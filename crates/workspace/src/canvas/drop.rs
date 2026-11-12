@@ -33,7 +33,9 @@ const _: () = assert!(
 pub enum DockTarget {
     /// Into the canvas at this edge, taking a fair share of it.
     Canvas(Edge),
-    /// Beside the docked pane `slot`, on its `side`: that pane splits.
+    /// Beside the docked pane `slot`, on its `side`: into that pane's split
+    /// when it lays panes that way, for a fair share of it, else that pane
+    /// splits in half.
     Beside { slot: PaneSlot, side: Edge },
     /// Into the docked pane `slot`'s place; that pane floats where the
     /// docking one floated.
@@ -61,61 +63,56 @@ pub enum DropTarget {
 }
 
 /// What dropping a pane with the pointer at `pointer` does on `canvas`, whose
-/// docked panes stand at `panes`. A canvas corner wins over its edges, a
-/// canvas edge over the panes along it.
+/// docked panes stand at `panes`: the first of [`drop_zones`] holding it, so
+/// a canvas corner wins over its edges and a canvas edge over the panes along
+/// it; anywhere else, and outside the canvas, the pane floats.
 #[must_use]
 pub fn drop_target(
     canvas: CanvasRect,
     panes: &[(PaneSlot, CanvasRect)],
     pointer: CanvasPoint,
 ) -> DropTarget {
-    if !canvas.contains(pointer) {
-        return DropTarget::Float;
-    }
-    let left = pointer.x - canvas.x;
-    let right = canvas.right() - pointer.x;
-    let top = pointer.y - canvas.y;
-    let bottom = canvas.bottom() - pointer.y;
-    let near_left = left <= right;
-    let near_top = top <= bottom;
-    let across = left.min(right);
-    let down = top.min(bottom);
-    if across <= PARK_CORNER_PX && down <= PARK_CORNER_PX {
-        return DropTarget::Park(match (near_top, near_left) {
-            (true, true) => Corner::TopLeft,
-            (true, false) => Corner::TopRight,
-            (false, true) => Corner::BottomLeft,
-            (false, false) => Corner::BottomRight,
-        });
-    }
-    if across.min(down) <= DOCK_EDGE_BAND_PX {
-        return DropTarget::Dock(DockTarget::Canvas(if across <= down {
-            if near_left { Edge::Left } else { Edge::Right }
-        } else if near_top {
-            Edge::Top
-        } else {
-            Edge::Bottom
-        }));
-    }
-    let zones = panes
-        .iter()
-        .flat_map(|&(slot, rect)| pane_zones(canvas, slot, rect));
+    let zones = drop_zones(canvas, panes).into_iter();
     let mut hit = zones.filter(|(_, zone)| zone.contains(pointer));
-    hit.next()
-        .map_or(DropTarget::Float, |(target, _)| DropTarget::Dock(target))
+    hit.next().map_or(DropTarget::Float, |(target, _)| target)
 }
 
-/// Every docked pane's dock zones on `canvas`: its four sides, then its
-/// centre, each where a drop there reaches it, in pane order. What the scene
-/// publishes and what [`drop_target`] tests a pointer against.
+/// Every zone a drop docks or parks in on `canvas`, in the order the drop
+/// rule tries them: the four corners, the four edge bands, then each docked
+/// pane's four sides and centre, in pane order. What the scene publishes and
+/// what [`drop_target`] tests a pointer against, so the two never disagree.
 #[must_use]
-pub fn dock_zones(
+pub fn drop_zones(
     canvas: CanvasRect,
     panes: &[(PaneSlot, CanvasRect)],
-) -> Vec<(DockTarget, CanvasRect)> {
-    (panes.iter())
+) -> Vec<(DropTarget, CanvasRect)> {
+    let (band, corner) = (DOCK_EDGE_BAND_PX, PARK_CORNER_PX);
+    let (far_x, far_y) = (canvas.right() - corner, canvas.bottom() - corner);
+    let r = CanvasRect::new;
+    let corners = [
+        (Corner::TopLeft, r(canvas.x, canvas.y, corner, corner)),
+        (Corner::TopRight, r(far_x, canvas.y, corner, corner)),
+        (Corner::BottomLeft, r(canvas.x, far_y, corner, corner)),
+        (Corner::BottomRight, r(far_x, far_y, corner, corner)),
+    ];
+    let edges = [
+        (Edge::Left, r(canvas.x, canvas.y, band, canvas.h)),
+        (
+            Edge::Right,
+            r(canvas.right() - band, canvas.y, band, canvas.h),
+        ),
+        (Edge::Top, r(canvas.x, canvas.y, canvas.w, band)),
+        (
+            Edge::Bottom,
+            r(canvas.x, canvas.bottom() - band, canvas.w, band),
+        ),
+    ];
+    let corners = corners.map(|(at, zone)| (DropTarget::Park(at), zone));
+    let edges = edges.map(|(at, zone)| (DropTarget::Dock(DockTarget::Canvas(at)), zone));
+    let panes = (panes.iter())
         .flat_map(|&(slot, rect)| pane_zones(canvas, slot, rect))
-        .collect()
+        .map(|(target, zone)| (DropTarget::Dock(target), zone));
+    corners.into_iter().chain(edges).chain(panes).collect()
 }
 
 /// `slot`'s zones: the part of its rect the canvas bands leave, a side strip

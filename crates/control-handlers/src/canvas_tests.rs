@@ -688,48 +688,49 @@ fn a_second_flow_is_refused_over_the_control_plane() {
     assert_eq!(state, before);
 }
 
-/// A dragged ⋯ lifts a docked chart by a float to where it stood and holds
-/// it; a floating chart is only held; the last docked chart is not lifted.
+/// A dragged ⋯ holds its chart once the pointer has travelled the lift
+/// distance: a docked chart stays docked, held at no more than half the
+/// canvas centred on the press; a floating one is held where it floats; the
+/// last docked chart is not held.
 #[test]
 fn a_dragged_menu_button_lifts_its_chart() {
     use crate::canvas::lifted;
-    use quantick_workspace::canvas::{CanvasRect, CanvasState, FloatHost, PaneKind, preset};
+    use quantick_workspace::canvas::{
+        CanvasPoint, CanvasRect, CanvasState, FloatHost, LIFT_PX, PaneKind, PaneMode, preset,
+    };
     let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
     let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
-    let stood = state.rects(area)[0].1;
-    let (act, held) = lifted(&state, area, Some(0), Some((30.0, 12.0))).unwrap();
-    let rect = CanvasRectDto {
-        x: stood.x,
-        y: stood.y,
-        w: stood.w,
-        h: stood.h,
-    };
-    let float = CanvasAct::Float {
-        slot: 0,
-        rect: Some(rect),
-    };
-    assert_eq!(act, Some(float));
-    assert_eq!(held.slot(), 0);
-    assert_eq!(
-        held.rect(quantick_workspace::canvas::CanvasPoint::new(30.0, 12.0)),
-        stood
+    let press = Some((300.0, 12.0));
+    let still = lifted(
+        &state,
+        area,
+        Some(1),
+        press,
+        Some((300.0 + LIFT_PX - 1.0, 12.0)),
     );
-    assert!(lifted(&state, area, None, Some((0.0, 0.0))).is_none());
-    assert!(lifted(&state, area, Some(0), None).is_none());
+    assert!(still.is_none(), "a slow click never lifts");
+    let held = lifted(&state, area, Some(1), press, Some((330.0, 40.0))).unwrap();
+    assert_eq!(held.slot(), 1);
+    assert_eq!(
+        state.mode(1),
+        Some(PaneMode::Docked),
+        "it stays docked until the drop"
+    );
+    let at = held.rect(CanvasPoint::new(300.0, 12.0));
+    assert_eq!((at.w, at.h), (800.0, 450.0), "half the canvas at most");
+    assert_eq!((at.x + at.w / 2.0, at.y + at.h / 2.0), (300.0, 12.0));
+    assert!(lifted(&state, area, None, press, press).is_none());
 
     let added = state.add(PaneKind::Time, area).unwrap();
-    let (act, held) = lifted(&state, area, Some(added), Some((1.0, 1.0))).unwrap();
-    assert_eq!(act, None, "a floating chart is only held");
+    let far = Some((40.0, 40.0));
+    let held = lifted(&state, area, Some(added), Some((1.0, 1.0)), far).unwrap();
     let Some(FloatHost::Canvas { rect }) = state.host(added) else {
         panic!("floating");
     };
-    assert_eq!(
-        held.rect(quantick_workspace::canvas::CanvasPoint::new(1.0, 1.0)),
-        *rect
-    );
+    assert_eq!(held.rect(CanvasPoint::new(1.0, 1.0)), *rect);
     state.float(0, area).unwrap();
     assert!(
-        lifted(&state, area, Some(1), Some((1.0, 1.0))).is_none(),
+        lifted(&state, area, Some(1), Some((1.0, 1.0)), far).is_none(),
         "the last docked chart stays"
     );
 }

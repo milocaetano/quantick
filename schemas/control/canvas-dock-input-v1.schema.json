@@ -16,7 +16,7 @@
   "description": "Where a floating chart docks: exactly one of `edge`, `beside` with\n`side`, or `swap_with`.",
   "properties": {
     "beside": {
-      "description": "A docked chart's slot: that chart splits, this one on its `side`.",
+      "description": "A docked chart's slot: this chart docks on its `side`. When that\nchart's split already lays charts that way, this one joins the split\nbeside it and every chart in it gives a fair share; otherwise that\nchart splits in half with this one.",
       "format": "uint32",
       "minimum": 0,
       "type": [

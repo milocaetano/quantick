@@ -376,36 +376,42 @@ fn canvas_dock_minimize_restore_resize_round_trip() {
     assert!((top.h - at(&docked, 1).h).abs() < 0.5, "its split kept");
 }
 
-/// A docked chart's ⋯ is its grip: dragged, the chart lifts out of the
-/// layout where it stood; dropped on the flow's centre it takes the flow's
-/// place, and the flow floats where the chart stood.
+/// A docked chart's ⋯ is its grip: dragged past the lift distance the chart
+/// is held while it stays in place, and dropped on the flow's centre the two
+/// trade places, both docked; a click still opens the menu.
 #[test]
 fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
     let (mut app, ctx) = saved_tab("time+time+flow");
     let panes = app.active_tab().canvas.state.panes();
     let kind = |want| panes.iter().find(|pane| pane.1 == want).unwrap().0;
     let (chart, flow) = (kind(PaneKind::Time), kind(PaneKind::Flow));
-    let stood = (model_rects(&app).into_iter()).find(|(slot, _)| *slot == chart);
-    let stood = stood.unwrap().1;
+    let before = model_rects(&app);
+    let at = |held| before.iter().find(|(slot, _)| *slot == held).unwrap().1;
     let button = drawn(&app, &format!("pane_menu.{chart}")).expect("the chart wears its ⋯");
     let frame = |app: &mut QuantickApp, events| {
         run_frame_sized(app, &ctx, TEST_WINDOW, events, egui::Modifiers::NONE);
     };
-    let at = button.center();
+    let press = button.center();
     frame(
         &mut app,
-        vec![egui::Event::PointerMoved(at), pointer_button(at, true)],
+        vec![
+            egui::Event::PointerMoved(press),
+            pointer_button(press, true),
+        ],
     );
     frame(
         &mut app,
-        vec![egui::Event::PointerMoved(at + egui::vec2(0.0, 60.0))],
+        vec![egui::Event::PointerMoved(press + egui::vec2(0.0, 60.0))],
     );
+    let held = app.active_tab().canvas.floats.held.map(|held| held.slot());
+    assert_eq!(held, Some(chart), "held");
     let state = &app.active_tab().canvas.state;
-    assert_eq!(state.mode(chart), Some(PaneMode::Floating), "lifted");
-    assert_eq!(state.host(chart), Some(&FloatHost::Canvas { rect: stood }));
-    assert!(app.active_tab().canvas.floats.held.is_some(), "and held");
-    let place = (model_rects(&app).into_iter()).find(|(slot, _)| *slot == flow);
-    let place = place.unwrap().1;
+    assert_eq!(
+        state.mode(chart),
+        Some(PaneMode::Docked),
+        "in place until the drop"
+    );
+    let place = at(flow);
     let centre = egui::pos2(place.x + place.w / 2.0, place.y + place.h / 2.0);
     frame(&mut app, vec![egui::Event::PointerMoved(centre)]);
     frame(
@@ -423,14 +429,23 @@ fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
         "{:?}",
         state.panes()
     );
-    assert_eq!(state.mode(flow), Some(PaneMode::Floating));
-    let now = (model_rects(&app).into_iter()).find(|(slot, _)| *slot == chart);
-    assert_eq!(now.unwrap().1, place, "the chart took the flow's place");
+    assert_eq!(state.mode(flow), Some(PaneMode::Docked));
+    let after = model_rects(&app);
+    let now = |held| after.iter().find(|(slot, _)| *slot == held).unwrap().1;
     assert_eq!(
-        app.active_tab().canvas.state.host(flow),
-        Some(&FloatHost::Canvas { rect: stood }),
-        "the flow floats where the chart stood"
+        (now(chart), now(flow)),
+        (place, at(chart)),
+        "they traded places"
     );
-    let menus = &app.active_tab().canvas.menus;
-    assert!(menus.open.is_none(), "a drag opens no menu");
+    assert!(
+        app.active_tab().canvas.menus.open.is_none(),
+        "a drag opens no menu"
+    );
+    press_menu_opens(&mut app, &ctx, chart);
+}
+
+/// A click on the ⋯ still opens the chart's menu.
+fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
+    press(app, ctx, &format!("pane_menu.{slot}"));
+    assert_eq!(app.active_tab().canvas.menus.open, Some(slot));
 }

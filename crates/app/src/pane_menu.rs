@@ -19,9 +19,9 @@ const RULE_PX: f32 = 9.0;
 /// How far below its restore a folded chart's name starts.
 const NAME_GAP_PX: f32 = 40.0;
 
-/// One tab's chart menus: the one open, a press this frame, a ⋯ dragged to
-/// lift its chart, the dialog up, and every ⋯, row, restore and dialog
-/// button as drawn, for the scene.
+/// One tab's chart menus: the one open, a press this frame, a ⋯ dragged
+/// this frame to lift its chart, the dialog up, and every ⋯, row, restore
+/// and dialog button as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct PaneMenus {
     pub(crate) open: Option<PaneSlot>,
@@ -75,7 +75,7 @@ pub(crate) fn button(
     if response.clicked() {
         menus.open = (menus.open != Some(slot)).then_some(slot);
     }
-    menus.lift = menus.lift.or(response.drag_started().then_some(slot));
+    menus.lift = menus.lift.or(response.dragged().then_some(slot));
     let open = menus.open == Some(slot);
     if response.hovered() || open {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());

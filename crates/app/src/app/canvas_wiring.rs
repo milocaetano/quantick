@@ -111,13 +111,15 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     let at = ctx.input(|input| input.viewport().inner_rect);
     let origin = at.map_or((0.0, 0.0), |at| (at.min.x, at.min.y));
     let area = canvas_area(app);
-    let start = ctx.input(|input| input.pointer.press_origin().map(|at| (at.x, at.y)));
+    let at = |at: Option<egui::Pos2>| at.map(|at| (at.x, at.y));
+    let pointer = ctx.input(|input| input.pointer.clone());
+    let (press, now) = (at(pointer.press_origin()), at(pointer.latest_pos()));
     let canvas = &mut app.active_tab_mut().canvas;
     let floats = &mut canvas.floats;
     (floats.origin, floats.scale) = (origin, ctx.pixels_per_point());
     let (dropped, windows) = (floats.dropped.take(), std::mem::take(&mut floats.windows));
-    let lift = canvas::lifted(&canvas.state, area, canvas.menus.lift.take(), start);
-    floats.held = lift.as_ref().map(|lift| lift.1).or(floats.held);
+    let lift = canvas::lifted(&canvas.state, area, canvas.menus.lift.take(), press, now);
+    floats.held = floats.held.or(lift);
     let monitor = |rect| crate::floating_panes::monitor_of(rect, ctx.pixels_per_point());
     #[cfg(any(feature = "scenario-harness", test))]
     let hooked = canvas_hooks(app);
@@ -127,7 +129,6 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         .filter_map(|(slot, events)| canvas::window_act(slot, (events.moved, events.closed)))
         .collect();
     acts.extend(dropped.map(|(slot, outcome)| canvas::drop_act(slot, outcome, origin, monitor)));
-    acts.extend(lift.and_then(|lift| lift.0));
     for act in acts.into_iter().chain(hooked) {
         if let Err(error) = answer(app, act) {
             tracing::warn!(error = %error.message, "the floating chart's act was refused");
