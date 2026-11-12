@@ -103,7 +103,9 @@ pub fn seat_slot(state: &CanvasState, seats: &mut Seats, seat: Option<usize>) ->
 }
 
 /// `state`'s panes, with `seats` brought up to date: gone slots dropped,
-/// new time slots seated on the lowest free chart.
+/// new time slots seated on the lowest free chart in the order the tree
+/// draws them, then the floating ones, so a picked layout shows its first
+/// built chart first whatever the slots' numbers.
 fn seated(state: &CanvasState, seats: &mut Seats) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
     let panes = state.panes();
     let time = |slot: PaneSlot| {
@@ -121,14 +123,16 @@ fn seated(state: &CanvasState, seats: &mut Seats) -> Vec<(PaneSlot, PaneKind, Pa
         }
         kept
     });
-    for (slot, kind, _) in &panes {
-        if *kind == PaneKind::Time && !held.iter().any(|(on, _)| on == slot) {
+    let docked = state.tree().panes().into_iter();
+    let floating = (state.floating().iter()).map(|pane| (pane.slot, pane.kind));
+    for (slot, kind) in docked.chain(floating) {
+        if kind == PaneKind::Time && !held.iter().any(|(on, _)| *on == slot) {
             let free = (0..).find(|pane| !held.iter().any(|(_, seat)| seat == pane));
             let free = free.unwrap_or_default();
             if freed.remove(&free) {
                 reseed.push(free);
             }
-            held.push((*slot, free));
+            held.push((slot, free));
         }
     }
     panes

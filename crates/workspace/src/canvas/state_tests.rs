@@ -170,24 +170,89 @@ fn floating_panes_park_pop_out_and_return() {
         Err(CanvasRefusal::NotInOsWindow(0))
     );
 
-    // Picking a layout re-docks by kind; floating panes keep floating.
+    // Picking a layout re-docks by kind, a floating pane of a needed kind
+    // included; one no place needs keeps floating.
+    let spare = state.add(PaneKind::Flow, CANVAS).unwrap();
     assert!(state.apply_preset(preset("time+flow").unwrap()));
-    assert_eq!(state.mode(0), Some(PaneMode::Floating));
+    assert_eq!(state.mode(0), Some(PaneMode::Docked), "the float came back");
+    assert_eq!(state.mode(spare), Some(PaneMode::Floating));
     let docked: Vec<_> = state.tree().panes();
-    assert_eq!(docked.len(), 2);
-    assert!(
-        docked.iter().any(|(slot, _)| *slot == 1),
-        "the flow pane kept its slot"
-    );
-    assert!(
-        !docked.iter().any(|(slot, _)| *slot == 0),
-        "a new time pane took a new slot"
-    );
+    assert_eq!(docked, [(0, PaneKind::Time), (1, PaneKind::Flow)]);
 
     // The canvas holds at most nine charts.
     let mut full = canvas("charts-8");
     full.add(PaneKind::Flow, CANVAS).unwrap();
     assert_eq!(full.add(PaneKind::Time, CANVAS), Err(CanvasRefusal::Full));
+}
+
+/// Picking a flow layout while the flow pane floats takes that pane back
+/// into the tree: one flow pane, and every docked slot has a band.
+#[test]
+fn picking_a_flow_layout_while_the_flow_floats_keeps_one_flow_pane() {
+    let mut state = canvas("time+flow");
+    let rect = CanvasRect::new(100.0, 100.0, 400.0, 300.0);
+    state.float(1, rect).unwrap();
+    assert!(state.apply_preset(preset("time+time+flow").unwrap()));
+    let flows = (state.panes().into_iter())
+        .filter(|(_, kind, _)| *kind == PaneKind::Flow)
+        .count();
+    assert_eq!(flows, 1, "never a second flow");
+    assert_eq!(state.mode(1), Some(PaneMode::Docked), "the flow came back");
+    assert!(state.floating().is_empty());
+    let bands = tree_bands(&state, &mut Seats::default(), CANVAS, 4.0);
+    let banded: Vec<_> = bands.iter().map(|band| band.slot).collect();
+    let mut docked: Vec<_> = (state.tree().panes().into_iter())
+        .map(|(slot, _)| slot)
+        .collect();
+    docked.sort_unstable();
+    assert_eq!(banded, docked, "every tree slot has a band");
+
+    // Floats count against the cap: a pick that would overflow it is refused
+    // and changes nothing.
+    let mut crowded = canvas("flow");
+    while crowded.add(PaneKind::Flow, CANVAS).is_ok() {}
+    let before = crowded.clone();
+    assert!(!crowded.apply_preset(preset("charts-8").unwrap()));
+    assert_eq!(crowded, before);
+
+    // A chart over the canvas is taken before one on another monitor.
+    let mut popped = canvas("time+time+flow");
+    let window = CanvasRect::new(2000.0, 0.0, 800.0, 600.0);
+    popped.pop_out(0, "DISPLAY2", window).unwrap();
+    popped.float(1, rect).unwrap();
+    assert!(popped.apply_preset(preset("time+flow").unwrap()));
+    assert_eq!(popped.mode(1), Some(PaneMode::Docked));
+    assert_eq!(
+        popped.mode(0),
+        Some(PaneMode::OsWindow),
+        "left on its monitor"
+    );
+}
+
+/// Folding every chart of a stack folds the stack itself to one strip, so
+/// the flow pane beside it takes the width.
+#[test]
+fn minimizing_every_pane_of_a_split_folds_the_split_to_a_strip() {
+    let mut state = canvas("stack2+flow");
+    state.minimize(0).unwrap();
+    state.minimize(1).unwrap();
+    let rects = state.rects(CANVAS);
+    let rect = |slot| rects.iter().find(|(held, _)| *held == slot).unwrap().1;
+    for slot in [0, 1] {
+        assert_eq!(rect(slot).x, 0.0);
+        assert_eq!(rect(slot).w, MINIMIZED_STRIP_PX, "one strip wide");
+    }
+    assert!(
+        (rect(0).h + rect(1).h - CANVAS.h).abs() < 1e-2,
+        "full height"
+    );
+    assert_eq!(rect(2).x, MINIMIZED_STRIP_PX);
+    assert_eq!(rect(2).w, CANVAS.w - MINIMIZED_STRIP_PX, "the flow grows");
+    let seams = tree_seams(&state, CANVAS, 4.0);
+    assert!(
+        seams.iter().all(|seam| !seam.resizable),
+        "the folded stack is pinned"
+    );
 }
 
 #[test]

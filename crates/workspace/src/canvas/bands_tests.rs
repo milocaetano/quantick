@@ -21,6 +21,25 @@ fn removing_a_chart_keeps_the_others_on_their_panes() {
     assert_eq!(seats, vec![Some(1), None], "the kept chart stays on pane 1");
 }
 
+/// A picked layout seats its charts in the order the tree draws them, so the
+/// top chart of a stack shows the first built chart whatever its slot.
+#[test]
+fn seats_follow_reading_order_after_a_pick() {
+    let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
+    let reversed = state.tree().relabelled(&|slot| 1 - slot);
+    *state.tree_mut() = reversed;
+    assert_eq!(state.tree().panes()[0].0, 1, "Row[1, 0]");
+    state.apply_preset(preset("stack2+flow").unwrap());
+    let top = state.tree().panes()[0].0;
+    assert_eq!(top, 1, "the pick kept slot 1 first");
+    let mut seats = Seats::default();
+    seats.clear();
+    let bands = tree_bands(&state, &mut seats, AREA, 4.0);
+    let band = bands.iter().find(|band| band.slot == top).unwrap();
+    assert_eq!(band.rect.y, 0.0, "the top band");
+    assert_eq!(band.seat, Some(0), "seated first in reading order");
+}
+
 /// A seam inside the canvas gives half a divider to each side; the canvas's
 /// own edges give nothing.
 #[test]

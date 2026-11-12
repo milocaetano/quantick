@@ -37,6 +37,28 @@ fn the_menu_offers_restore_size_only_while_the_chart_fills_the_canvas() {
     assert_eq!(menu_hook("first"), None);
 }
 
+/// A folded chart's menu brings it back where Minimize stood: folding it
+/// again would do nothing, so it is not offered.
+#[test]
+fn a_minimized_pane_is_not_offered_minimize() {
+    let mut state = canvas("time+time+flow");
+    state.minimize(0).unwrap();
+    let rows = pane_menu(&state, 0);
+    assert!(rows.contains(&PaneMenuItem::Restore), "{rows:?}");
+    assert!(!rows.contains(&PaneMenuItem::Minimize), "{rows:?}");
+    let labels: Vec<_> = rows.iter().map(|item| item.label()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Restore size",
+            "Maximize",
+            "Open in new window",
+            "Remove chart"
+        ]
+    );
+    assert_eq!(pane_menu(&state, 1)[0], PaneMenuItem::Minimize, "open");
+}
+
 #[test]
 fn a_strip_is_named_by_kind_bars_and_market() {
     let time = strip_label(PaneKind::Time, "1m", "BTCUSDT");
