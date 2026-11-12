@@ -7,7 +7,6 @@ use quantick_chart::flow_band::{flow_sides, gutter_strip_px, side_headers, side_
 use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
 };
-use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_chart::side_label::SideLabel;
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_engine::bar_selection::BarInputAvailability;
@@ -1193,7 +1192,8 @@ impl ChartPane {
         ui: &mut egui::Ui,
         side: PaneSide,
         chrome: &SideChrome<'_>,
-    ) -> Option<HeaderIntent> {
+        model: &quantick_ui_model::pane_header::State,
+    ) -> Option<quantick_ui_model::pane_header::Intent> {
         self.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
@@ -1215,7 +1215,7 @@ impl ChartPane {
         let (mut intent, painted) = (None, &mut self.frame.header_controls);
         let at = (CapsuleSide::Time, self.id);
         self.frame.capsules[0] =
-            draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent);
+            draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent, model);
         intent
     }
 
@@ -1253,7 +1253,8 @@ impl ChartPane {
         ui: &mut egui::Ui,
         row: egui::Rect,
         chrome: &SideRowChrome<'_>,
-    ) -> (Option<HeaderIntent>, bool) {
+        model: &quantick_ui_model::pane_header::State,
+    ) -> (Option<quantick_ui_model::pane_header::Intent>, bool) {
         use crate::pane_header::{BarsPart, SideHeader, draw_side_header};
         // An open settings panel takes the end of the row with the end of the chart.
         let row = self
@@ -1270,7 +1271,7 @@ impl ChartPane {
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);
         let headers = side_headers(shown, row.left(), row.right(), self.frame.lane_divider_x);
-        let bars = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
+        let bars = model.header.as_ref().expect("flow band refreshed header");
         let (mut intent, mut indicators) = (None, false);
         for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {
             let parts = side_parts(side, index == 0, state.is_some());
@@ -1299,7 +1300,7 @@ impl ChartPane {
             };
             let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
             let painted = &mut self.frame.header_controls;
-            indicators |= draw_side_header(ui, rect, header, painted, &mut intent);
+            indicators |= draw_side_header(ui, rect, header, painted, &mut intent, model);
         }
         super::lane_rail::paint_flow_divider(self, ui, row.top(), shown);
         (intent, indicators)

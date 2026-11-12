@@ -66,7 +66,7 @@ mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
 mod pane;
-mod pane_header;
+use surfaces::pane_header;
 mod pane_menu;
 mod paper_account;
 mod paper_calendar;

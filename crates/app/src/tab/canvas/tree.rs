@@ -101,7 +101,14 @@ impl Tab {
                 pane_areas.body,
                 palette.layout(crate::time_header::HEIGHT_PX),
             );
-            self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
+            self.draw_time_header(
+                ui,
+                slot,
+                areas.header,
+                bar_inputs,
+                job_slot.take(),
+                chrome.surfaces,
+            );
             rects.context_charts[slot] = Some((areas.chart, pane_areas.layout_strip));
         }
         if rects.pane_bands.len() + usize::from(flow_band.is_some()) > 1 {
@@ -290,7 +297,7 @@ impl Tab {
                 let height = palette.layout(crate::time_header::HEIGHT_PX);
                 let areas = split_pane_header(content, height);
                 let header = areas.header.with_min_x(areas.header.min.x + grip);
-                self.draw_time_header(ui, seat, header, bar_inputs, None);
+                self.draw_time_header(ui, seat, header, bar_inputs, None, chrome.surfaces);
                 rects.context_charts[seat] = Some((areas.chart, egui::Rect::NOTHING));
                 rects.pane_bands.push((side, content));
             }

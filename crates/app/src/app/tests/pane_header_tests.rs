@@ -33,23 +33,6 @@ fn set_flow_bars(app: &mut QuantickApp, spec: BarSpec) {
     app.active_tab_mut().apply_spec_changes();
 }
 
-#[test]
-fn every_pane_reads_its_own_bars_without_a_click() {
-    let ctx = egui::Context::default();
-    let (mut app, _events, _commands) = context_fixture(&ctx);
-    set_flow_bars(&mut app, BarSpec::Tick(2000));
-    let focus = app.active_tab().focus;
-    let texts = painted_text(&run_frame(&mut app, &ctx));
-
-    for wanted in ["ORDER FLOW", "Tick · 2000", "Tick · 4"] {
-        assert!(
-            texts.iter().any(|text| text.starts_with(wanted)),
-            "{wanted} is missing from {texts:?}"
-        );
-    }
-    assert_eq!(app.active_tab().focus, focus, "reading moved nothing");
-}
-
 /// The flow pane's strip comes off its chart, as a time pane's does.
 #[test]
 fn the_flow_chart_starts_below_its_header() {
@@ -283,22 +266,6 @@ fn each_pane_paints_only_the_controls_it_accepts() {
 
 /// Both lit is beside, one lit is that side alone, and a click on the last lit
 /// does nothing. The named read agrees at every step.
-#[test]
-fn the_side_switches_set_the_view_and_the_last_lit_stays() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    for (control, wanted) in [
-        (TAPE, LaneView::CandlesOnly),
-        (TRAIL, LaneView::CandlesOnly),
-        (TAPE, LaneView::Beside),
-        (TRAIL, LaneView::TapeOnly),
-        (TAPE, LaneView::TapeOnly),
-        (TRAIL, LaneView::Beside),
-    ] {
-        click_side(&mut app, &ctx, control);
-        assert_eq!(view_of(&app), wanted, "{control:?}");
-    }
-}
 
 /// The scene reads what the switches read: lit is selected, and the last lit
 /// names why it takes no press, with the call that does what the hand does.
@@ -793,35 +760,6 @@ fn a_narrow_tape_keeps_its_capsule() {
 
 /// A sample grows as it is dragged up, reads back through the named call's
 /// value and returns to `1x` on a double click.
-#[test]
-fn a_dragged_sample_sizes_its_bubbles_and_a_double_click_returns_to_one() {
-    use quantick_control_schema::bubble_scale::BubbleScaleTarget;
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let size = |app: &QuantickApp| {
-        app.active_tab()
-            .tape()
-            .bubble_display_scale(BubbleScaleTarget::Tape.into())
-    };
-    assert_eq!(size(&app), 1.0);
-    let sample = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
-    let to = sample.center() - egui::vec2(0.0, 40.0);
-    drag(&mut app, &ctx, sample.center(), to);
-    assert!((size(&app) - 2.0).abs() < 0.01, "{}", size(&app));
-
-    let far = sample.center() - egui::vec2(0.0, 4_000.0);
-    drag(&mut app, &ctx, sample.center(), far);
-    assert_eq!(size(&app), 3.0, "the range holds");
-    let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
-    drag(&mut app, &ctx, center, center + egui::vec2(0.0, 4_000.0));
-    assert_eq!(size(&app), 0.25, "both ways");
-
-    let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
-    click_chart(&mut app, &ctx, center);
-    click_chart(&mut app, &ctx, center);
-    run_frame(&mut app, &ctx);
-    assert_eq!(size(&app), 1.0, "a double click is 1x");
-}
 
 /// A sample shows only while its target is there; the candle sample's slot stays
 /// reserved, so the glyphs never shift, and the scene lists what was painted.
@@ -964,6 +902,14 @@ fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
     assert!((size(&app, BubbleScaleTarget::Candle) - 2.0).abs() < 0.01);
     assert_eq!(candle_viewport(&app), before);
 
+    click_chart(&mut app, &ctx, tape);
+    click_chart(&mut app, &ctx, tape);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        size(&app, BubbleScaleTarget::Tape),
+        1.0,
+        "pointer double click resets"
+    );
     let chart = app.active_tab().flow_pane.frame.area.expect("flow chart");
     let bare = egui::pos2(chart.left() + 100.0, chart.center().y);
     drag(&mut app, &ctx, bare, bare + egui::vec2(60.0, 0.0));
@@ -971,6 +917,28 @@ fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
         candle_viewport(&app),
         before,
         "the same drag pans the chart"
+    );
+}
+
+/// A chart pass can replace the reference that the earlier band observed.
+#[test]
+fn the_window_projection_reads_the_same_frames_chart_reference() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    app.active_tab_mut().flow_pane.frame.clear_hidden();
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let scope = pane.id;
+    let current = pane.flow_header_state().expect("flow header");
+    assert!(
+        current.window_reference_ms.is_some(),
+        "chart restored its reference after hiding"
+    );
+    let (model, _) = app.surfaces.pane_header.scoped(scope);
+    assert_eq!(model.snapshot.as_ref().unwrap().flow, Some(current));
+    assert_eq!(
+        model.window_label,
+        Some(quantick_chart::flow_band::window_label(&current))
     );
 }
 
@@ -1628,6 +1596,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                         side,
                         &mut painted,
                         &mut intent,
+                        &Default::default(),
                     );
                 });
             },

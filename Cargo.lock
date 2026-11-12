@@ -3384,6 +3384,11 @@ dependencies = [
 [[package]]
 name = "quantick-ui-model"
 version = "0.1.0"
+dependencies = [
+ "quantick-chart",
+ "quantick-engine",
+ "quantick-orderflow",
+]
 
 [[package]]
 name = "quantick-workspace"

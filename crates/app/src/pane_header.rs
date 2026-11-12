@@ -6,11 +6,10 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_chart::connection_state::Dot;
 use quantick_chart::flow_band::{
     DOCKED_CAPSULE_HEIGHT_PX, DOCKED_SLOT_HEIGHT_PX, FRAME_PX, SIDE_GAP_PX, SIDE_PAD_RIGHT_PX,
     SideWidths, WINDOW_SELECTOR_HINT, docked_capsule_corner, docked_slot_origin, plate_word,
-    side_fit, window_label, window_options,
+    side_fit,
 };
 use quantick_chart::pane_header::{
     BULB_END_PX, BULB_KEY_PX, BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide,
@@ -18,7 +17,7 @@ use quantick_chart::pane_header::{
     HeaderControl, HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, KEY_DOT_PX,
     LayerGlyph, LayerToggle, MARK_RULE_HEIGHT_PX, MARK_RULE_PX, PaneHeader, SAMPLE_RESET_SCALE,
     SEGMENT_GAP_PX, SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX,
-    SegmentInk, SideSegment, dragged_scale, flow_controls_px, flow_fit, key_dot_inset, mark_px,
+    SegmentInk, SideSegment, flow_controls_px, flow_fit, key_dot_inset, mark_px,
     sample_diameter_px, sample_value_text, section_layer, segment_px, side_word, side_words_px,
 };
 use quantick_chart::side_label::SIDE_LABEL_PADDING_PX;
@@ -32,6 +31,7 @@ use smallvec::SmallVec;
 use crate::chart_layers::shortcuts;
 use crate::loading;
 use crate::theme;
+use quantick_ui_model::pane_header::{Intent, State};
 
 /// Padding inside the strip: clears the pane's edge and keeps the controls off
 /// the rule below.
@@ -175,28 +175,16 @@ pub fn indicators_button(
     clicked
 }
 
-/// What a flow pane's band draws besides its mark: `None` without a tape.
-pub struct FlowRow {
-    pub state: Option<FlowHeaderState>,
-    /// The connection chip, while some stream is not well.
-    pub chip: Option<[Dot; 3]>,
-    /// The job slot's words and whether a job (not a remark) wrote them.
-    pub slot: Option<(String, bool)>,
-    /// The tab's order-flow panel is open: the gear wears the pressed look.
-    pub settings_open: bool,
-    /// The flow pane's lights; the bulb shows where the theme offers them.
-    pub lights_on: bool,
-}
-
 /// The flow pane's band; answers what a press on it asked for.
 pub fn draw_marked(
     ui: &mut egui::Ui,
     strip: egui::Rect,
-    header: &PaneHeader,
+    model: &State,
     salt: u64,
-    row: FlowRow,
     painted: &mut PaintedControls,
-) -> Option<HeaderIntent> {
+) -> Option<Intent> {
+    let header = model.header.as_ref()?;
+    let row = model.snapshot.as_ref()?;
     let palette = theme::get(ui.ctx());
     painted.clear();
     ui.painter()
@@ -208,10 +196,10 @@ pub fn draw_marked(
     let inner = inner.with_max_x(inner.right() - quantick_workspace::canvas::PANE_MENU_BUTTON_PX);
     let inner = inner.with_min_x((inner.left() + FRAME_PX).min(inner.right()));
     let bulb = palette.resolved.has_lit_flow().then_some(row.lights_on);
-    let bare_controls_px = row.state.map_or(0.0, |_| flow_controls_px(bulb.is_some()));
+    let bare_controls_px = row.flow.map_or(0.0, |_| flow_controls_px(bulb.is_some()));
     let bulb_px = bulb.map_or(0.0, |_| BULB_END_PX);
-    let word_widths = segment_word_widths(ui, row.state.as_ref());
-    let side_words = row.state.map_or(0.0, |_| side_words_px(word_widths));
+    let word_widths = segment_word_widths(ui, row.flow.as_ref());
+    let side_words = row.flow.map_or(0.0, |_| side_words_px(word_widths));
     let mark = header
         .mark
         .map(|mark| ui.fonts(|fonts| fonts.layout_job(mark_text(&palette, mark))));
@@ -235,7 +223,7 @@ pub fn draw_marked(
         slot: slot_px,
         chip_with_words,
         chip_dots,
-        market_held: row.state.is_some_and(|state| state.market_held),
+        market_held: row.flow.is_some_and(|state| state.market_held),
     });
     let chip_px = match (fit.chip, fit.chip_words) {
         (true, true) => chip_with_words + GROUP_GAP_PX,
@@ -253,7 +241,7 @@ pub fn draw_marked(
         ui.painter().vline(x, tall, (MARK_RULE_PX, ink));
         left += mark_px(mark_text_px) + GROUP_GAP_PX;
     }
-    let chip_right = inner.right() - row.state.map_or(0.0, |_| GEAR_END_PX + bulb_px);
+    let chip_right = inner.right() - row.flow.map_or(0.0, |_| GEAR_END_PX + bulb_px);
     if let Some(dots) = row.chip.as_ref().filter(|_| fit.chip) {
         let ink = palette.flow_ink();
         loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words, ink);
@@ -263,11 +251,19 @@ pub fn draw_marked(
         loading::draw_slot(ui, chip_right - chip_px, strip, slot, Some(ink));
     }
     let mut intent = None;
-    if let Some(state) = row.state {
+    if row.flow.is_some() {
         let band = clipped_child(ui, inner, strip, ("pane_header_band", salt));
         let words = fit.side_words.then_some(word_widths);
         let room = inner.with_min_x(left);
-        side_control(&band, room, salt, &state, words, painted, &mut intent);
+        side_control(
+            &band,
+            room,
+            salt,
+            model.segments.expect("flow segments"),
+            words,
+            painted,
+            &mut intent,
+        );
         let gear = key_rect(
             inner.right() - GEAR_KEY_PX,
             GEAR_KEY_PX,
@@ -290,7 +286,7 @@ fn lights_bulb(
     rect: egui::Rect,
     (salt, on): (u64, bool),
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let id = ui.id().with(("pane_lights_bulb", salt));
     let glyph = [icons::LIGHTBULB, icons::LIGHTBULB_FILAMENT][usize::from(on)];
@@ -298,7 +294,7 @@ fn lights_bulb(
     let control = HeaderControl::Settings(PanelControl::Lights);
     let response = bare_key(ui, (rect, id), (glyph, false, lit), control, painted);
     if response.clicked() {
-        *intent = Some(HeaderIntent::SetLights(!on));
+        *intent = Some(Intent::Request(HeaderIntent::SetLights(!on)));
     }
     response.on_hover_ui(|ui| {
         ui.set_max_width(TIP_WIDTH_PX);
@@ -337,13 +333,17 @@ pub fn draw_side_header(
     side: egui::Rect,
     header: SideHeader<'_>,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
+    model: &State,
 ) -> bool {
     let palette = theme::get(ui.ctx());
     let salt = header.salt;
     let plate = header.plate.then(|| plate_galley(ui, header.which));
     let plate_w = plate.as_ref().map_or(0.0, |plate| plate_px(plate));
-    let words = header.window.map(window_label);
+    let words = model
+        .window_label
+        .as_deref()
+        .filter(|_| header.window.is_some());
     let window_w = words.as_deref().map_or(0.0, |words| {
         let caret = ui.fonts(|fonts| fonts.layout_job(caret_text(&palette, words)));
         caret.size().x + 2.0 * WINDOW_PADDING_X
@@ -370,7 +370,7 @@ pub fn draw_side_header(
         left += plate_w + SIDE_GAP_PX;
     }
     let capsule = header.capsule.filter(|_| fit.capsule);
-    let window = header.window.zip(words).filter(|_| fit.window);
+    let window = words.filter(|_| fit.window);
     let end =
         side.right() - SIDE_PAD_RIGHT_PX - capsule.map_or(0.0, |c| c.width_px() + SIDE_GAP_PX);
     let mut clicked = false;
@@ -397,14 +397,22 @@ pub fn draw_side_header(
         let button_left = (content.cursor().left() + SIDE_GAP_PX).min(limit);
         clicked = indicators_button(ui, button_left, side, salt, fit.indicators_words);
     }
-    if let Some((state, words)) = window.as_ref() {
+    if let Some(words) = window {
         let size = egui::vec2(window_w, palette.layout(INDICATORS_HEIGHT));
         let center = egui::pos2(left + size.x / 2.0, side.center().y);
         let rect = egui::Rect::from_center_size(center, size);
-        window_selector(ui, rect, salt, state, words, painted, intent);
+        window_selector(ui, rect, salt, model, words, painted, intent);
     }
     if let Some(capsule) = capsule {
-        draw_docked_capsule(ui, &capsule, side, (header.which, salt), painted, intent);
+        draw_docked_capsule(
+            ui,
+            &capsule,
+            side,
+            (header.which, salt),
+            painted,
+            intent,
+            model,
+        );
     }
     clicked
 }
@@ -455,10 +463,10 @@ fn window_selector(
     ui: &egui::Ui,
     rect: egui::Rect,
     salt: u64,
-    state: &FlowHeaderState,
+    state: &State,
     words: &str,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let palette = theme::get(ui.ctx());
     let id = ui.id().with(("flow_tape_window", salt));
@@ -490,9 +498,12 @@ fn window_selector(
         egui::PopupCloseBehavior::CloseOnClickOutside,
         |ui| {
             ui.set_min_width(rect.width().max(120.0));
-            for option in window_options(state) {
-                if ui.selectable_label(option.selected, option.label).clicked() {
-                    *intent = option.pick.map(HeaderIntent::SetLaneWindow).or(*intent);
+            for (index, option) in state.window_options.iter().enumerate() {
+                if ui
+                    .selectable_label(option.selected, &option.label)
+                    .clicked()
+                {
+                    *intent = Some(Intent::WindowPick(index));
                     ui.memory_mut(egui::Memory::close_popup);
                 }
             }
@@ -527,7 +538,8 @@ pub fn draw_docked_capsule(
     header: egui::Rect,
     (which, salt): (CapsuleSide, u64),
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
+    model: &State,
 ) -> Option<egui::Rect> {
     let width = capsule.width_px();
     let corner = docked_capsule_corner(header.right(), header.top(), header.bottom(), width)?;
@@ -537,7 +549,7 @@ pub fn draw_docked_capsule(
     );
     let ui = clipped_child(ui, rect, rect, ("pane_docked_capsule", salt, which as u8));
     let origin = docked_slot_origin(corner);
-    capsule_slots(&ui, capsule, origin, salt, painted, intent);
+    capsule_slots(&ui, capsule, origin, salt, painted, intent, model);
     Some(rect)
 }
 
@@ -549,13 +561,13 @@ fn settings_gear(
     salt: u64,
     open: bool,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let id = ui.id().with(("pane_settings_gear", salt));
     let control = HeaderControl::Settings(PanelControl::Gear);
     let response = bare_key(ui, (rect, id), (icons::GEAR, open, None), control, painted);
     if response.clicked() {
-        *intent = Some(HeaderIntent::ToggleSettings);
+        *intent = Some(Intent::Request(HeaderIntent::ToggleSettings));
     }
     let key = Some(shortcuts::ORDERFLOW_SETTINGS_SHORTCUT);
     let response = response.on_hover_ui(|ui| {
@@ -564,7 +576,9 @@ fn settings_gear(
     response.context_menu(|ui| {
         for section in PanelSection::ALL {
             if ui.button(section.title()).clicked() {
-                *intent = Some(HeaderIntent::OpenLayerSettings(section_layer(section)));
+                *intent = Some(Intent::Request(HeaderIntent::OpenLayerSettings(
+                    section_layer(section),
+                )));
                 ui.close_menu();
             }
         }
@@ -665,7 +679,8 @@ fn capsule_slots(
     origin: (f32, f32),
     salt: u64,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
+    model: &State,
 ) {
     let palette = theme::get(ui.ctx());
     let (mut x, y) = origin;
@@ -677,7 +692,7 @@ fn capsule_slots(
         match item {
             CapsuleItem::Layer(glyph) => layer_glyph(ui, slot, salt, glyph, painted, intent),
             CapsuleItem::Sample(which, scale) => {
-                sample(ui, slot, salt, which, scale, painted, intent);
+                sample(ui, slot, salt, which, scale, painted, intent, model);
             }
             CapsuleItem::SampleOff(_) => {
                 ui.painter().circle_stroke(
@@ -700,7 +715,8 @@ fn sample(
     which: BubbleSample,
     scale: f32,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
+    model: &State,
 ) {
     let palette = theme::get(ui.ctx());
     let id = ui.id().with(("pane_header_sample", salt, which as u8));
@@ -708,27 +724,36 @@ fn sample(
     if response.hovered() || response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
-    if response.drag_started() {
-        ui.ctx().data_mut(|data| data.insert_temp(id, scale));
-    }
     let mut shown = scale;
+    let mut up_px = 0.0;
     if response.dragged() {
-        let pressed_at = ui.ctx().data(|data| data.get_temp(id)).unwrap_or(scale);
-        let up_px = ui.input(|input| {
+        up_px = ui.input(|input| {
             let pointer = &input.pointer;
             pointer
                 .press_origin()
                 .zip(pointer.latest_pos())
                 .map_or(0.0, |(from, now)| from.y - now.y)
         });
-        shown = dragged_scale(pressed_at, up_px);
+        shown = model.sample_scale(which, scale, up_px, response.drag_started());
         paint_value(ui, id, rect, shown);
     }
     if response.double_clicked() {
         shown = SAMPLE_RESET_SCALE;
     }
-    if shown != scale {
-        *intent = Some(HeaderIntent::SetSample(which, shown));
+    if response.drag_started()
+        || response.dragged()
+        || response.double_clicked()
+        || response.drag_stopped()
+    {
+        *intent = Some(Intent::SampleGesture {
+            sample: which,
+            scale,
+            started: response.drag_started(),
+            dragged: response.dragged(),
+            up_px,
+            reset: response.double_clicked(),
+            ended: response.drag_stopped(),
+        });
     }
     ui.painter().circle_filled(
         rect.center(),
@@ -771,18 +796,16 @@ pub fn layer_glyph(
     salt: u64,
     glyph: LayerGlyph,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let palette = theme::get(ui.ctx());
     let id = ui.id().with(("pane_layer_glyph", salt, glyph.toggle as u8));
     let response = ui.interact(rect, id, egui::Sense::click());
-    if response.clicked()
-        && let Some(asked) = glyph.click()
-    {
-        *intent = Some(asked);
-    }
-    if response.secondary_clicked() {
-        *intent = Some(HeaderIntent::OpenLayerSettings(glyph.toggle));
+    if response.clicked() || response.secondary_clicked() {
+        *intent = Some(Intent::Layer {
+            glyph,
+            secondary: response.secondary_clicked(),
+        });
     }
     if response.hovered() {
         let patch = egui::Rect::from_center_size(
@@ -834,14 +857,14 @@ fn side_control(
     ui: &egui::Ui,
     room: egui::Rect,
     salt: u64,
-    state: &FlowHeaderState,
+    segments: [SideSegment; 2],
     words: Option<[f32; 2]>,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let palette = theme::get(ui.ctx());
     let mut left = room.left();
-    for (at, segment) in SideSegment::pair(state).into_iter().enumerate() {
+    for (at, segment) in segments.into_iter().enumerate() {
         let rect = key_rect(
             left,
             segment_px(words.map(|words| words[at])),
@@ -874,15 +897,13 @@ fn side_segment(
     segment: SideSegment,
     words: bool,
     painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
+    intent: &mut Option<Intent>,
 ) {
     let palette = theme::get(ui.ctx());
     let id = ui.id().with(("side", salt, segment.side as u8));
     let response = ui.interact(rect, id, egui::Sense::click());
-    if response.clicked()
-        && let Some(asked) = segment.click()
-    {
-        *intent = Some(asked);
+    if response.clicked() {
+        *intent = Some(Intent::Side(segment.side));
     }
     let (hovered, pressed) = (response.hovered(), response.is_pointer_button_down_on());
     let dim = if pressed { KEY_PRESSED_OPACITY } else { 1.0 };
@@ -1185,4 +1206,60 @@ pub(crate) fn menu_id(salt: u64) -> egui::Id {
 #[cfg(test)]
 pub(crate) fn indicators_id(salt: u64) -> egui::Id {
     egui::Id::new(("pane_indicators_rect", salt))
+}
+
+/// UI mechanics for the catalog's pane-scoped header model.
+#[derive(Default)]
+pub(crate) struct View {
+    pub salt: u64,
+    pub painted: PaintedControls,
+}
+impl crate::surfaces::View<quantick_ui_model::pane_header::Model> for View {
+    fn id(&self) -> &'static str {
+        "pane-header"
+    }
+    fn paint(
+        &mut self,
+        state: &quantick_ui_model::pane_header::State,
+        target: &mut crate::surfaces::ViewContext<'_>,
+        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
+    ) -> Option<quantick_ui_model::pane_header::Intent> {
+        let ui = target.ui.as_deref_mut()?;
+        draw_marked(ui, ui.max_rect(), state, self.salt, &mut self.painted)
+    }
+}
+pub(crate) fn effects(
+    effects: quantick_ui_model::pane_header::Effects,
+) -> crate::surfaces::SurfaceResponse {
+    if effects.request.is_none() {
+        return crate::surfaces::SurfaceResponse::default();
+    }
+    crate::surfaces::SurfaceResponse {
+        model_effects: vec![crate::surfaces::HostEffect::PaneHeader(effects)],
+        ..Default::default()
+    }
+}
+
+/// The existing pane adapter executes the model's complete outcome.
+pub(crate) fn outcome(
+    response: crate::surfaces::SurfaceResponse,
+) -> quantick_ui_model::pane_header::Effects {
+    response
+        .model_effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            crate::surfaces::HostEffect::PaneHeader(effect) => Some(effect),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn resolve(
+    surfaces: &mut crate::surfaces::Surfaces,
+    scope: u64,
+    intent: Option<Intent>,
+) -> quantick_ui_model::pane_header::Effects {
+    intent.map_or_else(Default::default, |intent| {
+        outcome(surfaces.update_scoped(scope, crate::surfaces::HostIntent::PaneHeader(intent)))
+    })
 }
