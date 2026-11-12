@@ -8,7 +8,7 @@ model can retain its projection when the source has not changed.
 
 `src/catalog.rs` is the only registration list. Move a legacy entry into
 `models { [] [] name: Name => model_module = "model_module.rs",
-view_module = "view_module.rs", view_module::effects, Overlay; }`.
+view_module = "view_module.rs", view_module::effects, Overlay, Host; }`.
 The two metadata lists apply to the model and view declarations respectively;
 empty lists ship normally, while fixtures use conditional compilation.
 This declares `src/model_module.rs` here and `app/src/surfaces/view_module.rs`
@@ -68,3 +68,16 @@ validate actions before returning typed effects to existing domain adapters.
 The menu model owns navigation, availability and row projection. Its view keeps
 only native rectangles and formatted shortcuts. Test-only catalog items exercise
 ordering, visibility and effects in all four slots.
+
+Editors whose input changes rows within one frame override `View::paint_updated`.
+The generic `UpdateSession` borrows the adapter's actual state; `update(intent)`
+runs the authoritative model once and immediately folds its effects into the host
+response. `state()` then borrows the resulting projection for dependent painting.
+The session stores no second state or effect queue. Ordinary views keep `paint`;
+the default staged method forwards its optional intent through the same session.
+Scoped and unscoped hosts share this path. Emit updates only for changed input,
+never rebuild projections during idle painting.
+
+Each catalog row ends in `Host` or `Local`. `Host` opts into generated external
+`HostIntent` dispatch; `Local` owns only view/hook inputs and generates no unused
+host variant. Both retain identical model storage, slots, hooks and effect routing.
