@@ -153,8 +153,8 @@ pub const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it clo
 
 /// What a roll off an unlisted contract does, on the hover of the control
 /// that runs it.
-pub const ROLL_CAPTION: &str =
-    "Rolling keeps the workspace and drawings; the chart starts on the next contract.";
+pub const ROLL_CAPTION: &str = "Roll starts the chart on the next contract: it keeps the workspace and \
+     drawings, and disarms the tab's strategies.";
 
 /// What heads a refused roll's reason under the next step.
 pub const ROLL_REFUSED_PREFIX: &str = "Cannot roll to the next contract: ";
@@ -385,6 +385,15 @@ mod tests {
         assert!(
             RELOAD_CAPTION.contains("paper position") && RELOAD_CAPTION.contains("strateg"),
             "the caption has to name both things Reload ends: {RELOAD_CAPTION}"
+        );
+    }
+    /// A roll is a market switch, which disarms the tab's strategies; the
+    /// control says so before it is pressed, as Reload's does.
+    #[test]
+    fn the_roll_says_it_disarms_the_strategies() {
+        assert!(
+            ROLL_CAPTION.contains("drawings") && ROLL_CAPTION.contains("disarms the tab's strateg"),
+            "the caption has to name what Roll keeps and what it ends: {ROLL_CAPTION}"
         );
     }
     #[test]

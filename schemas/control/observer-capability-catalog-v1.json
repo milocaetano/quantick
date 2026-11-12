@@ -31364,7 +31364,7 @@
                 "type": "string"
               },
               "unlisted_symbol": {
-                "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals. With `kind` `info` the tab already\nrolled off it onto `active_symbol`, and the note stays until the trader\ndismisses it or a notice that needs a hand replaces it. Absent\notherwise; an optional field is an additive change to the v1 payload.",
+                "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals. With `kind` `info` the tab already\nrolled off it onto `active_symbol`, and the note stays through a connect\nuntil any later notice or switch replaces it. Absent\notherwise; an optional field is an additive change to the v1 payload.",
                 "type": [
                   "string",
                   "null"

@@ -896,7 +896,7 @@ impl Mt5Feed {
         // produces one per attempt. Awaiting a full channel would stall the
         // feed itself, and losing a duplicate of a message already on screen
         // costs nothing.
-        self.latch.raise(false);
+        self.latch.raise(false, None);
         let _ = self
             .notice_tx
             .try_send(FeedNotice::attention(headline, advice));

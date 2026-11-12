@@ -210,16 +210,36 @@ pub struct NoticeLatch {
     /// Attention notices raised so far: a step that wants to clear its own
     /// notice reads this before and after to know whether it still owns it.
     attentions: AtomicU64,
+    /// The contract the latest attention of this launch attempt said the
+    /// terminal does not list: what the supervisor's give-up is about.
+    unlisted: std::sync::Mutex<Option<String>>,
 }
 
 impl NoticeLatch {
     /// An attention notice is going out; `terminal_down` when it says the
-    /// terminal cannot be reached.
-    pub(crate) fn raise(&self, terminal_down: bool) {
+    /// terminal cannot be reached, `unlisted` the contract it says the
+    /// terminal does not list.
+    pub(crate) fn raise(&self, terminal_down: bool, unlisted: Option<String>) {
         self.attentions.fetch_add(1, Ordering::AcqRel);
         if terminal_down {
             self.terminal_down.store(true, Ordering::Release);
         }
+        self.set_unlisted(unlisted);
+    }
+
+    /// The contract the latest attention said is not listed, if it said so.
+    pub(crate) fn unlisted(&self) -> Option<String> {
+        self.unlisted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_unlisted(&self, unlisted: Option<String>) {
+        *self
+            .unlisted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = unlisted;
     }
 
     /// Whether the terminal is down and its notice must stay up.
@@ -244,6 +264,7 @@ impl NoticeLatch {
         match notice {
             FeedNotice::Connected => {
                 self.terminal_down.store(false, Ordering::Release);
+                self.set_unlisted(None);
                 vec![notice]
             }
             _ if !self.terminal_down() => vec![notice],
@@ -324,14 +345,18 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
         action = "wait_for_manual_bridge",
         "the bridge would not stay up; read its own log lines above for the reason"
     );
-    let _ = sup
-        .notices
-        .send(FeedNotice::attention(
-            "the MetaTrader bridge would not stay running",
-            "quantick stopped retrying after several attempts. Fix what the last \
-             message reported, then press Try again.",
-        ))
-        .await;
+    let _ = sup.notices.send(gave_up(sup.latch.unlisted())).await;
+}
+
+/// The supervisor's give-up. It is about the last attempt's failure, so it
+/// names the contract that attempt said is not listed, and nothing else does.
+fn gave_up(unlisted: Option<String>) -> FeedNotice {
+    FeedNotice::attention(
+        "the MetaTrader bridge would not stay running",
+        "quantick stopped retrying after several attempts. Fix what the last \
+         message reported, then press Try again.",
+    )
+    .with_unlisted(unlisted)
 }
 
 /// Everything one launch attempt needs, resolved once before the first.
@@ -420,6 +445,8 @@ impl<'a> BridgeLauncher<'a> {
     /// One launch attempt, start to exit. Returns when the bridge could not be
     /// started or has exited — either way, a failure the supervisor counts.
     async fn run(&mut self, attempt: u32) {
+        // What an earlier attempt reported is not this attempt's failure.
+        self.latch.set_unlisted(None);
         // A terminal that is down stays the notice: a fresh bridge's attach
         // is what says whether it is back.
         for notice in self
@@ -722,7 +749,7 @@ async fn forward_bridge_line(
         .with_unlisted(report.unlisted_symbol),
     };
     if matches!(notice, FeedNotice::Attention { .. }) {
-        latch.raise(terminal_down);
+        latch.raise(terminal_down, notice.unlisted_symbol().map(str::to_owned));
     }
     let _ = notices.send(notice).await;
     // Not "did this need the user" — a symbol without a book needs the user
@@ -1058,6 +1085,26 @@ mod tests {
         );
         let starting = FeedNotice::working("starting the MetaTrader bridge");
         assert_eq!(latch.admit(starting.clone()), [starting]);
+    }
+
+    /// Only the give-up that follows the bridge's own NOT_FOUND names the
+    /// contract; any other attention, a new attempt or a connect drops it.
+    #[tokio::test]
+    async fn only_the_give_up_after_an_unlisted_contract_names_it() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let latch = NoticeLatch::default();
+        let say = |line: &'static str| forward_bridge_line(line, "WINV26", &tx, &latch);
+        say(r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINV26"}"#).await;
+        assert_eq!(gave_up(latch.unlisted()).unlisted_symbol(), Some("WINV26"));
+        say(r#"{"event_code":"BRIDGE_SYMBOL_SELECT_FAILED","symbol":"WINV26"}"#).await;
+        assert_eq!(gave_up(latch.unlisted()).unlisted_symbol(), None);
+        say(r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINV26"}"#).await;
+        latch.set_unlisted(None);
+        assert_eq!(latch.unlisted(), None, "a fresh attempt starts clean");
+        say(r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINV26"}"#).await;
+        latch.admit(FeedNotice::Connected);
+        assert_eq!(latch.unlisted(), None, "a session that connects ends it");
+        while rx.try_recv().is_ok() {}
     }
 
     #[tokio::test]

@@ -509,8 +509,8 @@ pub enum FeedNotice {
     },
     /// The tab rolled off a contract the venue no longer lists onto the one
     /// its config names next. Nothing is wrong and nothing needs a hand: an
-    /// explanation of why the tab shows another contract, kept until the
-    /// trader dismisses it or a real notice takes its place.
+    /// explanation of why the tab shows another contract, kept through a
+    /// plain clear or a connect until any later notice or switch replaces it.
     Rolled {
         /// The contract the venue does not list.
         from: String,

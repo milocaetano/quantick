@@ -317,8 +317,8 @@ pub struct FeedNoticeSnapshot {
     /// structured report — not from the redacted words. When it is the tab's
     /// `active_symbol`, `feed.contract.roll` from it is the popup's Roll
     /// button: same rule, same refusals. With `kind` `info` the tab already
-    /// rolled off it onto `active_symbol`, and the note stays until the trader
-    /// dismisses it or a notice that needs a hand replaces it. Absent
+    /// rolled off it onto `active_symbol`, and the note stays through a connect
+    /// until any later notice or switch replaces it. Absent
     /// otherwise; an optional field is an additive change to the v1 payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlisted_symbol: Option<String>,

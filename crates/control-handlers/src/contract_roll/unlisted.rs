@@ -73,6 +73,12 @@ pub fn waiting_toast(from: &str, reason: &str) -> String {
     format!("{from} is no longer listed; the roll waits: {reason}")
 }
 
+/// What the trader reads when the switch a roll ran did not land.
+#[must_use]
+pub fn switch_failed_toast(to: &str) -> String {
+    format!("Could not switch to {to}")
+}
+
 /// What one settle did: the words for the trader, and the rolls for the
 /// journal.
 #[derive(Debug, Default, PartialEq)]
@@ -112,7 +118,8 @@ impl Settled {
 /// the roll the notice offers. Answers the toast and the journal payload.
 ///
 /// # Errors
-/// The refusal, or a notice that no longer offers `target`.
+/// The refusal, a notice that no longer offers `target`, or a switch that did
+/// not land.
 pub fn roll_from_notice<H: UnlistedContractPort + ?Sized>(
     host: &mut H,
     index: usize,
@@ -127,7 +134,7 @@ pub fn roll_from_notice<H: UnlistedContractPort + ?Sized>(
         _ => return Err(format!("{target} is no longer the roll on offer")),
     }
     let payload = roll_off(host, index, &missing, target, PRESSED_TRIGGER)
-        .ok_or("The tab being rolled has closed")?;
+        .ok_or_else(|| switch_failed_toast(target))?;
     Ok((unlisted_toast(&missing, target), payload))
 }
 
@@ -175,11 +182,17 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
         return None;
     }
     match roll? {
-        Ok(next) => {
-            let payload = roll_off(host, index, &missing, &next, AUTOMATIC_TRIGGER)?;
-            settled.notes.push(unlisted_toast(&missing, &next));
-            settled.rolls.push(payload);
-        }
+        Ok(next) => match roll_off(host, index, &missing, &next, AUTOMATIC_TRIGGER) {
+            Some(payload) => {
+                settled.notes.push(unlisted_toast(&missing, &next));
+                settled.rolls.push(payload);
+            }
+            // Said once: the licence ends, and the roll stays on offer.
+            None => {
+                host.auto_roll_mut(index)?.disarm();
+                settled.notes.push(switch_failed_toast(&next));
+            }
+        },
         Err(refusal) => {
             if host.auto_roll_mut(index)?.refusal_is_news(refusal.reason()) {
                 settled
@@ -193,7 +206,10 @@ fn settle_tab<H: UnlistedContractPort + ?Sized>(
 
 /// Roll tab `index` off `from` onto `to`, leaving the attach that follows the
 /// explanation, and answer the journal payload: `feed.contract.roll`'s result
-/// and what asked for it. `None` when the switch did not land.
+/// and what asked for it. `None` when the switch did not land, and then the
+/// roll memory is as it was: nothing decided, no licence moved, the offer
+/// kept. The caller resolved `to` first, so the feed offers it and the carry
+/// [`apply`] makes before the switch runs only where the switch can land.
 fn roll_off<H: UnlistedContractPort + ?Sized>(
     host: &mut H,
     index: usize,
@@ -201,13 +217,15 @@ fn roll_off<H: UnlistedContractPort + ?Sized>(
     to: &str,
     trigger: &str,
 ) -> Option<Value> {
+    // The attach inside the switch reads the roll, so it is staged first and
+    // put back when the switch does not land.
+    let before = host.auto_roll_mut(index)?.clone();
     host.auto_roll_mut(index)?
         .rolling(from, to, trigger == AUTOMATIC_TRIGGER);
     let carried = apply(host, index, to);
     let selected = host.feed_selection(index).filter(|now| now.symbol == to);
     let (Some(carried), Some(selected)) = (carried, selected) else {
-        // No attach will explain a roll that did not happen.
-        host.auto_roll_mut(index)?.take_rolled();
+        *host.auto_roll_mut(index)? = before;
         return None;
     };
     let result = ContractRollResult {

@@ -212,8 +212,6 @@ pub struct StatusResponse {
     pub word_rect: Option<egui::Rect>,
     /// The one-click control beside the word was pressed.
     pub reconnect: bool,
-    /// The roll's note beside the word was clicked away.
-    pub dismiss_note: bool,
 }
 
 /// What the feed-state cell shows this frame.
@@ -291,11 +289,11 @@ pub fn draw(
 fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResponse) {
     let palette = theme::get(ui.ctx());
     if let Some(note) = &lead.note {
-        let text = egui::RichText::new(note)
-            .small()
-            .color(palette.loading_meta());
-        let note = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
-        response.dismiss_note = note.on_hover_text("Click to dismiss").clicked();
+        ui.label(
+            egui::RichText::new(note)
+                .small()
+                .color(palette.loading_meta()),
+        );
     }
     let Some(word) = &lead.word else {
         return;

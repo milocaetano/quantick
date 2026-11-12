@@ -20,6 +20,9 @@ struct Window {
     auto: AutoRoll,
     /// What the last attach explained: the roll the link's notice now names.
     explained: Option<(String, String)>,
+    /// The window's switch snaps the selection back, as one whose feed left
+    /// the config does.
+    stuck: bool,
 }
 
 impl Window {
@@ -35,6 +38,7 @@ impl Window {
             delisted: Vec::new(),
             auto: AutoRoll::default(),
             explained: None,
+            stuck: false,
         }
     }
 }
@@ -70,6 +74,9 @@ impl FeedSourcePort for Window {
     }
     fn select_feed(&mut self, index: usize, _feed_id: &str, symbol: &str) -> Option<FeedSelection> {
         self.switches += 1;
+        if self.stuck {
+            return self.feed_selection(index);
+        }
         self.symbol = symbol.into();
         // The window's switch, then the link's attach and drain: the licence
         // follows only its own roll, the attach explains a roll, and a listed
@@ -264,6 +271,36 @@ fn an_unlisted_contract_offers_its_configured_roll_and_the_click_lands_there() {
         "a second press on a stale popup rolls nothing further"
     );
     assert_eq!(window.switches, 1);
+}
+
+/// A switch that snaps back rolled nothing: the press and the restored tab
+/// both say so, and the roll memory is as it was before the attempt.
+#[test]
+fn a_switch_that_does_not_land_says_so_and_decides_nothing() {
+    let mut window = unlisted_on("AAAZ26", &[]);
+    window.stuck = true;
+    settle_auto_rolls(&mut window);
+    let before = window.auto.clone();
+    window.auto.press("AAAG27");
+    let settled = settle_auto_rolls(&mut window);
+    assert_eq!(settled.notes, ["Could not switch to AAAG27"]);
+    assert!(settled.rolls.is_empty(), "nothing is journaled");
+    assert_eq!(window.auto, before, "nothing decided, the offer kept");
+    assert_eq!(window.auto.take_rolled(), None, "no attach explains it");
+
+    let mut window = unlisted_on("AAAZ26", &[]);
+    window.stuck = true;
+    window.auto.arm("AAAZ26");
+    let settled = settle_auto_rolls(&mut window);
+    assert_eq!(settled.notes, ["Could not switch to AAAG27"]);
+    assert!(settled.rolls.is_empty());
+    assert!(!window.auto.is_armed(), "it does not retry every frame");
+    assert_eq!(
+        window.auto.offer().map(|offer| offer.to.clone()),
+        Some(Ok("AAAG27".to_owned())),
+        "the roll stays on offer for a hand"
+    );
+    assert!(settle_auto_rolls(&mut window).is_empty(), "said once");
 }
 
 #[test]

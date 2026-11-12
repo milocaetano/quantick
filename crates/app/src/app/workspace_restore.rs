@@ -104,7 +104,7 @@ impl ArrangementAdapter<'_> {
                     );
                     tab.set_opening_layouts(saved.flow_layout, &saved.context_layouts);
                     tab.restore_candle_styles(&saved.candle_styles);
-                    tab.link.auto_roll.arm(&tab.symbol);
+                    tab.link.arm_auto_roll(&tab.symbol);
                     let showing = index == active && crate::orderflow_panel::flow_pane_shown(tab);
                     tab.tape_mut().settings_panel = saved.restored_panel(chrome, showing);
                     self.workspace.book.sync_mut().arrive(

@@ -155,10 +155,8 @@ fn a_refused_roll_keeps_reconnect_and_says_why() {
     assert_eq!(notice_view(&app)["roll_refused"], reason);
 }
 
-#[test]
-fn a_restored_tab_rolls_itself_once_and_says_so() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = rolling_app();
+/// Restore (or import) a saved workspace of one TESTUSDT tab.
+fn restore_testusdt(app: &mut QuantickApp) {
     app.arrangement_adapter()
         .restore_workspace(ui_state::Workspace::new(
             true,
@@ -189,6 +187,13 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
             }],
             None,
         ));
+}
+
+#[test]
+fn a_restored_tab_rolls_itself_once_and_says_so() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    restore_testusdt(&mut app);
     assert!(app.active_tab().link.auto_roll.armed_for("TESTUSDT"));
     app.active_tab_mut().link.notice = unlisted("TESTUSDT");
     run_frame(&mut app, &ctx);
@@ -198,7 +203,7 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     // The explanation stays on the tab, not alarming, and is readable on the
-    // control plane until the trader puts it away.
+    // control plane until a later notice replaces it.
     assert_eq!(
         status_lead(&app).note.as_deref(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
@@ -222,6 +227,29 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
         app.active_tab().active.1,
         "TESTUSDT",
         "a configured cycle does not loop: TESTUSDT was decided already"
+    );
+}
+
+/// A bundle imported mid-session adopts a tab that is already streaming: the
+/// contract is listed, so a later report offers the roll and waits for a hand.
+#[test]
+fn an_import_does_not_license_a_tab_that_already_connected() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .link
+        .set_connection(quantick_feed::FeedConnectionState::Connected, 0);
+    restore_testusdt(&mut app);
+    assert!(!app.active_tab().link.auto_roll.is_armed());
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "TESTUSDT", "no roll by itself");
+    assert_eq!(
+        app.active_tab().link.quick_action(),
+        crate::feed_notice::NoticeAction::Roll("ETHUSDT".to_owned()),
+        "the roll is offered"
     );
 }
 
