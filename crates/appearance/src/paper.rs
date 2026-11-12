@@ -3,7 +3,8 @@
 //! painter of them reads the same answer and a test grades it headless.
 //!
 //! Light writes its chart levels on one near-black plate and lets only the
-//! ink say what a level is; Dark keeps its accent and side colours. Light's
+//! ink say what a level is, except a level under the hand or aimed, which
+//! wears the white paper plate; Dark keeps its accent and side colours. Light's
 //! slate flow pane is a dark surface, so it keeps Dark's look too.
 use std::cmp::Ordering;
 
@@ -37,6 +38,124 @@ pub fn plate_for(theme: &ResolvedTheme, line: PremultipliedRgba) -> Option<Plate
     plates_on_chart(theme).then_some(Plate {
         fill: Token::OrderPlate,
         ink,
+    })
+}
+
+/// What a paper-trading level on the chart is doing, which decides how its
+/// tag and price-axis chip are painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelState {
+    /// In the book and left alone: a working order, a live leg.
+    Resting,
+    /// A protective leg riding an unfilled order: it arms on the fill.
+    Pending,
+    /// Under the hand: a leg being dragged, or a stop or target the aim
+    /// carries before the click.
+    Moving,
+    /// The aim itself (the Alt ghost): the order the next click sends.
+    Aimed,
+}
+
+/// Whether a level's tag is outlined rather than filled. A pending leg is
+/// outlined in both themes; a light chart also writes a level under the
+/// hand on its paper plate (white, edged in the side's tag colour, only the
+/// money coloured) instead of the near-black order plate. Dark fills it.
+#[must_use]
+pub fn outlined_tag(theme: &ResolvedTheme, state: LevelState) -> bool {
+    match state {
+        LevelState::Resting => false,
+        LevelState::Pending => true,
+        LevelState::Moving | LevelState::Aimed => plates_on_chart(theme),
+    }
+}
+
+/// The paper plate: its fill, its one-pixel edge, the words on it, and
+/// whether the edge is dashed. The edge is dashed exactly while the order
+/// is not sent (the aim); a solid edge is an order in the book or a level
+/// that moves with one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaperPlate {
+    pub fill: Token,
+    pub edge: Token,
+    pub ink: Token,
+    pub dashed: bool,
+}
+
+/// The dash and gap of a paper plate's unsent edge, in logical pixels.
+pub const PAPER_DASH_PX: f32 = 3.0;
+pub const PAPER_GAP_PX: f32 = 2.0;
+
+/// The paper plate a light chart lays under a level drawn in `line` while it
+/// is `state`, or `None` where it keeps its own look (Dark, and every
+/// resting level). The edge is the side's tag colour, the one its filled
+/// price-axis chip wears ([`level_chip`]), so each side has one colour; an
+/// entry's is the order plate. A pending leg's plate here is the one
+/// `chip_tag` outlines.
+#[must_use]
+pub fn paper_plate(
+    theme: &ResolvedTheme,
+    line: PremultipliedRgba,
+    state: LevelState,
+) -> Option<PaperPlate> {
+    let plate = plate_for(theme, line)?;
+    let edge = match plate.ink {
+        Token::PlateGain => Token::PaperTagGain,
+        Token::PlateLoss => Token::PaperTagLoss,
+        _ => Token::OrderPlate,
+    };
+    (state != LevelState::Resting).then_some(PaperPlate {
+        fill: Token::Inset,
+        edge,
+        ink: Token::TextPrimary,
+        dashed: state == LevelState::Aimed,
+    })
+}
+
+/// The price-axis chip of a level drawn in `line`: on a light chart a level
+/// under the hand or aimed is filled in its side's tag colour with white
+/// digits, so it reads as the paper plate's twin; every other level keeps
+/// [`plate_for`] (`None` in Dark: the side colour and `chip_ink`).
+#[must_use]
+pub fn level_chip(
+    theme: &ResolvedTheme,
+    line: PremultipliedRgba,
+    state: LevelState,
+) -> Option<Plate> {
+    let plate = plate_for(theme, line)?;
+    let fill = match plate.ink {
+        Token::PlateGain => Token::PaperTagGain,
+        Token::PlateLoss => Token::PaperTagLoss,
+        _ => return Some(plate),
+    };
+    Some(match state {
+        LevelState::Moving | LevelState::Aimed => Plate {
+            fill,
+            ink: Token::ChipInk,
+        },
+        LevelState::Resting | LevelState::Pending => plate,
+    })
+}
+
+/// How a light chart writes a measurement's readout: a grey edge round its
+/// plate, the signed price line in the gain or loss ink and every other line
+/// in the primary ink. `None` keeps the surface's own readout (Dark: no
+/// edge, every line in the move's colour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaperReadout {
+    pub edge: Token,
+    pub ink: Token,
+    pub gain: Token,
+    pub loss: Token,
+}
+
+/// The readout look of `theme`'s chart; see [`PaperReadout`].
+#[must_use]
+pub fn paper_readout(theme: &ResolvedTheme) -> Option<PaperReadout> {
+    plates_on_chart(theme).then(|| PaperReadout {
+        edge: Token::ReadoutEdge,
+        ink: Token::TextPrimary,
+        gain: pnl_ink(theme, Token::ChartCanvas, Ordering::Greater),
+        loss: pnl_ink(theme, Token::ChartCanvas, Ordering::Less),
     })
 }
 

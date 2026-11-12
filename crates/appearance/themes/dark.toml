@@ -170,6 +170,11 @@ ledger_card_edge = "#2E3648"
 ledger_session = "#262E40"
 ledger_session_edge = "#34405A"
 ledger_selection = "#2B3F63"
+# Light's paper plates; Dark lays none, so these mirror its own chip and
+# draw no readout edge.
+paper_tag_gain = "#26A69A"
+paper_tag_loss = "#EF5350"
+readout_edge = "#00000000"
 # The settings panels' blocks in Dark's own colours: chrome ground, inset
 # plates, ledger cards as blocks, the card edge as the band.
 panel_ground = "#171B26"

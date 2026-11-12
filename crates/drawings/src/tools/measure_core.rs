@@ -18,7 +18,7 @@ use super::{
     ChartPoint, DrawingStyle, ToolFamily, ValueUnit, dashed_segment_within, drawing_fill,
     drawing_stroke,
 };
-use quantick_appearance::{FontRole, ResolvedTheme, Token};
+use quantick_appearance::{FontRole, ResolvedTheme, Token, paper};
 
 /// The one rail family every measurement tool declares.
 pub(super) const MEASURE_FAMILY: ToolFamily = ToolFamily {
@@ -56,6 +56,8 @@ const READOUT_LINE_GAP_PX: f32 = 2.0;
 const READOUT_PAD_X_PX: f32 = 5.0;
 const READOUT_PAD_Y_PX: f32 = 3.0;
 const READOUT_RADIUS_PX: f32 = 3.0;
+/// A light chart's readout edge (`paper::paper_readout`).
+const READOUT_EDGE_PX: f32 = 1.0;
 /// The ruler's anchor dots: big enough to find the end of the leg, small
 /// enough to stay under the selection ring.
 const RULER_DOT_RADIUS_PX: f32 = 3.0;
@@ -353,16 +355,33 @@ fn paint_plate(
         (chart_rect.top() - plate.top()).max(0.0) + (chart_rect.bottom() - plate.bottom()).min(0.0),
     ));
 
-    if appearance.drawing_label_plates {
+    // A light chart lays the paper readout: a white plate edged in grey, in
+    // its primary ink, inking only the signed price line, which leads whenever
+    // the move has a direction (`paper_readout`). Elsewhere the plate follows
+    // the surface's `drawing_label_plates`.
+    let paper = paper::paper_readout(appearance);
+    if paper.is_some() || appearance.drawing_label_plates {
         painter.rect_filled(
             plate,
             READOUT_RADIUS_PX,
             appearance.color(Token::DrawingReadoutPlate),
         );
     }
+    if let Some(paper) = paper {
+        let edge = Stroke::new(READOUT_EDGE_PX, appearance.color(paper.edge));
+        painter.rect_stroke(plate, READOUT_RADIUS_PX, edge);
+    }
     let mut cursor = plate.min + vec2(READOUT_PAD_X_PX, READOUT_PAD_Y_PX);
-    for (line, size) in readout.lines.iter().zip(&sizes) {
+    for (index, (line, size)) in readout.lines.iter().zip(&sizes).enumerate() {
         let advance = size.y + READOUT_LINE_GAP_PX;
+        let color = match (paper, readout.rising) {
+            (Some(paper), rising) => appearance.color(match (index, rising) {
+                (0, Some(true)) => paper.gain,
+                (0, Some(false)) => paper.loss,
+                _ => paper.ink,
+            }),
+            (None, _) => color,
+        };
         painter.text(cursor, Align2::LEFT_TOP, line, font, color);
         cursor.y += advance;
     }
