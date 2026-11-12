@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 129 |
+| Reachable by capability | 131 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **183** |
+| **Total** | **185** |
 
-100 of the 183 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 83 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+100 of the 185 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 85 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -198,6 +198,8 @@ The three exclusion classes are closed:
 | `tool.trend-line` | Arm the trend line | tool rail, family flyout, canvas right-click | `annotate.trend_line.create` | — |
 | `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
+| `drawing.text.properties` | Edit a note's words, font, size, color, background, border and wrapping | inline editor, text properties tab and size slider | `annotate.text.set` | — |
+| `drawing.text.repeat` | Place another independent note in the selected style | the text properties bar T button | `annotate.text.repeat` | — |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu (drawing section and objects submenu), the object manager, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
@@ -259,7 +261,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 85 |
+| `authored` | 87 |
 
 ## Appendix: rows no registry stands behind
 
@@ -339,6 +341,8 @@ declares nothing here is a guard failure.
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `feed.connection_state` | a readout painted from one state, with no control of its own |
 | `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
+| `drawing.text.properties` | the text properties widgets |
+| `drawing.text.repeat` | the text properties bar repeat button |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |

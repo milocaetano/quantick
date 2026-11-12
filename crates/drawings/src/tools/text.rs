@@ -5,7 +5,10 @@
 //! muted type — never nothing, because an invisible object the trader cannot
 //! find to delete is worse than a visible empty one.
 
-use crate::{Align2, FontSpec, FontFamily, MarkScene, pos2, Px, PxRect, vec2};
+use crate::{Align2, FontSpec, FontFamily, MarkScene, MarkShape, Stroke, Px, PxRect, vec2, rgba_unmultiplied};
+#[cfg(test)]
+use crate::pos2;
+use crate::text::{TextAppearance, TextExtent, TextFormat, text_bounds};
 use quantick_chart::style::PremultipliedRgba;
 use std::any::Any;
 
@@ -24,10 +27,6 @@ pub const PLACEHOLDER: &str = "Note";
 const DEFAULT_TEXT_PX: f32 = 12.0;
 pub const MIN_TEXT_PX: f32 = 6.0;
 pub const MAX_TEXT_PX: f32 = 72.0;
-/// How far the note's baseline sits above its anchor, so the anchor marks the
-/// price and the words do not cover it.
-const TEXT_LIFT_PX: f32 = 4.0;
-/// Hit padding around the laid-out words, so a short note is still grabbable.
 const TEXT_HIT_PAD_PX: f32 = 3.0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +34,8 @@ pub struct TextPayload {
     pub text: String,
     pub size_px: f32,
     pub family: FontFamily,
+    pub appearance: TextAppearance,
+    pub extent: TextExtent,
 }
 
 impl Default for TextPayload {
@@ -43,6 +44,8 @@ impl Default for TextPayload {
             text: String::new(),
             size_px: DEFAULT_TEXT_PX,
             family: FontFamily::Proportional,
+            appearance: TextAppearance::default(),
+            extent: TextExtent::default(),
         }
     }
 }
@@ -83,6 +86,7 @@ impl DrawingPayload for TextPayload {
         table.insert("family".into(), toml::Value::String(match self.family {
             FontFamily::Proportional => "proportional", FontFamily::Monospace => "monospace",
         }.into()));
+        table.insert("appearance".into(), toml::Value::try_from(self.appearance).ok()?);
         Some(toml::Value::Table(table))
     }
     fn import_preset(&mut self, value: &toml::Value) -> bool {
@@ -94,7 +98,15 @@ impl DrawingPayload for TextPayload {
             Some("monospace") => FontFamily::Monospace,
             Some(_) => return false,
         };
+        let appearance = match value.get("appearance") {
+            Some(value) => match value.clone().try_into::<TextAppearance>() {
+                Ok(value) if value.valid() => value,
+                _ => return false,
+            },
+            None => TextAppearance::default(),
+        };
         if !size.is_finite() { return false; }
+        self.appearance = appearance;
         self.family = family;
         self.size_px = (size as f32).clamp(MIN_TEXT_PX, MAX_TEXT_PX);
         true
@@ -210,15 +222,29 @@ impl MarkTool for Text {
         let Some(payload) = payload_of(ctxt) else {
             return;
         };
-        let (text, color) = shown(payload, style, ctxt.appearance);
-        painter.text(
-            *anchor - vec2(0.0, TEXT_LIFT_PX),
-            Align2::LEFT_BOTTOM,
-            text.to_owned(),
-            FontSpec { size_px: payload.size_px, family: payload.family },
+        let legacy = payload.appearance == TextAppearance::default();
+        // Rich notes own their foreground/background pair. Canvas contrast
+        // correction applies only to legacy notes with no authored appearance.
+        let (text, color) = shown(payload, if legacy { style } else { ctxt.style }, ctxt.appearance);
+        let bounds = payload.bounds(*anchor, ctxt.text);
+        if legacy {
+            painter.text(*anchor - vec2(0.0, crate::text::TEXT_LIFT_PX), Align2::LEFT_BOTTOM, text, payload.format().font, color);
+            return;
+        }
+        if let Some([r, g, b, a]) = payload.appearance.background {
+            painter.rect_filled(bounds, 0.0, rgba_unmultiplied(r, g, b, a));
+        }
+        if let Some([r, g, b, a]) = payload.appearance.border {
+            painter.rect_stroke(bounds, 0.0, Stroke::new(1.0, rgba_unmultiplied(r, g, b, a)));
+        }
+        painter.add(MarkShape::NoteText {
+            at: bounds.min + vec2(payload.appearance.padding(), payload.appearance.padding()),
+            text: text.to_owned(),
+            format: payload.format(),
             color,
-        );
+        });
     }
+
     fn hit_test(
         &self,
         _chart_rect: PxRect,
@@ -233,17 +259,7 @@ impl MarkTool for Text {
         let Some(payload) = payload_of(ctxt) else {
             return false;
         };
-        let (text, _) = shown(payload, ctxt.style, ctxt.appearance);
-        // Measured from the type size rather than laid out: hit-testing runs
-        // per frame per object and must not build a galley to answer.
-        let lines = text.lines().count().max(1) as f32;
-        let widest = text.lines().map(str::chars).map(Iterator::count).max().unwrap_or(0) as f32;
-        let size = vec2(
-            widest * payload.size_px * APPROX_GLYPH_ASPECT,
-            lines * payload.size_px * APPROX_LINE_HEIGHT,
-        );
-        let top_left = pos2(anchor.x, anchor.y - TEXT_LIFT_PX - size.y);
-        PxRect::from_min_size(top_left, size)
+        payload.bounds(*anchor, ctxt.text)
             .expand(radius_px.max(TEXT_HIT_PAD_PX))
             .contains(position)
     }
@@ -254,11 +270,19 @@ impl MarkTool for Text {
     }
 }
 
-/// Width of an average proportional glyph as a fraction of the font size, and
-/// line height as a multiple of it. Approximations on purpose — see the
-/// hit-test comment.
-const APPROX_GLYPH_ASPECT: f32 = 0.55;
-const APPROX_LINE_HEIGHT: f32 = 1.25;
+impl TextPayload {
+    pub fn shown_text(&self) -> &str {
+        if self.text.trim().is_empty() { PLACEHOLDER } else { &self.text }
+    }
+
+    pub fn format(&self) -> TextFormat {
+        TextFormat { font: FontSpec { size_px: self.size_px, family: self.family }, appearance: self.appearance }
+    }
+
+    pub fn bounds(&self, anchor: Px, metrics: &dyn crate::TextMetrics) -> PxRect {
+        text_bounds(anchor, self.extent.measure(self.shown_text(), self.format(), metrics), self.appearance)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -305,12 +329,14 @@ mod tests {
             text: "do not travel".to_owned(),
             size_px: 20.0,
             family: FontFamily::Monospace,
+            ..TextPayload::default()
         };
         let exported = source.export_preset().expect("text exports a preset");
         let mut target = TextPayload {
             text: "mine".to_owned(),
             size_px: DEFAULT_TEXT_PX,
             family: FontFamily::Proportional,
+            ..TextPayload::default()
         };
         assert!(target.import_preset(&exported));
         assert_eq!(target.size_px, 20.0);

@@ -232,6 +232,20 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
 /// Objects already on the chart.
 pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "drawing.text.properties",
+        title: "Edit a note's words, font, size, color, background, border and wrapping",
+        reach: "inline editor, text properties tab and size slider",
+        keys: &[(Source::Authored, "the text properties widgets")],
+        mapping: capability!("annotate.text.set"),
+    },
+    UiBehaviour {
+        id: "drawing.text.repeat",
+        title: "Place another independent note in the selected style",
+        reach: "the text properties bar T button",
+        keys: &[(Source::Authored, "the text properties bar repeat button")],
+        mapping: capability!("annotate.text.repeat"),
+    },
+    UiBehaviour {
         id: "attention.mark.create",
         title: "Take a mark of what is under the pointer",
         reach: "Ctrl+M",

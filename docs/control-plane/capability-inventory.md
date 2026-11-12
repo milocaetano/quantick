@@ -50,6 +50,8 @@ capability that cannot change application state.
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.text.repeat` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
+| `annotate.text.set` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
@@ -182,4 +184,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-157 capabilities registered.
+159 capabilities registered.

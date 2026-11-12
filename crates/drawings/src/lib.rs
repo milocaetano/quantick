@@ -27,6 +27,7 @@ pub mod gesture;
 pub mod icons;
 pub mod palette;
 pub mod presets;
+pub mod text;
 
 mod clipboard;
 mod collection;
@@ -49,12 +50,12 @@ mod update;
 #[cfg(test)]
 mod scratch;
 
-pub use color::{RgbaExt, TRANSPARENT, WHITE, rgba_premultiplied, rgba_unmultiplied};
+pub use color::{RgbaExt, TRANSPARENT, WHITE, opaque, rgba_premultiplied, rgba_unmultiplied};
 pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(any(test, feature = "test-support"))]
 pub use defaults::NullPresetHost;
 pub use defaults::{
-    PresetHost, has_saved_default, new_drawing_from_defaults, remember_last_style,
+    PresetHost, has_saved_default, new_drawing_from_defaults, prepare_repeat, remember_last_style,
     reset_tool_default, save_tool_default,
 };
 pub use family::{

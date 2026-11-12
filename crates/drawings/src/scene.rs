@@ -85,6 +85,9 @@ impl FontSpec {
 pub trait TextMetrics {
     /// The width and height `text` occupies on one line in `font`.
     fn size(&self, text: &str, font: FontSpec) -> Px;
+    fn note_size(&self, text: &str, format: crate::text::TextFormat) -> Px {
+        self.size(text, format.font)
+    }
 }
 
 /// The metrics of a context that sets no label — a hit test or a gesture
@@ -105,6 +108,13 @@ pub const UNMEASURED: Unmeasured = Unmeasured;
 /// pixels.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarkShape {
+    /// A laid-out note, with explicit font style and wrapping.
+    NoteText {
+        at: Px,
+        text: String,
+        format: crate::text::TextFormat,
+        color: PremultipliedRgba,
+    },
     /// A straight segment between two points.
     Line { from: Px, to: Px, stroke: Stroke },
     /// A chain of segments through `points`, closed back to the first when

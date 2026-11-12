@@ -335,6 +335,11 @@ impl DrawingController {
         if ask.duplicate {
             self.duplicate_selected_drawing(host, effects, alerts);
         }
+        if ask.draw_again.is_some()
+            && let Some(drawing) = host.drawings_mut().selected_mut()
+        {
+            quantick_drawings::prepare_repeat(&mut self.presets, drawing);
+        }
         effects.arm = effects.arm.or(ask.draw_again);
         if let Some(saved) = ask.saved_default {
             // Nothing to undo: this changed a preference, not the chart.

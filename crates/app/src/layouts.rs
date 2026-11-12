@@ -59,7 +59,7 @@ pub(crate) fn market_settings_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawings::{Drawing, DrawingId, DrawingScope, StyleColor32};
+    use crate::drawings::{DrawingId, DrawingScope, StyleColor32};
     fn level(price: f64) -> SavedDrawing {
         SavedDrawing {
             tool: "horizontal-line".to_owned(),
@@ -173,42 +173,36 @@ mod tests {
         assert_eq!(SavedDrawing::from_drawing(&drawing).origin, saved.origin);
     }
 
-    /// Both files were written by `save` at c040c621, before drawing colours
-    /// left egui: `drawings.toml` as saved, `drawings-resaved.toml` after one
-    /// pass through live drawings. A translucent colour already changes on
-    /// that pass (the live colour is premultiplied); this pins it, not fixes it.
+    /// Both historical files still load with their original painted colours.
+    /// Further saves must not repeat their old double-premultiplication bug.
     #[test]
-    fn a_drawings_file_from_before_the_headless_colour_loads_and_saves_unchanged() {
+    fn legacy_drawings_keep_their_loaded_colour_across_further_saves() {
         const SAVED: &str = include_str!("../fixtures/layouts/drawings.toml");
         const RESAVED: &str = include_str!("../fixtures/layouts/drawings-resaved.toml");
         let dir = crate::scratch::ScratchDir::new("layouts-colour");
         let path = dir.join(LAYOUTS_FILE);
 
-        let mut book = parse(SAVED).unwrap();
-        save(&path, &book);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), SAVED);
+        for fixture in [SAVED, RESAVED] {
+            let mut book = parse(fixture).unwrap();
+            save(&path, &book);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), fixture);
 
-        let saved = book.take_legacy_drawings().remove(0).items;
-        assert_eq!(saved.len(), 3, "an opaque and two translucent colours");
-        let live: Vec<Drawing> = saved
-            .iter()
-            .map(|entry| entry.to_drawing(DrawingId(entry.id.unwrap())).unwrap())
-            .collect();
-        for (entry, drawing) in saved.iter().zip(&live) {
-            let [r, g, b, a] = entry.color;
-            assert_eq!(
-                drawing.style.color32(),
-                eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a),
-                "the painted colour is the one egui made from the file"
-            );
+            let saved = book.take_legacy_drawings().remove(0).items;
+            assert_eq!(saved.len(), 3, "an opaque and two translucent colours");
+            for entry in saved {
+                let drawing = entry.to_drawing(DrawingId(entry.id.unwrap())).unwrap();
+                let [r, g, b, a] = entry.color;
+                assert_eq!(
+                    drawing.style.color32(),
+                    eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                    "the painted colour is the one egui made from the historical file"
+                );
+                let resaved = SavedDrawing::from_drawing(&drawing);
+                let reloaded = resaved.to_drawing(drawing.id).unwrap();
+                assert_eq!(reloaded, drawing, "saving preserves the loaded drawing");
+                assert_eq!(SavedDrawing::from_drawing(&reloaded), resaved);
+            }
         }
-        let resaved: Vec<SavedDrawing> = live.iter().map(SavedDrawing::from_drawing).collect();
-        let expected = parse(RESAVED)
-            .unwrap()
-            .take_legacy_drawings()
-            .remove(0)
-            .items;
-        assert_eq!(resaved, expected);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

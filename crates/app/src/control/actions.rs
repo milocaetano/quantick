@@ -34,6 +34,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::attention::register(&mut registry)?;
     quantick_control_handlers::appearance::register_actions(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;
+    quantick_control_handlers::drawing_text::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
     quantick_control_handlers::layout::register(&mut registry)?;
     quantick_control_handlers::canvas::register(&mut registry)?;

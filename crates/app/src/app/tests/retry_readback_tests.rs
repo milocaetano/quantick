@@ -76,6 +76,8 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "drawing_scope_control_tests.rs"]
 mod drawing_scope_control;
+#[path = "drawing_text_control_tests.rs"]
+mod drawing_text_control;
 #[path = "feed_source_control_tests.rs"]
 mod feed_source_control;
 #[path = "history_control_tests.rs"]
@@ -875,6 +877,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        ("annotate.text.set", 1, Value::Null, Readback::Moves),
         // Filled in when it runs: a dated line placed for the call to keep.
         (
             "annotate.drawing_scope.set",
@@ -1266,6 +1269,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
                 })
+            }
+            "annotate.text.set" => {
+                let pane = &mut app.active_tab_mut().flow_pane;
+                pane.drawings.place(
+                    crate::drawings::DrawingTool::by_id("text").unwrap(),
+                    ChartPoint::at(1.0, 100.0),
+                );
+                let target = drawing_text_control::target(&app);
+                json!({ "target": target, "text": "Retry-safe note" })
             }
             "annotate.drawing_scope.set" => {
                 app.surfaces.chart_settings.close();

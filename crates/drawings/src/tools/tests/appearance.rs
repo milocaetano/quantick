@@ -115,6 +115,7 @@ fn empty_note_uses_ambient_ink_but_authored_note_keeps_its_font_and_color() {
             text: text.into(),
             size_px: 17.0,
             family: FontFamily::Monospace,
+            ..TextPayload::default()
         };
         let painted = scene(&theme, "text", &payload, false);
         assert!(painted.shapes.iter().any(|shape| matches!(shape, MarkShape::Text { color, font, .. }
@@ -285,7 +286,7 @@ fn painted_colors(scene: &MarkScene) -> Vec<PremultipliedRgba> {
             MarkShape::Path { fill, stroke, .. }
             | MarkShape::Rect { fill, stroke, .. }
             | MarkShape::Circle { fill, stroke, .. } => vec![*fill, stroke.color],
-            MarkShape::Text { color, .. } => vec![*color],
+            MarkShape::Text { color, .. } | MarkShape::NoteText { color, .. } => vec![*color],
         })
         .collect()
 }
@@ -346,6 +347,28 @@ fn a_flat_readout_reads_against_its_plate() {
             .iter()
             .all(|color| *color == light.color(Token::TextPrimary))
     );
+}
+
+#[test]
+fn rich_notes_preserve_the_authored_foreground_background_pair_on_every_theme() {
+    let ink = PremultipliedRgba::from_rgb(243, 247, 255);
+    let payload = TextPayload {
+        text: "authored pair".into(),
+        appearance: crate::text::TextAppearance {
+            background: Some([20, 30, 40, 255]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap(),
+    ] {
+        let scene = scene_in(&theme, "text", &payload, false, ink);
+        assert!(scene.shapes.iter().any(|shape| matches!(
+            shape, MarkShape::NoteText { color, .. } if *color == ink
+        )));
+    }
 }
 
 /// A level ruler (Shift copies the price) has no move to ink: Light writes

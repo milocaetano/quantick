@@ -20,7 +20,10 @@ pub trait SavedDrawingExt {
 impl SavedDrawingExt for SavedDrawing {
     /// The file's form of a live drawing.
     fn from_drawing(drawing: &Drawing<DrawingTool>) -> Self {
-        let [r, g, b, a] = drawing.style.color.to_array();
+        // The file reader takes straight RGBA; persisting the renderer's
+        // premultiplied channels would darken translucent ink on every reload.
+        let [r, g, b, _] = crate::color::opaque(drawing.style.color).to_array();
+        let a = drawing.style.color.to_array()[3];
         Self {
             durable_identity: drawing.durable_identity.clone(),
             id: Some(drawing.id.0),
