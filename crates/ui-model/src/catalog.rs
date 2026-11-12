@@ -10,13 +10,14 @@ macro_rules! surface_catalog {
         $consumer! {
             legacy {
                 script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
-                indicator_preview: IndicatorPreviewSurface => Surface::draw, ignore_keyboard;
                 market_palette: MarketPaletteSurface => Surface::draw, ignore_keyboard;
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
             modules { remove_chart; }
             models {
+                [] []
+                indicator_preview: IndicatorPreview => indicator_preview = "indicator_preview.rs", indicator_preview = "indicator_preview.rs", indicator_preview::effects, Overlay, Local;
                 [] []
                 indicator_picker: IndicatorPicker => indicator_picker = "indicator_picker.rs", indicator_picker = "indicator_picker.rs", indicator_picker::effects, Overlay, Host;
                 [] []
