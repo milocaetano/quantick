@@ -409,7 +409,7 @@ impl CanvasState {
     }
 
     /// Snap a pane floating over the canvas into `corner` of `canvas`,
-    /// keeping its size.
+    /// keeping its size, clear of every folded chart's strip.
     ///
     /// # Errors
     /// The pane is not floating over the canvas.
@@ -424,7 +424,10 @@ impl CanvasState {
         let FloatHost::Canvas { rect } = self.floating[index].host else {
             return Err(not_floating);
         };
-        let parked = park_rect(canvas, corner, (rect.w, rect.h));
+        let strips: Vec<CanvasRect> = (self.rects(canvas).into_iter())
+            .filter_map(|(held, strip)| self.minimized.contains(&held).then_some(strip))
+            .collect();
+        let parked = park_rect(canvas, corner, (rect.w, rect.h), &strips);
         self.floating[index].host = FloatHost::Canvas { rect: parked };
         Ok(parked != rect)
     }

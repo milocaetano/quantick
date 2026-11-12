@@ -102,6 +102,30 @@ pub fn seat_slot(state: &CanvasState, seats: &mut Seats, seat: Option<usize>) ->
     slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
 }
 
+/// How built chart `seat` (`None` for the flow pane) shows, by the seats the
+/// last drawn frame gave out; `None` when the canvas holds no pane for it.
+#[must_use]
+pub fn seat_mode(state: &CanvasState, seats: &Seats, seat: Option<usize>) -> Option<PaneMode> {
+    let slot = match seat {
+        Some(seat) => (seats.held.iter()).find_map(|(slot, held)| (*held == seat).then_some(*slot)),
+        None => (state.panes().into_iter())
+            .find_map(|(slot, kind, _)| (kind != PaneKind::Time).then_some(slot)),
+    };
+    state.mode(slot?)
+}
+
+/// Whether built chart `seat` (`None` for the flow pane) is on screen:
+/// docked with nothing maximized over it, maximized itself, or floating. A
+/// folded chart is only its strip, and a chart the canvas lacks is nowhere.
+#[must_use]
+pub fn seat_drawn(state: &CanvasState, seats: &Seats, seat: Option<usize>) -> bool {
+    match seat_mode(state, seats, seat) {
+        Some(PaneMode::Docked) => state.maximized().is_none(),
+        Some(PaneMode::Minimized) | None => false,
+        Some(_) => true,
+    }
+}
+
 /// `state`'s panes, with `seats` brought up to date: gone slots dropped,
 /// new time slots seated on the lowest free chart in the order the tree
 /// draws them, then the floating ones, so a picked layout shows its first

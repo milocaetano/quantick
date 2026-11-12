@@ -104,7 +104,7 @@ impl TabCanvas {
     /// The canvas half of `Tab::set_layout`. A layout chosen from the picker
     /// shows the panes its thumbnail drew, so the folds open even when the
     /// layout is the one already selected. Returns the focus the switch
-    /// reveals, or `None` when the layout did not change.
+    /// reveals, or `None` when the layout did not change, as past the cap.
     pub(super) fn switch_layout(
         &mut self,
         layout: CanvasLayout,
@@ -112,6 +112,10 @@ impl TabCanvas {
         focus: PaneSide,
     ) -> Option<PaneSide> {
         let previous = self.layout;
+        let preset = layout.preset();
+        if !self.state.apply_preset(preset) && self.state.preset() != Some(preset) {
+            return None;
+        }
         // Leaving the column collapsed meant the cell lit, two panes were
         // promised, and an 8 px rail arrived instead. Before the early return,
         // because picking the arrangement that is *already* selected is
@@ -120,7 +124,6 @@ impl TabCanvas {
         self.context_collapsed = false;
         self.flow_collapsed = false;
         self.expand_context_stack();
-        self.state.apply_preset(layout.preset());
         self.seats.clear();
         if layout == previous {
             return None;
@@ -269,6 +272,12 @@ impl TabCanvas {
             && self.state.maximized().is_none()
             && self.state.minimized().is_empty()
             && self.state.preset() == Some(self.layout.preset())
+    }
+
+    /// One split, owned by the painter drawing: `CanvasState::mirror_split`.
+    pub(crate) fn mirror_split(&mut self, columns: bool) {
+        let (preset, split) = (self.layout.preset(), &mut self.split_fraction);
+        self.state.mirror_split(preset, split, columns);
     }
 
     /// Put the column painter's split where the layout's tree puts the flow

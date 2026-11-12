@@ -3,7 +3,7 @@
 
 use eframe::egui;
 use quantick_control::wire::ActorKind;
-use quantick_workspace::canvas::CanvasRect;
+use quantick_workspace::canvas::{CanvasRect, PaneMode, seat_mode};
 pub(crate) use quantick_workspace::canvas_layout::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame,
 };
@@ -38,7 +38,12 @@ impl TabCanvas {
         self.layout.shows_time() && !time_panes.is_empty() && !self.context_collapsed
     }
 
+    /// Folded by the canvas model, or by the column flags while they draw.
     pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
+        if !self.column_painted() {
+            let seat = side.index().checked_sub(1);
+            return seat_mode(&self.state, &self.seats, seat) == Some(PaneMode::Minimized);
+        }
         let heights = &self.context_stack.heights;
         match side {
             PaneSide::Flow => self.flow_collapsed && self.layout.shows_time(),

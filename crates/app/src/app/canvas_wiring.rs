@@ -33,11 +33,10 @@ pub(super) fn tab_area(canvas: &crate::tab::layout::TabCanvas) -> CanvasRect {
     }
 }
 
-/// `tab` as the window draws it: its area and whether the column painter
-/// draws it.
+/// `tab` as the window draws it: its area.
 pub(crate) fn drawn(tab: &crate::tab::layout::TabCanvas) -> canvas::Drawn {
-    let (area, columns) = (tab_area(tab), tab.column_painted());
-    canvas::Drawn { area, columns }
+    let area = tab_area(tab);
+    canvas::Drawn { area }
 }
 
 /// The active tab's workspace as last saved, if it has a save.
@@ -76,7 +75,7 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
     let act = canvas::placed_pop_out(act, place, origin, |rect| monitor_of(rect, scale));
     let (changed, slot) = if let CanvasAct::PickLayout { preset_id } = &act {
         let before = app.active_tab().canvas.state.clone();
-        app.apply_layout_preset(canvas::picked(preset_id)?);
+        app.apply_layout_preset(canvas::pick_on(&before, preset_id)?);
         (app.active_tab().canvas.state != before, None)
     } else if let Some(id) = canvas::surface_widget(&act) {
         let reads = (&app.config, app.runtime.tz);
@@ -86,8 +85,11 @@ fn answer(app: &mut QuantickApp, act: CanvasAct) -> Result<CanvasResult, Control
         (true, None)
     } else {
         let drawn = drawn(&app.active_tab().canvas);
-        let state = &mut app.active_tab_mut().canvas.state;
-        canvas::act(state, saved.as_ref(), drawn, act)?
+        let tab = &mut app.active_tab_mut().canvas;
+        tab.mirror_split(tab.column_painted());
+        let acted = canvas::act(&mut tab.state, saved.as_ref(), drawn, act);
+        tab.mirror_split(false);
+        acted?
     };
     let (tab, unsaved) = (&app.active_tab().canvas, unsaved(app));
     let drawn = drawn(tab);
@@ -233,8 +235,9 @@ pub(super) fn with_canvas(
     mut recipe: WorkspaceRecipe,
     canvas: &crate::tab::layout::TabCanvas,
 ) -> WorkspaceRecipe {
-    let plain = canvas.column_painted() && canvas.state.numbered_as(canvas.layout.preset());
-    recipe.canvas = (!plain).then(|| canvas.state.clone());
+    let (preset, columns) = (canvas.layout.preset(), canvas.column_painted());
+    let (state, split) = (&canvas.state, canvas.split_fraction);
+    recipe.canvas = state.saved_form(preset, split, columns);
     recipe
 }
 
@@ -248,9 +251,9 @@ pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
         .unwrap_or_else(|| CanvasLayout::from(recipe.layout))
 }
 
-/// The canvas model a recipe restores: its saved one, else its layout's preset.
+/// The canvas model a recipe restores: its saved one, else its preset and split.
 #[must_use]
 pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
-    let layout = recipe_layout(recipe);
-    (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset(layout.preset()))
+    let (preset, split) = (recipe_layout(recipe).preset(), recipe.split_fraction);
+    (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset_split(preset, split))
 }
