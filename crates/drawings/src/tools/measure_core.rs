@@ -355,15 +355,18 @@ fn paint_plate(
         (chart_rect.top() - plate.top()).max(0.0) + (chart_rect.bottom() - plate.bottom()).min(0.0),
     ));
 
-    painter.rect_filled(
-        plate,
-        READOUT_RADIUS_PX,
-        appearance.color(Token::DrawingReadoutPlate),
-    );
-    // A light chart edges the plate in grey and writes in its primary ink,
-    // inking only the signed price line, which leads whenever the move has
-    // a direction (`paper_readout`).
+    // A light chart lays the paper readout: a white plate edged in grey, in
+    // its primary ink, inking only the signed price line, which leads whenever
+    // the move has a direction (`paper_readout`). Elsewhere the plate follows
+    // the surface's `drawing_label_plates`.
     let paper = paper::paper_readout(appearance);
+    if paper.is_some() || appearance.drawing_label_plates {
+        painter.rect_filled(
+            plate,
+            READOUT_RADIUS_PX,
+            appearance.color(Token::DrawingReadoutPlate),
+        );
+    }
     if let Some(paper) = paper {
         let edge = Stroke::new(READOUT_EDGE_PX, appearance.color(paper.edge));
         painter.rect_stroke(plate, READOUT_RADIUS_PX, edge);

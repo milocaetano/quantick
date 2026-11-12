@@ -138,6 +138,28 @@ fn ruler_uses_the_same_configured_font_for_plate_measurement_and_paint() {
     );
 }
 
+/// Light paints a measurement's readout on the paper plate the trader picked
+/// for the ruler: no other drawing label has a plate on Light, but the ruler's
+/// readout does.
+#[test]
+fn light_ruler_readout_sits_on_the_paper_plate() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let plate = light.color(Token::DrawingReadoutPlate);
+    let painted = scene(&light, "measure", &NoPayload, false);
+    assert!(
+        painted
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, MarkShape::Text { .. }))
+    );
+    assert!(
+        painted
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, MarkShape::Rect { fill, .. } if *fill == plate))
+    );
+}
+
 #[test]
 fn light_enlarged_fib_labels_follow_ambient_font_without_changing_levels() {
     use crate::tools::fib::{FibKind, FibPayload};
