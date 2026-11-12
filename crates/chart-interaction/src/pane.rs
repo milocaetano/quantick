@@ -169,7 +169,8 @@ pub enum CanvasHit {
     /// On a candle's body or wick: the chart settings open, the view stays.
     Candle,
     /// Open canvas: nothing opens, and the view returns to live at the
-    /// spacing it had, the last price centred ([`Model::live_centre`]).
+    /// spacing it had, the last price centred ([`Model::live_centre`]);
+    /// already live, it zooms in one notch as well.
     Empty,
 }
 
@@ -222,14 +223,14 @@ impl CanvasRepeat {
 /// two anchors of a quickly placed line, would otherwise read as a double
 /// click on the chart once the tool disarms — and open the settings or move
 /// the view the trader just drew on. A triple counts only after the canvas's
-/// own double click centred the live price.
+/// own double click returned the candles or the tape to live.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DoubleClickGate {
     previous_on_canvas: bool,
     /// What the canvas's previous click counted as.
     counted: Option<CanvasRepeat>,
-    /// The counted double click centred the live price (the reducer sets
-    /// it): only that double's third click zooms in.
+    /// The counted double click returned the candles or the tape to live
+    /// (the reducer sets it): only that double's third click zooms in.
     centred: bool,
     /// That centring double returned the tape, not the candles, to live:
     /// its third click zooms the tape.
@@ -492,18 +493,19 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
             let zoom = crate::viewport::TRIPLE_CLICK_ZOOM;
             if repeat == Some(CanvasRepeat::Triple) {
                 if model.double_click.tape {
-                    effects.extend([Effect::TapeLive, Effect::ZoomTape(zoom)]);
+                    // Its double already returned the tape to live.
+                    effects.push(Effect::ZoomTape(zoom));
                 } else {
                     model.live_centre(true);
                 }
             } else if tape {
                 // Off live the tape's double click returns it and arms the
                 // third click; already live, it is the zoom itself.
-                if repeat.is_some() && tape_live {
+                if tape_live {
                     effects.push(Effect::ZoomTape(zoom));
                 } else {
                     effects.push(Effect::TapeLive);
-                    model.double_click.centred = repeat.is_some();
+                    model.double_click.centred = true;
                     model.double_click.tape = true;
                 }
             } else if let Some(slot) = overlay {
@@ -516,10 +518,12 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
                     // Open canvas, a divider or a drawing: off live, back to
                     // live at the trader's own spacing, the price centred,
                     // and the third click may zoom in. Already live, the
-                    // double click is the zoom itself — each further pair
-                    // zooms again — and arms no third click.
+                    // double click on open canvas is the zoom itself — each
+                    // further pair zooms again — and arms no third click;
+                    // a divider or a drawing only recentres.
                     (_, Some(_)) => {
-                        let zoom_in = model.viewport.follows_live();
+                        let zoom_in =
+                            model.viewport.follows_live() && canvas == Some(CanvasHit::Empty);
                         model.live_centre(zoom_in);
                         model.double_click.centred = !zoom_in;
                         model.double_click.tape = false;
@@ -825,10 +829,11 @@ mod tests {
         let _ = update(&mut model, double(false, Some(7), None));
         assert_eq!(model.pending_settings, Some(7));
     }
-    /// Already live, the canvas's double click is the zoom: each pair widens
-    /// the candles by [`TRIPLE_CLICK_ZOOM`] up to the widest a candle may
-    /// be, centres the price, and arms no third click — the gesture zooms
-    /// once however many clicks the run counts.
+    /// Already live, the double click on open canvas is the zoom: each pair
+    /// widens the candles by [`TRIPLE_CLICK_ZOOM`] up to the widest a candle
+    /// may be, centres the price, and arms no third click — the gesture
+    /// zooms once however many clicks the run counts. A divider or a drawing
+    /// only recentres.
     #[test]
     fn a_live_canvas_double_click_zooms_in() {
         use crate::viewport::MAX_CANDLE_WIDTH;
@@ -838,7 +843,8 @@ mod tests {
         const TRIPLE: WindowClick = WindowClick::Canvas {
             repeat: Some(CanvasRepeat::Triple),
         };
-        for canvas in [Some(CanvasHit::Empty), None] {
+        {
+            let canvas = Some(CanvasHit::Empty);
             let mut model = Model::default();
             model.viewport.set_px_per_bar(10.0);
             model.viewport.pan_pixels(300.0, 400);
@@ -856,6 +862,12 @@ mod tests {
             let _ = update(&mut model, canvas_repeat(canvas, CanvasRepeat::Double));
             assert_eq!(model.viewport.px_per_bar(), MAX_CANDLE_WIDTH, "clamped");
         }
+        let mut divider = Model::default();
+        divider.viewport.set_px_per_bar(10.0);
+        assert!(divider.viewport.follows_live());
+        let _ = update(&mut divider, canvas_repeat(None, CanvasRepeat::Double));
+        assert_eq!(divider.viewport.px_per_bar(), 10.0, "a divider: no zoom");
+        assert!(divider.take_live_centre(), "but the price centres");
         // A live run of three clicks: the pair zooms, the third adds nothing.
         let mut model = Model::default();
         model.viewport.set_px_per_bar(10.0);
@@ -863,7 +875,8 @@ mod tests {
         let gate = &mut model.double_click;
         assert_eq!(gate.observe(1, WindowClick::Canvas { repeat: None }), None);
         assert_eq!(gate.observe(2, DOUBLE), Some(CanvasRepeat::Double));
-        let _ = update(&mut model, canvas_repeat(None, CanvasRepeat::Double));
+        let open = Some(CanvasHit::Empty);
+        let _ = update(&mut model, canvas_repeat(open, CanvasRepeat::Double));
         assert_eq!(model.viewport.px_per_bar(), 20.0);
         assert_eq!(model.double_click.observe(3, TRIPLE), None, "no triple");
         assert_eq!(model.viewport.px_per_bar(), 20.0);
@@ -899,7 +912,7 @@ mod tests {
         assert_eq!(triple, Some(CanvasRepeat::Triple), "armed");
         assert_eq!(
             update(&mut model, canvas_repeat(None, CanvasRepeat::Triple)),
-            [Effect::TapeLive, Effect::ZoomTape(zoom)]
+            [Effect::ZoomTape(zoom)]
         );
         assert!(!model.viewport.follows_live(), "the candles never moved");
         assert_eq!(model.viewport.px_per_bar(), 20.0);
