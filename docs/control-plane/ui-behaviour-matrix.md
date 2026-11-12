@@ -100,8 +100,8 @@ The three exclusion classes are closed:
 | `canvas.pane.restore` | Bring a folded or maximized chart back to its place | a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas | `canvas.pane.restore` | — |
 | `canvas.pane.remove` | Remove a chart from the canvas, asking first when the save holds it | a chart header's ⋯ menu, Remove chart, then the dialog's Remove | `canvas.pane.remove` | — |
 | `canvas.widget.add` | Add a chart or a widget to the canvas | the toolbar's + left of the capsule, then a row of ADD TO CANVAS | `canvas.widget.add` | — |
-| `canvas.pane.float` | Move or resize a floating chart over the canvas | a floating chart's grip dropped away from the edges and corners, or an edge dragged | `canvas.pane.float` | — |
-| `canvas.pane.dock` | Dock a floating chart into the layout at an edge | a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here | `canvas.pane.dock` | — |
+| `canvas.pane.float` | Float a docked chart, or move or resize a floating one over the canvas | a docked chart's ⋯ → Float, or its ⋯ dragged; a floating chart's grip dropped away from the dock zones and corners, or an edge dragged | `canvas.pane.float` | — |
+| `canvas.pane.dock` | Dock a floating chart into the layout at a canvas edge, beside a docked chart, or in a docked chart's place | a floating chart's grip (or a docked chart's ⋯, which lifts it) dropped on a canvas edge, a chart's side or its centre, where the slot lights with Dock here; or a floating chart's ⋯ → Dock left/right/top/bottom | `canvas.pane.dock` | — |
 | `canvas.pane.park` | Park a floating chart in a canvas corner | a floating chart's grip dropped in a canvas corner | `canvas.pane.park` | — |
 | `canvas.pane.pop_out` | Open a chart in its own OS window | a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge | `canvas.pane.pop_out` | — |
 | `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
@@ -298,9 +298,9 @@ declares nothing here is a guard failure.
 | `canvas.pane.maximize` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.restore` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.remove` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
-| `canvas.pane.float` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
-| `canvas.pane.dock` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
-| `canvas.pane.park` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.float` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.dock` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.park` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
 | `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.resize` | a drag on a seam the canvas model's `tree_seams` lists |

@@ -1,7 +1,7 @@
 {
   "$defs": {
     "CanvasEdge": {
-      "description": "A canvas edge a floating chart docks at.",
+      "description": "A side of the canvas, or of a docked chart, a floating chart docks at.",
       "enum": [
         "left",
         "right",
@@ -13,19 +13,56 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Where a chart docks: exactly one of `edge`, `beside` with `side`, or\n`swap_with`. A floating chart docks there; a docked chart moves there.",
   "properties": {
+    "beside": {
+      "description": "A docked chart's slot: this chart docks on its `side`. When that\nchart's split already lays charts that way, this one joins the split\nbeside it and every chart in it gives a fair share; otherwise that\nchart splits in half with this one.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "edge": {
-      "$ref": "#/$defs/CanvasEdge"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanvasEdge"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A canvas edge: the chart takes a fair share of the canvas there."
+    },
+    "side": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanvasEdge"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The side of `beside` the chart docks on."
     },
     "slot": {
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
+    },
+    "swap_with": {
+      "description": "A docked chart's slot: this chart takes its place. A floating chart\nleaves it floating where this one stood; two docked charts trade\nplaces, both staying docked.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
     }
   },
   "required": [
-    "slot",
-    "edge"
+    "slot"
   ],
   "title": "DockPaneInput",
   "type": "object"

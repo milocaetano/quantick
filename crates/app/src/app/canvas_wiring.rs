@@ -113,9 +113,16 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let at = ctx.input(|input| input.viewport().inner_rect);
     let origin = at.map_or((0.0, 0.0), |at| (at.min.x, at.min.y));
-    let floats = &mut app.active_tab_mut().canvas.floats;
+    let area = canvas_area(app);
+    let at = |at: Option<egui::Pos2>| at.map(|at| (at.x, at.y));
+    let pointer = ctx.input(|input| input.pointer.clone());
+    let (press, now) = (at(pointer.press_origin()), at(pointer.latest_pos()));
+    let canvas = &mut app.active_tab_mut().canvas;
+    let floats = &mut canvas.floats;
     (floats.origin, floats.scale) = (origin, ctx.pixels_per_point());
     let (dropped, windows) = (floats.dropped.take(), std::mem::take(&mut floats.windows));
+    let lift = canvas::lifted(&canvas.state, area, canvas.menus.lift.take(), press, now);
+    floats.held = floats.held.or(lift);
     let monitor = |rect| crate::floating_panes::monitor_of(rect, ctx.pixels_per_point());
     #[cfg(any(feature = "scenario-harness", test))]
     let hooked = canvas_hooks(app);
