@@ -114,22 +114,6 @@ impl std::ops::Deref for ToolbarModel<'_> {
 /// the hovers disclose what the press would do to the open position.
 pub type PaperTradeModel = quantick_paper::desk::TradeBar;
 
-/// One active indicator as the picker shows it. Raw slot numbers
-/// keep the toolbar decoupled from the worker's types.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndicatorMenuEntry {
-    /// The app-side slot id this entry answers to.
-    pub slot: u64,
-    /// Display label (the indicator's short title).
-    pub label: String,
-    /// Whether the eye toggle currently hides it.
-    pub hidden: bool,
-    /// Whether the indicator is disabled by a runtime error.
-    pub errored: bool,
-    /// Whether the running version is stale (the file on disk has errors).
-    pub stale: bool,
-}
-
 pub use quantick_ui_model::chrome_toolbar::Action as ToolbarAction;
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the

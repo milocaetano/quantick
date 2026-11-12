@@ -9,7 +9,6 @@ macro_rules! surface_catalog {
     ($consumer:ident) => {
         $consumer! {
             legacy {
-                indicator_picker: IndicatorPickerSurface => Surface::draw, indicator_picker::IndicatorPickerSurface::capture_keyboard;
                 script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
                 indicator_preview: IndicatorPreviewSurface => Surface::draw, ignore_keyboard;
                 market_palette: MarketPaletteSurface => Surface::draw, ignore_keyboard;
@@ -18,6 +17,8 @@ macro_rules! surface_catalog {
             }
             modules { remove_chart; }
             models {
+                [] []
+                indicator_picker: IndicatorPicker => indicator_picker = "indicator_picker.rs", indicator_picker = "indicator_picker.rs", indicator_picker::effects, Overlay, Host;
                 [] []
                 home: Home => home = "home.rs", home = "home.rs", home::effects, HomeCanvas, Local;
                 [] []

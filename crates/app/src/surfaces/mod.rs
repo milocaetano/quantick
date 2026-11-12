@@ -19,8 +19,8 @@ pub(crate) use toast::ToastSurface;
 /// What the surfaces need from the application, kept to what they actually
 /// read so a surface cannot quietly acquire the whole app.
 pub(crate) struct SurfaceEnv<'a> {
+    #[cfg(any(feature = "scenario-harness", test))]
     pub picker_pane_id: u64,
-    pub picker_indicators: &'a [crate::toolbar::IndicatorMenuEntry],
     pub picker_scripts: &'a [quantick_stores::script_library::ScriptEntry],
     /// The frame's clock reading, passed in rather than sampled, so a surface
     /// that expires on a deadline stays as testable as the engine is.
@@ -75,7 +75,6 @@ impl SurfaceEnv<'static> {
     pub fn quiet(now: Instant) -> Self {
         Self {
             picker_pane_id: 0,
-            picker_indicators: &[],
             picker_scripts: &[],
             now,
             indicator_preview_area: None,
@@ -259,7 +258,7 @@ impl ViewContext<'_> {
 /// Paint cached model state and return an intent only when input changes it.
 /// Time-dependent views include the supplied time in their intent.
 pub(crate) trait View<M: quantick_ui_model::Model> {
-    fn capture_keyboard(&mut self, _ctx: &egui::Context) {}
+    fn capture_keyboard(&mut self, _state: &M::State, _ctx: &egui::Context) {}
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<M::Intent> {
         None
@@ -289,7 +288,7 @@ pub(crate) trait View<M: quantick_ui_model::Model> {
 pub(crate) type Adapter<M, V> = quantick_ui_model::Adapter<M, V, SurfaceResponse>;
 impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
-        self.view.capture_keyboard(ctx);
+        self.view.capture_keyboard(&self.model_state, ctx);
     }
     fn id(&self) -> &'static str {
         self.view.id()
@@ -317,7 +316,7 @@ struct LegacyView<'a, S> {
     draw: fn(&mut S, &egui::Context, &SurfaceEnv<'_>) -> SurfaceResponse,
 }
 impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView<'_, S> {
-    fn capture_keyboard(&mut self, ctx: &egui::Context) {
+    fn capture_keyboard(&mut self, _: &(), ctx: &egui::Context) {
         (self.keyboard)(self.surface, ctx);
     }
     fn id(&self) -> &'static str {

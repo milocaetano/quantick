@@ -1020,10 +1020,10 @@ impl IndicatorPickerPort for QuantickApp {
         input: quantick_control_schema::indicator_picker::PickerInput,
     ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String> {
         let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
-        quantick_control_schema::indicator_picker::apply(
-            &mut self.surfaces.indicator_picker.state,
-            self.runtime.indicators.script_library.entries(),
+        quantick_ui_model::indicator_picker::Model::control(
+            &mut self.surfaces.indicator_picker.model_state,
             target,
+            self.runtime.indicators.script_library.entries(),
             input,
         )
     }
