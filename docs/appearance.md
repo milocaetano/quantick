@@ -88,6 +88,8 @@ groups are:
 | `flow_key_unlit_dot`, `flow_key_unlit_ink` | A hidden side's key: its grey dot and muted word |
 | `flow_gear_ink`, `flow_key_down`, `flow_key_down_shade` | The bare gear's ink, and the well with its top shade it sinks into while the settings are open |
 | `flow_bulb_lit` | The bulb beside the gear while the flow pane's lights are on; at rest it wears `flow_gear_ink` |
+| `paper_tag_gain`, `paper_tag_loss` | Light's paper plates: the edge of a white plate under a buy or sell level under the hand, the aim or a pending leg, and the fill of its price-axis chip (white digits); Dark mirrors `buy` and `sell` and lays no paper plate |
+| `readout_edge` | The edge of Light's measurement readout plate; Dark's is transparent |
 | `flow_key_down_rim`, `flow_key_down_ink`, `flow_key_up_top`, `flow_key_up_bottom`, `flow_key_up_lip`, `flow_key_up_edge`, `flow_key_up_shadow` | Accepted legacy v1 keys; the band's keys no longer paint a body |
 | `bare_hover`, `float_shadow` | Control hover and floating surface shadows |
 | `capsule_fill`, `capsule_border`, `capsule_shadow` | Accepted legacy v1 keys; docked layer capsules no longer paint a separate case |

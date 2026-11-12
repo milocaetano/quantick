@@ -61,7 +61,7 @@ pub enum LevelState {
 
 /// Whether a level's tag is outlined rather than filled. A pending leg is
 /// outlined in both themes; a light chart also writes a level under the
-/// hand on its paper plate (white, edged in the side's plate ink, only the
+/// hand on its paper plate (white, edged in the side's tag colour, only the
 /// money coloured) instead of the near-black order plate. Dark fills it.
 #[must_use]
 pub fn outlined_tag(theme: &ResolvedTheme, state: LevelState) -> bool {
@@ -90,9 +90,10 @@ pub const PAPER_GAP_PX: f32 = 2.0;
 
 /// The paper plate a light chart lays under a level drawn in `line` while it
 /// is `state`, or `None` where it keeps its own look (Dark, and every
-/// resting level). The edge is the plate ink of the side `line` names, the
-/// one the pinned stop and target already wear: a pending leg's plate here
-/// is the one `chip_tag` outlines.
+/// resting level). The edge is the side's tag colour, the one its filled
+/// price-axis chip wears ([`level_chip`]), so each side has one colour; an
+/// entry's is the order plate. A pending leg's plate here is the one
+/// `chip_tag` outlines.
 #[must_use]
 pub fn paper_plate(
     theme: &ResolvedTheme,
@@ -100,10 +101,10 @@ pub fn paper_plate(
     state: LevelState,
 ) -> Option<PaperPlate> {
     let plate = plate_for(theme, line)?;
-    // An entry's plate ink is white: on paper its edge is the plate itself.
     let edge = match plate.ink {
-        Token::OrderPlateInk => Token::OrderPlate,
-        ink => ink,
+        Token::PlateGain => Token::PaperTagGain,
+        Token::PlateLoss => Token::PaperTagLoss,
+        _ => Token::OrderPlate,
     };
     (state != LevelState::Resting).then_some(PaperPlate {
         fill: Token::Inset,

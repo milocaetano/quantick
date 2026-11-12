@@ -360,8 +360,9 @@ fn paint_plate(
         READOUT_RADIUS_PX,
         appearance.color(Token::DrawingReadoutPlate),
     );
-    // A light chart edges the plate in grey and inks only the signed price
-    // line, which leads whenever the move has a direction (`paper_readout`).
+    // A light chart edges the plate in grey and writes in its primary ink,
+    // inking only the signed price line, which leads whenever the move has
+    // a direction (`paper_readout`).
     let paper = paper::paper_readout(appearance);
     if let Some(paper) = paper {
         let edge = Stroke::new(READOUT_EDGE_PX, appearance.color(paper.edge));
@@ -371,12 +372,12 @@ fn paint_plate(
     for (index, (line, size)) in readout.lines.iter().zip(&sizes).enumerate() {
         let advance = size.y + READOUT_LINE_GAP_PX;
         let color = match (paper, readout.rising) {
-            (Some(paper), Some(rising)) => appearance.color(match (index, rising) {
-                (0, true) => paper.gain,
-                (0, false) => paper.loss,
+            (Some(paper), rising) => appearance.color(match (index, rising) {
+                (0, Some(true)) => paper.gain,
+                (0, Some(false)) => paper.loss,
                 _ => paper.ink,
             }),
-            _ => color,
+            (None, _) => color,
         };
         painter.text(cursor, Align2::LEFT_TOP, line, font, color);
         cursor.y += advance;

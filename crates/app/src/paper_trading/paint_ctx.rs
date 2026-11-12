@@ -128,32 +128,45 @@ impl PaintCtx<'_> {
         self.chip(y, fill, text, (fill, ink, egui::Stroke::NONE));
     }
 
-    /// Lays the paper plate (`paper::paper_plate`) a light chart puts under a
-    /// level in `color` while it is `state` over `rect` - its edge dashed
-    /// while the order is unsent - and returns its ink; `None` paints nothing.
-    pub(super) fn paper_label(
+    /// The paper plate (`paper::paper_plate`) a light chart lays under a
+    /// level in `color` while it is `state`: (fill, edge, ink, dashed).
+    pub(super) fn paper(
         &self,
-        rect: egui::Rect,
         color: Color32,
         state: LevelState,
-    ) -> Option<Color32> {
+    ) -> Option<(Color32, Color32, Color32, bool)> {
         let line = PremultipliedRgba::from_premultiplied(color.to_array());
         let plate = paper::paper_plate(&self.palette.resolved, line, state)?;
         let get = |token| *self.palette.get(token);
-        let edge = Stroke::new(1.0_f32, get(plate.edge));
-        self.painter
-            .rect_filled(rect, egui::Rounding::same(3.0), get(plate.fill));
-        if plate.dashed {
+        Some((
+            get(plate.fill),
+            get(plate.edge),
+            get(plate.ink),
+            plate.dashed,
+        ))
+    }
+
+    /// The one plate painter under every tag and label: `fill` at the tags'
+    /// radius and, given one, a 1 px edge, dashed while its order is unsent.
+    pub(super) fn plate_body(
+        &self,
+        rect: egui::Rect,
+        fill: Color32,
+        edge: Option<(Color32, bool)>,
+    ) {
+        let rounding = egui::Rounding::same(3.0);
+        self.painter.rect_filled(rect, rounding, fill);
+        let Some((color, dashed)) = edge else { return };
+        let stroke = Stroke::new(1.0_f32, color);
+        if dashed {
             let (a, b) = (rect.min, rect.max);
             let ring = [a, egui::pos2(b.x, a.y), b, egui::pos2(a.x, b.y), a];
             let (dash, gap) = (paper::PAPER_DASH_PX, paper::PAPER_GAP_PX);
             self.painter
-                .extend(egui::Shape::dashed_line(&ring, edge, dash, gap));
+                .extend(egui::Shape::dashed_line(&ring, stroke, dash, gap));
         } else {
-            self.painter
-                .rect_stroke(rect, egui::Rounding::same(3.0), edge);
+            self.painter.rect_stroke(rect, rounding, stroke);
         }
-        Some(get(plate.ink))
     }
 
     /// Hollow: a `color` border and ink on the chart's ground, for a level
@@ -230,10 +243,11 @@ impl PaintCtx<'_> {
         ghost: bool,
     ) {
         let palette = &self.palette;
-        // A light chart's tag is its plate; a ghost keeps only its outline,
-        // in the plate's gain or loss ink so a pending TP and SL differ.
+        // A light chart's tag is its plate; a ghost is the paper plate, edged
+        // in its side's tag colour so a pending TP and SL differ.
         let plated = self.plate(fill);
-        let outline = plated.filter(|_| ghost).map_or(fill, |(_, ink)| ink);
+        let paper = self.paper(fill, LevelState::Pending).filter(|_| ghost);
+        let outline = paper.map_or(fill, |(_, edge, ..)| edge);
         let fill = plated.map_or(fill, |(plate, _)| plate);
         let plate_ink = plated.filter(|_| !ghost).map(|(_, ink)| ink);
         let financial = plate_ink.is_none() && !palette.resolved.dark && has_signed_figure(text);
@@ -271,16 +285,10 @@ impl PaintCtx<'_> {
             egui::pos2(right, center_y + half),
         );
         if ghost || financial {
-            self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
-            self.painter.rect_stroke(
-                full,
-                egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, outline),
-            );
+            let body = paper.map_or(palette.inset(), |(body, ..)| body);
+            self.plate_body(full, body, Some((outline, false)));
         } else {
-            self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), fill);
+            self.plate_body(full, fill, None);
         }
         self.painter.galley(
             egui::pos2(full.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),

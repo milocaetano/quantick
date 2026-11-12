@@ -98,7 +98,7 @@ fn rects(shapes: &[egui::Shape]) -> Vec<(egui::Color32, egui::Color32, f32)> {
 }
 
 /// The Alt aim on a light chart: its line keeps the order plate, its label
-/// is the paper plate - white, edged dashed in the side's plate ink because
+/// is the paper plate - white, edged dashed in the side's tag colour because
 /// nothing is sent yet, dark words - and its price chip is filled in the
 /// side's tag colour with white digits. No black plate is left.
 #[test]
@@ -114,7 +114,7 @@ fn the_cmd_preview_lays_the_dashed_paper_plate_in_light() {
     assert!(segments.contains(&palette.order_plate()), "the line");
     let edge_dashes = segments
         .iter()
-        .filter(|color| **color == palette.plate_gain())
+        .filter(|color| **color == *palette.get(quantick_appearance::Token::PaperTagGain))
         .count();
     assert!(
         edge_dashes >= 8,
@@ -173,11 +173,15 @@ fn the_cmd_preview_keeps_its_filled_label_in_dark() {
         "no edge: {rects:?}"
     );
     assert_eq!(glyph_ink(&shapes, "BUY "), palette.chip_ink());
-    assert!(!segment_colors(&shapes).contains(&palette.plate_gain()));
+    let segments = segment_colors(&shapes);
+    assert!(
+        segments.iter().all(|color| *color == palette.buy()),
+        "only the line is dashed: {segments:?}"
+    );
 }
 
 /// The stop and target the aim carries take the pinned leg's plate on a
-/// light chart - white, a solid edge in the gain or loss plate ink, dark
+/// light chart - white, a solid edge in the side's tag colour, dark
 /// words - with chips filled in the side's tag colour. Dark fills them in
 /// the side colours, as before.
 #[test]
@@ -186,16 +190,12 @@ fn the_aim_s_stop_and_target_wear_the_pinned_leg_plate_in_light() {
     let palette = crate::theme::get(&light);
     let shapes = aim_shapes(&light, true);
     let rects = rects(&shapes);
-    for (edge, tag) in [
-        (
-            palette.plate_gain(),
-            quantick_appearance::Token::PaperTagGain,
-        ),
-        (
-            palette.plate_loss(),
-            quantick_appearance::Token::PaperTagLoss,
-        ),
+    // One colour a side: the plate's edge is its filled chip's colour.
+    for token in [
+        quantick_appearance::Token::PaperTagGain,
+        quantick_appearance::Token::PaperTagLoss,
     ] {
+        let edge = *palette.get(token);
         // `chip_tag` fills the plate, then strokes its edge solid on top.
         assert!(
             rects
@@ -203,10 +203,9 @@ fn the_aim_s_stop_and_target_wear_the_pinned_leg_plate_in_light() {
                 .any(|(_, stroke, width)| *stroke == edge && *width == 1.0),
             "an edge solid in {edge:?}: {rects:?}"
         );
-        let tag = *palette.get(tag);
         assert!(
-            rects.iter().any(|(fill, ..)| *fill == tag),
-            "{tag:?}: {rects:?}"
+            rects.iter().any(|(fill, ..)| *fill == edge),
+            "{edge:?}: {rects:?}"
         );
     }
     let white = rects.iter().filter(|(fill, ..)| *fill == palette.inset());
@@ -232,8 +231,8 @@ fn the_aim_s_stop_and_target_wear_the_pinned_leg_plate_in_light() {
     assert!(dark_rects.iter().all(|(fill, ..)| *fill != palette.inset()));
 }
 
-/// A pending TP and SL are outlined in the plate's gain and loss inks, so
-/// the two ghosts no longer look identical.
+/// A pending TP and SL are outlined in their sides' tag colours, so the two
+/// ghosts no longer look identical.
 #[test]
 fn light_ghost_legs_tell_take_profit_from_stop() {
     let ctx = light_ctx();
@@ -252,8 +251,9 @@ fn light_ghost_legs_tell_take_profit_from_stop() {
     };
     let take_profit = outline(palette.buy());
     let stop = outline(palette.sell());
-    assert_eq!(take_profit, palette.plate_gain());
-    assert_eq!(stop, palette.plate_loss());
+    let tag = |token| *palette.get(token);
+    assert_eq!(take_profit, tag(quantick_appearance::Token::PaperTagGain));
+    assert_eq!(stop, tag(quantick_appearance::Token::PaperTagLoss));
     assert_ne!(take_profit, stop);
 }
 

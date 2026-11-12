@@ -536,13 +536,16 @@ impl PaperTrading {
         // There is no resting state to distinguish — releasing the
         // modifier is what makes the aim go away. A light chart lays the
         // paper plate instead, edged dashed: the order is not sent yet.
-        let ink = ctx
-            .paper_label(label, color, LevelState::Aimed)
-            .unwrap_or_else(|| {
-                ctx.painter
-                    .rect_filled(label, egui::Rounding::same(3.0), line);
+        let ink = match ctx.paper(color, LevelState::Aimed) {
+            Some((fill, edge, ink, dashed)) => {
+                ctx.plate_body(label, fill, Some((edge, dashed)));
                 ink
-            });
+            }
+            None => {
+                ctx.plate_body(label, line, None);
+                ink
+            }
+        };
         let quantity = preview.quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
         let text = format!(
             "{} {} {}",

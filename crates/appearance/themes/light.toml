@@ -174,10 +174,10 @@ ledger_card_edge = "#D5D9E0"
 ledger_session = "#F1F4F8"
 ledger_session_edge = "#E1E6EE"
 ledger_selection = "#D6E6FB"
-# The paper plate the chart lays under a level under the hand (the Alt aim,
-# its stop and target, a leg being dragged): the price-axis chip filled in
-# the side's colour with white digits, and the ruler readout's grey edge
-# (docs/fable/escuro, option A "Papel").
+# Paper plates: a level under the hand (the Alt aim, its stop and target, a
+# leg being dragged) sits on a white plate edged in its side's colour, dashed
+# while the order is unsent; its price-axis chip is filled in that colour with
+# white digits. The ruler readout is edged in a neutral grey.
 paper_tag_gain = "#1A8743"
 paper_tag_loss = "#D1403A"
 readout_edge = "#AEB6BF"

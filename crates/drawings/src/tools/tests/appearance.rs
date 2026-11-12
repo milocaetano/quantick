@@ -317,33 +317,43 @@ fn a_flat_readout_reads_against_its_plate() {
     };
     let (on_dark, on_light) = (text(&dark), text(&light));
     assert!(!on_dark.is_empty() && on_dark.iter().all(|color| *color == near_white));
+    // Light writes a readout with no direction in its primary ink.
     assert!(!on_light.is_empty());
     assert!(
         on_light
             .iter()
-            .all(|color| *color == light.legible_readout(light.legible_drawing(near_white)))
+            .all(|color| *color == light.color(Token::TextPrimary))
     );
 }
 
-/// The ruler's texts and the stroke of its plate's edge, measured from 20 to
-/// 80 (`rising`) or back.
+/// A level ruler (Shift copies the price) has no move to ink: Light writes
+/// its bars and time in the primary ink inside the grey edge.
+#[test]
+fn light_level_ruler_reads_in_the_primary_ink() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let (texts, edges) = ruler_readout(&light, [50.0, 50.0]);
+    assert_eq!(texts.len(), 1, "bars and time only: {texts:?}");
+    assert!(texts[0].0.contains("bars"), "{texts:?}");
+    assert_eq!(texts[0].1, light.color(Token::TextPrimary));
+    assert_eq!(
+        edges,
+        vec![Stroke::new(1.0, light.color(Token::ReadoutEdge))]
+    );
+}
+
+/// The ruler's texts and the stroke of its plate's edge, measured from
+/// `prices[0]` at bar 1 to `prices[1]` at bar 5.
 fn ruler_readout(
     theme: &ResolvedTheme,
-    rising: bool,
+    prices: [f64; 2],
 ) -> (Vec<(String, PremultipliedRgba)>, Vec<Stroke>) {
     let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
-    let point = |price| ChartPoint {
-        bar: 1.0,
+    let point = |bar, price| ChartPoint {
+        bar,
         price,
         time_ms: None,
     };
-    let mut anchors = [point(20.0), point(80.0)];
-    anchors[1].bar = 5.0;
-    if !rising {
-        anchors.swap(0, 1);
-        anchors[0].bar = 1.0;
-        anchors[1].bar = 5.0;
-    }
+    let anchors = [point(1.0, prices[0]), point(5.0, prices[1])];
     let style = DrawingStyle::default();
     let ctxt = DrawContext {
         appearance: theme,
@@ -396,7 +406,8 @@ fn light_ruler_readout_is_edged_and_inks_only_the_signed_line() {
     let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
     let dark = ResolvedTheme::bundled_dark();
     for rising in [true, false] {
-        let (texts, edges) = ruler_readout(&light, rising);
+        let prices = if rising { [20.0, 80.0] } else { [80.0, 20.0] };
+        let (texts, edges) = ruler_readout(&light, prices);
         assert_eq!(texts.len(), 2, "{texts:?}");
         let (price, time) = (&texts[0], &texts[1]);
         assert!(price.0.contains("pts"), "{price:?}");
@@ -413,7 +424,7 @@ fn light_ruler_readout_is_edged_and_inks_only_the_signed_line() {
             "one grey edge"
         );
 
-        let (texts, edges) = ruler_readout(dark, rising);
+        let (texts, edges) = ruler_readout(dark, prices);
         let side = if rising { Token::Buy } else { Token::Sell };
         assert!(texts.iter().all(|(_, color)| *color == dark.color(side)));
         assert!(edges.is_empty(), "Dark draws no readout edge");

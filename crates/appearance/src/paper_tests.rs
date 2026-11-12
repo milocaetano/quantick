@@ -371,11 +371,14 @@ const STATES: [LevelState; 4] = [
 fn light_lays_the_paper_plate_under_a_moving_or_aimed_level() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     for (line, edge) in [
-        (Token::Buy, Token::PlateGain),
-        (Token::Sell, Token::PlateLoss),
+        (Token::Buy, Token::PaperTagGain),
+        (Token::Sell, Token::PaperTagLoss),
     ] {
         let line = light.color(line);
         assert_eq!(paper_plate(&light, line, LevelState::Resting), None);
+        // One colour a side: the edge is the filled chip's colour.
+        let chip = level_chip(&light, line, LevelState::Moving).unwrap();
+        assert_eq!(chip.fill, edge);
         for state in [LevelState::Pending, LevelState::Moving, LevelState::Aimed] {
             let plate = paper_plate(&light, line, state).unwrap();
             assert_eq!(
@@ -386,6 +389,8 @@ fn light_lays_the_paper_plate_under_a_moving_or_aimed_level() {
             assert_eq!(plate.dashed, state == LevelState::Aimed, "{state:?}");
             assert!(outlined_tag(&light, state));
             assert_reads(&light, plate.ink, plate.fill, 4.5);
+            // A non-text edge keeps 3:1 on its own plate.
+            assert_reads(&light, plate.edge, plate.fill, 3.0);
             assert!(
                 relative_luminance(light.color(plate.fill)) > 0.9,
                 "a white plate"
