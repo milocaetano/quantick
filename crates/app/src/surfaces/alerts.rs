@@ -104,6 +104,14 @@ impl AlertSurface {
     pub(crate) fn is_open(&self) -> bool {
         self.open
     }
+    pub(crate) fn is_editing(&self) -> bool {
+        self.open && (self.draft.is_some() || self.pending_drawing.is_some())
+    }
+    pub(crate) fn close_manager(&mut self) {
+        if !self.is_editing() {
+            self.open = false;
+        }
+    }
     pub(crate) fn open_drawing(&mut self, target: Option<DurableDrawingRef>) {
         self.open = true;
         self.pending_drawing = Some(target);

@@ -468,7 +468,24 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
         "the selection raised the bar"
     );
 
+    app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.surfaces.alerts.is_open());
+    assert!(!app.surfaces.alerts.is_editing());
+    assert!(
+        app.drawings.chrome.context_bar_rect().is_some(),
+        "the manager sidebar coexists with the selected drawing toolbar"
+    );
+    app.dock.select(crate::dock::DockTab::Session);
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.surfaces.alerts.is_open(),
+        "another dock tab closes the manager"
+    );
+
     app.surfaces.alerts.open_drawing(None);
+    assert!(app.surfaces.alerts.is_editing());
     app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);

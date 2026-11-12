@@ -620,6 +620,9 @@ impl QuantickApp {
         if response.open_alerts {
             self.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
         }
+        if self.dock.tab().is_some() {
+            self.surfaces.alerts.close_manager();
+        }
         super::alerts_runtime::draw_manager_panel(self, ctx);
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
@@ -730,7 +733,7 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        let (chrome, open) = (&mut self.drawings.chrome, self.surfaces.alerts.is_open());
+        let (chrome, open) = (&mut self.drawings.chrome, self.surfaces.alerts.is_editing());
         chrome.frame_facts(scratch.canvas.begin_text_edit, open);
         let ask = self.drawings.draw_drawing_chrome(
             ctx,

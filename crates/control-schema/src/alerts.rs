@@ -1,7 +1,8 @@
 //! Alert control contracts. Definitions use the domain's serialized vocabulary.
 use quantick_control::registry::{CapabilityDescriptor, IdempotencyPolicy};
 use serde_json::{Value, json};
-pub const OPEN: &str = "alerts.open";
+pub const OPEN_CAPABILITY_ID: &str = "alerts.open";
+pub const OPEN: &str = OPEN_CAPABILITY_ID;
 pub const RAIL_CONTROL: &str = "dock.alerts";
 pub const MODULE_ID: &str = "alerts";
 pub const CHANGED_EVENT: &str = "alerts.changed";

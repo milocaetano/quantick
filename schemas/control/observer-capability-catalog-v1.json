@@ -1347,6 +1347,7 @@
                   }
                 },
                 "utc_ms": {
+                  "description": "Desktop receipt/evaluation time in UTC milliseconds, not replay market time.",
                   "type": "integer"
                 }
               },
@@ -1840,6 +1841,56 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "alerts.list",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Open the local Alerts manager beside the chart.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "alerts.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "module": "alerts",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "const": true
+          }
+        },
+        "required": [
+          "open"
+        ],
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening an open manager leaves it open; inspect dock.alerts selected state.",
+      "title": "Open Alerts",
       "version": 1
     },
     {

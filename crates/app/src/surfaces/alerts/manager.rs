@@ -8,7 +8,7 @@ impl AlertSurface {
         context: Option<&Context>,
         response: &mut SurfaceResponse,
     ) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut self.history, false, format!("{} Alerts", icons::BELL));
             ui.selectable_value(&mut self.history, true, "History");
             if ui
@@ -25,9 +25,11 @@ impl AlertSurface {
         });
         ui.horizontal(|ui| {
             ui.label("Search");
-            ui.text_edit_singleline(&mut self.search);
-            ui.checkbox(&mut self.newest_first, "Newest first");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search).desired_width(ui.available_width()),
+            );
         });
+        ui.checkbox(&mut self.newest_first, "Newest first");
         ui.separator();
         let body_height = (ui.ctx().screen_rect().height() - 180.0).max(40.0);
         egui::ScrollArea::vertical()

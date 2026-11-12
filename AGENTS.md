@@ -7,7 +7,7 @@
 **Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
 --client claude` (or `codex`), enable **Tools → Local agent access**, and call
 `quantick_describe` first. Tools and authority:
-[crates/mcp/README.md](crates/mcp/README.md); capabilities: the generated
+[crates/mcp/README.md](crates/mcp/README.md); capabilities:
 [capability inventory](docs/control-plane/capability-inventory.md) and
 [capability catalog](schemas/control/observer-capability-catalog-v1.json).
 
