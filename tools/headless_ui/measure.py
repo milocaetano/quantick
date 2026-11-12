@@ -8,6 +8,8 @@ import re
 import subprocess
 import tarfile
 
+from rust_source import code_only, structs
+
 ROOT = Path(__file__).resolve().parents[2]
 SURFACES = ('agent_popup bar_switch chart_settings drawing_chrome home '
             'indicator_picker indicator_preview market_palette remove_chart '
@@ -112,21 +114,6 @@ def classify(path, source, test_modules=()):
             'test_category': category}
 
 
-def structs(source):
-    """Inventory named, multiline Rust structs, including conditional fields.
-
-    Counts are declaration counts, not a particular feature configuration.
-    Keep field types to expose app-owned wrappers during subsequent audits.
-    """
-    result = {}
-    for match in re.finditer(r'^\s*(?:pub(?:\([^\n]*?\))?\s+)?struct (\w+)[^;\n]*\{\n(.*?)^}',
-                             source, re.M | re.S):
-        fields = re.findall(r'^    (?:pub(?:\([^\n]*?\))?\s+)?(\w+):\s*(.+),\s*$',
-                            match[2], re.M)
-        result[match[1]] = dict(fields)
-    return result
-
-
 def measure(sha, files):
     test_modules = test_module_files(files)
     inventory = {path: classify(path, source, test_modules) for path, source in sorted(files.items())
@@ -228,7 +215,7 @@ def check_targets(current, baseline, files, chrome=False, final=False):
                      r'\bInstant\s*::\s*now\b|\bstd\s*::\s*thread\s*::\s*sleep\b')
         for path, source in models.items():
             if path.endswith('.rs'):
-                source = re.sub(r'//[^\n]*|/\*.*?\*/', '', source, flags=re.S)
+                source = code_only(source)
             if path.endswith(('.rs', '.toml')) and re.search(forbidden, source):
                 failures.append('UI or clock reference in ' + path)
     if failures:

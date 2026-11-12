@@ -444,7 +444,11 @@
       "clips": "Option<player::ClipPlayer>",
       "refused_at": "Option<Instant>"
     },
-    "crates/app/src/audio/player.rs::ClipPlayer": {},
+    "crates/app/src/audio/player.rs::ClipPlayer": {
+      "current": "Option<Player>",
+      "device": "MixerDeviceSink",
+      "faulted": "Arc<AtomicBool>"
+    },
     "crates/app/src/bands.rs::BandGeometry": {
       "auto_range": "Option<(f64, f64)>",
       "candles_right": "Option<f32>",
@@ -1179,6 +1183,7 @@
       "tape_memory": "Option<&'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>>",
       "tape_overlay": "Option<&'a Arc<quantick_orderflow::projection::TapeOverlay>>",
       "tape_prices": "Option<PriceWindow>",
+      "tape_rebuilds": "Option<( &'a std::cell::RefCell<super::PaneTapeRebuilds>, &'a Arc<HeatmapProjection>, )>",
       "tape_time": "Option<(quantick_orderflow::LiveEdge, i64)>"
     },
     "crates/app/src/orderflow_render/preview.rs::PreviewBubble": {
@@ -1501,6 +1506,7 @@
       "price_range": "(f64, f64)",
       "projection": "Option<Arc<VisibleOrderflow>>",
       "rect": "egui::Rect",
+      "regional": "Option<( Arc<quantick_orderflow::projection::flow_tape::FlowTapeFrame>, Arc<crate::orderflow_render::FlowDrawing>, )>",
       "renderers": "&'static RenderRegistry",
       "tick_chart": "bool",
       "total": "usize",
@@ -1647,6 +1653,7 @@
       "time_grid_xs": "&'a [f32]"
     },
     "crates/app/src/pane/render_registry/axes.rs::LaneTimeAxisPass": {
+      "clock": "Option<( i64, crate::timezone::TzOffset, quantick_orderflow::projection::TapeHorizontalGeometry, )>",
       "lane_strip": "Option<egui::Rect>",
       "painter": "&'a egui::Painter",
       "tape_age": "Option<quantick_orderflow::TapeAge>",

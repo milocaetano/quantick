@@ -39,6 +39,18 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(measure.structs(source)['Owner'],
                          {'wrapper': 'nested::Hub', 'probe': 'bool'})
 
+    def test_multiline_types_comments_and_one_line_structs(self):
+        source = ('pub struct Owner<T> {\n    multi: BTreeMap<\n        String,\n'
+                  '        Vec<T>,\n    >, // state\n    last: bool // no final comma\n}\n'
+                  'struct Small { callback: fn(u8, u8) -> bool, name: &\'static str }')
+        owners = measure.structs(source)
+        self.assertEqual(set(owners['Owner']), {'multi', 'last'})
+        self.assertEqual(owners['Small'], {'callback': 'fn(u8, u8) -> bool',
+                                          'name': "&'static str"})
+        source = 'struct QuantickApp {\n' + ''.join(
+            f'    field{i}: bool, // owner state\n' for i in range(31)) + '}\n'
+        self.assertEqual(len(measure.structs(source)['QuantickApp']), 31)
+
     def test_external_test_helpers_follow_module_ownership(self):
         files = {'crates/app/src/foo.rs': '#[cfg(test)]\nmod helper;\n',
                  'crates/app/src/foo/helper.rs': 'mod fixture;\n',
@@ -96,6 +108,21 @@ class TargetTests(unittest.TestCase):
 
     def test_headless_documentation_may_name_forbidden_dependencies(self):
         self.files['crates/ui-model/src/lib.rs'] = '// No egui or eframe.\npub trait Model {}'
+        measure.check_targets(self.current, self.baseline, self.files, final=True)
+
+    def test_url_literal_does_not_hide_a_clock_call(self):
+        self.files['crates/ui-model/src/lib.rs'] = (
+            'pub fn update() { let endpoint = "https://example.test"; '
+            'let now = std::time::Instant::now(); }')
+        with self.assertRaisesRegex(ValueError, 'clock reference'):
+            measure.check_targets(self.current, self.baseline, self.files, final=True)
+
+    def test_rust_literals_and_nested_comments_are_not_code(self):
+        self.files['crates/ui-model/src/lib.rs'] = (
+            '/* outer /* Instant::now() */ egui */\n'
+            'const DOC: &str = r##"Instant::now() // eframe"##;\n'
+            'const TEXT: &str = "escaped \\" quote and egui";\n'
+            "const CH: char = '\\'';\n")
         measure.check_targets(self.current, self.baseline, self.files, final=True)
 
 
