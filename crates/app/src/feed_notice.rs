@@ -25,9 +25,7 @@
 use eframe::egui;
 
 use crate::theme;
-pub use quantick_feed::notice_report::{
-    NoticeAction, Report, Severity, popup_still_open, report, roll_label,
-};
+pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, popup_still_open, report};
 use quantick_feed::stall::Recovery;
 
 /// The word when the chart is not being fed: one word for several faults, which
@@ -77,43 +75,6 @@ const BUTTON_SPACING_PX: f32 = 8.0;
 const BUTTON_GAP_PX: f32 = 10.0;
 /// Gap between the button row and the consequence caption, in pixels.
 const CAPTION_GAP_PX: f32 = 6.0;
-
-/// What [`Recovery::Reload`] costs, said on the popup rather than behind a
-/// confirmation dialog.
-///
-/// A modal between a trader and a stalled chart is one more thing in the way at
-/// the worst moment, and this act is recoverable in the sense that matters —
-/// the position it closes is journaled, with its reason, by
-/// `PaperTrading::on_timeline_reset`. What is not acceptable is the trader
-/// learning about it afterwards, which is what happened while the only button
-/// on offer said "Try again" and quietly reset the timeline.
-const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
-     disarms every strategy.";
-
-/// What a roll off an unlisted contract does, under the button that runs it.
-const ROLL_CAPTION: &str =
-    "Rolling keeps the workspace and drawings; the chart starts on the next contract.";
-
-/// What each control costs, in the trader's terms, on its own hover.
-///
-/// The caption below the buttons names what the destructive one ends, and for
-/// a while that was the only sentence either button had. A warning beside one
-/// control and silence beside the other does not read as "that one is safe" —
-/// it reads as "one of these is dangerous and I cannot tell which", which
-/// pushes a trader toward pressing neither at the moment they most need to
-/// press one. This is the status line's old hover text, restored to the
-/// surface that inherited its job.
-#[must_use]
-fn recovery_cost(recovery: Recovery) -> &'static str {
-    match recovery {
-        Recovery::Reconnect => {
-            "Keeps the chart as it is: bars, drawings, strategies and any open paper position."
-        }
-        Recovery::Reload => {
-            "Rebuilds the chart from scratch: closes any open paper position and disarms every strategy."
-        }
-    }
-}
 
 /// Whether `QUANTICK_FEED_POPUP` asks the chart to open the popup.
 ///
@@ -201,9 +162,7 @@ fn geometry(
     let step = report
         .next_step_text()
         .map(|step| wrap(&step, STEP_PT, palette.text_muted()));
-    let rolls = report.roll_target().is_some();
-    let caption = if rolls { ROLL_CAPTION } else { RELOAD_CAPTION };
-    let caption = wrap(caption, CAPTION_PT, palette.text_faint());
+    let caption = wrap(report.caption(), CAPTION_PT, palette.text_faint());
 
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
@@ -261,15 +220,7 @@ fn geometry(
         step,
         caption,
         primary: (primary, report.primary),
-        // A roll takes the first place; the act it displaced stays beside it.
-        secondary: (
-            secondary,
-            if rolls {
-                report.primary
-            } else {
-                report.primary.other()
-            },
-        ),
+        secondary: (secondary, report.secondary()),
     }
 }
 
@@ -376,27 +327,14 @@ pub fn draw_popup(
     // application's guess about which act is needed must never be the reason a
     // trader cannot reach the other one.
     let mut action = NoticeAction::None;
-    let (primary_rect, primary_recovery) = primary;
-    let roll = report.roll_target();
-    let (label, cost) = match roll {
-        Some(target) => (roll_label(target), ROLL_CAPTION),
-        None => (
-            primary_recovery.label().to_owned(),
-            recovery_cost(primary_recovery),
-        ),
-    };
+    let (primary_rect, _) = primary;
+    let label = egui::RichText::new(report.primary_label()).color(palette.chip_ink());
     if ui
-        .put(
-            primary_rect,
-            egui::Button::new(egui::RichText::new(label).color(palette.chip_ink())).fill(accent),
-        )
-        .on_hover_text(cost)
+        .put(primary_rect, egui::Button::new(label).fill(accent))
+        .on_hover_text(report.primary_cost())
         .clicked()
     {
-        action = roll.map_or_else(
-            || primary_recovery.into(),
-            |target| NoticeAction::Roll(target.to_owned()),
-        );
+        action = report.primary_action();
     }
     let (secondary_rect, secondary_recovery) = secondary;
     if ui
@@ -404,7 +342,7 @@ pub fn draw_popup(
             secondary_rect,
             egui::Button::new(secondary_recovery.label()).fill(palette.control()),
         )
-        .on_hover_text(recovery_cost(secondary_recovery))
+        .on_hover_text(secondary_recovery.cost())
         .clicked()
     {
         action = secondary_recovery.into();
@@ -666,16 +604,6 @@ mod tests {
                 if secondary { "secondary" } else { "primary" }
             );
         }
-    }
-
-    /// The consequence of the destructive control is on the popup, so a trader
-    /// learns it before pressing rather than from a journal afterwards.
-    #[test]
-    fn the_popup_says_what_reload_costs() {
-        assert!(
-            RELOAD_CAPTION.contains("paper position") && RELOAD_CAPTION.contains("strateg"),
-            "the caption has to name both things Reload ends: {RELOAD_CAPTION}"
-        );
     }
 
     /// Wrapped text must stay inside the popup, including when the chart is

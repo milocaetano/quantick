@@ -104,7 +104,78 @@ impl<'a> Report<'a> {
             _ => step.to_owned(),
         })
     }
+
+    /// The sentence under the buttons: what a roll keeps when one is
+    /// offered, otherwise what Reload ends.
+    #[must_use]
+    pub fn caption(&self) -> &'static str {
+        if self.roll_target().is_some() {
+            ROLL_CAPTION
+        } else {
+            RELOAD_CAPTION
+        }
+    }
+
+    /// The control offered second. A roll takes the first place, and the act
+    /// it displaced stays beside it.
+    #[must_use]
+    pub fn secondary(&self) -> Recovery {
+        if self.roll_target().is_some() {
+            self.primary
+        } else {
+            self.primary.other()
+        }
+    }
+
+    /// The word on the control offered first.
+    #[must_use]
+    pub fn primary_label(&self) -> String {
+        self.roll_target()
+            .map_or_else(|| self.primary.label().to_owned(), roll_label)
+    }
+
+    /// What the control offered first costs, on its own hover.
+    #[must_use]
+    pub fn primary_cost(&self) -> &'static str {
+        self.roll_target()
+            .map_or_else(|| self.primary.cost(), |_| ROLL_CAPTION)
+    }
+
+    /// What a press of the control offered first asks.
+    #[must_use]
+    pub fn primary_action(&self) -> NoticeAction {
+        self.roll_target().map_or_else(
+            || self.primary.into(),
+            |target| NoticeAction::Roll(target.to_owned()),
+        )
+    }
 }
+
+impl<'a> From<&'a Result<String, &'static str>> for RollNote<'a> {
+    /// The roll on offer, or the reason it is refused.
+    fn from(roll: &'a Result<String, &'static str>) -> Self {
+        match roll {
+            Ok(target) => Self::To(target),
+            Err(reason) => Self::Refused(reason),
+        }
+    }
+}
+
+/// What [`Recovery::Reload`] costs, said on the popup rather than behind a
+/// confirmation dialog.
+///
+/// A modal between a trader and a stalled chart is one more thing in the way at
+/// the worst moment, and this act is recoverable in the sense that matters —
+/// the position it closes is journaled, with its reason, by
+/// `PaperTrading::on_timeline_reset`. What is not acceptable is the trader
+/// learning about it afterwards, which is what happened while the only button
+/// on offer said "Try again" and quietly reset the timeline.
+pub const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
+     disarms every strategy.";
+
+/// What a roll off an unlisted contract does, under the button that runs it.
+pub const ROLL_CAPTION: &str =
+    "Rolling keeps the workspace and drawings; the chart starts on the next contract.";
 
 /// What heads a refused roll's reason under the next step.
 pub const ROLL_REFUSED_PREFIX: &str = "Cannot roll to the next contract: ";
@@ -282,6 +353,23 @@ mod tests {
         assert_eq!(roll_label("WINZ26"), "Roll to WINZ26");
         assert_eq!(offered.next_step_text().as_deref(), Some("Add it."));
         assert_eq!(offered.headline, bare.headline, "today's words stay");
+        assert_eq!(offered.primary_label(), "Roll to WINZ26");
+        assert_eq!(offered.primary_cost(), ROLL_CAPTION);
+        assert_eq!(offered.caption(), ROLL_CAPTION);
+        assert_eq!(
+            offered.primary_action(),
+            NoticeAction::Roll("WINZ26".to_owned())
+        );
+        assert_eq!(
+            offered.secondary(),
+            Recovery::Reconnect,
+            "the act the roll displaced stays beside it"
+        );
+        assert_eq!(bare.primary_label(), "Reconnect");
+        assert_eq!(bare.primary_cost(), Recovery::Reconnect.cost());
+        assert_eq!(bare.caption(), RELOAD_CAPTION);
+        assert_eq!(bare.primary_action(), NoticeAction::Reconnect);
+        assert_eq!(bare.secondary(), Recovery::Reload);
 
         let refused = bare.with_roll(Some(RollNote::Refused("Finish the drawing gesture first")));
         assert_eq!(
@@ -294,6 +382,22 @@ mod tests {
             Some("Add it.\nCannot roll to the next contract: Finish the drawing gesture first.")
         );
         assert_eq!(refused.primary, Recovery::Reconnect);
+        assert_eq!(refused.primary_action(), NoticeAction::Reconnect);
+        assert_eq!(refused.caption(), RELOAD_CAPTION);
+        let refusal: Result<String, &'static str> = Err("Finish the drawing gesture first");
+        assert_eq!(
+            RollNote::from(&refusal),
+            RollNote::Refused("Finish the drawing gesture first")
+        );
+    }
+    /// The consequence of the destructive control is on the popup, so a trader
+    /// learns it before pressing rather than from a journal afterwards.
+    #[test]
+    fn the_popup_says_what_reload_costs() {
+        assert!(
+            RELOAD_CAPTION.contains("paper position") && RELOAD_CAPTION.contains("strateg"),
+            "the caption has to name both things Reload ends: {RELOAD_CAPTION}"
+        );
     }
     #[test]
     fn a_quiet_tape_gets_controls_and_not_an_alarm() {

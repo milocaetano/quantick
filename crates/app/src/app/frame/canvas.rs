@@ -24,7 +24,7 @@ pub(in crate::app) struct CanvasAnswers {
     pub notice_action: feed_notice::NoticeAction,
     /// The roll the open popup offers off a contract the venue no longer
     /// lists, or why it cannot roll; read before the canvas borrows the tabs.
-    pub roll: Option<Result<String, RollRefusal>>,
+    pub roll: Option<Result<String, &'static str>>,
     pub chip_clicked: bool,
     pub dismissed: bool,
     /// Where the status word landed while it is the popup's door. A feed that
@@ -53,7 +53,8 @@ impl CanvasAnswers {
             popup_open,
             roll: popup_open
                 .then(|| quantick_control_handlers::contract_roll::notice_roll(port, index))
-                .flatten(),
+                .flatten()
+                .map(|roll| roll.map_err(RollRefusal::reason)),
             chip_clicked: status.word_clicked,
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {
@@ -155,11 +156,7 @@ fn draw_recovery_popup(
             }
         }
     };
-    let roll = answers.roll.clone();
-    let report = report.with_roll(roll.as_ref().map(|roll| match roll {
-        Ok(target) => RollNote::To(target),
-        Err(refusal) => RollNote::Refused(refusal.reason()),
-    }));
+    let report = report.with_roll(answers.roll.as_ref().map(RollNote::from));
     // A click anywhere else puts it away, measured against the rectangles that
     // were actually drawn — so a click on the edge of what the trader can see
     // is never read as a click outside it, and the popup is laid out once

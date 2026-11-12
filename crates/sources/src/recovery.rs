@@ -41,6 +41,27 @@ impl Recovery {
         }
     }
 
+    /// What the control costs, in the trader's terms, on its own hover.
+    ///
+    /// The caption below the buttons names what the destructive one ends, and for
+    /// a while that was the only sentence either button had. A warning beside one
+    /// control and silence beside the other does not read as "that one is safe" —
+    /// it reads as "one of these is dangerous and I cannot tell which", which
+    /// pushes a trader toward pressing neither at the moment they most need to
+    /// press one. This is the status line's old hover text, restored to the
+    /// surface that inherited its job.
+    #[must_use]
+    pub fn cost(self) -> &'static str {
+        match self {
+            Self::Reconnect => {
+                "Keeps the chart as it is: bars, drawings, strategies and any open paper position."
+            }
+            Self::Reload => {
+                "Rebuilds the chart from scratch: closes any open paper position and disarms every strategy."
+            }
+        }
+    }
+
     /// The other one.
     #[must_use]
     pub fn other(self) -> Self {
