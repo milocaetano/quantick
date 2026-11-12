@@ -12,6 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
+use quantick_appearance::tab_strip::WORKSPACE_UNDERLINE_PT;
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -32,8 +33,9 @@ const PANE_STROKE_PX: f32 = 1.0;
 pub struct CapsuleModel<'a> {
     /// The docked panes the canvas draws, as the model's tree.
     pub tree: &'a PaneTree,
-    /// The tab's workspace name.
+    /// The tab's workspace name, and its colour on the capsule's underline.
     pub workspace: &'a str,
+    pub colour: Option<quantick_workspace::workspace_colour::WorkspaceColour>,
     /// Auto save is off and the workspace differs from its save.
     pub unsaved: bool,
     /// What differs is the layout: the miniature wears the dot too.
@@ -143,6 +145,12 @@ pub fn draw(
             painter.rect_filled(part.shrink(1.0), ROUNDING_PX, palette.control());
         }
     }
+    // The workspace's colour along the bottom edge, inside the border.
+    if let Some(ink) = model.colour.and_then(|c| palette.workspace(c.index())) {
+        let inner = whole.shrink(1.0);
+        let line = inner.with_min_y(inner.bottom() - WORKSPACE_UNDERLINE_PT);
+        painter.rect_filled(line, 1.5, ink);
+    }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
     paint_tree(painter, face, model.tree);
@@ -246,6 +254,7 @@ pub(crate) mod tests {
         CapsuleModel {
             tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree,
             workspace: "Default",
+            colour: None,
             unsaved: false,
             layout_unsaved: false,
             menu_open: false,

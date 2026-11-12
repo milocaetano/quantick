@@ -3,6 +3,7 @@
 //! `workspace_menu`'s and what a row does is [`WorkspaceCommand`]'s.
 
 use eframe::egui;
+use quantick_appearance::tab_strip as sizes;
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
@@ -80,6 +81,9 @@ impl<'a> WorkspaceRows<'a> {
     /// cell's menu, its one-line summary.
     pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>, summary: bool) {
         let (current, _) = self.state();
+        let palette = crate::theme::get(ui.ctx());
+        let edge = ui.max_rect().left() - ui.style().spacing.menu_margin.left;
+        ui.spacing_mut().button_padding.x += sizes::WORKSPACE_ROW_INDENT_PT;
         for row in self.book.list() {
             let beside = if summary {
                 self.book.summary(&row.name)
@@ -91,10 +95,53 @@ impl<'a> WorkspaceRows<'a> {
                     .selected(row.name == current)
                     .shortcut_text(crate::theme::supporting_text(ui, beside)),
             );
+            // The row's bar at the menu's left edge, hollow without a colour.
+            let y = response.rect.y_range().shrink(2.0);
+            let bar = egui::Rect::from_x_y_ranges(edge..=edge + sizes::WORKSPACE_ROW_BAR_PT, y);
+            match row.colour.and_then(|c| palette.workspace(c.index())) {
+                Some(ink) => ui.painter().rect_filled(bar, 2.0, ink),
+                None => ui
+                    .painter()
+                    .rect_stroke(bar, 2.0, (1.0, palette.text_faint())),
+            };
             if response.clicked() {
                 Self::push(commands, WorkspaceCommand::Set(row.name));
             }
         }
+        ui.spacing_mut().button_padding.x -= sizes::WORKSPACE_ROW_INDENT_PT;
+    }
+
+    /// Below the list, the open workspace's eight colours: its own outlined,
+    /// one another workspace holds dimmed under that owner's initials; a click
+    /// gives it the colour, swapping with the owner, never sharing one.
+    fn swatches(self, ui: &mut egui::Ui, workspace: &str, commands: &mut Vec<MenuCommand>) {
+        let palette = crate::theme::get(ui.ctx());
+        let caption = text::colour_caption(workspace);
+        ui.label(crate::theme::supporting_text(ui, caption));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = sizes::WORKSPACE_SWATCH_GAP_PT;
+            for swatch in self.book.swatches(workspace) {
+                let ink = palette.workspace(swatch.colour.index()).unwrap_or_default();
+                let held =
+                    [1.0, sizes::WORKSPACE_SWATCH_USED_ALPHA][usize::from(swatch.owner.is_some())];
+                let ring = (
+                    if swatch.current { 2.0 } else { 0.0 },
+                    palette.text_primary(),
+                );
+                let initials = egui::RichText::new(&swatch.initials).size(10.0).strong();
+                let button = egui::Button::new(initials.color(palette.text_primary()))
+                    .fill(ink.gamma_multiply(held))
+                    .stroke(ring)
+                    .min_size(egui::Vec2::splat(sizes::WORKSPACE_SWATCH_PT));
+                let hover = text::swatch_hover(swatch.colour.key(), swatch.owner.as_deref());
+                if ui.add(button).on_hover_text(hover).clicked() && !swatch.current {
+                    let pick =
+                        WorkspaceCommand::SetColour(workspace.to_owned(), swatch.colour.key());
+                    Self::push(commands, pick);
+                }
+            }
+        });
+        ui.label(crate::theme::supporting_text(ui, text::COLOUR_SWAP_HINT));
     }
 
     /// The rows that act on the tab's workspace. Handles the rows `menus` routes
@@ -176,11 +223,7 @@ impl<'a> WorkspaceRows<'a> {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         super::menus::flat_rows(ui);
                         self.action_row(ui, RowId::WorkspaceAutosave, commands);
-                        let line = if auto {
-                            "Every change is saved".to_owned()
-                        } else {
-                            format!("Save with {keys}")
-                        };
+                        let line = text::autosave_line(auto, &keys);
                         ui.label(crate::theme::supporting_text(ui, line));
                         ui.separator();
                         let save = egui::Button::new(format!("Save \u{201c}{workspace}\u{201d}"))
@@ -202,6 +245,8 @@ impl<'a> WorkspaceRows<'a> {
                         ui.separator();
                         ui.label(crate::theme::supporting_text(ui, "WORKSPACES"));
                         self.list(ui, commands, true);
+                        ui.separator();
+                        self.swatches(ui, workspace, commands);
                         ui.separator();
                         self.action_row(ui, RowId::WorkspaceNew, commands);
                         self.action_row(ui, RowId::ManageWorkspaces, commands);

@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 87 |
+| deduplicated per connection | 88 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 18 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **129** |
+| **Total** | **130** |
 
 ## Capabilities
 
@@ -245,6 +245,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `widget.close` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `widget.changed` | `payload.open` | an event after the pre-call cursor names the pane with open false | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `widget.open` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `widget.changed` | `payload.open` | an event after the pre-call cursor names the pane with open true | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.autosave.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.autosave_set` | `payload.auto_save` | an event after the pre-call cursor carries the requested state | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `workspace.colour.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.colour_set` | `payload.colour` | an event after the pre-call cursor gives the workspace the requested colour | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.delete` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.deleted` | `payload.workspace` | an event after the pre-call cursor names the deleted workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.new` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.created` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.rename` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.renamed` | `payload.workspace` | an event after the pre-call cursor carries the new name | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -252,4 +253,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-129 mutable capabilities registered, 129 with a readback.
+130 mutable capabilities registered, 130 with a readback.

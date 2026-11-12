@@ -44,6 +44,9 @@ impl WorkspaceBookHost for FakeHost {
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
         Some(&mut self.book)
     }
+    fn workspace_book_ref(&self) -> Option<&WorkspaceBook> {
+        Some(&self.book)
+    }
     fn persist_workspace_book(&mut self) -> Result<(), String> {
         if self.write_fails || self.book_writes_left == Some(0) {
             return Err("saving is off".to_owned());
@@ -480,8 +483,9 @@ fn list_names_every_workspace_with_its_summary_and_tabs() {
     assert_eq!(
         rows["workspaces"],
         json!([
-            { "name": "Default", "summary": "as the feed opens", "tabs": ["2"] },
-            { "name": "Scalp", "summary": "Flow", "tabs": ["1"] },
+            { "name": "Default", "summary": "as the feed opens", "tabs": ["2"],
+              "colour": "steel" },
+            { "name": "Scalp", "summary": "Flow", "tabs": ["1"], "colour": "violet" },
         ])
     );
 }
@@ -503,6 +507,8 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
     edit(&mut host, 1);
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
+    let value = json!({ "name": "Blank", "colour": "steel" });
+    colour_set(&mut host, &mut access, &actor, &value).unwrap();
     // Revert only refuses now: its row names an event nothing journals.
     for row in READBACKS
         .iter()
@@ -525,6 +531,83 @@ fn every_journal_row_reads_a_field_the_event_carries() {
                 .any(|event| event.kind.as_str() == kind),
             "{kind} was never journaled"
         );
+    }
+}
+
+/// A colour another workspace holds swaps the two, once, journaled; a repeat
+/// writes nothing; an unknown name is refused; the swatch row is the call.
+#[test]
+fn colour_set_swaps_with_the_holder_and_a_repeat_writes_nothing() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let (writes, journaled) = (host.writes, access.events.len());
+    let value = json!({ "name": "Scalp", "colour": "steel" });
+    let swapped = colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(
+        swapped,
+        json!({ "workspace": "Scalp", "colour": "steel", "changed": true,
+                "swapped_with": "Default" })
+    );
+    assert_eq!(
+        host.book.colour(DEFAULT_WORKSPACE),
+        Some(WorkspaceColour::Violet)
+    );
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 1, journaled + 1)
+    );
+    let again = colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(again["changed"], false);
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 1, journaled + 1)
+    );
+    let value = json!({ "name": "Nope", "colour": "cyan" });
+    let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.unknown");
+
+    let mut menu = WorkspaceMenuState::default();
+    let command = WorkspaceCommand::SetColour("Default".to_owned(), "steel");
+    let journal = Some((&mut access, &actor));
+    apply_row_command(&mut host, journal, &mut menu, 1, "WDOV26", command);
+    assert_eq!(
+        host.book.colour(DEFAULT_WORKSPACE),
+        Some(WorkspaceColour::Steel)
+    );
+    assert_eq!(
+        host.workspace_colour_of_tab_1(),
+        Some(WorkspaceColourDto::Violet)
+    );
+    let rows = host.workspace_colours();
+    assert_eq!(rows[0].colour, Some(WorkspaceColourDto::Steel));
+    assert_eq!(rows[1].colour, Some(WorkspaceColourDto::Violet));
+}
+
+/// The wire's eight words are the store's, slot for slot.
+#[test]
+fn the_wire_and_the_store_name_the_palette_alike() {
+    for colour in WorkspaceColour::ALL {
+        let wire = serde_json::to_value(dto(colour).unwrap()).unwrap();
+        assert_eq!(wire, colour.key());
+    }
+}
+
+/// A failed write leaves both colours where they were.
+#[test]
+fn a_colour_that_cannot_be_written_changes_nothing() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    host.write_fails = true;
+    let before = host.book.clone();
+    let value = json!({ "name": "Scalp", "colour": "steel" });
+    let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&refused), WRITE_FAILED_CODE);
+    assert_eq!(host.book, before);
+}
+
+impl FakeHost {
+    fn workspace_colour_of_tab_1(&self) -> Option<WorkspaceColourDto> {
+        self.tab_workspace_colour(1)
     }
 }
 

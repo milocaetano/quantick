@@ -7,6 +7,7 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::arrangement_adapter::StripAsk;
+use super::title_bar::draw as draw_title_bar;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
@@ -256,12 +257,11 @@ impl QuantickApp {
             .chrome
             .window_menu
             .opened_from(ctx.viewport_id(), MenuDoor::Kebab);
-        self.chrome.title_bar.agent_on = self
-            .control
-            .control_access
-            .as_ref()
-            .is_some_and(crate::control::ControlAccess::is_enabled);
-        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
+        let access = self.control.control_access.as_ref();
+        self.chrome.title_bar.agent_on =
+            access.is_some_and(crate::control::ControlAccess::is_enabled);
+        let market = (&self.runtime, &self.config);
+        let action = draw_title_bar(ctx, market, &mut self.chrome.title_bar);
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);

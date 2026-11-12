@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "WorkspaceColourDto": {
+      "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+      "enum": [
+        "steel",
+        "violet",
+        "cyan",
+        "magenta",
+        "azure",
+        "indigo",
+        "chalk",
+        "cobalt"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The colour the workspace now holds, and the workspace it swapped with.",
+  "properties": {
+    "changed": {
+      "description": "`false` when the workspace already held it: nothing is written.",
+      "type": "boolean"
+    },
+    "colour": {
+      "$ref": "#/$defs/WorkspaceColourDto"
+    },
+    "swapped_with": {
+      "description": "The workspace that held the colour and now holds the old one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "workspace",
+    "colour",
+    "changed"
+  ],
+  "title": "WorkspaceColourSetResult",
+  "type": "object"
+}

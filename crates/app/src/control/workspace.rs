@@ -74,6 +74,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         timezone_offset_minutes: timezone.minutes(),
         timezone_label: timezone.label(),
         layouts: super::layout::layout_tabs(app),
+        workspaces: app.workspace_colours(),
         save_on_exit,
         auto_save: app.workspace_autosave(),
         performance_readings_visible,
@@ -135,6 +136,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,
                     modified,
+                    workspace_colour: app.tab_workspace_colour(tabs.id_at(index)),
                     canvas: Some(quantick_control_handlers::canvas::view(
                         &tab.canvas.state,
                         crate::app::canvas_wiring::drawn(&tab.canvas),

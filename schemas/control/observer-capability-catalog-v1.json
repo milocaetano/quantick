@@ -28752,6 +28752,119 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.colour.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+            "enum": [
+              "steel",
+              "violet",
+              "cyan",
+              "magenta",
+              "azure",
+              "indigo",
+              "chalk",
+              "cobalt"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Give a workspace a colour of the palette.",
+        "properties": {
+          "colour": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "colour"
+        ],
+        "title": "WorkspaceColourSetInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+            "enum": [
+              "steel",
+              "violet",
+              "cyan",
+              "magenta",
+              "azure",
+              "indigo",
+              "chalk",
+              "cobalt"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The colour the workspace now holds, and the workspace it swapped with.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the workspace already held it: nothing is written.",
+            "type": "boolean"
+          },
+          "colour": {
+            "$ref": "#/$defs/WorkspaceColourDto"
+          },
+          "swapped_with": {
+            "description": "The workspace that held the colour and now holds the old one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "colour",
+          "changed"
+        ],
+        "title": "WorkspaceColourSetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
+      "title": "Give a workspace a colour",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
       "destructive": false,
       "dry_run_supported": false,
@@ -28836,7 +28949,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count), its colour and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -28861,9 +28974,35 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+            "enum": [
+              "steel",
+              "violet",
+              "cyan",
+              "magenta",
+              "azure",
+              "indigo",
+              "chalk",
+              "cobalt"
+            ],
+            "type": "string"
+          },
           "WorkspaceEntry": {
             "description": "One workspace and the tabs using it.",
             "properties": {
+              "colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Its colour; `None` for a ninth while all eight are held. Additive."
+              },
               "name": {
                 "type": "string"
               },
@@ -36163,6 +36302,42 @@
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
           },
+          "WorkspaceColourDto": {
+            "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+            "enum": [
+              "steel",
+              "violet",
+              "cyan",
+              "magenta",
+              "azure",
+              "indigo",
+              "chalk",
+              "cobalt"
+            ],
+            "type": "string"
+          },
+          "WorkspaceColourRow": {
+            "description": "One workspace's colour; `None` for a ninth while all eight are held.",
+            "properties": {
+              "colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
           "WorkspacePane": {
             "properties": {
               "collapsed": {
@@ -36298,6 +36473,18 @@
                 "default": "",
                 "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
                 "type": "string"
+              },
+              "workspace_colour": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkspaceColourDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "That workspace's colour, the bar on the tab's left edge. Additive."
               }
             },
             "required": [
@@ -36405,6 +36592,14 @@
             "description": "Native presentation order, independent of the retained runtime storage indices below.",
             "items": {
               "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "type": "array"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Every workspace and its colour, `Default` first, then by name.\nAdditive; empty from a build that predates workspace colours.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceColourRow"
             },
             "type": "array"
           }

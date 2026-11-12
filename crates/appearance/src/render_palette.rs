@@ -12,6 +12,12 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    /// The colour of workspace palette slot `slot` ([`crate::tab_strip::WORKSPACE_TOKENS`]).
+    pub fn workspace(&self, slot: usize) -> Option<T> {
+        crate::tab_strip::WORKSPACE_TOKENS
+            .get(slot)
+            .map(|token| *self.get(*token))
+    }
     pub fn flow_surface(&self) -> T {
         *self.get(Token::FlowSurface)
     }

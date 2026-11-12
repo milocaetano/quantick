@@ -204,6 +204,16 @@ panel_live_row = "#E9ECEF"
 panel_stripe_loss = "#B3261E"
 # The buy ink reads 4.0:1 on the footer grey; gains there go one step deeper.
 panel_gain_ink = "#145A24"
+# The workspace colours, in palette order (the tab design of 2026-11-12):
+# deep enough to read on the warm grey idle tab, the active tab and menu.
+workspace_steel = "#4A5A72"
+workspace_violet = "#7B2CC9"
+workspace_cyan = "#0B7896"
+workspace_magenta = "#A8238F"
+workspace_azure = "#1F5FD6"
+workspace_indigo = "#5536C4"
+workspace_chalk = "#262B33"
+workspace_cobalt = "#3448C8"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.

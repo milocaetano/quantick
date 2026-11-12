@@ -149,6 +149,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: Mapping::Capabilities(&["workspace.list", "workspace.rename", "workspace.delete"]),
     },
     UiBehaviour {
+        id: "workspace.colour.set",
+        title: "Give a workspace a colour, swapping with the workspace holding it",
+        reach: "the capsule's workspace menu, the swatches under the workspaces",
+        keys: &[(
+            Source::Authored,
+            "the swatch row under the capsule's workspace menu is neither a menu-bar entry nor a toolbar action",
+        )],
+        mapping: Mapping::Capabilities(&["workspace.colour.set"]),
+    },
+    UiBehaviour {
         id: "workspace.list",
         title: "List the workspaces and the tabs using each",
         reach: "window menu, Workspace, whose list names each workspace",

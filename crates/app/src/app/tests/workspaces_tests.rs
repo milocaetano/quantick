@@ -537,6 +537,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         default_layout: None,
         default_bars: None,
         record_deals: false,
+        short_name: None,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     let opened_with = app.active_tab().tape().active_preset_for_test().to_string();

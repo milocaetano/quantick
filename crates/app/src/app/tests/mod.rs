@@ -375,6 +375,7 @@ fn test_config() -> AppConfig {
             default_layout: None,
             default_bars: None,
             record_deals: false,
+            short_name: None,
         }],
         metatrader: Default::default(),
         paper: Default::default(),
@@ -1924,6 +1925,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -1940,6 +1942,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             },
         ],
         metatrader: crate::config::MetaTraderSettings {

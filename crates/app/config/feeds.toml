@@ -16,6 +16,9 @@ default_symbol = "BTCUSDT"
 # Each [[feeds]] entry is one selectable feed.
 #   id            — stable identifier, referenced by `default_feed` (unique).
 #   name          — label shown in the feed selector.
+#   short_name    — optional: the venue's code on a market tab's tag (BIN,
+#                   HL, MT5); the name stays in the tab's hover. Absent, the
+#                   tag reads the name.
 #   provider      — which backend streams it; maps to a code path.
 #                   Supported: "binance", "binance-futures", "hyperliquid", "metatrader".
 #   symbols       — the assets offered for this feed (first is its fallback).
@@ -98,6 +101,7 @@ default_symbol = "BTCUSDT"
 [[feeds]]
 id = "binance"
 name = "Binance"
+short_name = "BIN"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
 # Every crypto market opens on one look, and resets to it. Declared per
@@ -122,6 +126,7 @@ default_bars = "tick:50"
 [[feeds]]
 id = "binance-futures"
 name = "Binance USD-M perpetual"
+short_name = "BIN"
 provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Crypto default" }
@@ -140,6 +145,7 @@ default_bars = "tick:50"
 [[feeds]]
 id = "hyperliquid"
 name = "Hyperliquid"
+short_name = "HL"
 provider = "hyperliquid"
 symbols = ["BTC", "ETH", "HYPE", "SOL", "ZEC"]
 symbol_bubble_presets = { "BTC" = "Crypto default", "ETH" = "Crypto default", "HYPE" = "Crypto default", "SOL" = "Crypto default", "ZEC" = "Crypto default" }
@@ -164,6 +170,7 @@ symbol_asset_modes = { "BTC" = { quantity_unit = "BTC" }, "ETH" = { quantity_uni
 [[feeds]]
 id = "metatrader-tickmill"
 name = "MetaTrader 5 — Tickmill"
+short_name = "MT5"
 provider = "metatrader"
 symbols = ["XAUUSD", "US500", "US30"]
 bubble_preset = "live lane pie"
@@ -181,6 +188,7 @@ bubble_preset = "live lane pie"
 [[feeds]]
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
+short_name = "MT5"
 provider = "metatrader"
 symbols = ["WIN$N", "WDO$N", "WINV26", "WINZ26", "WING27"]
 # What "Roll to ..." on the symbol list offers: the contract that follows,

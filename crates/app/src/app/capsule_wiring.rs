@@ -17,6 +17,7 @@ use crate::toolbar::{DrawnControl, ToolbarAction};
 pub(super) struct CapsuleState {
     tree: PaneTree,
     workspace: String,
+    colour: Option<quantick_stores::workspaces::WorkspaceColour>,
     unsaved: bool,
     marks: LayoutMarks,
     menu_open: bool,
@@ -43,6 +44,7 @@ impl CapsuleState {
             menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
             popover_open: app.chrome.layout_picker_open,
             add_open: app.chrome.add_menu.open,
+            colour: book.book().colour(&workspace),
             workspace,
             door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
             door_hover: format!(
@@ -68,6 +70,7 @@ impl CapsuleState {
         CapsuleModel {
             tree: &self.tree,
             workspace: &self.workspace,
+            colour: self.colour,
             unsaved: self.unsaved,
             layout_unsaved: self.marks.layout_unsaved,
             menu_open: self.menu_open,

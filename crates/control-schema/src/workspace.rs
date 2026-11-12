@@ -101,6 +101,56 @@ pub struct WorkspaceSnapshot {
     /// The layout strip: every layout, and which is active. Additive.
     #[serde(default)]
     pub layouts: Vec<crate::layout::LayoutTabSnapshot>,
+    /// Every workspace and its colour, `Default` first, then by name.
+    /// Additive; empty from a build that predates workspace colours.
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceColourRow>,
+}
+
+/// A workspace's colour: one slot of a fixed palette of eight, never held by
+/// two workspaces (`workspace.colour.set`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceColourDto {
+    Steel,
+    Violet,
+    Cyan,
+    Magenta,
+    Azure,
+    Indigo,
+    Chalk,
+    Cobalt,
+}
+
+impl WorkspaceColourDto {
+    /// The palette, in the order a new workspace takes it.
+    pub const ALL: [Self; 8] = [
+        Self::Steel,
+        Self::Violet,
+        Self::Cyan,
+        Self::Magenta,
+        Self::Azure,
+        Self::Indigo,
+        Self::Chalk,
+        Self::Cobalt,
+    ];
+
+    /// The colour of the palette slot at `index`.
+    pub fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    /// Its place in [`Self::ALL`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One workspace's colour; `None` for a ninth while all eight are held.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceColourRow {
+    pub name: String,
+    pub colour: Option<WorkspaceColourDto>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -142,6 +192,9 @@ pub struct WorkspaceTab {
     /// Whether the tab holds edits it has not saved to that workspace.
     #[serde(default)]
     pub modified: bool,
+    /// That workspace's colour, the bar on the tab's left edge. Additive.
+    #[serde(default)]
+    pub workspace_colour: Option<WorkspaceColourDto>,
     /// The canvas model: the preset the docked panes match and every pane's
     /// mode. Additive; absent from a build that predates it.
     #[serde(default)]

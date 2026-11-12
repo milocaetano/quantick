@@ -15,6 +15,17 @@ pub enum WindowState {
     Minimized,
 }
 
+/// The maximize button's hover and the state its click asks for: a maximized
+/// window restores, any other maximizes.
+#[must_use]
+pub const fn maximize_button(maximized: bool) -> (&'static str, WindowState) {
+    if maximized {
+        ("Restore window", WindowState::Normal)
+    } else {
+        ("Maximize window", WindowState::Maximized)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WindowInput {

@@ -1968,6 +1968,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
         record_deals: false,
+        short_name: None,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().canvas.layout, CanvasLayout::Single);

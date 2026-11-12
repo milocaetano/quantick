@@ -147,6 +147,11 @@ pub struct FeedConfig {
     /// nothing to disk.
     #[serde(default)]
     pub record_deals: bool,
+    /// The venue's short code on a market tab's tag (`BIN`, `HL`, `MT5`);
+    /// the full [`name`](Self::name) stays in the tab's hover. Absent, the tag
+    /// reads the name itself ([`AppConfig::feed_code`]).
+    #[serde(default)]
+    pub short_name: Option<String>,
 }
 
 /// Marks a [`FeedConfig::symbol_bubble_presets`] key as a symbol prefix.
@@ -538,6 +543,14 @@ impl AppConfig {
         self.feed(id).map_or(id, |feed| feed.name.as_str())
     }
 
+    /// The short code of feed `id` for a tab's venue tag: its `short_name`,
+    /// else its display name ([`Self::feed_name`]).
+    #[must_use]
+    pub fn feed_code<'a>(&'a self, id: &'a str) -> &'a str {
+        let code = self.feed(id).and_then(|feed| feed.short_name.as_deref());
+        code.unwrap_or_else(|| self.feed_name(id))
+    }
+
     /// The symbol feed `id` should show given a `wanted` selection.
     ///
     /// `Some(wanted)` when the feed offers it, otherwise the feed's first
@@ -608,6 +621,36 @@ impl AppConfig {
     #[must_use]
     pub fn opening_spec_for(&self, id: &str) -> quantick_chart::state::BarConfiguration {
         self.startup_spec_for(id).unwrap_or_else(factory_flow_spec)
+    }
+
+    /// Data-honesty label for how each print on feed `id` is known, and its
+    /// hover, or `None` when the venue reports true trades and true sides (§8,
+    /// the status bar's middle section). The label shares its row with the
+    /// machinery readouts, so it stays short and the full story is the hover.
+    ///
+    /// A recording's own note (`replay`) comes first. Then a venue that prints
+    /// nothing at all (`traded_volume` false) takes precedence over how sides
+    /// were decided: on a quote-driven feed *every* print is derived, and
+    /// saying so is the more important disclosure. Without it a chart of
+    /// one-unit prints reads as a market where every trade happened to be the
+    /// same size.
+    #[must_use]
+    pub fn print_note(
+        &self,
+        id: &str,
+        replay: Option<String>,
+        traded_volume: bool,
+    ) -> Option<(String, Option<String>)> {
+        if let Some(note) = replay {
+            return Some((note, None));
+        }
+        if self.provider_of(id).is_some() && !traded_volume {
+            let hover = "this venue quotes prices but prints no trades: every candle is built \
+                         from one synthetic print per tick, at the mid of bid and ask, carrying \
+                         one unit — never a traded size";
+            return Some(("prints: quote-derived".to_owned(), Some(hover.to_owned())));
+        }
+        self.side_note(id).map(|note| (note.to_owned(), None))
     }
 
     /// Data-honesty label for how feed `id` decides the aggressor side of a
@@ -1049,6 +1092,25 @@ pub fn load_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every shipped feed names its tab code; a feed without one tags its
+    /// tabs with its name, and an unknown id with the id.
+    #[test]
+    fn a_tab_code_comes_from_the_config_and_falls_back_to_the_name() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        assert!(config.feeds.iter().all(|feed| feed.short_name.is_some()));
+        assert_eq!(config.feed_code("hyperliquid"), "HL");
+        assert_eq!(config.feed_code("metatrader-b3"), "MT5");
+        config.feeds[0].short_name = None;
+        let first = config.feeds[0].id.clone();
+        assert_eq!(config.feed_code(&first), config.feed_name(&first));
+        assert_eq!(config.feed_code("nowhere"), "nowhere");
+    }
 
     /// The catalog the app runs on is the file's list plus the user's, in
     /// that order and without repeats.

@@ -35,6 +35,45 @@ pub fn home_label_fits(
     markets <= slots && (markets != 1 || lone_fits)
 }
 
+/// The widths the shown market tabs take: each its own content's, hugging it
+/// with no stretch gap; when together they overflow `room`, all shrink by one
+/// factor, none below `floor`.
+#[must_use]
+pub fn hug_widths(natural: &[f32], room: f32, floor: f32) -> Vec<f32> {
+    let total: f32 = natural.iter().sum();
+    let scale = if total > room && total > 0.0 {
+        room.max(0.0) / total
+    } else {
+        1.0
+    };
+    natural
+        .iter()
+        .map(|width| (width * scale).max(floor))
+        .collect()
+}
+
+/// The width the slot count is asked at: the tabs' mean natural width, so a
+/// strip of hugging tabs overflows into the menu when they stop fitting.
+#[must_use]
+pub fn mean_width(natural: &[f32], fallback: f32) -> f32 {
+    if natural.is_empty() {
+        return fallback;
+    }
+    natural.iter().sum::<f32>() / natural.len() as f32
+}
+
+/// A market tab's hover: `Scalp · WINZ26 · MetaTrader 5 — B3`, plus
+/// ` (replay)` on a recording.
+#[must_use]
+pub fn tab_hover(workspace: &str, symbol: &str, venue: &str, feed: TabFeed) -> String {
+    let replay = if feed == TabFeed::Replay {
+        " (replay)"
+    } else {
+        ""
+    };
+    format!("{workspace} \u{b7} {symbol} \u{b7} {venue}{replay}")
+}
+
 /// What a market tab's feed is doing, as the mark beside its symbol says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabFeed {
@@ -63,6 +102,13 @@ impl TabFeed {
             (false, false, true) => Self::Disconnected,
             (false, false, false) => Self::Stopped,
         }
+    }
+
+    /// Whether the tab wears a mark at all: a healthy live feed shows nothing,
+    /// so only a recording, a lost or stopped feed, or a venue notice does.
+    #[must_use]
+    pub const fn marked(self) -> bool {
+        !matches!(self, Self::Live)
     }
 
     /// The word printed after the symbol: a recording is never passed off as live.
@@ -379,6 +425,41 @@ mod tests {
         ];
         let named: Vec<_> = all.iter().filter_map(|feed| feed.word()).collect();
         assert_eq!(named, ["Replay"]);
+    }
+
+    #[test]
+    fn tabs_hug_their_content_and_shrink_together_only_when_they_overflow() {
+        assert_eq!(hug_widths(&[100.0, 60.0], 400.0, 40.0), [100.0, 60.0]);
+        assert_eq!(hug_widths(&[100.0, 100.0], 100.0, 40.0), [50.0, 50.0]);
+        assert_eq!(hug_widths(&[100.0, 100.0], 20.0, 40.0), [40.0, 40.0]);
+        assert!(hug_widths(&[], 100.0, 40.0).is_empty());
+        assert_eq!(mean_width(&[100.0, 60.0], 180.0), 80.0);
+        assert_eq!(mean_width(&[], 180.0), 180.0);
+    }
+
+    #[test]
+    fn only_a_healthy_live_feed_wears_no_mark() {
+        assert!(!TabFeed::Live.marked());
+        for feed in [
+            TabFeed::Attention,
+            TabFeed::Replay,
+            TabFeed::Disconnected,
+            TabFeed::Stopped,
+        ] {
+            assert!(feed.marked(), "{feed:?}");
+        }
+    }
+
+    #[test]
+    fn the_hover_names_workspace_symbol_and_venue() {
+        assert_eq!(
+            tab_hover("Scalp", "WINZ26", "MetaTrader 5 — B3", TabFeed::Live),
+            "Scalp · WINZ26 · MetaTrader 5 — B3"
+        );
+        assert_eq!(
+            tab_hover("Default", "BTCUSDT", "Binance", TabFeed::Replay),
+            "Default · BTCUSDT · Binance (replay)"
+        );
     }
 
     #[test]

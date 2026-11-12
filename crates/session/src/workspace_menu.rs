@@ -21,6 +21,9 @@ pub enum WorkspaceCommand {
     /// Open the Manage workspaces dialog.
     BeginManage,
     Delete(String),
+    /// Give this workspace the palette colour with this key (`violet`); the
+    /// workspace holding it takes the old one.
+    SetColour(String, &'static str),
     /// The dialog's Enter.
     SubmitDialog,
     /// Close these tabs, or exit, asking first per tab holding edits.

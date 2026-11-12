@@ -491,6 +491,34 @@ pub fn save_to_hover(followers: &[String]) -> String {
     }
 }
 
+/// The line under the capsule menu's autosave row: what saves an edit.
+#[must_use]
+pub fn autosave_line(auto: bool, keys: &str) -> String {
+    if auto {
+        "Every change is saved".to_owned()
+    } else {
+        format!("Save with {keys}")
+    }
+}
+
+/// The caption over the workspace menu's colour swatches.
+#[must_use]
+pub fn colour_caption(workspace: &str) -> String {
+    format!("COLOUR OF {}", workspace.to_uppercase())
+}
+
+/// The line under the swatches.
+pub const COLOUR_SWAP_HINT: &str = "A colour in use swaps with its owner";
+
+/// A swatch's hover: its colour, and who holds it when another workspace does.
+#[must_use]
+pub fn swatch_hover(colour: &str, owner: Option<&str>) -> String {
+    match owner {
+        Some(owner) => format!("{colour}: {owner}'s; click to swap"),
+        None => colour.to_owned(),
+    }
+}
+
 /// The Manage workspaces dialog's title.
 pub const MANAGE_DIALOG_TITLE: &str = "Manage workspaces";
 /// A dialog row's buttons.

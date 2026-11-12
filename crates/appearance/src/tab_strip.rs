@@ -190,6 +190,31 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
+/// The workspace colours in `quantick_workspace`'s palette order: slot `i`
+/// paints in `WORKSPACE_TOKENS[i]`.
+pub const WORKSPACE_TOKENS: [Token; 8] = [
+    Token::WorkspaceSteel,
+    Token::WorkspaceViolet,
+    Token::WorkspaceCyan,
+    Token::WorkspaceMagenta,
+    Token::WorkspaceAzure,
+    Token::WorkspaceIndigo,
+    Token::WorkspaceChalk,
+    Token::WorkspaceCobalt,
+];
+
+/// The line in the workspace's colour under the toolbar capsule, and the bar
+/// at a workspace menu row's left edge with the indent its name takes past
+/// it, in points.
+pub const WORKSPACE_UNDERLINE_PT: f32 = 3.0;
+pub const WORKSPACE_ROW_BAR_PT: f32 = 7.0;
+pub const WORKSPACE_ROW_INDENT_PT: f32 = 8.0;
+/// The workspace menu's colour swatches: 22 pt squares 8 pt apart, one held
+/// by another workspace dimmed to this alpha under its owner's initials.
+pub const WORKSPACE_SWATCH_PT: f32 = 22.0;
+pub const WORKSPACE_SWATCH_GAP_PT: f32 = 8.0;
+pub const WORKSPACE_SWATCH_USED_ALPHA: f32 = 0.38;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +298,54 @@ mod tests {
             let strip = theme.title_strip();
             let ratio = contrast_ratio(strip.color(Token::TextMuted), strip.color(Token::TabStrip));
             assert!(ratio >= 4.5, "{} strip: {ratio}", theme.name);
+        }
+    }
+
+    /// Each workspace colour is a graphic (3:1) on the idle tab's block and on
+    /// the active tab's sheet, in both themes, and the eight are distinct.
+    #[test]
+    fn every_workspace_colour_reads_on_both_tab_faces_in_both_themes() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let mut seen = Vec::new();
+            for token in WORKSPACE_TOKENS {
+                let colour = theme.color(token);
+                assert!(!seen.contains(&colour), "{} {}", theme.name, token.key());
+                seen.push(colour);
+                for face in [tab_fill(false), tab_fill(true)] {
+                    let ratio = contrast_ratio(colour, theme.color(face));
+                    let at = (theme.name.as_str(), token.key(), face.key());
+                    assert!(ratio >= 3.0, "{at:?}: {ratio}");
+                }
+            }
+        }
+    }
+
+    /// No green, red, gold or orange: those already mean buy, sell, the POC
+    /// and unsaved edits. A tinted colour's hue stays between cyan and
+    /// magenta; a near-grey one (steel, chalk) has no hue to speak of.
+    #[test]
+    fn no_workspace_colour_is_green_red_gold_or_orange() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            for token in WORKSPACE_TOKENS {
+                let [r, g, b, _] = theme.color(token).to_array().map(f32::from);
+                let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+                if (max - min) / max.max(1.0) < 0.2 {
+                    continue;
+                }
+                let hue = if max == r {
+                    60.0 * ((g - b) / (max - min))
+                } else if max == g {
+                    60.0 * ((b - r) / (max - min) + 2.0)
+                } else {
+                    60.0 * ((r - g) / (max - min) + 4.0)
+                };
+                let hue = hue.rem_euclid(360.0);
+                assert!((180.0..=330.0).contains(&hue), "{}: {hue}", token.key());
+            }
         }
     }
 

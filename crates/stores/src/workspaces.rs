@@ -9,6 +9,7 @@ pub use quantick_workspace::workspace_book::{
     RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
+pub use quantick_workspace::workspace_colour::{ColourOutcome, Swatch, WorkspaceColour};
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
