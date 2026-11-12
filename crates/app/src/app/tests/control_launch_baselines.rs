@@ -593,7 +593,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 assert_eq!(notifications[0]["payload"]["message"], message);
                 assert_eq!(notifications[0]["actor"]["kind"], "agent");
                 if case == "F07-popup" {
-                    let popup = app.surfaces.agent_popup.pending().unwrap();
+                    let popup = app.surfaces.agent_popup.model_state.pending().unwrap();
                     assert_eq!(popup.title, "From your assistant");
                     assert_eq!(popup.message, "hello:again");
                     assert!(popup.author.contains("agent"));

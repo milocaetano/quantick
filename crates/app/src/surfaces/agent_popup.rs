@@ -1,15 +1,14 @@
-//! The assistant's popup, as a [`Surface`].
+//! Paint the assistant notification state and emit dismissal intents.
 //!
-//! Raised over the control plane by `quantick_notify` and dismissed by the
-//! trader. It owns the one thing it draws, so moving it here took its state
-//! off `QuantickApp` with it — the point of the port, and the reason this
-//! file's existence is the whole registration.
+//! Raised over the control plane by `quantick_notify` and dismissed by the trader.
 
 use eframe::egui;
 
-use super::{Surface, SurfaceEnv, SurfaceResponse};
+use super::{SurfaceEnv, SurfaceResponse, ViewContext};
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::control::AgentPopup;
 use crate::theme;
+use quantick_ui_model::agent_popup::{Intent, Model, State};
 
 /// How far below the top edge the assistant's popup opens, clear of the menu
 /// row and the toolbar.
@@ -20,35 +19,20 @@ const MAX_WIDTH_PX: f32 = 360.0;
 /// Room between the message and the attribution line under it.
 const SPACING_PX: f32 = 6.0;
 
-/// The assistant's popup: at most one waiting to be read.
 #[derive(Default)]
-pub(crate) struct AgentPopupSurface {
-    pending: Option<AgentPopup>,
-}
+pub(crate) struct View;
 
-impl AgentPopupSurface {
-    /// Raise a popup, replacing any still on screen. Last message wins: the
-    /// assistant speaks to a trader who is watching a market, and a queue
-    /// would show them a stale line while the current one waits.
-    pub fn show(&mut self, popup: AgentPopup) {
-        self.pending = Some(popup);
-    }
-}
-
-#[cfg(test)]
-impl AgentPopupSurface {
-    /// The popup currently on screen, if any.
-    pub fn pending(&self) -> Option<&AgentPopup> {
-        self.pending.as_ref()
-    }
-}
-
-impl Surface for AgentPopupSurface {
+impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "agent_popup"
     }
-
-    fn draw(&mut self, ctx: &egui::Context, _env: &SurfaceEnv<'_>) -> SurfaceResponse {
+    fn paint(
+        &mut self,
+        state: &State,
+        target: &mut ViewContext<'_>,
+        _env: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        let ctx = target.context();
         let palette = theme::get(ctx);
         let id = self.id();
         let mut open = true;
@@ -59,9 +43,7 @@ impl Surface for AgentPopupSurface {
         // screen at 60 Hz would be ~21,600 copies of three strings that never
         // change. The borrow ends with this block, before `pending` is cleared.
         {
-            let Some(popup) = self.pending.as_ref() else {
-                return SurfaceResponse::default();
-            };
+            let popup = state.pending()?;
             egui::Window::new(&popup.title)
                 .id(egui::Id::new(id))
                 .open(&mut open)
@@ -82,60 +64,40 @@ impl Surface for AgentPopupSurface {
                     }
                 });
         }
-        if dismissed || !open {
-            self.pending = None;
+        if dismissed {
+            Some(Intent::Dismiss)
+        } else if !open {
+            Some(Intent::WindowClosed)
+        } else {
+            None
         }
-        SurfaceResponse::default()
     }
 
     /// The real popup arrives over the control plane from a connected
     /// assistant, so a scripted capture has no way to raise one — which is
     /// exactly the case `ui-harness` says a hook must cover. It goes through
-    /// [`Self::show`], the same call `quantick_notify` makes.
+    /// the same model intent used by `quantick_notify`.
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<Intent> {
         if crate::hooks::captured::var("QUANTICK_AGENT_POPUP").is_some_and(|value| value == "1") {
-            self.show(AgentPopup {
+            Some(Intent::Show(AgentPopup {
                 title: "Assistant".to_string(),
                 message: "Volume at 108k is three times the session median.".to_string(),
                 author: "capture".to_string(),
-            });
+            }))
+        } else {
+            None
         }
     }
+}
+
+pub(crate) fn effects((): ()) -> SurfaceResponse {
+    SurfaceResponse::default()
 }
 
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_AGENT_POPUP"];
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn popup(message: &str) -> AgentPopup {
-        AgentPopup {
-            title: "Assistant".to_string(),
-            message: message.to_string(),
-            author: "tester".to_string(),
-        }
-    }
-
-    /// The surface starts empty, so an application that never hears from the
-    /// assistant paints no window.
-    #[test]
-    fn a_new_surface_has_nothing_to_show() {
-        assert!(AgentPopupSurface::default().pending().is_none());
-    }
-
-    /// Last message wins, rather than queueing behind one the trader has not
-    /// dismissed.
-    #[test]
-    fn a_second_popup_replaces_the_first() {
-        let mut surface = AgentPopupSurface::default();
-        surface.show(popup("first"));
-        surface.show(popup("second"));
-        assert_eq!(
-            surface.pending().map(|p| p.message.as_str()),
-            Some("second")
-        );
-    }
-}
+#[path = "agent_popup/tests.rs"]
+mod tests;

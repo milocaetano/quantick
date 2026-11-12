@@ -281,7 +281,9 @@ impl ViewContext<'_> {
 pub(crate) trait View<M: quantick_ui_model::Model> {
     fn capture_keyboard(&mut self, _ctx: &egui::Context) {}
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) -> Option<M::Intent> {
+        None
+    }
     fn id(&self) -> &'static str;
     fn paint(
         &mut self,
@@ -296,10 +298,6 @@ pub(crate) type Adapter<M, V> = quantick_ui_model::Adapter<M, V, SurfaceResponse
 impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
         self.view.capture_keyboard(ctx);
-    }
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
-        self.view.apply_env_hook(env);
     }
     fn id(&self) -> &'static str {
         self.view.id()
@@ -371,6 +369,12 @@ macro_rules! register_surfaces {
             }
         }
         impl Surfaces {
+            pub fn update(&mut self, intent: HostIntent) -> SurfaceResponse {
+                match intent {
+                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update(*intent),)*
+                }
+            }
+
             pub fn update_scoped(&mut self, scope: u64, intent: HostIntent) -> SurfaceResponse {
                 match intent {
                     $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, *intent),)*
@@ -401,7 +405,7 @@ macro_rules! register_surfaces {
                     if !self.hooks_applied {
                         self.hooks_applied = true;
                         $(self.$legacy.apply_env_hook(env);)*
-                        $($(#[$view_attr])* self.$field.apply_env_hook(env);)*
+                        $($(#[$view_attr])* if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); })*
                     }
                     $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
                 }
@@ -733,7 +737,10 @@ mod tests {
     #[test]
     fn a_shipped_surface_and_a_fake_take_the_same_path() {
         let ctx = egui::Context::default();
-        let mut real = agent_popup::AgentPopupSurface::default();
+        let mut real = Adapter::<quantick_ui_model::agent_popup::Model, _>::new(
+            agent_popup::View,
+            agent_popup::effects,
+        );
         let mut fake = FakeSurface::default();
         let quiet_real = ctx.run(Default::default(), |ctx| {
             let _ = drive(&mut real, ctx, &env());
