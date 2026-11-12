@@ -25,8 +25,20 @@
     "colour": {
       "$ref": "#/$defs/WorkspaceColourDto"
     },
+    "holder_colour": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkspaceColourDto"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The colour `swapped_with` holds now: the one the workspace gave up,\nor `None` when the workspace had none, so `swapped_with` goes without."
+    },
     "swapped_with": {
-      "description": "The workspace that held the colour and now holds the old one.",
+      "description": "The workspace that held the colour.",
       "type": [
         "string",
         "null"

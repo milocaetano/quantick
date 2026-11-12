@@ -338,7 +338,8 @@ pub fn parse_book(text: &str) -> Result<WorkspaceBook, BookParseError> {
             *recipe = recipe.without_bars();
         }
     }
-    // A book from before colours gets them here, in its stored order.
+    // A book from before colours gets them here, in the book's order:
+    // `Default` first, then by name, whatever order the file lists them in.
     book.settle_colours();
     Ok(book)
 }
@@ -446,6 +447,14 @@ impl WorkspaceBook {
     #[must_use]
     pub fn colour(&self, name: &str) -> Option<WorkspaceColour> {
         self.colours.get(name).copied()
+    }
+
+    /// The colour of the workspace tab `tab` uses ([`Self::tab_workspace`]):
+    /// `Default`'s for a tab the book has not adopted yet. The one answer the
+    /// strip, the capsule and the snapshot all read.
+    #[must_use]
+    pub fn tab_colour(&self, tab: u64) -> Option<WorkspaceColour> {
+        self.colour(self.tab_workspace(tab))
     }
 
     /// The picker's eight swatches for `name`, in palette order.

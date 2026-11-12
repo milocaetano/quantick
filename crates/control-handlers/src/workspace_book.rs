@@ -109,16 +109,17 @@ pub trait WorkspaceBookHost {
             |state| (state.workspace.to_owned(), state.modified),
         )
     }
-    /// The colour of the tab's workspace, as the snapshot and the strip read it.
+    /// The colour of the tab's workspace, `Default`'s for a tab the book has
+    /// not adopted yet: [`WorkspaceBook::tab_colour`], which the strip and the
+    /// capsule paint too.
     fn tab_workspace_colour(&self, tab: u64) -> Option<WorkspaceColourDto> {
-        let book = self.workspace_book_ref()?;
-        book.colour(book.tab_state(tab)?.workspace).and_then(dto)
+        self.workspace_book_ref()?.tab_colour(tab).map(Into::into)
     }
     /// Every workspace's colour, `Default` first, as the snapshot reads them.
     fn workspace_colours(&self) -> Vec<WorkspaceColourRow> {
         let rows = self.workspace_book_ref().map(WorkspaceBook::list);
         let row = |row: quantick_stores::workspaces::WorkspaceListing| WorkspaceColourRow {
-            colour: row.colour.and_then(dto),
+            colour: row.colour.map(Into::into),
             name: row.name,
         };
         rows.unwrap_or_default().into_iter().map(row).collect()
@@ -149,6 +150,9 @@ pub trait WorkspaceBookHost {
 /// still lands, and nothing is journaled.
 pub type Journal<'a, A> = Option<(&'a mut A, &'a ActorContext)>;
 
+/// A workspace row's command, its colour the palette's own slot.
+pub type RowCommand = WorkspaceCommand<WorkspaceColour>;
+
 /// Carry out what a workspace row asked for, through the same steps the
 /// control call takes, so a row leaves the call's journal row. Answers what
 /// to tell the trader, naming the tabs.
@@ -158,7 +162,7 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     menu: &mut WorkspaceMenuState,
     tab: u64,
     symbol: &str,
-    command: WorkspaceCommand,
+    command: RowCommand,
 ) -> Option<String> {
     let note = match command {
         WorkspaceCommand::BeginSaveAs => {
@@ -204,12 +208,8 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         WorkspaceCommand::SetAutosave(on) => {
             autosave_journaled(host, &mut to, on, tab).map(|(_, saved)| saved_notes(host, &saved))
         }
-        WorkspaceCommand::SetColour(name, key) => {
-            let unknown = || ControlError::invalid_request(format!("no colour is called {key}"));
-            let colour = WorkspaceColour::from_key(key).ok_or_else(unknown);
-            colour
-                .and_then(|colour| colour_journaled(host, &mut to, &name, colour))
-                .map(|_| None)
+        WorkspaceCommand::SetColour(name, colour) => {
+            colour_journaled(host, &mut to, &name, colour).map(|_| None)
         }
         WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
             gone.changed.then(|| {
@@ -318,11 +318,6 @@ fn write_failed(reason: String) -> ControlError {
     );
     error.context.details = Some(json!({ "code": WRITE_FAILED_CODE }));
     error
-}
-
-/// The wire's word for a palette slot: the two lists share one order.
-fn dto(colour: WorkspaceColour) -> Option<WorkspaceColourDto> {
-    WorkspaceColourDto::at(colour.index())
 }
 
 fn wires(tabs: &[u64]) -> Vec<WireU64> {
@@ -1006,7 +1001,8 @@ fn colour_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let outcome = set_workspace_colour(app, name, colour)?;
     if outcome.changed {
         let payload = json!({ "workspace": name, "colour": colour.key(),
-            "swapped_with": outcome.swapped_with });
+            "swapped_with": outcome.swapped_with,
+            "holder_colour": outcome.holder_colour.map(WorkspaceColour::key) });
         journal(to, WORKSPACE_COLOUR_SET_EVENT_KIND, payload);
     }
     Ok(outcome)
@@ -1175,13 +1171,13 @@ fn colour_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceColourSetInput { name, colour } = input(value)?;
-    let picked = WorkspaceColour::ALL[colour.index()];
-    let outcome = colour_journaled(app, &mut Some((access, actor)), &name, picked)?;
+    let outcome = colour_journaled(app, &mut Some((access, actor)), &name, colour.into())?;
     answer(&WorkspaceColourSetResult {
         workspace: outcome.workspace,
         colour,
         changed: outcome.changed,
         swapped_with: outcome.swapped_with,
+        holder_colour: outcome.holder_colour.map(Into::into),
     })
 }
 
@@ -1199,7 +1195,7 @@ fn list<H: WorkspaceBookHost + ?Sized, A>(
         .map(|row| WorkspaceEntry {
             tabs: wires(&row.tabs),
             summary: book_ref.summary(&row.name),
-            colour: row.colour.and_then(dto),
+            colour: row.colour.map(Into::into),
             name: row.name,
         })
         .collect();

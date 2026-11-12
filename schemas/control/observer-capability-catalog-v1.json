@@ -28752,7 +28752,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
+      "description": "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it in swapped_with and the colour it now holds in holder_colour; a workspace without a colour (a ninth) that takes a held one leaves its holder without, holder_colour null. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -28826,8 +28826,20 @@
           "colour": {
             "$ref": "#/$defs/WorkspaceColourDto"
           },
+          "holder_colour": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceColourDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The colour `swapped_with` holds now: the one the workspace gave up,\nor `None` when the workspace had none, so `swapped_with` goes without."
+          },
           "swapped_with": {
-            "description": "The workspace that held the colour and now holds the old one.",
+            "description": "The workspace that held the colour.",
             "type": [
               "string",
               "null"

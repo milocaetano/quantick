@@ -103,9 +103,11 @@ pub struct ColourOutcome {
     pub colour: WorkspaceColour,
     /// `false` when the workspace already held it.
     pub changed: bool,
-    /// The workspace that held the colour and now holds the picker's old one
-    /// (none, when the picker had none).
+    /// The workspace that held the colour.
     pub swapped_with: Option<String>,
+    /// What [`Self::swapped_with`] holds now: the picker's old colour, or
+    /// `None` when the picker had none, so the holder goes without.
+    pub holder_colour: Option<WorkspaceColour>,
 }
 
 /// Give `name` the colour `colour`; a workspace holding it swaps with `name`.
@@ -127,6 +129,7 @@ pub fn pick(colours: &mut Colours, name: &str, colour: WorkspaceColour) -> Colou
         workspace: name.to_owned(),
         colour,
         changed: previous != Some(colour),
+        holder_colour: holder.as_ref().and(previous),
         swapped_with: holder,
     }
 }
@@ -140,6 +143,9 @@ pub struct Swatch {
     pub current: bool,
     /// Another workspace holds it: picking it swaps the two.
     pub owner: Option<String>,
+    /// Picking it leaves [`Self::owner`] without a colour: the workspace
+    /// picking holds none to give back.
+    pub owner_goes_without: bool,
     /// The owner's initials, as short as tells it from the other owners.
     pub initials: String,
 }
@@ -148,6 +154,7 @@ pub struct Swatch {
 #[must_use]
 pub fn swatches(colours: &Colours, name: &str) -> Vec<Swatch> {
     let owners: Vec<&str> = colours.keys().map(String::as_str).collect();
+    let colourless = !colours.contains_key(name);
     WorkspaceColour::ALL
         .into_iter()
         .map(|colour| {
@@ -160,25 +167,36 @@ pub fn swatches(colours: &Colours, name: &str) -> Vec<Swatch> {
                     .as_deref()
                     .map(|owner| initials(owner, &owners))
                     .unwrap_or_default(),
+                owner_goes_without: colourless && owner.is_some(),
                 owner,
             }
         })
         .collect()
 }
 
-/// The shortest start of `name` (one or two letters) no other of `among`
-/// shares, case aside: `Scalp` and `Swing` are `Sc` and `Sw`, `Default` is `D`.
+/// The most characters a swatch's initials take.
+pub const INITIALS_MAX: usize = 4;
+
+/// The shortest start of `name`, up to [`INITIALS_MAX`] characters, no other
+/// of `among` shares, case aside: `Scalp` and `Swing` are `Sc` and `Sw`,
+/// `Default` is `D`. Names alike that far take one character less and their
+/// place among the names alike, in `among`'s order: `Scalp` and `Scalper`
+/// are `Sca1` and `Sca2`.
 #[must_use]
 pub fn initials(name: &str, among: &[&str]) -> String {
     let start = |text: &str, letters: usize| -> String { text.chars().take(letters).collect() };
-    let clash = |letters: usize| {
-        among.iter().any(|other| {
-            *other != name
-                && start(other, letters).to_lowercase() == start(name, letters).to_lowercase()
-        })
+    let alike = |other: &str, letters: usize| {
+        start(other, letters).to_lowercase() == start(name, letters).to_lowercase()
     };
-    let letters = if clash(1) { 2 } else { 1 };
-    start(name, letters)
+    let unique = |letters: usize| !among.iter().any(|o| *o != name && alike(o, letters));
+    if let Some(letters) = (1..=INITIALS_MAX).find(|letters| unique(*letters)) {
+        return start(name, letters);
+    }
+    let mut twins = among.iter().filter(|other| alike(other, INITIALS_MAX));
+    let place = twins
+        .position(|other| *other == name)
+        .map_or(1, |at| at + 1);
+    format!("{}{place}", start(name, INITIALS_MAX - 1))
 }
 
 #[cfg(test)]
@@ -231,11 +249,13 @@ mod tests {
         let mut colours = settled(&["Default", "Scalp", "Swing"]);
         let swap = pick(&mut colours, "Swing", WorkspaceColour::Violet);
         assert_eq!(swap.swapped_with.as_deref(), Some("Scalp"));
+        assert_eq!(swap.holder_colour, Some(WorkspaceColour::Cyan));
         assert!(swap.changed);
         assert_eq!(colours["Swing"], WorkspaceColour::Violet);
         assert_eq!(colours["Scalp"], WorkspaceColour::Cyan);
         let free = pick(&mut colours, "Swing", WorkspaceColour::Chalk);
         assert_eq!((free.changed, free.swapped_with), (true, None));
+        assert_eq!(free.holder_colour, None);
         let again = pick(&mut colours, "Swing", WorkspaceColour::Chalk);
         assert!(!again.changed);
     }
@@ -244,8 +264,12 @@ mod tests {
     fn a_colourless_ninth_picking_a_held_colour_leaves_its_holder_none() {
         let names = ["Default", "A", "B", "C", "D", "E", "F", "G", "H"];
         let mut colours = settled(&names);
+        let row = swatches(&colours, "H");
+        assert!(row[4].owner_goes_without, "H holds nothing to give D back");
+        assert!(row.iter().all(|swatch| swatch.owner.is_some()));
         let outcome = pick(&mut colours, "H", WorkspaceColour::Azure);
         assert_eq!(outcome.swapped_with.as_deref(), Some("D"));
+        assert_eq!(outcome.holder_colour, None, "D goes without");
         assert_eq!(colours.get("D"), None);
         assert_eq!(colours.get("H"), Some(&WorkspaceColour::Azure));
     }
@@ -260,6 +284,10 @@ mod tests {
         assert_eq!(row[0].initials, "D");
         assert_eq!(row[2].initials, "Sw");
         assert!(
+            !row[0].owner_goes_without,
+            "Scalp gives Default violet back"
+        );
+        assert!(
             row[3..]
                 .iter()
                 .all(|swatch| swatch.owner.is_none() && !swatch.current)
@@ -268,10 +296,26 @@ mod tests {
 
     #[test]
     fn initials_grow_only_where_two_owners_share_a_letter() {
-        let among = ["Default", "Scalp", "Swing", "Fluxo"];
+        let among = ["Default", "Scalp", "Swing", "Flow"];
         assert_eq!(initials("Default", &among), "D");
         assert_eq!(initials("Scalp", &among), "Sc");
         assert_eq!(initials("Swing", &among), "Sw");
-        assert_eq!(initials("Fluxo", &["Fluxo"]), "F");
+        assert_eq!(initials("Flow", &["Flow"]), "F");
+        assert_eq!(initials("Sw", &["Sw", "Swing"]), "Sw");
+        assert_eq!(initials("Swing", &["Sw", "Swing"]), "Swi");
+    }
+
+    /// Owners alike past four characters still read apart, each in four.
+    #[test]
+    fn initials_tell_apart_names_alike_past_four_characters() {
+        for among in [["Scalp", "Scalper"], ["Swing", "Swing2"]] {
+            let [first, second] = among.map(|name| initials(name, &among));
+            assert_ne!(first, second, "{among:?}");
+            assert!(first.chars().count() <= INITIALS_MAX, "{first}");
+            assert!(second.chars().count() <= INITIALS_MAX, "{second}");
+        }
+        assert_eq!(initials("Scalp", &["Scalp", "Scalper"]), "Sca1");
+        assert_eq!(initials("Swing2", &["Swing", "Swing2"]), "Swi2");
+        assert_eq!(initials("Default", &["Default", "Scalp", "Scalper"]), "D");
     }
 }

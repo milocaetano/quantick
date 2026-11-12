@@ -9,18 +9,16 @@ use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
     FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
 };
-use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, close_slot};
+use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, FaceSource};
 use quantick_workspace::arrangement::strip::{
-    StripSurface, TabFeed, chip_parts, home_label_fits, hug_widths, market_slots, mean_width,
-    tab_hover, visible_tabs,
+    StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
 use quantick_workspace::workspace_colour::WorkspaceColour;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use crate::theme::{self, Palette};
 
 const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
-const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
 const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 /// A window so narrow the strip is in its compact form: the × and a sliver.
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
@@ -28,13 +26,9 @@ pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
 const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
-const SYMBOL_TEXT_PX: f32 = 13.0;
-const SUFFIX_TEXT_PX: f32 = 12.0;
 const CLOSE_GLYPH_PX: f32 = 14.0;
 const ADD_GLYPH_PX: f32 = 17.0;
 const ADD_WIDTH_PX: f32 = 30.0;
-/// The venue's code on its tag, in a 1 px outline ([`face_layout`]).
-const TAG_TEXT_PX: f32 = 9.5;
 /// How far a second strike of the symbol sits from the first. The bundled face
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
@@ -60,7 +54,7 @@ pub struct TabChip<'a> {
     /// The workspace, its colour on the left edge's bar, the venue's code (`BIN`).
     pub workspace: &'a str,
     pub colour: Option<WorkspaceColour>,
-    pub venue_code: &'a str,
+    pub venue_code: Cow<'a, str>,
 }
 
 /// What the strip asked the window to do.
@@ -91,6 +85,8 @@ pub(crate) struct StripDrawn {
     pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
+    /// Each tab's face, measured once while its words hold.
+    pub(crate) faces: face_layout::FaceCache,
 }
 
 pub(crate) fn draw(
@@ -117,25 +113,30 @@ pub(crate) fn draw(
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
-    let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
-    let faces: Vec<Face> = chips.iter().map(|chip| face(ui, chip)).collect();
-    let natural: Vec<f32> = faces.iter().map(|f| f.at.width + close_reserve).collect();
-    let chip_width = mean_width(&natural, CHIP_PREFERRED_WIDTH_PX);
-    let slots = market_slots(room, labelled, chip_width);
-    let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
-    let fits = home_label_fits(chips.len(), slots, room, labelled, chip_width);
-    let shown = fits.then_some((label, labelled));
+    let (gap, scale) = (ui.spacing().item_spacing.x, ui.ctx().pixels_per_point());
+    let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
+    let face = |chip: &TabChip<'_>| drawn.faces.layout(chip.id, &source(chip, scale), width);
+    let faces: Vec<FaceLayout> = chips.iter().map(face).collect();
+    drawn.faces.keep(chips.iter().map(|chip| chip.id));
+    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
+    let room = ui.available_width() - controls_width - gap;
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
+    let home = (labelled, bare);
+    let strip = StripRoom {
+        room,
+        home,
+        gap,
+        floor,
+    };
+    let fit = fit_tabs(&natural, strip, drawn.reveal.unwrap_or(active));
+    let shown = fit.home_labelled.then_some((label, labelled));
     let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
         .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
     let active_chip = surface.active_chip(active);
-    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
-    let gaps = ui.spacing().item_spacing.x * visible.len() as f32;
-    let strip = ui.available_width() - controls_width - gaps;
-    let widths = hug_widths(&natural[visible.clone()], strip, floor);
-    for (index, chip_width) in visible.clone().zip(widths) {
+    for (index, chip_width) in fit.visible.clone().zip(fit.widths) {
         let chip = &chips[index];
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
@@ -173,7 +174,7 @@ pub(crate) fn draw(
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
-                let slot = close_slot(selected, response.hovered() || close_hot);
+                let slot = face_layout::close_slot(selected, response.hovered() || close_hot);
                 let hot = close_hot && closable && slot == CloseSlot::Close;
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
@@ -216,7 +217,7 @@ pub(crate) fn draw(
             }
         });
     }
-    if visible.len() < chips.len() {
+    if fit.visible.len() < chips.len() {
         let overflow = ui.push_id("market_overflow", |ui| {
             let dots = egui::Button::new(egui::RichText::new("...").size(17.0)).frame(false);
             egui::menu::menu_custom_button(ui, dots, |ui| {
@@ -262,71 +263,67 @@ pub(crate) fn draw(
     action
 }
 
-/// A tab's words, laid out once a frame for its width and its paint.
-struct Face {
-    symbol: Arc<egui::Galley>,
-    code: Arc<egui::Galley>,
-    /// "Replay" on a recording.
-    word: Option<Arc<egui::Galley>>,
-    at: FaceLayout,
-}
-
-fn face(ui: &egui::Ui, chip: &TabChip<'_>) -> Face {
-    let laid = |text: &str, px: f32| {
-        let font = egui::FontId::proportional(px);
-        ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER))
-    };
-    let symbol = laid(chip_parts(chip.label).0, SYMBOL_TEXT_PX);
-    let code = laid(chip.venue_code, TAG_TEXT_PX);
-    let word = chip.feed.word().map(|word| laid(word, SUFFIX_TEXT_PX));
-    let at = face_layout::lay_face(face_layout::FaceParts {
-        symbol: symbol.size().x,
-        code: code.size().x,
-        marked: chip.feed.marked(),
-        word: word.as_ref().map(|word| word.size().x),
-    });
-    Face {
+/// What a tab's face is measured from.
+fn source<'a>(chip: &'a TabChip<'_>, scale: f32) -> FaceSource<'a> {
+    let (symbol, code) = (chip_parts(chip.label).0, chip.venue_code.as_ref());
+    let (marked, word) = (chip.feed.marked(), chip.feed.word());
+    FaceSource {
         symbol,
         code,
+        marked,
         word,
-        at,
+        scale,
     }
 }
 
+/// One line of text at `pt` points.
+fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
+    let font = egui::FontId::proportional(pt);
+    ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER))
+}
+
 /// The symbol in its heavier strike, the venue's code in its outlined tag,
-/// then a feed that is not healthy and live: its mark, and "Replay" on a
-/// recording. The workspace's bar is the sheet's ([`paint_tab_surface`]);
-/// the workspace and the venue's name are the hover's.
+/// clipped there, then a feed that is not healthy and live: its mark, and
+/// "Replay" on a recording. The workspace's bar is the sheet's
+/// ([`paint_tab_surface`]); the workspace and the venue's name are the hover's.
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
-    (chip, face): (&TabChip<'_>, &Face),
+    (chip, face): (&TabChip<'_>, &FaceLayout),
     body: egui::Rect,
     lit: bool,
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let (left, y) = (body.left(), body.center().y);
-    let put = |galley: &Arc<egui::Galley>, x: f32, ink: egui::Color32| {
+    let put = |painter: &egui::Painter, galley: Arc<egui::Galley>, x: f32, ink| {
         let at = egui::pos2(left + x, y - galley.size().y / 2.0);
-        painter.galley(at, galley.clone(), ink);
+        painter.galley(at, galley, ink);
     };
     let ink = *palette.get(tab_ink(lit));
-    put(&face.symbol, face.at.symbol, ink);
-    put(&face.symbol, face.at.symbol + SEMIBOLD_STRIKE_PX, ink);
+    let symbol = laid(ui, chip_parts(chip.label).0, face_layout::SYMBOL_TEXT_PT);
+    put(&painter, symbol.clone(), face.symbol, ink);
+    put(&painter, symbol, face.symbol + SEMIBOLD_STRIKE_PX, ink);
     let tag = egui::Rect::from_x_y_ranges(
-        left + face.at.tag..=left + face.at.tag + face.at.tag_width,
+        left + face.tag..=left + face.tag + face.tag_width,
         egui::Rangef::point(y).expand(face_layout::TAG_HEIGHT_PT / 2.0),
     );
     let muted = palette.text_muted();
     painter.rect_stroke(tag.shrink(0.5), 3.0, (1.0, muted));
-    put(&face.code, face.at.tag + face_layout::TAG_PADDING_PT, muted);
+    let code = laid(ui, &chip.venue_code, face_layout::TAG_TEXT_PT);
+    let x = face.tag + face_layout::TAG_PADDING_PT;
+    put(&painter.with_clip_rect(tag), code, x, muted);
     let mark = feed_mark(chip.feed);
     let feed_ink = *palette.get(feed_token(mark));
-    if let Some(x) = face.at.mark {
+    if let Some(x) = face.mark {
         paint_feed_mark(&painter, egui::pos2(left + x, y), mark, feed_ink);
     }
-    if let (Some(word), Some(x)) = (&face.word, face.at.word) {
-        put(word, x, feed_ink);
+    if let (Some(word), Some(x)) = (chip.feed.word(), face.word) {
+        put(
+            &painter,
+            laid(ui, word, face_layout::WORD_TEXT_PT),
+            x,
+            feed_ink,
+        );
     }
 }
 

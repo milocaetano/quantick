@@ -546,7 +546,7 @@ fn colour_set_swaps_with_the_holder_and_a_repeat_writes_nothing() {
     assert_eq!(
         swapped,
         json!({ "workspace": "Scalp", "colour": "steel", "changed": true,
-                "swapped_with": "Default" })
+                "swapped_with": "Default", "holder_colour": "violet" })
     );
     assert_eq!(
         host.book.colour(DEFAULT_WORKSPACE),
@@ -567,7 +567,7 @@ fn colour_set_swaps_with_the_holder_and_a_repeat_writes_nothing() {
     assert_eq!(detail(&refused), "workspace.unknown");
 
     let mut menu = WorkspaceMenuState::default();
-    let command = WorkspaceCommand::SetColour("Default".to_owned(), "steel");
+    let command = WorkspaceCommand::SetColour("Default".to_owned(), WorkspaceColour::Steel);
     let journal = Some((&mut access, &actor));
     apply_row_command(&mut host, journal, &mut menu, 1, "WDOV26", command);
     assert_eq!(
@@ -587,9 +587,46 @@ fn colour_set_swaps_with_the_holder_and_a_repeat_writes_nothing() {
 #[test]
 fn the_wire_and_the_store_name_the_palette_alike() {
     for colour in WorkspaceColour::ALL {
-        let wire = serde_json::to_value(dto(colour).unwrap()).unwrap();
+        let wire = serde_json::to_value(WorkspaceColourDto::from(colour)).unwrap();
         assert_eq!(wire, colour.key());
     }
+}
+
+/// A tab the book has not adopted reads `Default`'s colour in the snapshot,
+/// as the strip and the capsule paint it.
+#[test]
+fn a_tab_not_yet_adopted_reads_defaults_colour() {
+    let (host, _, _) = parts();
+    let book = host.workspace_book_ref().unwrap();
+    assert!(book.tab_state(99).is_none(), "tab 99 is not adopted");
+    assert_eq!(book.tab_workspace(99), DEFAULT_WORKSPACE);
+    assert_eq!(
+        host.tab_workspace_colour(99),
+        Some(WorkspaceColourDto::Steel)
+    );
+    assert_eq!(
+        host.tab_workspace_colour(99).map(Into::into),
+        book.tab_colour(99)
+    );
+}
+
+/// A workspace without a colour that takes a held one leaves its holder
+/// without: the answer and the journal both say so.
+#[test]
+fn a_colourless_workspace_taking_a_held_colour_says_its_holder_goes_without() {
+    let (mut host, mut access, actor) = parts();
+    for name in ["A", "B", "C", "D", "E", "F", "G", "H"] {
+        save_as(&mut host, &mut access, &actor, &json!({ "name": name })).unwrap();
+    }
+    assert_eq!(host.book.colour("H"), None, "all eight are held");
+    let value = json!({ "name": "H", "colour": "steel" });
+    let taken = colour_set(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(taken["swapped_with"], "Default");
+    assert_eq!(taken["holder_colour"], Value::Null);
+    assert_eq!(host.book.colour(DEFAULT_WORKSPACE), None);
+    let event = access.events.last().unwrap();
+    assert_eq!(event.payload["holder_colour"], Value::Null);
+    assert_eq!(event.payload["swapped_with"], "Default");
 }
 
 /// A failed write leaves both colours where they were.
@@ -905,7 +942,7 @@ fn row(
     access: &mut FakeAccess,
     actor: &ActorContext,
     menu: &mut WorkspaceMenuState,
-    command: WorkspaceCommand,
+    command: RowCommand,
 ) -> Option<String> {
     apply_row_command(host, Some((access, actor)), menu, 1, "SYM1", command)
 }

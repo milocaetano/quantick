@@ -6,7 +6,6 @@ use std::time::Instant;
 
 use quantick_control_handlers::workspace_book as ops;
 use quantick_layers::{ChartLayer, recipe_layers};
-use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
 use quantick_workspace::book_upkeep::{self, TabRecipeHost};
@@ -248,7 +247,7 @@ fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &Wor
 
 /// Carry out what a workspace row or the toolbar asked for, on what the active
 /// tab shows now, journaled as the trader's hand.
-pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
+pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: ops::RowCommand) {
     let tab = app.runtime.tabs.active_id();
     book_upkeep::watch_tab(&mut BookTabs(app), tab, Instant::now());
     let symbol = app.active_tab().symbol.clone();

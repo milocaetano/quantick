@@ -10,6 +10,7 @@
 //! at compile time. An external file that is present but malformed is a hard
 //! error — a bad config is surfaced, never silently ignored (data-honesty rule).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -149,9 +150,25 @@ pub struct FeedConfig {
     pub record_deals: bool,
     /// The venue's short code on a market tab's tag (`BIN`, `HL`, `MT5`);
     /// the full [`name`](Self::name) stays in the tab's hover. Absent, the tag
-    /// reads the name itself ([`AppConfig::feed_code`]).
+    /// reads the name's initials ([`AppConfig::feed_code`]).
     #[serde(default)]
     pub short_name: Option<String>,
+}
+
+/// The most characters a venue code made of a name's initials takes.
+pub const VENUE_INITIALS_MAX: usize = 4;
+
+/// A venue tag for a feed whose config names no `short_name`: the uppercase
+/// first character of each alphanumeric word of `name`, at most
+/// [`VENUE_INITIALS_MAX`]: `MetaTrader 5 — Tickmill` is `M5T`.
+#[must_use]
+pub fn venue_initials(name: &str) -> String {
+    let words = name.split(|c: char| !c.is_alphanumeric());
+    let initials = words.filter_map(|word| word.chars().next());
+    initials
+        .flat_map(char::to_uppercase)
+        .take(VENUE_INITIALS_MAX)
+        .collect()
 }
 
 /// Marks a [`FeedConfig::symbol_bubble_presets`] key as a symbol prefix.
@@ -544,11 +561,14 @@ impl AppConfig {
     }
 
     /// The short code of feed `id` for a tab's venue tag: its `short_name`,
-    /// else its display name ([`Self::feed_name`]).
+    /// else the initials of its display name ([`Self::feed_name`],
+    /// [`venue_initials`]).
     #[must_use]
-    pub fn feed_code<'a>(&'a self, id: &'a str) -> &'a str {
-        let code = self.feed(id).and_then(|feed| feed.short_name.as_deref());
-        code.unwrap_or_else(|| self.feed_name(id))
+    pub fn feed_code<'a>(&'a self, id: &'a str) -> Cow<'a, str> {
+        match self.feed(id).and_then(|feed| feed.short_name.as_deref()) {
+            Some(code) => Cow::Borrowed(code),
+            None => Cow::Owned(venue_initials(self.feed_name(id))),
+        }
     }
 
     /// The symbol feed `id` should show given a `wanted` selection.
@@ -1094,9 +1114,9 @@ mod tests {
     use super::*;
 
     /// Every shipped feed names its tab code; a feed without one tags its
-    /// tabs with its name, and an unknown id with the id.
+    /// tabs with its name's initials, and an unknown id with the id's.
     #[test]
-    fn a_tab_code_comes_from_the_config_and_falls_back_to_the_name() {
+    fn a_tab_code_comes_from_the_config_and_falls_back_to_the_initials() {
         let mut config = parse(
             EMBEDDED_DEFAULT,
             ConfigSource::Embedded,
@@ -1107,9 +1127,19 @@ mod tests {
         assert_eq!(config.feed_code("hyperliquid"), "HL");
         assert_eq!(config.feed_code("metatrader-b3"), "MT5");
         config.feeds[0].short_name = None;
+        config.feeds[0].name = "MetaTrader 5 \u{2014} Tickmill".to_owned();
         let first = config.feeds[0].id.clone();
-        assert_eq!(config.feed_code(&first), config.feed_name(&first));
-        assert_eq!(config.feed_code("nowhere"), "nowhere");
+        assert_eq!(config.feed_code(&first), "M5T");
+        assert_eq!(config.feed_code("nowhere"), "N");
+    }
+
+    #[test]
+    fn venue_initials_are_short_uppercase_and_deterministic() {
+        assert_eq!(venue_initials("MetaTrader 5 \u{2014} Tickmill"), "M5T");
+        assert_eq!(venue_initials("binance futures"), "BF");
+        assert_eq!(venue_initials("a b c d e f"), "ABCD");
+        assert_eq!(venue_initials("Hyperliquid (perps)"), "HP");
+        assert_eq!(venue_initials(" \u{2014} "), "");
     }
 
     /// The catalog the app runs on is the file's list plus the user's, in

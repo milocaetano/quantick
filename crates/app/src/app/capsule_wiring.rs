@@ -44,7 +44,7 @@ impl CapsuleState {
             menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
             popover_open: app.chrome.layout_picker_open,
             add_open: app.chrome.add_menu.open,
-            colour: book.book().colour(&workspace),
+            colour: book.book().tab_colour(tab),
             workspace,
             door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
             door_hover: format!(

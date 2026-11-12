@@ -237,6 +237,18 @@ mod tests {
         book
     }
 
+    /// The theme paints slot `i` in `WORKSPACE_TOKENS[i]`: the token list
+    /// keeps the palette's order and names, so a slot never paints another's.
+    #[test]
+    fn the_theme_tokens_follow_the_palette_slot_by_slot() {
+        use quantick_appearance::tab_strip::WORKSPACE_TOKENS;
+        assert_eq!(WORKSPACE_TOKENS.len(), WorkspaceColour::ALL.len());
+        for colour in WorkspaceColour::ALL {
+            let token = WORKSPACE_TOKENS[colour.index()];
+            assert_eq!(token.key(), format!("workspace_{}", colour.key()));
+        }
+    }
+
     #[test]
     fn the_file_sits_beside_the_layouts_and_round_trips_without_tab_state() {
         let dir = ScratchDir::new("workspaces-round-trip");

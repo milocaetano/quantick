@@ -6,6 +6,7 @@ use quantick_control::wire::{CanonicalDecimal, WireU64};
 
 use schemars::JsonSchema;
 
+use quantick_stores::workspaces::WorkspaceColour;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "workspace.summary";
@@ -122,27 +123,34 @@ pub enum WorkspaceColourDto {
     Cobalt,
 }
 
-impl WorkspaceColourDto {
-    /// The palette, in the order a new workspace takes it.
-    pub const ALL: [Self; 8] = [
-        Self::Steel,
-        Self::Violet,
-        Self::Cyan,
-        Self::Magenta,
-        Self::Azure,
-        Self::Indigo,
-        Self::Chalk,
-        Self::Cobalt,
-    ];
-
-    /// The colour of the palette slot at `index`.
-    pub fn at(index: usize) -> Option<Self> {
-        Self::ALL.get(index).copied()
+/// Slot for slot, by name: a slot added to either side stops the build here.
+impl From<WorkspaceColour> for WorkspaceColourDto {
+    fn from(colour: WorkspaceColour) -> Self {
+        match colour {
+            WorkspaceColour::Steel => Self::Steel,
+            WorkspaceColour::Violet => Self::Violet,
+            WorkspaceColour::Cyan => Self::Cyan,
+            WorkspaceColour::Magenta => Self::Magenta,
+            WorkspaceColour::Azure => Self::Azure,
+            WorkspaceColour::Indigo => Self::Indigo,
+            WorkspaceColour::Chalk => Self::Chalk,
+            WorkspaceColour::Cobalt => Self::Cobalt,
+        }
     }
+}
 
-    /// Its place in [`Self::ALL`].
-    pub const fn index(self) -> usize {
-        self as usize
+impl From<WorkspaceColourDto> for WorkspaceColour {
+    fn from(colour: WorkspaceColourDto) -> Self {
+        match colour {
+            WorkspaceColourDto::Steel => Self::Steel,
+            WorkspaceColourDto::Violet => Self::Violet,
+            WorkspaceColourDto::Cyan => Self::Cyan,
+            WorkspaceColourDto::Magenta => Self::Magenta,
+            WorkspaceColourDto::Azure => Self::Azure,
+            WorkspaceColourDto::Indigo => Self::Indigo,
+            WorkspaceColourDto::Chalk => Self::Chalk,
+            WorkspaceColourDto::Cobalt => Self::Cobalt,
+        }
     }
 }
 

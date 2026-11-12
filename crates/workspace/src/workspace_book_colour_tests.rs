@@ -74,7 +74,7 @@ fn a_ninth_workspace_holds_none_until_a_colour_frees() {
 #[test]
 fn deleting_a_workspace_frees_its_colour_and_recolours_nothing_else() {
     let mut book = book();
-    for name in ["Scalp", "Swing", "Fluxo"] {
+    for name in ["Scalp", "Swing", "Flow"] {
         book.create(1, name).unwrap();
     }
     let before = colours(&book);
@@ -125,8 +125,10 @@ fn a_colour_follows_its_workspace_through_a_rename_and_a_reload() {
     assert_unique(&reloaded);
 }
 
+/// The file lists `Scalp` before `Default`; the colours still go in the
+/// book's order, `Default` first, then by name.
 #[test]
-fn a_stored_book_without_colours_gets_them_in_stored_order_then_keeps_them() {
+fn a_stored_book_without_colours_gets_them_in_book_order_then_keeps_them() {
     let text = format!(
         "version = 1\n{}{}{}",
         recipe("Scalp"),
@@ -149,6 +151,16 @@ fn a_stored_book_without_colours_gets_them_in_stored_order_then_keeps_them() {
         "deterministic"
     );
     assert_eq!(colours(&reload(&book)), colours(&book), "kept once written");
+}
+
+/// A tab the book has not adopted reads `Default`'s colour, as its workspace.
+#[test]
+fn a_tab_not_yet_adopted_wears_defaults_colour() {
+    let mut book = book();
+    book.save_as(1, "Scalp").unwrap();
+    assert_eq!(book.tab_colour(1), Some(Violet));
+    assert_eq!(book.tab_workspace(7), DEFAULT_WORKSPACE);
+    assert_eq!(book.tab_colour(7), Some(Steel));
 }
 
 #[test]

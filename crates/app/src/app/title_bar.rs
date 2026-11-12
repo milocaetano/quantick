@@ -103,7 +103,7 @@ pub(super) fn chips_of<'a>(
                 id,
                 label: tab.chip_label(),
                 workspace,
-                colour: book.colour(workspace),
+                colour: book.tab_colour(id),
                 venue_code: config.feed_code(&tab.feed_id),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),

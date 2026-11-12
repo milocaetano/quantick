@@ -6,7 +6,7 @@ use eframe::egui;
 use quantick_appearance::tab_strip as sizes;
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
-use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
+use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceColour};
 
 use super::MenuCommand;
 use crate::app::QuantickApp;
@@ -49,7 +49,7 @@ impl<'a> WorkspaceRows<'a> {
         crate::app::tab_workspaces::symbols_of(self.tabs, tabs)
     }
 
-    fn push(commands: &mut Vec<MenuCommand>, command: WorkspaceCommand) {
+    fn push(commands: &mut Vec<MenuCommand>, command: WorkspaceCommand<WorkspaceColour>) {
         commands.push(MenuCommand::Workspace(command));
     }
 
@@ -133,10 +133,9 @@ impl<'a> WorkspaceRows<'a> {
                     .fill(ink.gamma_multiply(held))
                     .stroke(ring)
                     .min_size(egui::Vec2::splat(sizes::WORKSPACE_SWATCH_PT));
-                let hover = text::swatch_hover(swatch.colour.key(), swatch.owner.as_deref());
+                let hover = text::swatch_hover(&swatch);
                 if ui.add(button).on_hover_text(hover).clicked() && !swatch.current {
-                    let pick =
-                        WorkspaceCommand::SetColour(workspace.to_owned(), swatch.colour.key());
+                    let pick = WorkspaceCommand::SetColour(workspace.to_owned(), swatch.colour);
                     Self::push(commands, pick);
                 }
             }

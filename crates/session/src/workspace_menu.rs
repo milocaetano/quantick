@@ -4,9 +4,12 @@
 
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 
-/// What a workspace row or the dialog asked the window to do.
+/// What a workspace row or the dialog asked the window to do. `Colour` is the
+/// palette slot [`Self::SetColour`] names, typed by the crate that owns the
+/// palette (`quantick_control_handlers::workspace_book::RowCommand`), which
+/// this one does not reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkspaceCommand {
+pub enum WorkspaceCommand<Colour> {
     /// Put the active tab on this workspace.
     Set(String),
     /// Write the active tab's edits into its workspace.
@@ -21,9 +24,9 @@ pub enum WorkspaceCommand {
     /// Open the Manage workspaces dialog.
     BeginManage,
     Delete(String),
-    /// Give this workspace the palette colour with this key (`violet`); the
-    /// workspace holding it takes the old one.
-    SetColour(String, &'static str),
+    /// Give this workspace this palette colour; the workspace holding it
+    /// takes the old one.
+    SetColour(String, Colour),
     /// The dialog's Enter.
     SubmitDialog,
     /// Close these tabs, or exit, asking first per tab holding edits.

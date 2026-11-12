@@ -232,8 +232,12 @@ pub struct WorkspaceColourSetResult {
     pub colour: WorkspaceColourDto,
     /// `false` when the workspace already held it: nothing is written.
     pub changed: bool,
-    /// The workspace that held the colour and now holds the old one.
+    /// The workspace that held the colour.
     pub swapped_with: Option<String>,
+    /// The colour `swapped_with` holds now: the one the workspace gave up,
+    /// or `None` when the workspace had none, so `swapped_with` goes without.
+    #[serde(default)]
+    pub holder_colour: Option<WorkspaceColourDto>,
 }
 
 /// Takes nothing: every workspace is listed.
@@ -395,7 +399,7 @@ pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_COLOUR_SET_CAPABILITY_ID,
         MODULE_ID,
         "Give a workspace a colour",
-        "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
+        "Gives a workspace one of the eight palette colours: steel, violet, cyan, magenta, azure, indigo, chalk or cobalt. Its tabs wear it as the bar on their left edge and the capsule as its underline. No two workspaces share a colour: a colour another workspace holds swaps the two, and the answer names it in swapped_with and the colour it now holds in holder_colour; a workspace without a colour (a ninth) that takes a held one leaves its holder without, holder_colour null. A new workspace takes the next free colour and a deleted one frees its own; a ninth holds none until one frees. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown.",
         "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
     ))
 }
@@ -574,6 +578,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_stores::workspaces::WorkspaceColour;
     use serde_json::json;
 
     #[test]
@@ -598,10 +603,10 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<WorkspaceColourSetInput>(refused).is_err());
         }
-        for (index, colour) in WorkspaceColourDto::ALL.into_iter().enumerate() {
-            assert_eq!(WorkspaceColourDto::at(index), Some(colour));
-            assert_eq!(colour.index(), index);
+        for colour in WorkspaceColour::ALL {
+            let wire = WorkspaceColourDto::from(colour);
+            assert_eq!(WorkspaceColour::from(wire), colour);
+            assert_eq!(json!(wire), json!(colour.key()), "one word per slot");
         }
-        assert_eq!(WorkspaceColourDto::at(8), None);
     }
 }
