@@ -206,7 +206,8 @@ pub(crate) fn preview(
     state: &CanvasState,
     canvas: Rect,
 ) {
-    let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas));
+    let held = floats.held.map(|held| held.slot());
+    let targets = quantick_control_handlers::canvas::drop_targets(state, model_rect(canvas), held);
     floats.drawn.extend(targets);
     let (Some(held), Some(pointer)) = (floats.held, floats.pointer(ctx)) else {
         return;

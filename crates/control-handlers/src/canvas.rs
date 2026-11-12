@@ -700,7 +700,8 @@ pub fn placed_pop_out(
     }
 }
 
-/// The canvas's drop targets while a chart floats over it, as the canvas
+/// The canvas's drop targets while a chart floats over it or is held, less
+/// the held chart's own, as the canvas
 /// model's one drop rule lays them out: each corner parks, each edge band
 /// docks, each docked chart's sides dock beside it and its centre swaps.
 /// Answers each target's scene id, label, place and the capability that
@@ -709,12 +710,13 @@ pub fn placed_pop_out(
 pub fn drop_targets(
     state: &CanvasState,
     area: CanvasRect,
+    held: Option<u32>,
 ) -> Vec<(String, String, CanvasRect, &'static str)> {
     let over = |pane: &canvas::FloatingPane| matches!(pane.host, FloatHost::Canvas { .. });
-    if !state.floating().iter().any(over) {
+    if held.is_none() && !state.floating().iter().any(over) {
         return Vec::new();
     }
-    let zones = canvas::drop_zones(area, &canvas::open_panes(state, area));
+    let zones = canvas::drop_zones(area, &canvas::open_panes(state, area, held));
     let named = |target| match target {
         DropTarget::Park(corner) => {
             let at = match corner {
@@ -945,7 +947,7 @@ pub fn hook_acts(value: &str) -> Vec<CanvasAct> {
 /// so a swap trades two places, and floats, if the drop floats it, at no
 /// more than half the canvas each way, centred on the press. `None` for a
 /// chart that cannot leave its place (the last docked one, or one in its
-/// own window).
+/// own window, or one folded to its strip).
 #[must_use]
 pub fn lifted(
     state: &CanvasState,
@@ -963,17 +965,17 @@ pub fn lifted(
     if let Some(FloatHost::Canvas { rect }) = state.host(slot) {
         return Some(held(*rect));
     }
+    if state.mode(slot) == Some(PaneMode::Minimized) {
+        return None;
+    }
     let stood = state
         .rects(area)
         .into_iter()
         .find(|(held, _)| *held == slot)?
         .1;
-    let size = CanvasRect::new(
-        0.0,
-        0.0,
-        stood.w.min(area.w / 2.0),
-        stood.h.min(area.h / 2.0),
-    );
+    let (min_w, min_h) = canvas::MIN_FLOAT_SIZE;
+    let w = stood.w.min(area.w / 2.0).max(min_w);
+    let size = CanvasRect::new(0.0, 0.0, w, stood.h.min(area.h / 2.0).max(min_h));
     let from = size.centred_in(CanvasRect::new(x, y, 0.0, 0.0));
     state.clone().float(slot, from).ok()?;
     Some(held(from))

@@ -162,8 +162,8 @@ pub struct FloatPaneInput {
     pub rect: Option<CanvasRectDto>,
 }
 
-/// Where a floating chart docks: exactly one of `edge`, `beside` with
-/// `side`, or `swap_with`.
+/// Where a chart docks: exactly one of `edge`, `beside` with `side`, or
+/// `swap_with`. A floating chart docks there; a docked chart moves there.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DockPaneInput {
@@ -180,8 +180,9 @@ pub struct DockPaneInput {
     /// The side of `beside` the chart docks on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<CanvasEdge>,
-    /// A docked chart's slot: this chart takes its place, and it floats
-    /// where this one stood.
+    /// A docked chart's slot: this chart takes its place. A floating chart
+    /// leaves it floating where this one stood; two docked charts trade
+    /// places, both staying docked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap_with: Option<u32>,
 }

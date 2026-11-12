@@ -103,7 +103,7 @@ fn centre(rect: CanvasRect) -> CanvasPoint {
 #[test]
 fn every_pane_zone_is_reached_where_it_is_published() {
     let (state, _) = floating_over("charts-4");
-    let panes = open_panes(&state, CANVAS);
+    let panes = open_panes(&state, CANVAS, None);
     let zones = drop_zones(CANVAS, &panes);
     assert_eq!(
         zones.len(),
@@ -134,7 +134,7 @@ fn every_pane_zone_is_reached_where_it_is_published() {
 fn a_drop_on_a_pane_side_splits_that_pane() {
     let (mut state, slot) = floating_over("charts-2");
     let (zero, one) = (rect_of(&state, 0), rect_of(&state, 1));
-    let panes = open_panes(&state, CANVAS);
+    let panes = open_panes(&state, CANVAS, None);
     let bottom = CanvasPoint::new(one.x + one.w / 2.0, one.bottom() - DOCK_EDGE_BAND_PX - 10.0);
     let target = DockTarget::Beside {
         slot: 1,
@@ -178,7 +178,7 @@ fn a_centre_drop_swaps_the_two_panes() {
         panic!("a new pane floats over the canvas");
     };
     let flow = rect_of(&state, 1);
-    let panes = open_panes(&state, CANVAS);
+    let panes = open_panes(&state, CANVAS, None);
     assert_eq!(
         drop_target(CANVAS, &panes, centre(flow)),
         DropTarget::Dock(DockTarget::Swap(1))
@@ -227,9 +227,17 @@ fn a_held_docked_pane_trades_places_or_moves() {
     };
     assert_eq!(
         held.release(&state, CANVAS, window, centre(zero)),
-        DropOutcome::Float(held.rect(centre(zero))),
-        "its own centre is no target"
+        DropOutcome::Dock(DockTarget::Swap(0)),
+        "let go over its own place, it stays"
     );
+    let mut kept = state.clone();
+    assert_eq!(kept.dock(0, DockTarget::Swap(0)), Ok(false));
+    // Past the top band, in the corner chart 1's side zones leave.
+    let near_top = CanvasPoint::new(rect_of(&state, 1).x + 10.0, CANVAS.y + 55.0);
+    let DropOutcome::Float(floated) = held.release(&state, CANVAS, window, near_top) else {
+        panic!("away from every zone it floats");
+    };
+    assert!(floated.y >= CANVAS.y, "kept inside the canvas: {floated:?}");
     let swap = held.release(&state, CANVAS, window, centre(flow));
     assert_eq!(swap, DropOutcome::Dock(DockTarget::Swap(2)));
     let lit = held.dock_preview(&state, CANVAS, window, centre(flow));

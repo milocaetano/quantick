@@ -407,9 +407,23 @@ fn drops_windows_and_hooks_become_canvas_acts() {
         panic!("a pop-out from the menu opens where the chart stands");
     };
     assert_eq!((rect.x, rect.y), (10.0, 60.0));
-    assert!(drop_targets(&state, area).is_empty(), "nothing floats");
+    assert!(
+        drop_targets(&state, area, None).is_empty(),
+        "nothing floats"
+    );
+    let held = drop_targets(&state, area, Some(0));
+    let ids: Vec<_> = held.iter().map(|(id, ..)| id.as_str()).collect();
+    assert!(
+        ids.contains(&"canvas.dock.swap.1"),
+        "a held chart sees the targets: {ids:?}"
+    );
+    assert!(
+        !ids.iter()
+            .any(|id| id.ends_with(".0") || id.contains(".0.")),
+        "never its own: {ids:?}"
+    );
     let added = state.add(PaneKind::Time, area).unwrap();
-    let targets = drop_targets(&state, area);
+    let targets = drop_targets(&state, area, None);
     assert_eq!(
         targets.len(),
         8 + 2 * 5,
@@ -775,6 +789,13 @@ fn a_dragged_menu_button_lifts_its_chart() {
     assert_eq!((at.w, at.h), (800.0, 450.0), "half the canvas at most");
     assert_eq!((at.x + at.w / 2.0, at.y + at.h / 2.0), (300.0, 12.0));
     assert!(lifted(&state, area, None, press, press).is_none());
+    let mut folded = CanvasState::from_preset(preset("time+time+flow").unwrap());
+    folded.minimize(0).unwrap();
+    let far = Some((300.0, 80.0));
+    assert!(
+        lifted(&folded, area, Some(0), press, far).is_none(),
+        "a folded strip is not lifted"
+    );
 
     let added = state.add(PaneKind::Time, area).unwrap();
     let far = Some((40.0, 40.0));

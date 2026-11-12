@@ -34,12 +34,18 @@ pub enum DropOutcome {
     PopOut(CanvasRect),
 }
 
-/// The docked panes of `state` a drop can dock beside or swap with, where
-/// they stand on `canvas`: every one the canvas lays out but a folded strip.
+/// The docked panes of `state` a drop of the pane `held` can dock beside or
+/// swap with, where they stand on `canvas`: every one the canvas lays out
+/// but a folded strip and the held pane itself. What the drop rule and the
+/// scene both read, so they never disagree.
 #[must_use]
-pub fn open_panes(state: &CanvasState, canvas: CanvasRect) -> Vec<(PaneSlot, CanvasRect)> {
+pub fn open_panes(
+    state: &CanvasState,
+    canvas: CanvasRect,
+    held: Option<PaneSlot>,
+) -> Vec<(PaneSlot, CanvasRect)> {
     let mut panes = state.rects(canvas);
-    panes.retain(|(slot, _)| state.mode(*slot) != Some(PaneMode::Minimized));
+    panes.retain(|(slot, _)| Some(*slot) != held && state.mode(*slot) != Some(PaneMode::Minimized));
     panes
 }
 
@@ -148,9 +154,9 @@ impl FloatGesture {
     /// What letting go at `pointer` over `state`'s `canvas` does: a resize
     /// keeps the new size; a move past `window` pops the pane out, and inside
     /// it the canvas's one drop rule decides, over the panes it lays out. A
-    /// pane let go over the window outside the canvas (the toolbar) floats
-    /// kept inside the canvas. A held docked pane (lifted by its ⋯) offers no
-    /// zone of its own, and a corner floats it parked there.
+    /// pane floats kept inside the canvas, never over the toolbar. A held
+    /// docked pane (lifted by its ⋯) offers no zone of its own, let go over
+    /// its own place stays there, and a corner floats it parked there.
     #[must_use]
     pub fn release(
         &self,
@@ -166,13 +172,21 @@ impl FloatGesture {
         if !window.contains(pointer) {
             return DropOutcome::PopOut(rect);
         }
+        let rect = kept_inside(rect, canvas);
         if !canvas.contains(pointer) {
-            return DropOutcome::Float(kept_inside(rect, canvas));
+            return DropOutcome::Float(rect);
         }
-        let mut panes = open_panes(state, canvas);
-        panes.retain(|(held, _)| *held != self.slot());
+        let panes = open_panes(state, canvas, Some(self.slot()));
         let docked = state.tree().holds(self.slot());
+        let home = state
+            .rects(canvas)
+            .into_iter()
+            .find(|(held, _)| *held == self.slot());
         match drop_target(canvas, &panes, pointer) {
+            // Back over its own place a held docked pane stays where it was.
+            DropTarget::Float if home.is_some_and(|(_, home)| home.contains(pointer)) => {
+                DropOutcome::Dock(DockTarget::Swap(self.slot()))
+            }
             DropTarget::Dock(target) => DropOutcome::Dock(target),
             // A docked pane is not floating to park: it floats parked there.
             DropTarget::Park(corner) if docked => {
