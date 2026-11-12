@@ -103,7 +103,11 @@ mod tests {
                 | Token::LedgerCardEdge
                 | Token::LedgerSession
                 | Token::LedgerSessionEdge
-                | Token::LedgerSelection => light.color(token).to_array(),
+                | Token::LedgerSelection
+                // Paper's plates: the slate pane lays none (`paper::plates_on_chart`).
+                | Token::PaperTagGain
+                | Token::PaperTagLoss
+                | Token::ReadoutEdge => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

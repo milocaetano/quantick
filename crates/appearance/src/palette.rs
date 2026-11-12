@@ -257,9 +257,18 @@ pub enum Token {
     /// The band's light bulb while the flow pane's lights are on; at rest it
     /// wears the gear's ink.
     FlowBulbLit,
+    /// A light chart's price-axis chip, filled, under a buy or take-profit
+    /// level whose tag wears the paper plate (`paper::level_chip`); its
+    /// digits are `chip_ink`. Dark's value mirrors `buy`.
+    PaperTagGain,
+    /// The same chip under a sell or stop-loss level. Dark's mirrors `sell`.
+    PaperTagLoss,
+    /// The edge of a light chart's measurement readout (`paper::paper_readout`).
+    /// Dark draws none; its value is transparent.
+    ReadoutEdge,
 }
 impl Token {
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 139] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -396,6 +405,9 @@ impl Token {
         Self::FlowKeyUnlitInk,
         Self::FlowGearInk,
         Self::FlowBulbLit,
+        Self::PaperTagGain,
+        Self::PaperTagLoss,
+        Self::ReadoutEdge,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -442,6 +454,9 @@ impl Token {
             Self::FlowKeyUnlitInk => "flow_key_unlit_ink",
             Self::FlowGearInk => "flow_gear_ink",
             Self::FlowBulbLit => "flow_bulb_lit",
+            Self::PaperTagGain => "paper_tag_gain",
+            Self::PaperTagLoss => "paper_tag_loss",
+            Self::ReadoutEdge => "readout_edge",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

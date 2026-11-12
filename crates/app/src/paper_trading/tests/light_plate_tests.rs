@@ -1,6 +1,7 @@
 //! Light's chart plates, read off what the paint helpers actually emit: the
-//! aim's preview plates like a placed order, a pending TP and SL still tell
-//! apart, and a plated close glyph still answers a hover.
+//! aim and the stop and target it carries wear the paper plate (Dark keeps
+//! its fills), a pending TP and SL still tell apart, and a plated close
+//! glyph still answers a hover.
 use super::*;
 use crate::paper_trading::paint_ctx::close_button_rect;
 
@@ -53,23 +54,27 @@ fn glyph_ink(shapes: &[egui::Shape], glyph: &str) -> egui::Color32 {
         .unwrap_or_else(|| panic!("no {glyph} painted"))
 }
 
-/// The cmd-trading preview's dashed line and label take the order plate, as
-/// a placed order's line does, never the raw side colour.
-#[test]
-fn the_cmd_preview_plates_like_a_placed_order_in_light() {
+/// What the Alt aim paints in `ctx`'s theme, carrying a 1:1 stop and target
+/// when `bracket`.
+fn aim_shapes(ctx: &egui::Context, bracket: bool) -> Vec<egui::Shape> {
     let shift = egui::Modifiers {
         shift: true,
         ..Default::default()
     };
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
+    if bracket {
+        paper.set_ruler_ticks(3);
+    }
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let at = egui::pos2(400.0, 300.0);
     paper.handle_chart_input(&cmd_frame(chart, &scale, at, shift, false));
-    let ctx = light_ctx();
-    let palette = crate::theme::get(&ctx);
-    let shapes = shapes_of(&ctx, at, |paint| paper.draw_cmd_preview(paint, true));
-    let segments: Vec<_> = shapes
+    shapes_of(ctx, at, |paint| paper.draw_cmd_preview(paint, true))
+}
+
+/// The colours of every line segment painted, dashes included.
+fn segment_colors(shapes: &[egui::Shape]) -> Vec<egui::Color32> {
+    shapes
         .iter()
         .filter_map(|shape| match shape {
             egui::Shape::LineSegment { stroke, .. } => match stroke.color {
@@ -78,22 +83,153 @@ fn the_cmd_preview_plates_like_a_placed_order_in_light() {
             },
             _ => None,
         })
-        .collect();
-    assert!(segments.len() >= 8, "a dashed line: {segments:?}");
+        .collect()
+}
+
+/// Every filled rectangle, as (fill, edge colour, edge width).
+fn rects(shapes: &[egui::Shape]) -> Vec<(egui::Color32, egui::Color32, f32)> {
+    shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            egui::Shape::Rect(rect) => Some((rect.fill, rect.stroke.color, rect.stroke.width)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The Alt aim on a light chart: its line keeps the order plate, its label
+/// is the paper plate - white, edged dashed in the side's plate ink because
+/// nothing is sent yet, dark words - and its price chip is filled in the
+/// side's tag colour with white digits. No black plate is left.
+#[test]
+fn the_cmd_preview_lays_the_dashed_paper_plate_in_light() {
+    let ctx = light_ctx();
+    let palette = crate::theme::get(&ctx);
+    let shapes = aim_shapes(&ctx, false);
+    let segments = segment_colors(&shapes);
     assert!(
         segments.iter().all(|color| *color != palette.buy()),
         "no raw side colour on the plated chart: {segments:?}"
     );
-    assert!(segments.contains(&palette.order_plate()));
-    let plate_fills = shapes
+    assert!(segments.contains(&palette.order_plate()), "the line");
+    let edge_dashes = segments
         .iter()
-        .filter(
-            |shape| matches!(shape, egui::Shape::Rect(rect) if rect.fill == palette.order_plate()),
-        )
+        .filter(|color| **color == palette.plate_gain())
         .count();
-    assert!(plate_fills >= 2, "the label and the gutter chip are plates");
-    // The label reads its side's plate ink, as the gutter chip beside it.
-    assert_eq!(glyph_ink(&shapes, "BUY "), palette.plate_gain());
+    assert!(
+        edge_dashes >= 8,
+        "a dashed edge round the label: {segments:?}"
+    );
+    let rects = rects(&shapes);
+    assert!(
+        rects
+            .iter()
+            .all(|(fill, ..)| *fill != palette.order_plate()),
+        "no black plate: {rects:?}"
+    );
+    assert!(
+        rects.iter().any(|(fill, ..)| *fill == palette.inset()),
+        "the white label"
+    );
+    let tag = *palette.get(quantick_appearance::Token::PaperTagGain);
+    assert!(
+        rects.iter().any(|(fill, ..)| *fill == tag),
+        "the filled price chip"
+    );
+    assert_eq!(glyph_ink(&shapes, "BUY "), palette.text_primary());
+    let digits: Vec<_> = shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            egui::Shape::Text(text)
+                if text
+                    .galley
+                    .text()
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == '.') =>
+            {
+                Some(text.galley.job.sections[0].format.color)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(digits, vec![palette.chip_ink()], "white digits on the chip");
+}
+
+/// Dark's aim is untouched: a filled side-colour label in the chip ink, a
+/// side-colour chip, no paper plate and no dashed edge.
+#[test]
+fn the_cmd_preview_keeps_its_filled_label_in_dark() {
+    let ctx = egui::Context::default();
+    let palette = crate::theme::get(&ctx);
+    let shapes = aim_shapes(&ctx, false);
+    let rects = rects(&shapes);
+    let filled = rects
+        .iter()
+        .filter(|(fill, ..)| *fill == palette.buy())
+        .count();
+    assert!(filled >= 2, "the label and the gutter chip: {rects:?}");
+    assert!(
+        rects.iter().all(|(_, _, width)| *width == 0.0),
+        "no edge: {rects:?}"
+    );
+    assert_eq!(glyph_ink(&shapes, "BUY "), palette.chip_ink());
+    assert!(!segment_colors(&shapes).contains(&palette.plate_gain()));
+}
+
+/// The stop and target the aim carries take the pinned leg's plate on a
+/// light chart - white, a solid edge in the gain or loss plate ink, dark
+/// words - with chips filled in the side's tag colour. Dark fills them in
+/// the side colours, as before.
+#[test]
+fn the_aim_s_stop_and_target_wear_the_pinned_leg_plate_in_light() {
+    let light = light_ctx();
+    let palette = crate::theme::get(&light);
+    let shapes = aim_shapes(&light, true);
+    let rects = rects(&shapes);
+    for (edge, tag) in [
+        (
+            palette.plate_gain(),
+            quantick_appearance::Token::PaperTagGain,
+        ),
+        (
+            palette.plate_loss(),
+            quantick_appearance::Token::PaperTagLoss,
+        ),
+    ] {
+        // `chip_tag` fills the plate, then strokes its edge solid on top.
+        assert!(
+            rects
+                .iter()
+                .any(|(_, stroke, width)| *stroke == edge && *width == 1.0),
+            "an edge solid in {edge:?}: {rects:?}"
+        );
+        let tag = *palette.get(tag);
+        assert!(
+            rects.iter().any(|(fill, ..)| *fill == tag),
+            "{tag:?}: {rects:?}"
+        );
+    }
+    let white = rects.iter().filter(|(fill, ..)| *fill == palette.inset());
+    assert!(white.count() >= 2, "white TP and SL plates: {rects:?}");
+    assert!(
+        rects
+            .iter()
+            .all(|(fill, ..)| *fill != palette.order_plate())
+    );
+    assert_eq!(glyph_ink(&shapes, "TP"), palette.text_primary());
+    assert_eq!(glyph_ink(&shapes, "SL"), palette.text_primary());
+
+    let dark = egui::Context::default();
+    let palette = crate::theme::get(&dark);
+    let dark_rects = self::rects(&aim_shapes(&dark, true));
+    for side in [palette.buy(), palette.sell()] {
+        let filled = dark_rects.iter().filter(|(fill, ..)| *fill == side).count();
+        assert!(
+            filled >= 2,
+            "tag and chip filled in {side:?}: {dark_rects:?}"
+        );
+    }
+    assert!(dark_rects.iter().all(|(fill, ..)| *fill != palette.inset()));
 }
 
 /// A pending TP and SL are outlined in the plate's gain and loss inks, so

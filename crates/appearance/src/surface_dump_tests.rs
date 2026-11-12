@@ -4,8 +4,14 @@
 use crate::{DARK, LIGHT, ResolvedTheme, Token};
 use std::fmt::Write;
 
-/// The tokens the lights added; they did not exist before them.
-const ADDED: [&str; 1] = ["flow_bulb_lit"];
+/// The tokens added since the lights: the bulb, then the paper plates'
+/// chip colours and readout edge. They did not exist before them.
+const ADDED: [&str; 4] = [
+    "flow_bulb_lit",
+    "paper_tag_gain",
+    "paper_tag_loss",
+    "readout_edge",
+];
 
 fn dump(name: &str, theme: &ResolvedTheme, out: &mut String) {
     writeln!(out, "[{name}]").unwrap();

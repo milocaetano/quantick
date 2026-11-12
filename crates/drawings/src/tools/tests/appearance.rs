@@ -324,3 +324,98 @@ fn a_flat_readout_reads_against_its_plate() {
             .all(|color| *color == light.legible_readout(light.legible_drawing(near_white)))
     );
 }
+
+/// The ruler's texts and the stroke of its plate's edge, measured from 20 to
+/// 80 (`rising`) or back.
+fn ruler_readout(
+    theme: &ResolvedTheme,
+    rising: bool,
+) -> (Vec<(String, PremultipliedRgba)>, Vec<Stroke>) {
+    let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
+    let point = |price| ChartPoint {
+        bar: 1.0,
+        price,
+        time_ms: None,
+    };
+    let mut anchors = [point(20.0), point(80.0)];
+    anchors[1].bar = 5.0;
+    if !rising {
+        anchors.swap(0, 1);
+        anchors[0].bar = 1.0;
+        anchors[1].bar = 5.0;
+    }
+    let style = DrawingStyle::default();
+    let ctxt = DrawContext {
+        appearance: theme,
+        payload: &NoPayload,
+        anchors: &anchors,
+        scale: &scale,
+        px_per_bar: 10.0,
+        unit: ValueUnit::Price,
+        primary_band: true,
+        style,
+        selected: false,
+        halo: false,
+        content_editing: false,
+        text: &Metrics,
+    };
+    let mut painted = MarkScene::default();
+    tool("measure").paint(
+        &mut painted,
+        PxRect::from_min_max(Px::ZERO, pos2(900.0, 500.0)),
+        style,
+        &[pos2(100.0, 400.0), pos2(500.0, 100.0)],
+        &ctxt,
+        false,
+    );
+    let texts = painted
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            MarkShape::Text { text, color, .. } => Some((text.clone(), *color)),
+            _ => None,
+        })
+        .collect();
+    let edges = painted
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            MarkShape::Rect { stroke, .. } if stroke.width > 0.0 => Some(*stroke),
+            _ => None,
+        })
+        .collect();
+    (texts, edges)
+}
+
+/// Light's ruler readout is a white plate edged in neutral grey: the points
+/// and percent line in the chart's gain or loss ink, the bars and time in
+/// the primary ink. Dark keeps its unedged plate, every line in the move's
+/// colour.
+#[test]
+fn light_ruler_readout_is_edged_and_inks_only_the_signed_line() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let dark = ResolvedTheme::bundled_dark();
+    for rising in [true, false] {
+        let (texts, edges) = ruler_readout(&light, rising);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        let (price, time) = (&texts[0], &texts[1]);
+        assert!(price.0.contains("pts"), "{price:?}");
+        let signed = if rising {
+            Token::BuyInk
+        } else {
+            Token::LossInk
+        };
+        assert_eq!(price.1, light.color(signed), "rising {rising}");
+        assert_eq!(time.1, light.color(Token::TextPrimary));
+        assert_eq!(
+            edges,
+            vec![Stroke::new(1.0, light.color(Token::ReadoutEdge))],
+            "one grey edge"
+        );
+
+        let (texts, edges) = ruler_readout(dark, rising);
+        let side = if rising { Token::Buy } else { Token::Sell };
+        assert!(texts.iter().all(|(_, color)| *color == dark.color(side)));
+        assert!(edges.is_empty(), "Dark draws no readout edge");
+    }
+}

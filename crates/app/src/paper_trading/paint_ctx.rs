@@ -9,6 +9,7 @@
 
 use eframe::egui;
 use eframe::egui::{Color32, Stroke};
+use quantick_appearance::paper::LevelState;
 use quantick_appearance::{PremultipliedRgba, paper};
 use quantick_paper::desk::geometry::{self, Bounds, Point};
 use quantick_paper::desk::geometry::{
@@ -113,10 +114,46 @@ impl PaintCtx<'_> {
     /// chip's geometry. The line stays at its true price; only the chip
     /// dodges the reserved last-price row.
     pub(super) fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
-        let (fill, ink) = self
-            .plate(color)
-            .unwrap_or((color, self.palette.chip_ink()));
+        self.level_chip(y, color, text, LevelState::Resting);
+    }
+
+    /// The gutter chip of a level that is `state`: a light chart fills one
+    /// under the hand, or the aim, in its side's colour (`paper::level_chip`).
+    pub(super) fn level_chip(&self, y: f32, color: Color32, text: &str, state: LevelState) {
+        let line = PremultipliedRgba::from_premultiplied(color.to_array());
+        let (fill, ink) = paper::level_chip(&self.palette.resolved, line, state)
+            .map_or((color, self.palette.chip_ink()), |plate| {
+                (*self.palette.get(plate.fill), *self.palette.get(plate.ink))
+            });
         self.chip(y, fill, text, (fill, ink, egui::Stroke::NONE));
+    }
+
+    /// Lays the paper plate (`paper::paper_plate`) a light chart puts under a
+    /// level in `color` while it is `state` over `rect` - its edge dashed
+    /// while the order is unsent - and returns its ink; `None` paints nothing.
+    pub(super) fn paper_label(
+        &self,
+        rect: egui::Rect,
+        color: Color32,
+        state: LevelState,
+    ) -> Option<Color32> {
+        let line = PremultipliedRgba::from_premultiplied(color.to_array());
+        let plate = paper::paper_plate(&self.palette.resolved, line, state)?;
+        let get = |token| *self.palette.get(token);
+        let edge = Stroke::new(1.0_f32, get(plate.edge));
+        self.painter
+            .rect_filled(rect, egui::Rounding::same(3.0), get(plate.fill));
+        if plate.dashed {
+            let (a, b) = (rect.min, rect.max);
+            let ring = [a, egui::pos2(b.x, a.y), b, egui::pos2(a.x, b.y), a];
+            let (dash, gap) = (paper::PAPER_DASH_PX, paper::PAPER_GAP_PX);
+            self.painter
+                .extend(egui::Shape::dashed_line(&ring, edge, dash, gap));
+        } else {
+            self.painter
+                .rect_stroke(rect, egui::Rounding::same(3.0), edge);
+        }
+        Some(get(plate.ink))
     }
 
     /// Hollow: a `color` border and ink on the chart's ground, for a level

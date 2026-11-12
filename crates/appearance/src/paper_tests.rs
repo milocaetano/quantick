@@ -356,3 +356,157 @@ fn a_selected_trade_wears_the_selection_and_lifts_its_detail() {
     assert_eq!(day.fill_at(false, true), None, "a header is never selected");
     assert_eq!(day.detail_at(true), Token::TextMuted);
 }
+
+const STATES: [LevelState; 4] = [
+    LevelState::Resting,
+    LevelState::Pending,
+    LevelState::Moving,
+    LevelState::Aimed,
+];
+
+/// Light writes a level under the hand, and the aim, on the paper plate:
+/// the pending leg's white plate and side edge, dark words, an edge dashed
+/// only while the order is unsent. A resting level keeps the dark plate.
+#[test]
+fn light_lays_the_paper_plate_under_a_moving_or_aimed_level() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    for (line, edge) in [
+        (Token::Buy, Token::PlateGain),
+        (Token::Sell, Token::PlateLoss),
+    ] {
+        let line = light.color(line);
+        assert_eq!(paper_plate(&light, line, LevelState::Resting), None);
+        for state in [LevelState::Pending, LevelState::Moving, LevelState::Aimed] {
+            let plate = paper_plate(&light, line, state).unwrap();
+            assert_eq!(
+                (plate.fill, plate.edge, plate.ink),
+                (Token::Inset, edge, Token::TextPrimary),
+                "{state:?}"
+            );
+            assert_eq!(plate.dashed, state == LevelState::Aimed, "{state:?}");
+            assert!(outlined_tag(&light, state));
+            assert_reads(&light, plate.ink, plate.fill, 4.5);
+            assert!(
+                relative_luminance(light.color(plate.fill)) > 0.9,
+                "a white plate"
+            );
+        }
+    }
+    assert!(!outlined_tag(&light, LevelState::Resting));
+    // An entry's edge is the order plate, never its white ink on white.
+    let accent = paper_plate(&light, light.color(Token::Accent), LevelState::Aimed).unwrap();
+    assert_eq!(accent.edge, Token::OrderPlate);
+}
+
+/// The chip beside a paper plate is filled in its side's tag colour with
+/// white digits at 4.5:1; a resting or pending level keeps the dark plate.
+#[test]
+fn light_fills_a_moving_level_s_chip_in_its_side_colour() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    for (line, fill) in [
+        (Token::Buy, Token::PaperTagGain),
+        (Token::Sell, Token::PaperTagLoss),
+    ] {
+        let line = light.color(line);
+        for state in [LevelState::Moving, LevelState::Aimed] {
+            let chip = level_chip(&light, line, state).unwrap();
+            assert_eq!(
+                chip,
+                Plate {
+                    fill,
+                    ink: Token::ChipInk
+                }
+            );
+            assert_reads(&light, chip.ink, chip.fill, 4.5);
+            assert_eq!(
+                light.color(chip.ink),
+                PremultipliedRgba::from_rgb(255, 255, 255)
+            );
+        }
+        for state in [LevelState::Resting, LevelState::Pending] {
+            assert_eq!(level_chip(&light, line, state), plate_for(&light, line));
+        }
+    }
+    assert_ne!(
+        light.color(Token::PaperTagGain),
+        light.color(Token::PaperTagLoss)
+    );
+    let accent = light.color(Token::Accent);
+    assert_eq!(
+        level_chip(&light, accent, LevelState::Aimed),
+        plate_for(&light, accent)
+    );
+}
+
+/// Dark, and Light's slate flow pane, keep every level as it was: no paper
+/// plate, no filled tag colour, no readout edge; only a pending leg is
+/// outlined, as before.
+#[test]
+fn dark_surfaces_lay_no_paper_plate() {
+    let dark = ResolvedTheme::default();
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    for surface in [&dark, light.bookmap()] {
+        for state in STATES {
+            for line in [Token::Accent, Token::Buy, Token::Sell] {
+                let line = surface.color(line);
+                assert_eq!(paper_plate(surface, line, state), None);
+                assert_eq!(level_chip(surface, line, state), None);
+            }
+            assert_eq!(
+                outlined_tag(surface, state),
+                state == LevelState::Pending,
+                "{state:?}"
+            );
+        }
+        assert_eq!(paper_readout(surface), None);
+    }
+}
+
+/// Light's ruler readout: a grey edge on its plate, the price line in the
+/// readable gain or loss ink of the chart, the rest in the primary ink.
+#[test]
+fn light_readout_is_edged_in_grey_and_inks_only_the_move() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let readout = paper_readout(&light).unwrap();
+    assert_eq!(
+        readout,
+        PaperReadout {
+            edge: Token::ReadoutEdge,
+            ink: Token::TextPrimary,
+            gain: Token::BuyInk,
+            loss: Token::LossInk,
+        }
+    );
+    for ink in [readout.ink, readout.gain, readout.loss] {
+        assert_reads(&light, ink, Token::ChartCanvas, 4.5);
+    }
+    let edge = light.color(readout.edge);
+    let [r, g, b, a] = edge.to_array();
+    assert_eq!(a, 255);
+    assert!(
+        r.abs_diff(b) < 24 && g.abs_diff(b) < 24,
+        "a neutral grey edge"
+    );
+    assert!(contrast_ratio(edge, light.color(Token::ChartCanvas)) > 1.5);
+}
+
+/// A saved Light copy written before these tokens (the trader's
+/// `appearance.toml.choice.toml`) still resolves them to bundled Light's.
+#[test]
+fn a_light_copy_saved_before_the_paper_tokens_takes_bundled_light_s() {
+    let bundled = ResolvedTheme::parse(LIGHT).unwrap();
+    let older: String = LIGHT
+        .lines()
+        .filter(|line| {
+            !["paper_tag_gain", "paper_tag_loss", "readout_edge"]
+                .iter()
+                .any(|key| line.starts_with(key))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_ne!(older, LIGHT.replace("\r\n", "\n"));
+    let saved = ResolvedTheme::parse(&older).unwrap();
+    for token in [Token::PaperTagGain, Token::PaperTagLoss, Token::ReadoutEdge] {
+        assert_eq!(saved.color(token), bundled.color(token), "{}", token.key());
+    }
+}
