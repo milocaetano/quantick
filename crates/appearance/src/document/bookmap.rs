@@ -10,6 +10,10 @@ pub struct BookmapOverride {
     pub candle_outline_width: Option<f32>,
     pub candle_outline_opacity: Option<f32>,
     pub candle_wick_opacity: Option<f32>,
+    /// Whether the pane's drawing labels sit on a plate; absent, the root
+    /// theme's answer.
+    #[serde(default)]
+    pub drawing_label_plates: Option<bool>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     /// The pane's own plot inks; the root theme's are never inherited here.
@@ -32,6 +36,7 @@ impl BookmapOverride {
             candle_outline_opacity: self.candle_outline_opacity,
             candle_wick_opacity: self.candle_wick_opacity,
             chart_time_grid: None,
+            drawing_label_plates: self.drawing_label_plates,
             chart_axes: None,
             colors: self.colors.clone(),
             plot_ink: self.plot_ink.clone(),

@@ -1004,3 +1004,51 @@ fn the_flow_band_defaults_to_the_documents_own_flow_surface() {
     let dark = ResolvedTheme::default();
     assert_eq!(band(""), dark.color(Token::FlowBand).to_array());
 }
+
+/// On Light's paper a new drawing is born black, and its labels are ink
+/// alone: the price-axis tag paints no plate and writes in the drawing's own
+/// colour. Dark keeps the plated tag it always had.
+#[test]
+fn light_drawings_are_black_and_their_labels_have_no_plate() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let black = [0, 0, 0, 255];
+    for surface in [ChartSurface::Paper, ChartSurface::LitFlow] {
+        let paper = light.surface(surface);
+        assert_eq!(
+            paper.color(Token::DrawingDefault).to_array(),
+            black,
+            "{surface:?}"
+        );
+        assert!(!paper.drawing_label_plates, "{surface:?}");
+    }
+    let ink = light.color(Token::DrawingDefault);
+    assert_eq!(light.drawing_tag_paint(ink), (color::TRANSPARENT, ink));
+    // A pale pick still reads over paper: the bare ink is made legible.
+    let (_, pale) = light.drawing_tag_paint(WHITE);
+    assert_eq!(pale, light.drawing_text_ink(WHITE));
+    assert_ne!(pale, WHITE);
+    // The dark island keeps its plates, so a black drawing's tag stays seen.
+    let island = light.bookmap();
+    assert!(island.drawing_label_plates);
+    assert_eq!(island.drawing_tag_paint(ink), (ink, island.ink_on(ink)));
+
+    let dark = ResolvedTheme::default();
+    assert!(dark.drawing_label_plates);
+    let blue = dark.color(Token::DrawingDefault);
+    assert_eq!(dark.drawing_tag_paint(blue), (blue, dark.ink_on(blue)));
+}
+
+/// Bare drawing text on Light reads at body-text contrast: black stays
+/// black, a pale buy green is shaded deeper; Dark leaves the ink alone.
+#[test]
+fn bare_drawing_text_is_shaded_until_it_reads() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let canvas = light.color(Token::Canvas);
+    let black = PremultipliedRgba::from_rgb(0, 0, 0);
+    assert_eq!(light.drawing_text_ink(black), black);
+    let pale = PremultipliedRgba::from_rgb(120, 220, 140);
+    let ink = light.drawing_text_ink(pale);
+    assert!(contrast::contrast_ratio(ink, canvas) >= contrast::MIN_BARE_TEXT_CONTRAST);
+    let dark = ResolvedTheme::default();
+    assert_eq!(dark.drawing_text_ink(pale), pale);
+}

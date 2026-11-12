@@ -33,6 +33,10 @@ impl super::Palette {
     pub fn ink_on(&self, fill: Color32) -> Color32 {
         rendered(self.resolved.ink_on(headless(fill)))
     }
+    pub fn drawing_tag_paint(&self, color: Color32) -> (Color32, Color32) {
+        let (fill, ink) = self.resolved.drawing_tag_paint(headless(color));
+        (rendered(fill), rendered(ink))
+    }
 }
 
 pub fn with_opacity(color: Color32, alpha: u8) -> Color32 {
