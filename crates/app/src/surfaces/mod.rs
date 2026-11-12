@@ -285,6 +285,18 @@ pub(crate) trait View<M: quantick_ui_model::Model> {
         None
     }
     fn id(&self) -> &'static str;
+    /// Default single-stage views keep their existing input path. Interactive
+    /// editors may emit bounded updates before painting dependent widgets.
+    fn paint_updated(
+        &mut self,
+        session: &mut quantick_ui_model::UpdateSession<'_, M>,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
+    ) {
+        if let Some(intent) = self.paint(session.state(), target, env) {
+            session.update(intent);
+        }
+    }
     fn paint(
         &mut self,
         state: &M::State,
@@ -306,10 +318,14 @@ impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
         self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
     fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        let Some(intent) = self.view.paint(&self.model_state, target, Some(env)) else {
-            return SurfaceResponse::default();
-        };
-        self.update(intent)
+        let mut response = SurfaceResponse::default();
+        self.with_updates(
+            |effect| response.merge(effect),
+            |view, session| {
+                view.paint_updated(session, target, Some(env));
+            },
+        );
+        response
     }
 }
 
@@ -337,16 +353,40 @@ impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView
     }
 }
 
+// Filter explicit host opt-ins before expanding enum variants and match arms.
+// Local views and hooks still use the same typed adapter and model session.
+macro_rules! register_host_routes {
+    ([$($rows:tt)*] ; Local [$($attr:meta),*] $tag:ident $model:ident $field:ident; $($rest:tt)*) => {
+        register_host_routes! { [$($rows)*] ; $($rest)* }
+    };
+    ([$($rows:tt)*] ; Host [$($attr:meta),*] $tag:ident $model:ident $field:ident; $($rest:tt)*) => {
+        register_host_routes! { [$($rows)* ([$($attr),*] $tag $model $field)] ; $($rest)* }
+    };
+    ([$(([$($attr:meta),*] $tag:ident $model:ident $field:ident))*] ;) => {
+        /// Only catalog entries with an external host route have a variant.
+        pub(crate) enum HostIntent {
+            $($(#[$attr])* $tag(Box<<quantick_ui_model::$model::Model as quantick_ui_model::Model>::Intent>),)*
+        }
+        impl Surfaces {
+            pub fn update(&mut self, intent: HostIntent) -> SurfaceResponse {
+                match intent { $($(#[$attr])* HostIntent::$tag(intent) => self.$field.update(*intent),)* }
+            }
+            pub fn update_scoped(&mut self, scope: u64, intent: HostIntent) -> SurfaceResponse {
+                match intent { $($(#[$attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, *intent),)* }
+            }
+        }
+    };
+}
+
 macro_rules! register_surfaces {
     (legacy { $( $legacy:ident: $ty:ident => $draw:path, $keyboard:path; )* }
      modules { $($module:ident;)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
-        $effects:path, $slot:ident; )* }) => {
-        /// Host routing is generated with exactly the views this host compiles.
-        pub(crate) enum HostIntent {
-            $($(#[$view_attr])* $tag(Box<<quantick_ui_model::$model::Model as quantick_ui_model::Model>::Intent>),)*
-        }
+        $effects:path, $slot:ident, $dispatch:ident; )* }) => {
+        register_host_routes! { [] ; $(
+            $dispatch [$($view_attr),*] $tag $model $field;
+        )* }
         $(pub(crate) mod $legacy;)*
         $(pub(crate) mod $module;)*
         $($(#[$view_attr])* #[path = $view_file] pub(crate) mod $view;)*
@@ -369,26 +409,16 @@ macro_rules! register_surfaces {
             }
         }
         impl Surfaces {
-            pub fn update(&mut self, intent: HostIntent) -> SurfaceResponse {
-                match intent {
-                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update(*intent),)*
-                }
-            }
-
-            pub fn update_scoped(&mut self, scope: u64, intent: HostIntent) -> SurfaceResponse {
-                match intent {
-                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, *intent),)*
-                }
-            }
-
             pub fn retain_slot_scopes(&mut self, slot: quantick_ui_model::Slot, keep: impl Fn(u64) -> bool) {
                 $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { self.$field.retain_scopes(&keep); })*
             }
 
             pub fn draw_slot_scoped(&mut self, scope: u64, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
                 let mut response = SurfaceResponse::default();
-                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot { let (state, view) = self.$field.scoped(scope);
-                    if let Some(intent) = view.paint(state, target, None) { response.merge(self.$field.update_scoped(scope, intent)); } })*
+                $($(#[$view_attr])* if slot == quantick_ui_model::Slot::$slot {
+                    self.$field.with_scoped_updates(scope, |effect| response.merge(effect), |view, session| {
+                        view.paint_updated(session, target, None);
+                    }); })*
                 response
             }
 
@@ -458,7 +488,7 @@ mod tests {
     fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {
         let mut registry = Surfaces::default();
         registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
-        registry.update_scoped(10, HostIntent::Second(Box::new((0, 17))));
+        registry.second.update_scoped(10, (0, 17));
         registry.update_scoped(20, HostIntent::First(Box::new((8, 17))));
         assert_eq!(*registry.first.scoped(10).0, 3);
         assert_eq!(*registry.first.scoped(20).0, 8);
@@ -492,8 +522,8 @@ mod tests {
         use quantick_ui_model::Slot;
         let mut registry = Surfaces::default();
         registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
-        registry.update_scoped(10, HostIntent::Second(Box::new((7, 17))));
-        registry.update_scoped(20, HostIntent::Second(Box::new((9, 17))));
+        registry.second.update_scoped(10, (7, 17));
+        registry.second.update_scoped(20, (9, 17));
         registry.retain_slot_scopes(Slot::PaneHeader, |_| false);
         assert_eq!(*registry.first.scoped(10).0, 3);
         assert_eq!(*registry.second.scoped(10).0, 14);
