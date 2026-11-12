@@ -164,24 +164,18 @@ pub(crate) fn band<R>(
             sw: foot,
             se: foot,
         };
-        let fill = response.hovered().then_some(chrome::BAND_HOVER);
-        let fill = *palette.get(fill.unwrap_or(chrome::BAND.fill));
-        ui.painter().rect_filled(rect, rounding, fill);
-        let icon = egui::Rect::from_center_size(
-            egui::pos2(
-                rect.left() + BAND_PAD_X_PX + FOLD_ICON_PX / 2.0,
-                rect.center().y,
-            ),
-            egui::Vec2::splat(FOLD_ICON_PX),
-        );
-        fold_icon(ui, &response.clone().with_new_rect(icon), openness, ink);
-        let at = egui::pos2(icon.right() + ui.spacing().icon_spacing, rect.center().y);
+        let look = chrome::band_look(palette.resolved.dark, response.hovered());
+        let (left, y) = (rect.left() + BAND_PAD_X_PX, rect.center().y);
+        ui.painter()
+            .rect_filled(rect, rounding, *palette.get(look.fill));
+        fold_icon(ui, egui::pos2(left + FOLD_ICON_PX / 2.0, y), openness, ink);
+        let at = egui::pos2(left + FOLD_ICON_PX + ui.spacing().icon_spacing, y);
         let title_right = at.x + words.size().x;
         ui.painter()
             .galley(at - egui::vec2(0.0, words.size().y / 2.0), words, ink);
         let room = rect.right() - BAND_PAD_X_PX - title_right - STATE_GAP_PX;
         if room > 0.0 {
-            let state_ink = *palette.get(chrome::BAND_STATE.ink);
+            let state_ink = *palette.get(look.ink);
             let mut job = egui::text::LayoutJob::simple_singleline(
                 state.to_owned(),
                 palette.mono_font(BAND_STATE_SIZE),
@@ -235,7 +229,7 @@ pub(crate) fn folding_caption<R>(
     let shown = egui::CollapsingHeader::new(caption_words(ui, name))
         .id_salt(salt)
         .default_open(default_open)
-        .icon(move |ui, openness, response| fold_icon(ui, response, openness, ink))
+        .icon(move |ui, openness, response| fold_icon(ui, response.rect.center(), openness, ink))
         .show(ui, body);
     let header = shown.header_response.rect;
     rule(
@@ -259,16 +253,14 @@ fn rule(ui: &egui::Ui, across: egui::Rangef, y: f32, token: quantick_appearance:
     ui.painter().hline(across, y + CAPTION_RULE_PX, stroke);
 }
 
-/// egui's fold triangle in `ink`, `FOLD_ICON_PX` across at the centre of
-/// `at` (egui draws in three quarters of its rect): right shut, down open.
-fn fold_icon(ui: &mut egui::Ui, at: &egui::Response, openness: f32, ink: egui::Color32) {
-    let side = egui::Vec2::splat(FOLD_ICON_PX / 0.75);
-    let rect = egui::Rect::from_center_size(at.rect.center(), side);
-    let saved = ui.visuals().widgets.clone();
-    let widgets = &mut ui.visuals_mut().widgets;
-    widgets.inactive.fg_stroke.color = ink;
-    widgets.hovered.fg_stroke.color = ink;
-    widgets.active.fg_stroke.color = ink;
-    egui::collapsing_header::paint_default_icon(ui, openness, &at.clone().with_new_rect(rect));
-    ui.visuals_mut().widgets = saved;
+/// A fold triangle in `ink`, `FOLD_ICON_PX` across at `centre` whatever the
+/// pointer does, turned by `openness` as egui's own: right shut, down open.
+fn fold_icon(ui: &egui::Ui, centre: egui::Pos2, openness: f32, ink: egui::Color32) {
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let turn = egui::emath::Rot2::from_angle(egui::remap(openness, 0.0..=1.0, -quarter..=0.0));
+    let half = FOLD_ICON_PX / 2.0;
+    let corners = [(-half, -half), (half, -half), (0.0, half)];
+    let points = corners.map(|(x, y)| centre + turn * egui::vec2(x, y));
+    let triangle = egui::Shape::convex_polygon(points.to_vec(), ink, egui::Stroke::NONE);
+    ui.painter().add(triangle);
 }

@@ -288,6 +288,10 @@ pub(super) fn draw_header(
         left.push(((*piece).to_owned(), palette.mono_font(TITLE_PX), ink));
     }
     let (small, detail) = (palette.mono_font(DETAIL_PX), *palette.get(look.detail));
+    // egui reads this frame's hover off the last frame's rects: known before the layout.
+    let hover = ui.ctx().read_response(ui.next_auto_id());
+    let lit = lit || hover.is_some_and(|response| response.hovered());
+    let look = &look.lit_if(lit);
     let right = |text: &str| signed_figures(&palette, look, text, small.clone(), detail);
     let width = (ui.available_width() - pad.left - pad.right).max(1.0);
     let texts: Vec<&str> = left.iter().map(|(text, ..)| text.as_str()).collect();
@@ -400,8 +404,8 @@ fn paint_trade(
     sense: egui::Sense,
 ) -> egui::Response {
     let palette = theme::get(ui.ctx());
-    let result = words.result;
-    let look = ledger_row(palette.resolved.dark, RowKind::Trade { result });
+    let (long, result) = (words.side == quantick_engine::Side::Buy, words.result);
+    let look = ledger_row(palette.resolved.dark, RowKind::Trade { long, result });
     let ink = *palette.get(look.ink);
     let detail = *palette.get(look.detail_at(selected));
     let (title, small) = (palette.mono_font(TITLE_PX), palette.mono_font(DETAIL_PX));

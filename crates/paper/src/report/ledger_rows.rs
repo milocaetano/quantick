@@ -68,9 +68,9 @@ pub struct TradeWords<'a> {
     /// The leading figure, written on line one, and the one that keeps it
     /// honest, on line two ([`SymbolPnl::row_split`]).
     pub pnl: (String, String),
-    /// Whether the trade won, lost or came out flat: the sign of its move,
-    /// open at the last mark, flat before one.
-    pub result: std::cmp::Ordering,
+    /// Whether the trade won, lost or came out flat: the sign of its move;
+    /// `None` while the position is open, its move not settled.
+    pub result: Option<std::cmp::Ordering>,
     /// The detail line's facts: the closing clock, how long it was held,
     /// and why it ended with its tags ([`trade_detail_parts`]).
     pub detail: [String; 3],
@@ -105,7 +105,7 @@ impl<'a> TradeWords<'a> {
             symbol: shown_symbol(instrument, chart),
             source: meta.source,
             pnl: meta.pnl.closed_split(trade),
-            result: trade.pnl_points.cmp(&Decimal::ZERO),
+            result: Some(trade.pnl_points.cmp(&Decimal::ZERO)),
             detail,
         }
     }
@@ -134,11 +134,7 @@ impl<'a> TradeWords<'a> {
                 .open_points
                 .map(|points| pnl.row_split(points, summary.quantity))
                 .unwrap_or_default(),
-            result: summary
-                .open_points
-                .map_or(std::cmp::Ordering::Equal, |points| {
-                    points.cmp(&Decimal::ZERO)
-                }),
+            result: None,
             detail: [String::new(), held, "at the last print".to_owned()],
         }
     }

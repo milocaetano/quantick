@@ -101,9 +101,35 @@ pub const WORDED: [Plate; 10] = [
     SESSION_CAPTION,
 ];
 
-/// A band under the pointer: the title plate's fill, which both the band's
-/// words and its state words read on.
-pub const BAND_HOVER: Token = TITLE_PLATE.fill;
+/// A band under the pointer, as its state words read on it: Light's is the
+/// title plate's darker graphite. Dark's title plate sits below its band and
+/// block and would read as a hole there, so its hover steps lighter (the
+/// session box's edge), its state words lifting to the band's ink where the
+/// muted state ink would fall to 3.9:1.
+#[must_use]
+pub const fn band_hover(dark: bool) -> Plate {
+    if dark {
+        Plate {
+            fill: Token::LedgerSessionEdge,
+            ink: BAND.ink,
+        }
+    } else {
+        Plate {
+            fill: TITLE_PLATE.fill,
+            ink: BAND_STATE.ink,
+        }
+    }
+}
+
+/// A band's fill and its state words' ink, at rest or `hovered`.
+#[must_use]
+pub const fn band_look(dark: bool, hovered: bool) -> Plate {
+    if hovered {
+        band_hover(dark)
+    } else {
+        BAND_STATE
+    }
+}
 
 /// The border of a block, and the rule under the filter bar.
 pub const BLOCK_EDGE: Token = Token::PanelBlockEdge;
@@ -130,7 +156,10 @@ pub const fn result_stripe(sign: Ordering) -> Token {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ResolvedTheme, contrast::contrast_ratio};
+    use crate::{
+        ResolvedTheme,
+        contrast::{contrast_ratio, relative_luminance},
+    };
 
     /// Text contrast for normal-size words (WCAG AA).
     const TEXT: f32 = 4.5;
@@ -234,16 +263,23 @@ mod tests {
     }
 
     /// A band under the pointer still reads: its title and its state words
-    /// on the hover fill, and the fill stands off the band at rest.
+    /// on the hover fill. Light's hover steps darker than the band; Dark's
+    /// steps lighter, never down to a hole under the band.
     #[test]
-    fn a_hovered_band_reads_and_stands_off_the_band() {
+    fn a_hovered_band_reads_and_steps_the_right_way_off_the_band() {
         for theme in both() {
-            for ink in [BAND.ink, BAND_STATE.ink] {
-                let ratio = contrast_ratio(theme.color(ink), theme.color(BAND_HOVER));
+            let hover = band_hover(theme.dark);
+            for ink in [BAND.ink, hover.ink] {
+                let ratio = contrast_ratio(theme.color(ink), theme.color(hover.fill));
                 assert!(ratio >= TEXT, "{} {ink:?}: {ratio:.2}", theme.name);
             }
-            assert_ne!(theme.color(BAND_HOVER), theme.color(BAND.fill));
+            let luminance = |token| relative_luminance(theme.color(token));
+            let lighter = luminance(hover.fill) > luminance(BAND.fill);
+            assert_eq!(lighter, theme.dark, "{}", theme.name);
         }
+        let dark = ResolvedTheme::bundled(true);
+        let luminance = |token| relative_luminance(dark.color(token));
+        assert!(luminance(band_hover(true).fill) > luminance(BLOCK.fill));
     }
 
     #[test]

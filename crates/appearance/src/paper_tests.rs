@@ -153,29 +153,36 @@ fn light_report_paints_gains_in_buy_ink_losses_in_warn_and_plates_the_drawdown()
     );
 }
 
-const KINDS: [RowKind; 4] = [
+const KINDS: [RowKind; 5] = [
     RowKind::Day,
     RowKind::Session,
     RowKind::Trade {
-        result: Ordering::Greater,
+        long: true,
+        result: Some(Ordering::Greater),
     },
     RowKind::Trade {
-        result: Ordering::Less,
+        long: false,
+        result: Some(Ordering::Less),
+    },
+    RowKind::Trade {
+        long: true,
+        result: None,
     },
 ];
 
 /// Light and Dark draw the same cards, boxes and rows; only token values
-/// (Light's own loss and replay inks, its day net and its lit session)
-/// differ.
+/// (Light's own loss and replay inks, its day net, its lit session and its
+/// trade stripe) differ.
 #[test]
 fn ledger_rows_share_one_structure_in_both_themes() {
     for kind in KINDS {
         let (dark, light) = (ledger_row(true, kind), ledger_row(false, kind));
         assert_eq!(
-            (dark.fill, dark.edge, dark.ink, dark.detail),
-            (light.fill, light.edge, light.ink, light.detail),
+            (dark.fill, dark.ink, dark.detail),
+            (light.fill, light.ink, light.detail),
             "{kind:?}"
         );
+        assert_eq!(dark.edge.is_some(), light.edge.is_some(), "{kind:?}");
         assert_eq!(
             (dark.selected_fill, dark.radius),
             (light.selected_fill, light.radius),
@@ -188,14 +195,6 @@ fn ledger_rows_share_one_structure_in_both_themes() {
             assert_eq!(dark.pnl[0], light.pnl[0], "{kind:?}");
         }
     }
-    let stripe = |result| ledger_row(true, RowKind::Trade { result }).edge;
-    assert_ne!(
-        stripe(Ordering::Greater),
-        stripe(Ordering::Less),
-        "the stripe tells a win from a loss"
-    );
-    assert_eq!(stripe(Ordering::Less), Some(Token::PanelStripeLoss));
-    assert_eq!(stripe(Ordering::Greater), Some(Token::BuyInk));
     assert_eq!(
         ledger_row(true, RowKind::Session).mark,
         None,
@@ -207,22 +206,57 @@ fn ledger_rows_share_one_structure_in_both_themes() {
     );
 }
 
+/// Dark's stripe keeps its side rule, whatever the result; Light's tells a
+/// win from a loss once the trade has closed and stays neutral while it is
+/// open, so a position near its entry does not flip with every print.
+#[test]
+fn a_trade_stripe_is_dark_s_side_and_light_s_settled_result() {
+    let stripe = |dark, long, result| ledger_row(dark, RowKind::Trade { long, result }).edge;
+    let settled = [Ordering::Greater, Ordering::Less, Ordering::Equal].map(Some);
+    for result in settled.into_iter().chain([None]) {
+        assert_eq!(stripe(true, true, result), Some(Token::Buy));
+        assert_eq!(stripe(true, false, result), Some(Token::Sell));
+    }
+    for long in [true, false] {
+        for (result, edge) in [
+            (Some(Ordering::Greater), Token::BuyInk),
+            (Some(Ordering::Less), Token::PanelStripeLoss),
+            (Some(Ordering::Equal), Token::PanelBlockEdge),
+            (None, Token::PanelBlockEdge),
+        ] {
+            assert_eq!(stripe(false, long, result), Some(edge), "{result:?}");
+        }
+    }
+    let dark = ResolvedTheme::default();
+    assert_eq!(
+        dark.color(Token::Buy),
+        PremultipliedRgba::from_rgb(0x26, 0xA6, 0x9A)
+    );
+    assert_eq!(
+        dark.color(Token::Sell),
+        PremultipliedRgba::from_rgb(0xEF, 0x53, 0x50)
+    );
+}
+
 /// Every word a ledger row writes keeps 4.5:1 on every surface it can sit
-/// on: its own plate, the hover fill and, selected, the selection - where
-/// the secondary words lift to the primary ink.
+/// on: its own plate, the hover fill (in its lit inks) and, selected, the
+/// selection - where the secondary words lift to the primary ink.
 #[test]
 fn ledger_words_read_on_every_surface_they_sit_on() {
     for theme in themes() {
         for kind in KINDS {
             let look = ledger_row(theme.dark, kind);
-            let surfaces = [look.fill, look.hover_fill].map(|fill| fill.map(|fill| (fill, false)));
-            let selection = look.selected_fill.map(|fill| (fill, true));
-            for (surface, selected) in surfaces.into_iter().chain([selection]).flatten() {
+            let surfaces = [
+                look.fill.map(|fill| (fill, false, false)),
+                look.hover_fill.map(|fill| (fill, false, true)),
+                look.selected_fill.map(|fill| (fill, true, true)),
+            ];
+            for (surface, selected, lit) in surfaces.into_iter().flatten() {
                 let mut inks = vec![
                     look.ink,
                     look.detail_at(selected),
-                    look.pnl_ink(Ordering::Greater),
-                    look.pnl_ink(Ordering::Less),
+                    look.lit_if(lit).pnl_ink(Ordering::Greater),
+                    look.lit_if(lit).pnl_ink(Ordering::Less),
                 ];
                 inks.extend(look.mark);
                 for ink in inks {
@@ -231,10 +265,12 @@ fn ledger_words_read_on_every_surface_they_sit_on() {
             }
         }
         // The borders still draw a line where they meet their fills.
+        let frame = ledger_frame(theme.dark, Some([false, false]), Some([false, false]));
+        let [card, session] = frame.layers.map(Option::unwrap);
         for (edge, fill) in [
-            (Token::LedgerCardEdge, Token::LedgerCard),
-            (Token::LedgerSessionEdge, Token::LedgerSession),
-            (Token::LedgerCardEdge, Token::PanelGround),
+            (card.stroke, card.fill),
+            (session.stroke, session.fill),
+            (card.stroke, Token::PanelGround),
         ] {
             assert_reads(&theme, edge, fill, 1.1);
         }
@@ -248,24 +284,28 @@ fn ledger_words_read_on_every_surface_they_sit_on() {
 fn ledger_surfaces_step_up_from_the_ground_and_none_is_a_black_plate() {
     let [dark, light] = themes();
     let luminance = |theme: &ResolvedTheme, token| relative_luminance(theme.color(token));
-    let frame = ledger_frame(Some([false, false]), Some([false, false]));
-    let [card, session] = frame.layers.map(|layer| layer.unwrap().fill);
-    for token in [
-        card,
-        session,
+    let fills = |dark| {
+        let frame = ledger_frame(dark, Some([false, false]), Some([false, false]));
+        frame.layers.map(|layer| layer.unwrap().fill)
+    };
+    let rows = [
         Token::PanelLiveRow,
         Token::LedgerSelection,
         Token::HoverFill,
-    ] {
+    ];
+    for token in fills(false).into_iter().chain(rows) {
         assert!(luminance(&light, token) > 0.5, "{}", token.key());
+    }
+    for token in fills(true).into_iter().chain(rows) {
         assert!(
             luminance(&dark, token) > luminance(&dark, Token::PanelGround),
             "{}",
             token.key()
         );
     }
+    let ([card, session], [light_card, _]) = (fills(true), fills(false));
     assert!(luminance(&dark, session) > luminance(&dark, card));
-    assert!(luminance(&light, card) > luminance(&light, Token::PanelGround));
+    assert!(luminance(&light, light_card) > luminance(&light, Token::PanelGround));
 }
 
 /// Dark paints the ledger's card and session box in the colours it painted
@@ -273,8 +313,17 @@ fn ledger_surfaces_step_up_from_the_ground_and_none_is_a_black_plate() {
 #[test]
 fn dark_ledger_frame_keeps_its_card_and_box_colours() {
     let dark = ResolvedTheme::default();
-    let frame = ledger_frame(Some([false, false]), Some([false, false]));
+    let frame = ledger_frame(true, Some([false, false]), Some([false, false]));
     let [card, session] = frame.layers.map(|layer| layer.unwrap());
+    assert_eq!(
+        [card.fill, card.stroke, session.fill, session.stroke],
+        [
+            Token::LedgerCard,
+            Token::LedgerCardEdge,
+            Token::LedgerSession,
+            Token::LedgerSessionEdge
+        ]
+    );
     for (token, [r, g, b]) in [
         (card.fill, [0x1E, 0x23, 0x30]),
         (card.stroke, [0x2E, 0x36, 0x48]),
@@ -283,6 +332,24 @@ fn dark_ledger_frame_keeps_its_card_and_box_colours() {
     ] {
         assert_eq!(dark.color(token), PremultipliedRgba::from_rgb(r, g, b));
     }
+}
+
+/// Light paints its card as a panel block and rules its session box like a
+/// caption, from the panels' own tokens: a saved theme that holds the old
+/// ledger values still shows the blocks.
+#[test]
+fn light_ledger_frame_reads_the_panel_tokens() {
+    let frame = ledger_frame(false, Some([false, false]), Some([false, false]));
+    let [card, session] = frame.layers.map(|layer| layer.unwrap());
+    assert_eq!(
+        [card.fill, card.stroke, session.fill, session.stroke],
+        [
+            Token::PanelBlock,
+            Token::PanelBlockEdge,
+            Token::PanelBlock,
+            Token::PanelCaptionRule
+        ]
+    );
 }
 
 /// Dark's day header writes its words, its count and its net in the inks
@@ -294,9 +361,14 @@ fn dark_day_words_keep_their_earlier_inks() {
     for (now, before) in [
         (day.ink, Token::TextPrimary),
         (day.detail, Token::TextMuted),
-        (day.pnl_ink(Ordering::Greater), Token::BuyInk),
-        (day.pnl_ink(Ordering::Less), Token::SellInk),
-        (day.pnl_ink(Ordering::Equal), Token::TextPrimary),
+        (day.lit_if(false).pnl_ink(Ordering::Greater), Token::BuyInk),
+        (day.lit_if(false).pnl_ink(Ordering::Less), Token::SellInk),
+        (
+            day.lit_if(false).pnl_ink(Ordering::Equal),
+            Token::TextPrimary,
+        ),
+        (day.lit_if(true).pnl_ink(Ordering::Greater), Token::BuyInk),
+        (day.lit_if(true).pnl_ink(Ordering::Less), Token::SellInk),
     ] {
         assert_eq!(dark.color(now), dark.color(before), "{now:?}");
     }
@@ -316,13 +388,45 @@ fn a_lit_session_stands_off_its_live_row() {
     assert_ne!(dark.color(dark_lit), dark.color(Token::PanelLiveRow));
 }
 
-/// A net written on the footer plate keeps 4.5:1 there in both themes.
+/// A session's gains keep the buy ink: Dark's always, Light's on its live
+/// row, and only Light's lit row, on the footer grey where the buy ink
+/// reads 4.0:1, takes the panels' deeper gain ink.
+#[test]
+fn only_light_s_lit_session_deepens_its_gains() {
+    for lit in [false, true] {
+        let dark = ledger_row(true, RowKind::Session);
+        assert_eq!(dark.lit_if(lit).pnl_ink(Ordering::Greater), Token::BuyInk);
+        assert_eq!(dark.lit_if(lit).pnl_ink(Ordering::Less), Token::SellInk);
+    }
+    let light = ledger_row(false, RowKind::Session);
+    assert_eq!(
+        light.lit_if(false).pnl_ink(Ordering::Greater),
+        Token::BuyInk
+    );
+    assert_eq!(
+        light.lit_if(true).pnl_ink(Ordering::Greater),
+        Token::PanelGainInk
+    );
+    assert_eq!(light.lit_if(true).pnl_ink(Ordering::Less), Token::LossInk);
+    assert_eq!(light.fill_at(true, false), Some(Token::PanelFooter));
+}
+
+/// A net written on the footer plate keeps 4.5:1 there in both themes:
+/// Light's gains in the panels' gain ink, every other figure (and every
+/// surface but the footer) in [`pnl_ink`]'s.
 #[test]
 fn signed_amounts_read_on_the_footer_plate() {
     for theme in themes() {
         for sign in [Ordering::Greater, Ordering::Less, Ordering::Equal] {
-            let ink = pnl_ink(&theme, Token::PanelFooter, sign);
+            let ink = plate_pnl_ink(&theme, Token::PanelFooter, sign);
             assert_reads(&theme, ink, Token::PanelFooter, 4.5);
+            let inset = plate_pnl_ink(&theme, Token::Inset, sign);
+            assert_eq!(inset, pnl_ink(&theme, Token::Inset, sign));
+            if theme.dark || sign != Ordering::Greater {
+                assert_eq!(ink, pnl_ink(&theme, Token::PanelFooter, sign));
+            } else {
+                assert_eq!(ink, Token::PanelGainInk);
+            }
         }
     }
 }
@@ -335,10 +439,11 @@ fn light_ledger_wears_no_gold_or_orange() {
     let mut tokens = vec![Token::LedgerSelection, Token::HoverFill];
     for kind in KINDS {
         let look = ledger_row(false, kind);
-        tokens.extend([look.ink, look.detail, look.pnl[0], look.pnl[1]]);
+        tokens.extend([look.ink, look.detail]);
+        tokens.extend(look.pnl.into_iter().chain(look.lit_pnl));
         tokens.extend(look.fill.into_iter().chain(look.edge).chain(look.mark));
     }
-    let frame = ledger_frame(Some([false, false]), Some([false, false]));
+    let frame = ledger_frame(false, Some([false, false]), Some([false, false]));
     for layer in frame.layers.into_iter().flatten() {
         tokens.extend([layer.fill, layer.stroke]);
     }
@@ -364,14 +469,14 @@ fn light_ledger_wears_no_gold_or_orange() {
 /// first and last rows add its top and bottom space.
 #[test]
 fn the_ledger_nests_a_trade_in_its_session_box_in_its_day_card() {
-    let bare = ledger_frame(None, None);
+    let bare = ledger_frame(true, None, None);
     assert_eq!(bare.layers, [None, None]);
     assert_eq!(bare.content, Margin::default());
 
     let open: Ends = [true, false];
     let middle: Ends = [false, false];
     let close: Ends = [false, true];
-    let day = ledger_frame(Some(open), None);
+    let day = ledger_frame(true, Some(open), None);
     let card = day.layers[0].unwrap();
     assert_eq!(
         (card.fill, card.stroke),
@@ -382,7 +487,7 @@ fn the_ledger_nests_a_trade_in_its_session_box_in_its_day_card() {
     assert_eq!(day.layers[1], None);
     assert_eq!((day.content.left, day.content.top), (0.0, CARD_GAP_PX));
 
-    let head = ledger_frame(Some(middle), Some(open));
+    let head = ledger_frame(true, Some(middle), Some(open));
     let session = head.layers[1].unwrap();
     assert_eq!(
         (session.fill, session.stroke),
@@ -395,7 +500,7 @@ fn the_ledger_nests_a_trade_in_its_session_box_in_its_day_card() {
         "the header spans its box"
     );
 
-    let trade = ledger_frame(Some(middle), Some(middle));
+    let trade = ledger_frame(true, Some(middle), Some(middle));
     assert_eq!(trade.content.left, SESSION_INSET_PX + TRADE_INSET_PX);
     assert_eq!(trade.content.right, trade.content.left);
     assert_eq!((trade.content.top, trade.content.bottom), (0.0, 0.0));
@@ -405,12 +510,12 @@ fn the_ledger_nests_a_trade_in_its_session_box_in_its_day_card() {
     assert_eq!(card.corners(), [CARD_RADIUS_PX, 0.0]);
     assert_eq!(card.reach(), [0.0, CARD_RADIUS_PX + 1.0]);
 
-    let last = ledger_frame(Some(close), Some(close));
+    let last = ledger_frame(true, Some(close), Some(close));
     assert_eq!(last.layers[0].unwrap().ends, close);
     assert_eq!(last.layers[1].unwrap().inset.bottom, SESSION_INSET_PX);
     assert_eq!(last.content.bottom, SESSION_INSET_PX + SESSION_PAD_PX);
 
-    let loose = ledger_frame(Some(close), None);
+    let loose = ledger_frame(true, Some(close), None);
     assert_eq!(loose.layers[1], None, "a trade no session holds has no box");
     assert_eq!(
         (loose.content.left, loose.content.bottom),
@@ -424,7 +529,8 @@ fn a_selected_trade_wears_the_selection_and_lifts_its_detail() {
     let trade = ledger_row(
         false,
         RowKind::Trade {
-            result: Ordering::Greater,
+            long: true,
+            result: Some(Ordering::Greater),
         },
     );
     assert_eq!(trade.fill_at(false, false), Some(Token::PanelBlock));
