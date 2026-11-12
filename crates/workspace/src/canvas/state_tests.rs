@@ -148,7 +148,7 @@ fn floating_panes_park_pop_out_and_return() {
     };
     assert_eq!(
         *rect,
-        park_rect(CANVAS, Corner::BottomRight, (300.0, 200.0))
+        park_rect(CANVAS, Corner::BottomRight, (300.0, 200.0), &[])
     );
     assert_eq!(state.park(0, Corner::BottomRight, CANVAS), Ok(false));
     assert_eq!(

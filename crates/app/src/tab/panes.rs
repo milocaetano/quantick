@@ -21,6 +21,7 @@ use crate::style::ChartStyle;
 use quantick_chart_interaction::pane_focus::{DrawnPanes, resolve_focus};
 use quantick_feed::{FeedConnectionState, FeedNotice};
 use quantick_session::{PaneView, SeamTrace};
+use quantick_workspace::canvas::seat_drawn;
 
 impl Tab {
     /// Move the context pane at `from` to `to`, keeping the rest in order.
@@ -173,17 +174,19 @@ impl Tab {
         resolve_focus(self.focus, self.drawn_panes()).unwrap_or(fallback)
     }
 
-    /// The panes on screen. A layout with no flow pane has no context column
-    /// to put away, so its collapse flag names nothing there.
+    /// The panes on screen: the canvas model's, unless the column painter
+    /// draws, whose collapse flags hold.
     pub fn drawn_panes(&self) -> DrawnPanes {
-        let column = !(self.canvas.layout.shows_flow() && self.canvas.context_collapsed);
-        let heights = &self.canvas.context_stack.heights;
-        let slot_drawn =
-            |slot: usize| column && !heights.get(slot).is_some_and(|h| h.is_collapsed());
-        DrawnPanes::new(
-            self.canvas.layout.shows_flow() && !self.canvas.flow_collapsed,
-            (0..self.context_panes_shown()).map(slot_drawn),
-        )
+        let canvas = &self.canvas;
+        if !canvas.column_painted() {
+            let seats = canvas.seats.current(&canvas.state);
+            let model = |seat| seat_drawn(&canvas.state, &seats, seat);
+            let time = (0..self.time_panes.len()).map(|seat| model(Some(seat)));
+            return DrawnPanes::new(model(None), time);
+        }
+        let open = |side| !canvas.pane_collapsed(side);
+        let time = (0..self.context_panes_shown()).map(|slot| open(PaneSide::Time(slot)));
+        DrawnPanes::new(canvas.layout.shows_flow() && open(PaneSide::Flow), time)
     }
 
     /// How many context panes the layout draws — bounded by how many exist,

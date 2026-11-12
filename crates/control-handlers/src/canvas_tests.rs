@@ -492,47 +492,100 @@ fn a_resize_moves_the_tree_share_and_reads_it_back() {
     assert_eq!(acts, vec![resize(0, CanvasDimension::Width, 0.25)]);
 }
 
-/// A column-painted tab keeps its own dividers: a tree resize is refused,
-/// naming the call that moves them, and the readback claims no tree share
-/// the screen does not show.
+/// C16: "1 TF + Flow" is drawn by the column painter, whose split is the
+/// tree's row share: the same resize a tree layout takes moves it, and the
+/// readback shows the share sent. Its stacked heights stay its own.
 #[test]
-fn a_column_painted_tab_refuses_a_tree_resize_and_reads_no_share() {
+fn resize_works_on_a_column_layout() {
     use crate::canvas::{Drawn, act, view};
     use quantick_control_schema::canvas::CanvasDimension;
     use quantick_workspace::canvas::{CanvasRect, CanvasState, preset};
-    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
-    let columns = Drawn {
-        area,
+    let drawn = Drawn {
+        area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
         columns: true,
     };
     let mut state = CanvasState::from_preset(preset("time+flow").unwrap());
-    let before = state.clone();
     let resize = CanvasAct::Resize {
         slot: 0,
         dimension: CanvasDimension::Width,
         share: 0.6,
     };
-    let error = act(&mut state, None, columns, resize).unwrap_err();
+    assert_eq!(act(&mut state, None, drawn, resize), Ok((true, Some(0))));
+    let read = view(&state, drawn);
+    let width = |slot: usize| {
+        read.panes[slot]
+            .width_share
+            .as_ref()
+            .map(|share| share.as_str().to_owned())
+    };
+    assert_eq!(width(0).as_deref(), Some("0.6"));
+    assert_eq!(width(1).as_deref(), Some("0.4"));
+    assert_eq!(read.preset_id.as_deref(), Some("time+flow"));
+
+    // The stacked charts' heights are the column painter's own: a height
+    // resize is refused, naming the call that moves them, and none reads back.
+    let mut stacked = CanvasState::from_preset(preset("stack2+flow").unwrap());
+    let before = stacked.clone();
+    let tall = CanvasAct::Resize {
+        slot: 0,
+        dimension: CanvasDimension::Height,
+        share: 0.7,
+    };
+    let error = act(&mut stacked, None, drawn, tall).unwrap_err();
     assert_eq!(
         error.context.details.unwrap()["refusal"],
         json!("canvas.column_layout")
     );
-    assert!(
-        error
-            .context
-            .next_steps
-            .iter()
-            .any(|step| step.contains("layout.pane.resize")),
-        "the refusal names the call that moves the column divider: {:?}",
-        error.context.next_steps
+    assert!((error.context.next_steps.iter()).any(|step| step.contains("layout.pane.resize_pair")));
+    assert_eq!(stacked, before, "nothing moved");
+    let read = view(&stacked, drawn);
+    assert!(read.panes.iter().all(|pane| pane.height_share.is_none()));
+}
+
+/// C19: with nine panes on the canvas, floats counted, a pick that needs one
+/// more is refused with `canvas.full` and leaves the canvas as it was.
+#[test]
+fn a_pick_over_the_pane_cap_is_refused() {
+    use crate::canvas::{Drawn, act};
+    use quantick_workspace::canvas::{CanvasRect, CanvasState, MAX_CANVAS_PANES, PaneKind, preset};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut state = CanvasState::from_preset(preset("flow").unwrap());
+    while state.add(PaneKind::Flow, area).is_ok() {}
+    assert_eq!(state.panes().len(), MAX_CANVAS_PANES);
+    let before = state.clone();
+    let pick = CanvasAct::PickLayout {
+        preset_id: "charts-8".to_owned(),
+    };
+    let error = act(
+        &mut state,
+        None,
+        Drawn {
+            area,
+            columns: false,
+        },
+        pick,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.context.details.unwrap()["refusal"],
+        json!("canvas.full")
     );
-    assert_eq!(state, before, "nothing moved");
-    let read = view(&state, columns);
-    assert!(
-        read.panes
-            .iter()
-            .all(|pane| pane.width_share.is_none() && pane.height_share.is_none()),
-        "no tree share on a column-painted tab"
+    assert_eq!(state, before, "nothing changed");
+    let same = CanvasAct::PickLayout {
+        preset_id: "flow".to_owned(),
+    };
+    assert_eq!(
+        act(
+            &mut state,
+            None,
+            Drawn {
+                area,
+                columns: false
+            },
+            same
+        ),
+        Ok((false, None)),
+        "the layout it already is reads as unchanged, not refused"
     );
 }
 

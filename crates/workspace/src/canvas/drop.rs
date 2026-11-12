@@ -83,19 +83,48 @@ pub fn drop_target(canvas: CanvasRect, pointer: CanvasPoint) -> DropTarget {
     })
 }
 
-/// Where a pane of `size` (width, height) sits parked in `corner`.
+/// Where a pane of `size` (width, height) sits parked in `corner`, clear of
+/// every folded chart's strip in `strips`: one in the way pushes it off
+/// along the strip's short side, keeping [`PARK_MARGIN_PX`] from it, so the
+/// strip's restore stays in reach.
 #[must_use]
-pub fn park_rect(canvas: CanvasRect, corner: Corner, size: (f32, f32)) -> CanvasRect {
+pub fn park_rect(
+    canvas: CanvasRect,
+    corner: Corner,
+    size: (f32, f32),
+    strips: &[CanvasRect],
+) -> CanvasRect {
     let (w, h) = size;
+    let from_left = matches!(corner, Corner::TopLeft | Corner::BottomLeft);
+    let from_top = matches!(corner, Corner::TopLeft | Corner::TopRight);
     let left = canvas.x + PARK_MARGIN_PX;
     let right = canvas.right() - PARK_MARGIN_PX - w;
     let top = canvas.y + PARK_MARGIN_PX;
     let bottom = canvas.bottom() - PARK_MARGIN_PX - h;
-    let (x, y) = match corner {
-        Corner::TopLeft => (left, top),
-        Corner::TopRight => (right, top),
-        Corner::BottomLeft => (left, bottom),
-        Corner::BottomRight => (right, bottom),
+    let mut at = CanvasRect::new(
+        if from_left { left } else { right },
+        if from_top { top } else { bottom },
+        w,
+        h,
+    );
+    let overlaps = |a: CanvasRect, b: CanvasRect| {
+        a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
     };
-    CanvasRect::new(x, y, w, h)
+    // The pane only moves away from its corner, so a strip once cleared stays
+    // clear: as many passes as strips do.
+    for _ in 0..strips.len() {
+        let Some(strip) = strips.iter().find(|strip| overlaps(at, **strip)) else {
+            break;
+        };
+        match (strip.h >= strip.w, from_left, from_top) {
+            (true, true, _) => at.x = strip.right() + PARK_MARGIN_PX,
+            (true, false, _) => at.x = strip.x - PARK_MARGIN_PX - w,
+            (false, _, true) => at.y = strip.bottom() + PARK_MARGIN_PX,
+            (false, _, false) => at.y = strip.y - PARK_MARGIN_PX - h,
+        }
+    }
+    // Never pushed off the canvas: its grip has to stay in reach.
+    at.x = at.x.min(right).max(left);
+    at.y = at.y.min(bottom).max(top);
+    at
 }

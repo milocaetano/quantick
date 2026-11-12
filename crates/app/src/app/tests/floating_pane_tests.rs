@@ -158,7 +158,7 @@ fn left_edge_docks_corner_parks_reload_restores() {
     drag_sized(&mut app, &ctx, TEST_WINDOW, from, corner);
     frames(&mut app, &ctx, 4);
     let area = crate::floating_panes::model_rect(canvas);
-    let expected = park_rect(area, Corner::BottomRight, (before.w, before.h));
+    let expected = park_rect(area, Corner::BottomRight, (before.w, before.h), &[]);
     assert_eq!(
         host(&app, parked),
         Some(FloatHost::Canvas { rect: expected })

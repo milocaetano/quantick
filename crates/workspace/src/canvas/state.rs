@@ -409,7 +409,7 @@ impl CanvasState {
     }
 
     /// Snap a pane floating over the canvas into `corner` of `canvas`,
-    /// keeping its size.
+    /// keeping its size, clear of every folded chart's strip.
     ///
     /// # Errors
     /// The pane is not floating over the canvas.
@@ -424,7 +424,10 @@ impl CanvasState {
         let FloatHost::Canvas { rect } = self.floating[index].host else {
             return Err(not_floating);
         };
-        let parked = park_rect(canvas, corner, (rect.w, rect.h));
+        let strips: Vec<CanvasRect> = (self.rects(canvas).into_iter())
+            .filter_map(|(held, strip)| self.minimized.contains(&held).then_some(strip))
+            .collect();
+        let parked = park_rect(canvas, corner, (rect.w, rect.h), &strips);
         self.floating[index].host = FloatHost::Canvas { rect: parked };
         Ok(parked != rect)
     }
@@ -559,9 +562,10 @@ impl CanvasState {
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
 ///
 /// Compared by slot, the pane's identity for its life: a save keeps the
-/// canvas whenever it is not [`CanvasState::numbered_as`] its preset, so a
-/// saved tab and the live one always number their panes alike, and a slot
-/// added since the save is one the save never held.
+/// canvas whenever its preset and split do not rebuild it
+/// ([`CanvasState::saved_form`]), so a saved tab and the live one always
+/// number their panes alike, and a slot added since the save is one the
+/// save never held.
 #[must_use]
 pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
     saved.holds(slot) && live.holds(slot)
