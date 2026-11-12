@@ -264,9 +264,6 @@ fn each_pane_paints_only_the_controls_it_accepts() {
     assert!(gap < 20.0 + menu, "at its right end, left of the ⋯");
 }
 
-/// Both lit is beside, one lit is that side alone, and a click on the last lit
-/// does nothing. The named read agrees at every step.
-
 /// The scene reads what the switches read: lit is selected, and the last lit
 /// names why it takes no press, with the call that does what the hand does.
 #[test]
@@ -757,9 +754,6 @@ fn a_narrow_tape_keeps_its_capsule() {
     flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
     flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
 }
-
-/// A sample grows as it is dragged up, reads back through the named call's
-/// value and returns to `1x` on a double click.
 
 /// A sample shows only while its target is there; the candle sample's slot stays
 /// reserved, so the glyphs never shift, and the scene lists what was painted.

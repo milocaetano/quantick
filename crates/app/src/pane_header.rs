@@ -344,7 +344,7 @@ pub fn draw_side_header(
         .window_label
         .as_deref()
         .filter(|_| header.window.is_some());
-    let window_w = words.as_deref().map_or(0.0, |words| {
+    let window_w = words.map_or(0.0, |words| {
         let caret = ui.fonts(|fonts| fonts.layout_job(caret_text(&palette, words)));
         caret.size().x + 2.0 * WINDOW_PADDING_X
     });
@@ -692,7 +692,7 @@ fn capsule_slots(
         match item {
             CapsuleItem::Layer(glyph) => layer_glyph(ui, slot, salt, glyph, painted, intent),
             CapsuleItem::Sample(which, scale) => {
-                sample(ui, slot, salt, which, scale, painted, intent, model);
+                sample(ui, slot, salt, (which, scale), painted, intent, model);
             }
             CapsuleItem::SampleOff(_) => {
                 ui.painter().circle_stroke(
@@ -712,8 +712,7 @@ fn sample(
     ui: &egui::Ui,
     rect: egui::Rect,
     salt: u64,
-    which: BubbleSample,
-    scale: f32,
+    (which, scale): (BubbleSample, f32),
     painted: &mut PaintedControls,
     intent: &mut Option<Intent>,
     model: &State,
@@ -1260,6 +1259,9 @@ pub(crate) fn resolve(
     intent: Option<Intent>,
 ) -> quantick_ui_model::pane_header::Effects {
     intent.map_or_else(Default::default, |intent| {
-        outcome(surfaces.update_scoped(scope, crate::surfaces::HostIntent::PaneHeader(intent)))
+        outcome(surfaces.update_scoped(
+            scope,
+            crate::surfaces::HostIntent::PaneHeader(Box::new(intent)),
+        ))
     })
 }

@@ -347,7 +347,7 @@ macro_rules! register_surfaces {
         $effects:path, $slot:ident; )* }) => {
         /// Host routing is generated with exactly the views this host compiles.
         pub(crate) enum HostIntent {
-            $($(#[$view_attr])* $tag(<quantick_ui_model::$model::Model as quantick_ui_model::Model>::Intent),)*
+            $($(#[$view_attr])* $tag(Box<<quantick_ui_model::$model::Model as quantick_ui_model::Model>::Intent>),)*
         }
         $(pub(crate) mod $legacy;)*
         $(pub(crate) mod $module;)*
@@ -373,7 +373,7 @@ macro_rules! register_surfaces {
         impl Surfaces {
             pub fn update_scoped(&mut self, scope: u64, intent: HostIntent) -> SurfaceResponse {
                 match intent {
-                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, intent),)*
+                    $($(#[$view_attr])* HostIntent::$tag(intent) => self.$field.update_scoped(scope, *intent),)*
                 }
             }
 
@@ -453,9 +453,9 @@ mod tests {
     #[test]
     fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {
         let mut registry = Surfaces::default();
-        registry.update_scoped(10, HostIntent::First((3, 17)));
-        registry.update_scoped(10, HostIntent::Second((0, 17)));
-        registry.update_scoped(20, HostIntent::First((8, 17)));
+        registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
+        registry.update_scoped(10, HostIntent::Second(Box::new((0, 17))));
+        registry.update_scoped(20, HostIntent::First(Box::new((8, 17))));
         assert_eq!(*registry.first.scoped(10).0, 3);
         assert_eq!(*registry.first.scoped(20).0, 8);
         let ctx = egui::Context::default();

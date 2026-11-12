@@ -469,11 +469,9 @@ impl Tab {
                 .is_some_and(|tape| tape.settings_panel.is_open()),
             lights_on: pane.surface() == quantick_appearance::ChartSurface::LitFlow,
         };
-        chrome.surfaces.update_scoped(
+        chrome.surfaces.pane_header.update_scoped(
             pane.id,
-            crate::surfaces::HostIntent::PaneHeader(
-                quantick_ui_model::pane_header::Intent::Refresh(snapshot),
-            ),
+            quantick_ui_model::pane_header::Intent::Refresh(snapshot),
         );
         chrome.surfaces.pane_header.scoped(pane.id).1.salt = pane.id;
         let ctx = ui.ctx().clone();
@@ -517,11 +515,9 @@ impl Tab {
                 link: self.connection.spoken_link(crate::metrics::wall_clock_ms()),
             };
             let pane = &mut self.flow_pane;
-            chrome.surfaces.update_scoped(
+            chrome.surfaces.pane_header.update_scoped(
                 pane.id,
-                crate::surfaces::HostIntent::PaneHeader(
-                    quantick_ui_model::pane_header::Intent::RefreshFlow(pane.flow_header_state()),
-                ),
+                quantick_ui_model::pane_header::Intent::RefreshFlow(pane.flow_header_state()),
             );
             let (intent, indicators) = pane.draw_flow_sides(
                 ui,
@@ -578,18 +574,16 @@ impl Tab {
             });
         let pane = &mut self.time_panes[slot];
         let snapshot = quantick_ui_model::pane_header::Snapshot::time(pane.spec.spec());
-        surfaces.update_scoped(
+        surfaces.pane_header.update_scoped(
             pane.id,
-            crate::surfaces::HostIntent::PaneHeader(
-                quantick_ui_model::pane_header::Intent::Refresh(snapshot),
-            ),
+            quantick_ui_model::pane_header::Intent::Refresh(snapshot),
         );
         let (model, _) = surfaces.pane_header.scoped(pane.id);
         let header = model.header.as_ref().expect("refreshed header");
         let spec = &mut pane.spec;
         pane.frame.header_controls.clear();
         let indicators = crate::time_header::draw(ui, strip, pane.id, reserve_px, |ui| {
-            crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
+            crate::pane_header::bars_control(ui, header, pane.id, spec, bar_inputs, rebuilding)
         });
         if let Some(job_slot) = &job_slot {
             let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right()

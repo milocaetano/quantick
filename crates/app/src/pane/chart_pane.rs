@@ -1290,7 +1290,7 @@ impl ChartPane {
                 plate: parts.plate,
                 clock: &clock,
                 bars: parts.bars.then_some(BarsPart {
-                    header: &bars,
+                    header: bars,
                     selection: &mut self.spec,
                     inputs: chrome.inputs,
                     rebuilding: chrome.rebuilding,
