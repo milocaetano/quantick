@@ -4,7 +4,80 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{FontFamily, FontSpec, Px, PxRect, TextMetrics, pos2, vec2};
+use crate::Px;
+use crate::geometry::{pos2, vec2};
+use crate::rect::PxRect;
+
+/// The two typefaces a mark's label is set in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontFamily {
+    Proportional,
+    Monospace,
+}
+
+/// A label's face and size in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontSpec {
+    pub size_px: f32,
+    pub family: FontFamily,
+}
+
+impl FontSpec {
+    pub fn themed(
+        theme: &quantick_appearance::ResolvedTheme,
+        role: quantick_appearance::FontRole,
+        size: f32,
+    ) -> Self {
+        let font = theme.typography.at_size(role, size);
+        Self {
+            size_px: font.size,
+            family: match font.family {
+                quantick_appearance::FontFamily::Proportional => FontFamily::Proportional,
+                quantick_appearance::FontFamily::Monospace => FontFamily::Monospace,
+            },
+        }
+    }
+
+    #[must_use]
+    pub const fn proportional(size_px: f32) -> Self {
+        Self {
+            size_px,
+            family: FontFamily::Proportional,
+        }
+    }
+
+    #[must_use]
+    pub const fn monospace(size_px: f32) -> Self {
+        Self {
+            size_px,
+            family: FontFamily::Monospace,
+        }
+    }
+}
+
+/// How big a label sets, asked of the renderer that owns the fonts: a tool
+/// that sizes a plate around its words needs the words' real extent.
+pub trait TextMetrics {
+    /// The width and height `text` occupies on one line in `font`.
+    fn size(&self, text: &str, font: FontSpec) -> Px;
+    fn note_size(&self, text: &str, format: TextFormat) -> Px {
+        self.size(text, format.font)
+    }
+}
+
+/// The metrics of a context that sets no label — a hit test or a gesture
+/// paints nothing, so every size it could ask for is zero.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Unmeasured;
+
+impl TextMetrics for Unmeasured {
+    fn size(&self, _text: &str, _font: FontSpec) -> Px {
+        Px::ZERO
+    }
+}
+
+/// See [`Unmeasured`].
+pub const UNMEASURED: Unmeasured = Unmeasured;
 
 pub const MIN_WRAP_PX: f32 = 40.0;
 pub const MAX_WRAP_PX: f32 = 1200.0;
@@ -116,35 +189,6 @@ pub fn text_bounds(anchor: Px, size: Px, appearance: TextAppearance) -> PxRect {
     )
 }
 
-/// A new empty note carries only the source's appearance, never its words.
-pub fn repeat_opening(drawing: &crate::Drawing<crate::DrawingTool>) -> crate::NewDrawing {
-    let mut payload = drawing.tool.default_payload();
-    if let Some(value) = drawing.payload.export_preset() {
-        payload.import_preset(&value);
-    }
-    crate::NewDrawing {
-        style: drawing.style,
-        payload,
-    }
-}
-
-/// The projected note body, available to chrome without asking it to measure.
-pub fn drawing_bounds(
-    drawing: &crate::Drawing<crate::DrawingTool>,
-    anchors: PxRect,
-    chart: PxRect,
-) -> PxRect {
-    if let Some(payload) = drawing
-        .payload
-        .as_any()
-        .downcast_ref::<crate::TextPayload>()
-    {
-        payload.bounds(anchors.min, &crate::UNMEASURED)
-    } else {
-        drawing.tool.painted_bounds(anchors, chart)
-    }
-}
-
 /// Reverse the shared note bounds for an editor using the same projection.
 pub fn anchor_from_bounds(bounds: PxRect, appearance: TextAppearance) -> Px {
     pos2(
@@ -152,7 +196,3 @@ pub fn anchor_from_bounds(bounds: PxRect, appearance: TextAppearance) -> Px {
         bounds.max.y + TEXT_LIFT_PX - appearance.padding(),
     )
 }
-
-#[cfg(test)]
-#[path = "text_tests.rs"]
-mod tests;

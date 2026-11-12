@@ -200,7 +200,7 @@ pub fn repeat(
         tool: DrawingTool::by_id("text").expect("registered text"),
         points: vec![point],
         band,
-        opening: quantick_drawings::text::repeat_opening(drawing),
+        opening: quantick_drawings::repeat_opening(drawing),
         author,
         name: None,
         text: input.text.clone(),

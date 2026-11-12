@@ -1,4 +1,4 @@
-//! Text properties use the same layout as the on-chart note.
+//! Text properties preserve the note's font while wrapping to the inspector.
 use super::{Drawing, StyleColor32};
 use eframe::egui;
 use quantick_drawings::{
@@ -55,9 +55,12 @@ pub(super) fn draw(ui: &mut egui::Ui, drawing: &mut Drawing) -> bool {
                 .suffix(" px"),
         )
         .changed();
-    let format = payload.format();
-    let mut layouter =
-        |ui: &egui::Ui, text: &str, _width: f32| super::text::layout(ui.ctx(), text, format, color);
+    let mut format = payload.format();
+    let mut layouter = move |ui: &egui::Ui, text: &str, width: f32| {
+        // The chart's wrap width belongs to the note, not this narrow editor.
+        format.appearance.wrap_width_px = Some(width);
+        super::text::layout(ui.ctx(), text, format, color)
+    };
     changed |= ui
         .add(
             egui::TextEdit::multiline(&mut payload.text)

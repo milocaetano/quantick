@@ -160,8 +160,8 @@ impl DrawingController {
         // popup that keeps clear of an object reads this rectangle, so asking
         // the anchors alone is what let a panel land in the middle of a
         // profile while believing it had walked around it.
-        let bbox = drawings::egui_rect(quantick_drawings::text::drawing_bounds(
-            drawing,
+        let bbox = drawings::egui_rect(drawing.tool.content_bounds(
+            drawing.payload.as_ref(),
             drawings::px_rect(bbox),
             band.rect,
         ));

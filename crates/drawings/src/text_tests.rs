@@ -1,5 +1,6 @@
-use super::*;
+use crate::text::*;
 use crate::{ChartPoint, DrawingPayload, DrawingTool, Drawings, FontSpec, TextPayload, UNMEASURED};
+use crate::{Px, TextMetrics, pos2, repeat_opening, vec2};
 
 struct Measured;
 impl TextMetrics for Measured {
@@ -33,6 +34,27 @@ fn measured_bounds_follow_anchor_without_edge_pinning_and_feed_headless_picks() 
         let moved = payload.bounds(anchor, &UNMEASURED);
         assert_eq!(moved.min - first.min, anchor - pos2(200.0, 180.0));
         assert_eq!(anchor_from_bounds(moved, payload.appearance), anchor);
+    }
+}
+
+#[test]
+fn tool_bounds_dispatch_uses_note_measurement_and_keeps_other_tool_geometry() {
+    let payload = styled();
+    let anchor = pos2(200.0, 180.0);
+    let anchors = crate::PxRect::from_min_max(anchor, anchor);
+    let chart = crate::PxRect::from_min_size(Px::ZERO, vec2(800.0, 600.0));
+    let measured = payload.bounds(anchor, &Measured);
+    let tool = DrawingTool::by_id("text").unwrap();
+    assert_eq!(tool.content_bounds(&payload, anchors, chart), measured);
+    for tool in crate::DRAWING_TOOLS {
+        if tool.id() != "text" {
+            assert_eq!(
+                tool.content_bounds(tool.default_payload().as_ref(), anchors, chart),
+                tool.painted_bounds(anchors, chart),
+                "{} retains its painted geometry",
+                tool.id(),
+            );
+        }
     }
 }
 

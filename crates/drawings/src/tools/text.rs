@@ -131,6 +131,12 @@ fn shown<'a>(payload: &'a TextPayload, style: DrawingStyle, appearance: &quantic
 }
 
 impl MarkTool for Text {
+    fn content_bounds(&self, payload: &dyn DrawingPayload, anchors: PxRect, _chart: PxRect) -> PxRect {
+        payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .map_or(anchors, |payload| payload.bounds(anchors.min, &crate::UNMEASURED))
+    }
     fn id(&self) -> &'static str {
         "text"
     }

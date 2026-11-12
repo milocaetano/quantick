@@ -203,3 +203,15 @@ pub fn prepare_repeat(host: &mut dyn PresetHost, drawing: &Drawing<crate::Drawin
         save_tool_default(host, drawing);
     }
 }
+
+/// A repeated object carries the source's preset appearance, never its content.
+pub fn repeat_opening<T: ToolCatalog>(drawing: &Drawing<T>) -> NewDrawing {
+    let mut payload = drawing.tool.default_payload();
+    if let Some(value) = drawing.payload.export_preset() {
+        payload.import_preset(&value);
+    }
+    NewDrawing {
+        style: drawing.style,
+        payload,
+    }
+}
