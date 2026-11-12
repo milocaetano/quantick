@@ -25,7 +25,9 @@
 use eframe::egui;
 
 use crate::theme;
-pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, popup_still_open, report};
+pub use quantick_feed::notice_report::{
+    NoticeAction, Report, Severity, popup_still_open, report, roll_label,
+};
 use quantick_feed::stall::Recovery;
 
 /// The word when the chart is not being fed: one word for several faults, which
@@ -87,6 +89,10 @@ const CAPTION_GAP_PX: f32 = 6.0;
 /// on offer said "Try again" and quietly reset the timeline.
 const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
      disarms every strategy.";
+
+/// What a roll off an unlisted contract does, under the button that runs it.
+const ROLL_CAPTION: &str =
+    "Rolling keeps the workspace and drawings; the chart starts on the next contract.";
 
 /// What each control costs, in the trader's terms, on its own hover.
 ///
@@ -193,9 +199,11 @@ fn geometry(
     };
     let headline = wrap(report.headline, HEADLINE_PT, palette.text_primary());
     let step = report
-        .next_step
-        .map(|step| wrap(step, STEP_PT, palette.text_muted()));
-    let caption = wrap(RELOAD_CAPTION, CAPTION_PT, palette.text_faint());
+        .next_step_text()
+        .map(|step| wrap(&step, STEP_PT, palette.text_muted()));
+    let rolls = report.roll_target().is_some();
+    let caption = if rolls { ROLL_CAPTION } else { RELOAD_CAPTION };
+    let caption = wrap(caption, CAPTION_PT, palette.text_faint());
 
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
@@ -253,7 +261,15 @@ fn geometry(
         step,
         caption,
         primary: (primary, report.primary),
-        secondary: (secondary, report.primary.other()),
+        // A roll takes the first place; the act it displaced stays beside it.
+        secondary: (
+            secondary,
+            if rolls {
+                report.primary
+            } else {
+                report.primary.other()
+            },
+        ),
     }
 }
 
@@ -361,18 +377,26 @@ pub fn draw_popup(
     // trader cannot reach the other one.
     let mut action = NoticeAction::None;
     let (primary_rect, primary_recovery) = primary;
+    let roll = report.roll_target();
+    let (label, cost) = match roll {
+        Some(target) => (roll_label(target), ROLL_CAPTION),
+        None => (
+            primary_recovery.label().to_owned(),
+            recovery_cost(primary_recovery),
+        ),
+    };
     if ui
         .put(
             primary_rect,
-            egui::Button::new(
-                egui::RichText::new(primary_recovery.label()).color(palette.chip_ink()),
-            )
-            .fill(accent),
+            egui::Button::new(egui::RichText::new(label).color(palette.chip_ink())).fill(accent),
         )
-        .on_hover_text(recovery_cost(primary_recovery))
+        .on_hover_text(cost)
         .clicked()
     {
-        action = primary_recovery.into();
+        action = roll.map_or_else(
+            || primary_recovery.into(),
+            |target| NoticeAction::Roll(target.to_owned()),
+        );
     }
     let (secondary_rect, secondary_recovery) = secondary;
     if ui

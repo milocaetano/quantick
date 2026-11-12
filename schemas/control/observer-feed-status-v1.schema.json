@@ -303,6 +303,13 @@
         },
         "text_availability": {
           "type": "string"
+        },
+        "unlisted_symbol": {
+          "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals. Absent otherwise; an optional field\nis an additive change to the v1 payload.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

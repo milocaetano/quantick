@@ -72,6 +72,28 @@ impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlP
     }
 }
 
+impl quantick_control_handlers::contract_roll::UnlistedContractPort for dyn ControlPort {
+    fn tab_count(&self) -> usize {
+        self.tab_reads().tabs().len()
+    }
+    fn unlisted_contract(&self, index: usize) -> Option<String> {
+        let tab = self.tab_reads().tab_at(index)?;
+        tab.link.notice.unlisted_symbol().map(str::to_owned)
+    }
+    fn feed_connected(&self, index: usize) -> bool {
+        let tab = self.tab_reads().tab_at(index);
+        tab.is_some_and(|tab| {
+            tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected
+        })
+    }
+    fn auto_roll_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut quantick_control_handlers::contract_roll::AutoRoll> {
+        Some(&mut self.tabs_mut().tab_at_mut(index)?.auto_roll)
+    }
+}
+
 impl TabDirectory for dyn ControlPort {
     fn active_tab_index(&self) -> usize {
         self.tab_reads().active_tab_index()

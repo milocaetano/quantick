@@ -503,6 +503,9 @@ pub enum FeedNotice {
         headline: String,
         /// The single next step to fix it.
         next_step: String,
+        /// The contract the venue said it does not list, from the provider's
+        /// structured report: what a configured contract roll starts from.
+        unlisted: Option<String>,
     },
 }
 
@@ -613,6 +616,35 @@ impl FeedNotice {
         Self::Attention {
             headline: headline.into(),
             next_step: next_step.into(),
+            unlisted: None,
+        }
+    }
+
+    /// An attention notice that also names, as data, the contract the venue
+    /// does not list — `None` keeps it a plain [`Self::attention`].
+    #[must_use]
+    pub fn with_unlisted(self, symbol: Option<String>) -> Self {
+        match self {
+            Self::Attention {
+                headline,
+                next_step,
+                ..
+            } => Self::Attention {
+                headline,
+                next_step,
+                unlisted: symbol,
+            },
+            other => other,
+        }
+    }
+
+    /// The contract the venue reported it does not list, when this notice
+    /// says so.
+    #[must_use]
+    pub fn unlisted_symbol(&self) -> Option<&str> {
+        match self {
+            Self::Attention { unlisted, .. } => unlisted.as_deref(),
+            _ => None,
         }
     }
 }

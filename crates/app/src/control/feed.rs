@@ -85,7 +85,8 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     feed_display_name: tab.feed_display_name(config).to_owned(),
                     source_mode: if replay { "replay" } else { "live" }.to_owned(),
                     connection_state: connection_state(tab.link.feed_connection).to_owned(),
-                    notice: FeedNoticeSnapshot::from_summary(tab.link.notice.summary()),
+                    notice: FeedNoticeSnapshot::from_summary(tab.link.notice.summary())
+                        .with_unlisted(tab.link.notice.unlisted_symbol()),
                     capabilities: FeedCapabilitiesSnapshot::from(capabilities),
                     provenance: market_data_provenance(tab, config),
                     history_trade_count: WireU64::new(

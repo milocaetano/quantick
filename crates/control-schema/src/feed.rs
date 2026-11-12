@@ -313,9 +313,25 @@ pub struct FeedNoticeSnapshot {
     pub headline_present: bool,
     pub next_step_present: bool,
     pub text_availability: String,
+    /// The contract the venue reported it does not list, from the feed's
+    /// structured report — not from the redacted words. When it is the tab's
+    /// `active_symbol`, `feed.contract.roll` from it is the popup's Roll
+    /// button: same rule, same refusals. Absent otherwise; an optional field
+    /// is an additive change to the v1 payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlisted_symbol: Option<String>,
 }
 
 impl FeedNoticeSnapshot {
+    /// The same view, naming the contract the venue does not list.
+    #[must_use]
+    pub fn with_unlisted(self, symbol: Option<&str>) -> Self {
+        Self {
+            unlisted_symbol: symbol.map(str::to_owned),
+            ..self
+        }
+    }
+
     /// The redacted view of a notice, from its kind and which of its two
     /// texts it carries: the words name the venue and the terminal behind
     /// it, and the observe tier does not publish them.
@@ -331,6 +347,7 @@ impl FeedNoticeSnapshot {
                 "not_applicable"
             }
             .to_owned(),
+            unlisted_symbol: None,
         }
     }
 }

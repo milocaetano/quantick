@@ -1839,6 +1839,7 @@ mod tests {
         let FeedNotice::Attention {
             headline,
             next_step,
+            ..
         } = bind_failure_notice(
             "US500",
             &Mt5Error::Bind {

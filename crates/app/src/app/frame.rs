@@ -134,6 +134,11 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
 /// (resets the chart) and apply its spec; a changed market moves its
 /// layouts along.
 fn apply_feed_switch(app: &mut QuantickApp) {
+    // Restored tabs on a contract the venue no longer lists roll themselves.
+    let port = app as &mut dyn super::control_host::ControlPort;
+    for note in quantick_control_handlers::contract_roll::settle_auto_rolls(port) {
+        app.surfaces.toast.note(note, Instant::now());
+    }
     let (tab, config) = app.active_with_config();
     let changed =
         tab.link.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
@@ -651,6 +656,11 @@ impl QuantickApp {
         let popup_tab = self.runtime.tabs.active_id();
         let mut answers =
             canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
+        if answers.popup_open {
+            let port = self as &dyn super::control_host::ControlPort;
+            let active = self.runtime.tabs.active_index();
+            answers.roll = quantick_control_handlers::contract_roll::notice_roll(port, active);
+        }
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -732,6 +742,16 @@ impl QuantickApp {
         spawn: &mut crate::tab::LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
     ) {
+        if let crate::feed_notice::NoticeAction::Roll(target) = &answers.notice_action
+            && let Some(index) = self.runtime.tabs.position(answers.popup_tab)
+        {
+            let port = self as &mut dyn super::control_host::ControlPort;
+            let rolled =
+                quantick_control_handlers::contract_roll::roll_from_notice(port, index, target);
+            self.surfaces
+                .toast
+                .note(rolled.unwrap_or_else(|refusal| refusal), now);
+        }
         let presented = self.presentation.resolve(&self.runtime, ctx).is_ok();
         super::frame_tail::FrameTailOwners {
             tabs: &mut self.runtime.tabs,
@@ -745,7 +765,7 @@ impl QuantickApp {
                 presentation: presented.then_some(ctx),
                 now,
                 tz: self.runtime.tz,
-                notice_action: answers.notice_action,
+                notice_action: answers.notice_action.clone(),
                 popup_tab: answers.popup_tab,
                 popup_open: answers.popup_open,
                 chip_clicked: answers.chip_clicked,

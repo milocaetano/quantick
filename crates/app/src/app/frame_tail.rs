@@ -61,6 +61,9 @@ impl FrameTailOwners<'_> {
                         feed_notice::NoticeAction::Reload => {
                             let _ = tab.reload_feed_with_spawn(self.config, spawn);
                         }
+                        // Rolled by the window before its tail: the roll
+                        // carries drawings these owners cannot reach.
+                        feed_notice::NoticeAction::Roll(_) => {}
                     }
                 }
                 FrameTailStage::SettlePaperPanels => settle(self.tabs, self.toast, input.now),
@@ -80,7 +83,7 @@ impl FrameTailOwners<'_> {
                         input.chip_clicked,
                         input.chip_rect.is_some(),
                         input.dismissed,
-                        input.notice_action,
+                        input.notice_action.clone(),
                     )
                     .then_some(input.popup_tab);
                 }

@@ -5,7 +5,7 @@ use crate::{
 };
 
 /// What the person watching asked of the popup this frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NoticeAction {
     /// Nothing was clicked.
     #[default]
@@ -14,6 +14,9 @@ pub enum NoticeAction {
     Reconnect,
     /// Throw the timeline away and rebuild it.
     Reload,
+    /// Roll the tab off a contract the venue no longer lists, onto the one
+    /// its feed config names next: the contract roll, drawings carried.
+    Roll(String),
 }
 
 impl From<Recovery> for NoticeAction {
@@ -55,14 +58,61 @@ pub struct Report<'a> {
     pub severity: Severity,
     /// The control offered first. The other is always beside it.
     pub primary: Recovery,
+    /// What a contract roll can do about a contract the venue no longer
+    /// lists; `None` leaves the report exactly as it was without one.
+    pub roll: Option<RollNote<'a>>,
 }
 
-impl Report<'_> {
+/// The contract roll a report about an unlisted contract carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollNote<'a> {
+    /// The configured next contract: offered first, in Reconnect's place.
+    To(&'a str),
+    /// Why the configured roll cannot run now, said under the next step.
+    Refused(&'a str),
+}
+
+impl<'a> Report<'a> {
     /// Whether the corner should carry this report.
     #[must_use]
     pub fn is_offline(&self) -> bool {
         matches!(self.severity, Severity::Offline)
     }
+
+    /// The same report, carrying `roll`.
+    #[must_use]
+    pub fn with_roll(self, roll: Option<RollNote<'a>>) -> Self {
+        Self { roll, ..self }
+    }
+
+    /// The roll this report offers in place of Reconnect, if any.
+    #[must_use]
+    pub fn roll_target(&self) -> Option<&'a str> {
+        match self.roll {
+            Some(RollNote::To(target)) => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The next step as the popup words it: a refused roll's reason follows
+    /// the provider's own step, which stays word for word.
+    #[must_use]
+    pub fn next_step_text(&self) -> Option<String> {
+        let step = self.next_step?;
+        Some(match self.roll {
+            Some(RollNote::Refused(reason)) => format!("{step}\n{ROLL_REFUSED_PREFIX}{reason}."),
+            _ => step.to_owned(),
+        })
+    }
+}
+
+/// What heads a refused roll's reason under the next step.
+pub const ROLL_REFUSED_PREFIX: &str = "Cannot roll to the next contract: ";
+
+/// The label of the control that rolls to `target`.
+#[must_use]
+pub fn roll_label(target: &str) -> String {
+    format!("Roll to {target}")
 }
 
 /// Build the report for a feed, or `None` when there is nothing to say.
@@ -78,6 +128,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
     if let FeedNotice::Attention {
         headline,
         next_step,
+        ..
     } = notice
     {
         return Some(Report {
@@ -86,6 +137,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: true,
             severity: Severity::Offline,
             primary: Recovery::Reconnect,
+            roll: None,
         });
     }
     if let Some(stall) = stall {
@@ -95,6 +147,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: stall.needs_attention,
             severity: Severity::Offline,
             primary: stall.primary,
+            roll: None,
         });
     }
     match notice {
@@ -105,6 +158,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: false,
             severity: Severity::Progress,
             primary: Recovery::Reconnect,
+            roll: None,
         }),
     }
 }
@@ -216,6 +270,32 @@ mod tests {
         );
     }
     #[test]
+    fn a_roll_offer_takes_the_place_of_nothing_but_its_own_words() {
+        let notice = FeedNotice::attention("MetaTrader does not list WINV26", "Add it.")
+            .with_unlisted(Some("WINV26".to_owned()));
+        let bare = plain(&notice).expect("an attention speaks");
+        assert_eq!(bare.roll, None, "the notice alone offers no roll");
+        assert_eq!(bare.next_step_text().as_deref(), Some("Add it."));
+
+        let offered = bare.with_roll(Some(RollNote::To("WINZ26")));
+        assert_eq!(offered.roll_target(), Some("WINZ26"));
+        assert_eq!(roll_label("WINZ26"), "Roll to WINZ26");
+        assert_eq!(offered.next_step_text().as_deref(), Some("Add it."));
+        assert_eq!(offered.headline, bare.headline, "today's words stay");
+
+        let refused = bare.with_roll(Some(RollNote::Refused("Finish the drawing gesture first")));
+        assert_eq!(
+            refused.roll_target(),
+            None,
+            "a refused roll offers no button"
+        );
+        assert_eq!(
+            refused.next_step_text().as_deref(),
+            Some("Add it.\nCannot roll to the next contract: Finish the drawing gesture first.")
+        );
+        assert_eq!(refused.primary, Recovery::Reconnect);
+    }
+    #[test]
     fn a_quiet_tape_gets_controls_and_not_an_alarm() {
         let stall = silent_stall();
         let report = from_stall(&stall);
@@ -255,9 +335,13 @@ mod tests {
             !open(false, false, false, NoticeAction::None),
             "so does a feed that came back on its own"
         );
-        for action in [NoticeAction::Reconnect, NoticeAction::Reload] {
+        for action in [
+            NoticeAction::Reconnect,
+            NoticeAction::Reload,
+            NoticeAction::Roll("WINZ26".to_owned()),
+        ] {
             assert!(
-                !open(false, true, false, action),
+                !open(false, true, false, action.clone()),
                 "a control that was pressed is under way, not still being read: {action:?}"
             );
         }

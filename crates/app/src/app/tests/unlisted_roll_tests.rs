@@ -1,0 +1,172 @@
+//! A contract the venue no longer lists rolls to the one its feed config names
+//! next: offered on the notice popup, and taken by itself on a restored tab.
+use super::*;
+use quantick_feed::FeedNotice;
+
+/// What the MetaTrader bridge's `BRIDGE_SYMBOL_NOT_FOUND` reaches a tab as.
+fn unlisted(symbol: &str) -> FeedNotice {
+    FeedNotice::attention(
+        format!("MetaTrader does not list {symbol}"),
+        "Add the contract to Market Watch.",
+    )
+    .with_unlisted(Some(symbol.to_owned()))
+}
+
+/// A tab on TESTUSDT whose feed config rolls it to ETHUSDT.
+fn rolling_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+    let (mut app, commands) = app_with_history(4);
+    app.config.feeds[0].contract_rolls =
+        std::collections::BTreeMap::from([("TESTUSDT".to_owned(), "ETHUSDT".to_owned())]);
+    (app, commands)
+}
+
+/// The popup open on the active tab, over `notice`, settled for a click.
+fn popup_over(app: &mut QuantickApp, ctx: &egui::Context, notice: FeedNotice) -> egui::FullOutput {
+    app.active_tab_mut().link.notice = notice;
+    app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
+    for _ in 0..3 {
+        run_frame(app, ctx);
+    }
+    run_frame(app, ctx)
+}
+
+fn click(at: egui::Pos2) -> Vec<egui::Event> {
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    vec![egui::Event::PointerMoved(at), press(true), press(false)]
+}
+
+#[test]
+fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    run_frame(&mut app, &ctx);
+    let output = popup_over(&mut app, &ctx, unlisted("TESTUSDT"));
+    assert_eq!(
+        app.active_tab().active.1,
+        "TESTUSDT",
+        "a tab opened by hand waits for the press"
+    );
+    let at = painted_text_center(&output, "Roll to ETHUSDT").expect("the roll is offered first");
+    assert!(
+        painted_text_center(&output, "Reconnect").is_some(),
+        "the act it displaced stays beside it"
+    );
+    run_frame_with_events(&mut app, &ctx, click(at));
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    assert_eq!(
+        app.surfaces.toast.message(),
+        Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
+    );
+    assert_eq!(
+        app.chrome.feed_popup_tab, None,
+        "a pressed control closes it"
+    );
+}
+
+#[test]
+fn no_successor_keeps_today_s_notice_and_its_reconnect() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let output = popup_over(&mut app, &ctx, unlisted("TESTUSDT"));
+    assert!(painted_text_center(&output, "Reconnect").is_some());
+    assert!(painted_text_center(&output, "Reload").is_some());
+    assert!(
+        !painted_text(&output)
+            .iter()
+            .any(|text| text.starts_with("Roll to")),
+        "{:?}",
+        painted_text(&output)
+    );
+}
+
+#[test]
+fn a_refused_roll_keeps_reconnect_and_says_why() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    let scratch = crate::scratch::ScratchDir::new("unlisted-roll-refused");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(scratch.path().to_path_buf());
+    run_frame(&mut app, &ctx);
+    app.apply_toolbar_action(ToolbarAction::PaperBuy);
+    assert!(!app.active_tab().paper.is_flat(), "a position is open");
+    let output = popup_over(&mut app, &ctx, unlisted("TESTUSDT"));
+    assert!(painted_text_center(&output, "Reconnect").is_some());
+    assert!(
+        painted_text(&output).iter().any(|text| text.contains(
+            "Cannot roll to the next contract: Close the paper position and cancel working orders first."
+        )),
+        "{:?}",
+        painted_text(&output)
+    );
+    assert!(
+        !painted_text(&output)
+            .iter()
+            .any(|text| text.starts_with("Roll to"))
+    );
+}
+
+#[test]
+fn a_restored_tab_rolls_itself_once_and_says_so() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = rolling_app();
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.4),
+                context_collapsed: false,
+                flow_collapsed: false,
+                context_heights: vec![],
+                context_panes_collapsed: vec![],
+                focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "dollar:250000".to_owned(),
+                time_bars: Some("time:5m".to_owned()),
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
+                orderflow_panel: Default::default(),
+            }],
+            None,
+        ));
+    assert!(app.active_tab().auto_roll.is_armed());
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    assert_eq!(
+        app.surfaces.toast.message(),
+        Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
+    );
+
+    // The same contract reported again rolls nothing further.
+    app.config.feeds[0]
+        .contract_rolls
+        .insert("ETHUSDT".to_owned(), "TESTUSDT".to_owned());
+    app.active_tab_mut().link.notice = unlisted("ETHUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "TESTUSDT", "one step per report");
+    app.active_tab_mut().link.notice = unlisted("TESTUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().active.1,
+        "TESTUSDT",
+        "a configured cycle does not loop: TESTUSDT was decided already"
+    );
+}

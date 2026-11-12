@@ -98,6 +98,7 @@ mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
+mod unlisted_roll_tests;
 mod widget_surface_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;

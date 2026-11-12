@@ -716,7 +716,8 @@ async fn forward_bridge_line(
             report
                 .next_step
                 .unwrap_or_else(|| "See bridge/mt5/README.md for this bridge's setup.".to_owned()),
-        ),
+        )
+        .with_unlisted(report.unlisted_symbol),
     };
     if matches!(notice, FeedNotice::Attention { .. }) {
         latch.raise(terminal_down);
@@ -852,6 +853,7 @@ mod tests {
         let Some(FeedNotice::Attention {
             headline,
             next_step,
+            ..
         }) = rx.recv().await
         else {
             panic!("expected an attention notice");
@@ -894,6 +896,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unlisted_contract_reaches_the_tab_as_data() {
+        let (tx, mut rx) = mpsc::channel(4);
+        forward_bridge_line(
+            r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINV26"}"#,
+            "WINV26",
+            &tx,
+            &NoticeLatch::default(),
+        )
+        .await;
+        let notice = rx.recv().await.expect("a notice");
+        assert_eq!(notice.unlisted_symbol(), Some("WINV26"));
+
+        // Any other attention names no contract to roll from.
+        forward_bridge_line(
+            r#"{"event_code":"BRIDGE_SYMBOL_SELECT_FAILED","symbol":"WINV26"}"#,
+            "WINV26",
+            &tx,
+            &NoticeLatch::default(),
+        )
+        .await;
+        let notice = rx.recv().await.expect("a notice");
+        assert!(matches!(notice, FeedNotice::Attention { .. }));
+        assert_eq!(notice.unlisted_symbol(), None);
+    }
+
+    #[tokio::test]
     async fn progress_lines_do_not_count_as_an_explanation() {
         let (tx, mut rx) = mpsc::channel(4);
         let produced = forward_bridge_line(
@@ -920,6 +948,7 @@ mod tests {
         let Some(FeedNotice::Attention {
             headline,
             next_step,
+            ..
         }) = exit_notice(false, Some(9))
         else {
             panic!("a silent exit must still say something");
@@ -972,6 +1001,7 @@ mod tests {
         let Some(FeedNotice::Attention {
             headline,
             next_step,
+            ..
         }) = rx.recv().await
         else {
             panic!("expected an attention notice");

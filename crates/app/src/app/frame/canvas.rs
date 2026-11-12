@@ -6,6 +6,8 @@
 //! recovery popup the status word opens.
 
 use eframe::egui;
+use quantick_control_handlers::contract_roll::RollRefusal;
+use quantick_feed::notice_report::RollNote;
 use quantick_feed::stall::Stall;
 
 use crate::feed_notice;
@@ -20,6 +22,9 @@ pub(in crate::app) struct CanvasAnswers {
     pub popup_tab: u64,
     pub popup_open: bool,
     pub notice_action: feed_notice::NoticeAction,
+    /// The roll the open popup offers off a contract the venue no longer
+    /// lists, or why it cannot roll; read before the canvas borrows the tabs.
+    pub roll: Option<Result<String, RollRefusal>>,
     pub chip_clicked: bool,
     pub dismissed: bool,
     /// Where the status word landed while it is the popup's door. A feed that
@@ -140,9 +145,15 @@ fn draw_recovery_popup(
                 needs_user: true,
                 severity: feed_notice::Severity::Offline,
                 primary: quantick_feed::stall::Recovery::Reconnect,
+                roll: None,
             }
         }
     };
+    let roll = answers.roll.clone();
+    let report = report.with_roll(roll.as_ref().map(|roll| match roll {
+        Ok(target) => RollNote::To(target),
+        Err(refusal) => RollNote::Refused(refusal.reason()),
+    }));
     // A click anywhere else puts it away, measured against the rectangles that
     // were actually drawn — so a click on the edge of what the trader can see
     // is never read as a click outside it, and the popup is laid out once
