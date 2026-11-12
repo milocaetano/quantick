@@ -67,3 +67,16 @@ claimed. History timestamps are explicitly labeled Received UTC and agent schema
 live feed or replay recording. Issue #894 remains open for separate market-time
 storage/display and replay-speed/seek tests; this change corrects the ambiguous
 label without changing cadence, expiry, persisted field meaning, or old documents.
+
+
+## Main synchronization (#963)
+
+The sync imports main `5684d188c` into alerts base `3bd1ab64b`. Alert
+surface, dock, editor, history, palette and input sources are unchanged by the
+sync; their component-level captures above remain evidence for those exact
+inputs. Imported volume rendering changes the chart behind those surfaces, so
+old captures do not establish the complete merged frame. Volume and indicator
+behavior is covered by the imported deterministic tests. Combined alert and
+indicator authority, registration, retry and readback are revalidated on the
+sync revision; see #963 and its PR for exact-head evidence. The keyboard,
+audible-output and popup-focus limitations above remain unchanged.

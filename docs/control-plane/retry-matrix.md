@@ -114,9 +114,9 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | --- | --- |
 | deduplicated per connection | 87 |
 | key refused; not retryable, read back | 17 |
-| key required; deduplicated per connection | 17 |
+| key required; deduplicated per connection | 18 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **128** |
+| **Total** | **129** |
 
 ## Capabilities
 
@@ -182,6 +182,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `home.show` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `active_surface` | active_surface is home, and the tab_strip.home control is selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.library.edit` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.library.changed` | `payload.script_editor` | the event reports the resulting editor revision; inspect reconciles source and diagnostics | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.mouse_vertical_line.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.mouse_vertical_line.changed` | `payload.indicator_guide.enabled` | an event after the pre-call cursor carries the requested boolean and its payload names the exact tab, pane and slot | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `indicator.native.edit` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `indicator.native.changed` | `payload.native_indicator.slot_id` | the event names the created or edited slot; indicator.native.list reads committed settings | `native_control_edits_share_layout_persistence` |
 | `indicator.picker.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.picker.changed` | `payload.indicator_picker` | the event reports the picker state after the call | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.script.attach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.attached` | `payload.script.slot_id` | an event after the pre-call cursor names a new `slot_id` | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `indicator.script.detach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.detached` | `payload.script.slot_id` | an event after the pre-call cursor names the `slot_id` asked for | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -251,4 +252,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-128 mutable capabilities registered, 128 with a readback.
+129 mutable capabilities registered, 129 with a readback.

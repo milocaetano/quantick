@@ -72,3 +72,5 @@ pub mod appearance;
 pub mod chart_settings;
 
 pub mod script_editor;
+
+pub mod native_indicator;
