@@ -1,6 +1,6 @@
 # quantick
 
-Open-source desktop order-flow trading platform on one deterministic Rust engine.
+Desktop order-flow trading on one deterministic Rust engine.
 
 Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gates: `.claude/hooks/README.md`.
 
@@ -10,7 +10,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 
 - **Dependency direction is one-way; no reverse edges.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; see `guards/src/graph.rs`. Inside a crate too: `guards/src/cycle.rs` fails a module cycle.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp`, `guards`.
-- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `appearance`, `anchored-studies`, `backpressure`, `chart`, `chart-interaction`, `drawings`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `control-handlers`, `control-schema`, `operability`, `indicators`, `indicator-session`, `pine`, `replay`, `session`, `sim`, `sources`, `stores`, `paper`, `civil`, `layers`, `workspace` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but network. `replay` and `strategy` are told the time, never read it. `backtest` and `mcp` are headless too, bar `backtest`'s stderr stopwatch.
+- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `ui-model`, `appearance`, `anchored-studies`, `backpressure`, `chart`, `chart-interaction`, `drawings`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `control-handlers`, `control-schema`, `operability`, `indicators`, `indicator-session`, `pine`, `replay`, `session`, `sim`, `sources`, `stores`, `paper`, `civil`, `layers`, `workspace` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but network. `replay` and `strategy` are told the time, never read it. `backtest` and `mcp` are headless, except `backtest`'s stderr stopwatch.
 - **`feed` and `feed-*` are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses `FeedEvent`. `platform` binds OS windows for `app` alone: safe calls, no egui or domain.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
@@ -28,8 +28,8 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 
 ## Keeping the trunk small
 
-- **A capability docks as a new file plus one registration line** — not a field, an init, a draw call and a hotkey in `QuantickApp`. No port to dock against? Build one: `.claude/skills/new-extension/SKILL.md`. A surface that moves out takes its tests with it.
-- **The size ratchet** (`crates/guards/src/size.rs`, production lines) caps a file at 1,500 lines; `size-baseline.txt` holds signed exceptions under a budget, so raising one lowers another in the same change. No growth past a ceiling, nor over 200 lines below one — `--tighten` writes the new number.
+- **A capability docks as a new file plus one registration line** — not a field, an init, a draw call and a hotkey in `QuantickApp`. No port to dock against? Build one: `.claude/skills/new-extension/SKILL.md`. A moved surface takes its tests with it.
+- **The size ratchet** (`crates/guards/src/size.rs`, production lines) caps a file at 1,500 lines; `size-baseline.txt` holds signed exceptions under a budget, so raising one lowers another in the same change. Never exceed a ceiling or sit over 200 lines below it — `--tighten` writes the new number.
 - **UI-free code in `app` is ratcheted** — `guards/src/ui_free.rs` caps `crates/app` lines that never name `egui`/`eframe`; such code belongs in a headless crate.
 - **Instructions are ratcheted too** — this file, `AGENTS.md`, and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/` (not goal files or evidence), in `context-baseline.txt`: over 10,000 bytes a file needs a signed ceiling, and the budget counts every file but skills, each ceilinged as one directory, so only deleting prose buys room. A `SKILL.md` states each rule that decides an outcome once, operatively; detail goes to its `references/`, reasoning to `docs/agentic-development.md`.
 

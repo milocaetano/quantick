@@ -2946,6 +2946,7 @@ dependencies = [
  "quantick-sim",
  "quantick-stores",
  "quantick-strategy",
+ "quantick-ui-model",
  "quantick-workspace",
  "raw-window-handle",
  "rfd",
@@ -3379,6 +3380,10 @@ dependencies = [
  "quantick-engine",
  "rust_decimal",
 ]
+
+[[package]]
+name = "quantick-ui-model"
+version = "0.1.0"
 
 [[package]]
 name = "quantick-workspace"

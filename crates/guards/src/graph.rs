@@ -56,6 +56,7 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
+    ("ui-model", &[]),
     ("appearance", &[]),
     ("anchored-studies", &["engine", "indicators"]),
     // Queue discipline and progress counts between an owner and a worker;

@@ -35,3 +35,4 @@ operability consumed by `app` only; the behaviour-to-capability table and its dr
 # annotate handlers in `control-handlers` began folding through its update.
 # `session` left it when `control-handlers` began driving the History press
 # through it.
+ui-model consumed by `app` only; the headless UI model contract and shared surface catalog requested in #922 intentionally have one shipped desktop view host. Domain rules remain in their existing crates.

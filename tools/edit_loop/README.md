@@ -216,6 +216,22 @@ recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
 top-three selection and representatives are unchanged, and the PR's own
 ordinary exact-final-head run must pass every one.
 
+The ui-model member-only amendment (#922 under feature #920) binds root SHA256
+`49d241582f073971d2b97237be6c76b368744cefc1ad82e4d053e7fb1a662d2c`.
+Compared with active identity
+`d7deec344053783fb6387a12dfbedfd34692f5a0bdba2744ea44254971b72086`,
+only `crates/ui-model` is added to the workspace members; all other parsed
+manifest values are equal. This is an applicability amendment, not a new
+calibration. Every numerical ceiling, historical calibration identity, host,
+toolchain, jobs, protocol, selection and representative remains unchanged.
+The [complete initial series](https://github.com/milocaetano/quantick/actions/runs/43147064393)
+at `1641593d86b1d2c8c2c86f708653354bdcd0a0f6` failed the identity check;
+its five-loop maxima were app 49.598 s, orderflow 37.337 s and pine 2.292 s,
+below the existing ceilings 82.126 s, 38.703 s and 2.653 s. The retained full
+artifact is `edit-loop-1641593d86b1d2c8c2c86f708653354bdcd0a0f6-1`.
+This failed run does not replace the mandatory fresh ordinary exact-final-head
+run against all original limits, and authorizes no automatic future refresh.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the
