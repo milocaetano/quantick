@@ -189,13 +189,13 @@ pub(super) fn draw_surfaces(
         },
     );
     // A surface hook may have opened the editor inside draw_all.
-    if registry.chart_settings.model_state.is_open()
-        && registry.chart_settings.model_state.editor.target.is_none()
-    {
-        let target = quantick_chart::pane_style::StyleTarget {
-            tab_id: tabs.active_id(),
-            pane_id: editor_pane.id,
-        };
+    if registry.chart_settings.model_state.is_open() && pinned.is_none() {
+        let target = registry.chart_settings.model_state.editor.target.unwrap_or(
+            quantick_chart::pane_style::StyleTarget {
+                tab_id: tabs.active_id(),
+                pane_id: editor_pane.id,
+            },
+        );
         registry.chart_settings.model_state.editor.pin(target);
         registry
             .chart_settings
