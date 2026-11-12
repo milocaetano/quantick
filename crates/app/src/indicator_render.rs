@@ -179,11 +179,13 @@ pub(crate) fn draw_overlays<'a>(
     bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
     for view in overlays {
+        let rect = painter.clip_rect();
+        let independent = view.bottom_scale(start, end, partial_slot, rect.top(), rect.bottom());
         draw_view_plots(
             painter,
             view,
             x,
-            |v| scale.y(v),
+            |v| independent.map_or_else(|| scale.y(v), |scale| scale.y(v)),
             start,
             end,
             partial_slot,

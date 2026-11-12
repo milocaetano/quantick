@@ -256,6 +256,14 @@ impl PaneHitTest<'_> {
         let (start, end) = viewport.visible_range(chart.width(), total);
         let mut best: Option<(f32, SlotId)> = None;
         for view in self.projection.indicators.visible_overlays() {
+            let independent = view.bottom_scale(
+                start,
+                end,
+                total.checked_sub(1),
+                chart.top(),
+                chart.bottom(),
+            );
+            let y = |value| independent.map_or_else(|| scale.y(value), |scale| scale.y(value));
             for index in 0..view.descriptor.plots.len() {
                 let Some(resolved) = view.plot_style(index) else {
                     continue;
@@ -278,7 +286,7 @@ impl PaneHitTest<'_> {
                         previous = None;
                         continue;
                     }
-                    let point = egui::pos2(viewport.x_center(row, right, total), scale.y(value));
+                    let point = egui::pos2(viewport.x_center(row, right, total), y(value));
                     if let Some(from) = previous {
                         let distance = drawings::distance_to_segment(pos, from, point);
                         if distance <= PLOT_PICK_TOLERANCE_PX

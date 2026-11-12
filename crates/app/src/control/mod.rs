@@ -21,6 +21,7 @@ mod indicator_guide;
 mod indicator_picker;
 mod interaction;
 pub(crate) mod inventory;
+mod native_indicator;
 mod price_axis;
 mod price_tag_progress;
 mod time_axis;

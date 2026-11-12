@@ -1,0 +1,4 @@
+# Native indicator control docks through app-owned tabs, pane workers and layout mirroring.
+# Input validation, preparation, readback and transport remain in headless control crates.
+crates/app +17
+!budget +17
