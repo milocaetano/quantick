@@ -64,6 +64,7 @@ pub(crate) trait ControlPort:
     + ChromePort
     + HealthPort
     + AlertsPort
+    + quantick_control_handlers::alerts::AlertDefinitionsPort
     + LayoutPort
     + PaperPort
     + LayersPort
@@ -82,6 +83,7 @@ impl<T> ControlPort for T where
         + ChromePort
         + HealthPort
         + AlertsPort
+        + quantick_control_handlers::alerts::AlertDefinitionsPort
         + LayoutPort
         + PaperPort
         + LayersPort
@@ -516,6 +518,7 @@ impl<'a> TabsMut<'a> {
 /// screen, read as values where the frame published them.
 #[derive(Clone, Copy)]
 pub(crate) struct ChromeReads<'a> {
+    pub(crate) alerts_open: bool,
     tabs: &'a ArrangementHost,
     style: &'a ChartStyle,
     tool_rail: &'a ToolRail,
@@ -570,6 +573,7 @@ impl<'a> ChromeReads<'a> {
             tz,
             drawing_chrome,
             drawn,
+            alerts_open: false,
             title_bar: None,
             settings_section: None,
             toolbar: &[],
@@ -951,6 +955,7 @@ impl ChromePort for QuantickApp {
             chrome,
             drawn,
         );
+        reads.alerts_open = self.surfaces.alerts.is_open();
         reads.title_bar = Some(&self.chrome.title_bar);
         reads.settings_section = self.chrome.window_menu.settings_shown();
         reads.toolbar = &self.chrome.toolbar_controls;

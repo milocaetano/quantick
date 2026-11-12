@@ -67,6 +67,7 @@ fn drawing_env<'a>(
         ))
     });
     crate::surfaces::DrawingEnv {
+        linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
         selected,
         chart_area: facts.chart_area,
@@ -97,6 +98,7 @@ fn drawing_env<'a>(
 /// that only runs the capture hooks gathers none of them and says so.
 #[derive(Default)]
 struct DrawingViewCosts<'a> {
+    linked_alerts: usize,
     selected_bbox: Option<egui::Rect>,
     selected_band: Option<String>,
     authored_objects: usize,
@@ -189,6 +191,7 @@ impl DrawingController {
         ctx: &egui::Context,
         host: &DrawingReadAccess<'_>,
         tools: &ToolRail,
+        alerts: &quantick_alerts::AlertBook,
     ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
         let manager_open = self.chrome.manager_open();
         let rows = if manager_open {
@@ -203,6 +206,12 @@ impl DrawingController {
         // allocates, every frame, for a value nothing would read.
         let inspector_showing = self.chrome.inspector_open() || self.chrome.inspector_pinned();
         let read = DrawingViewCosts {
+            linked_alerts: host
+                .drawings()
+                .selected()
+                .and_then(|index| host.drawings().items().get(index))
+                .and_then(|drawing| drawing.durable_identity.as_ref())
+                .map_or(0, |target| alerts.drawing_alert_count(target)),
             selected_bbox: self.selected_drawing_bbox(host),
             selected_band: inspector_showing
                 .then(|| self.selected_drawing_band(host))

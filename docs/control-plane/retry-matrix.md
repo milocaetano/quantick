@@ -112,16 +112,25 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 86 |
+| deduplicated per connection | 87 |
 | key refused; not retryable, read back | 17 |
-| key required; deduplicated per connection | 10 |
+| key required; deduplicated per connection | 18 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **120** |
+| **Total** | **129** |
 
 ## Capabilities
 
 | Capability | Versions | Policy | Enforced | Reach | Readback | Field | Applied when | Proven by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `alerts.clear_history` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.create` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.delete` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.edit` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | dock.alerts is selected | `alerts_right_rail_entry` |
+| `alerts.pause` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.rearm` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.resume` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
+| `alerts.target.resolve` | 1 | required | key required; deduplicated per connection | `cockpit` | `events.read` `alerts.changed` | `payload.receipt` | an event after the pre-call cursor names the operation and original request_id; receipt reports the committed alert id/revision or exact durable target. Read alerts.list/read/history for current state. A dropped-before cursor requires reconciliation before a new command. | `alert_socket_crud_retry_and_readback`, `alert_socket_target_binding_and_reopen` |
 | `annotate.arrow.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.drawing_magnet.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].magnet` | the row under the named `tab_id` and `pane_id` whose `drawing_id` was named carries the requested boolean | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `annotate.drawing_scope.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].scope` | the row under the named `tab_id` and `pane_id` whose `drawing_id` was named carries the requested scope | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -243,4 +252,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-120 mutable capabilities registered, 120 with a readback.
+129 mutable capabilities registered, 129 with a readback.

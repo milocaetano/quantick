@@ -17,6 +17,7 @@
 //! Nothing here reads a clock: a handler that stamps an event or a page is
 //! handed the time, or asks its port to stamp it.
 
+pub mod alerts;
 pub mod analysis;
 pub mod annotate;
 pub mod attention;

@@ -12,6 +12,7 @@ use crate::{DrawingPayload, DrawingStyle, ToolCatalog};
 
 #[derive(Debug, Clone)]
 pub struct Drawing<T> {
+    pub durable_identity: Option<quantick_workspace::drawing_identity::DurableDrawingRef>,
     /// Set on a drawing a migration merged in; absent on anything drawn since.
     pub origin: Option<quantick_workspace::layout_document::SavedOrigin>,
     /// See [`DrawingId`]: identity, where the index is only position.
@@ -115,6 +116,15 @@ impl<T> Drawing<T> {
 }
 
 impl Drawing<crate::DrawingTool> {
+    /// Geometry families that the alert target contract can address.
+    #[must_use]
+    pub fn supports_alert_target(&self) -> bool {
+        matches!(
+            self.tool.id(),
+            "trend-line" | "parallel-channel" | "rectangle"
+        )
+    }
+
     /// Whether the OHLC magnet moves this object's anchors at all: a tool
     /// that snaps by its own rule (a mark, an anchored VWAP) has no magnet.
     #[must_use]

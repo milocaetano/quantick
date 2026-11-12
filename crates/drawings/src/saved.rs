@@ -22,6 +22,7 @@ impl SavedDrawingExt for SavedDrawing {
     fn from_drawing(drawing: &Drawing<DrawingTool>) -> Self {
         let [r, g, b, a] = drawing.style.color.to_array();
         Self {
+            durable_identity: drawing.durable_identity.clone(),
             id: Some(drawing.id.0),
             tool: drawing.tool.id().to_owned(),
             name: drawing.name.clone(),
@@ -77,6 +78,7 @@ impl SavedDrawingExt for SavedDrawing {
         }
         let [r, g, b, a] = self.color;
         Some(Drawing {
+            durable_identity: self.durable_identity.clone(),
             id,
             author: self.author.as_ref().map(|author| DrawingAuthor {
                 actor_kind: author.actor_kind.clone(),

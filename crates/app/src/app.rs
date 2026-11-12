@@ -18,6 +18,7 @@ use eframe::egui;
 
 use crate::canvas_layout::PaneIdAllocator;
 
+pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
 pub(crate) mod canvas_wiring;
 pub(crate) mod capsule_wiring;
@@ -271,6 +272,7 @@ impl QuantickApp {
     ) -> workspace_bundle_adapter::WorkspaceBundleAdapter<'_> {
         workspace_bundle_adapter::WorkspaceBundleAdapter {
             arrangement: arrangement_adapter!(self),
+            alerts: &mut self.runtime.alerts.core,
             replay_view: &self.replay_view,
             layout_rename: &mut self.chrome.layout_rename,
             layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
@@ -620,6 +622,7 @@ impl eframe::App for QuantickApp {
         // Whatever the debounce was still holding: a level drawn a moment
         // before closing is a level the trader expects back.
         self.layout_adapter().flush_layouts();
+        let _ = self.runtime.alerts.core.flush();
         if let Some(access) = self.control.control_access.as_mut() {
             access.shutdown_for_exit();
         }

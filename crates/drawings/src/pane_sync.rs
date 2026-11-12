@@ -134,7 +134,13 @@ fn rebase<T: Clone + PartialEq>(
             continue;
         }
         match next.iter_mut().find(|drawing| drawing.id == old.id) {
-            Some(slot) => *slot = old.clone(),
+            Some(slot) => {
+                let identity = slot.durable_identity.clone();
+                *slot = old.clone();
+                if identity.is_some() {
+                    slot.durable_identity = identity;
+                }
+            }
             None => next.push(old.clone()),
         }
     }

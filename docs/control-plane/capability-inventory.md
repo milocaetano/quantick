@@ -24,6 +24,19 @@ capability that cannot change application state.
 
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
+| `alerts.clear_history` | 1 | `alerts` | no | `cockpit`, `cockpit.alert.delete` |
+| `alerts.create` | 1 | `alerts` | no | `cockpit` |
+| `alerts.delete` | 1 | `alerts` | no | `cockpit`, `cockpit.alert.delete` |
+| `alerts.edit` | 1 | `alerts` | no | `cockpit` |
+| `alerts.history` | 1 | `alerts` | yes | `observe` |
+| `alerts.list` | 1 | `alerts` | yes | `observe` |
+| `alerts.open` | 1 | `alerts` | no | `cockpit`, `cockpit.layout` |
+| `alerts.pause` | 1 | `alerts` | no | `cockpit` |
+| `alerts.read` | 1 | `alerts` | yes | `observe` |
+| `alerts.rearm` | 1 | `alerts` | no | `cockpit` |
+| `alerts.resume` | 1 | `alerts` | no | `cockpit` |
+| `alerts.target.resolve` | 1 | `alerts` | no | `cockpit` |
+| `alerts.validate` | 1 | `alerts` | yes | `observe` |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.drawing_magnet.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.drawing_scope.set` | 1 | `annotate` | no | `cockpit` |
@@ -169,4 +182,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-144 capabilities registered.
+157 capabilities registered.
