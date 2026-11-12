@@ -722,7 +722,10 @@ impl<'a> Alerts<'a> {
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
     pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
-        self.surfaces.agent_popup.show(popup);
+        self.surfaces
+            .update(crate::surfaces::HostIntent::AgentPopup(Box::new(
+                quantick_ui_model::agent_popup::Intent::Show(popup),
+            )));
     }
 
     /// Post one line to the window's own acknowledgement lane — the same

@@ -11,7 +11,6 @@ macro_rules! surface_catalog {
             legacy {
                 indicator_picker: IndicatorPickerSurface => Surface::draw, indicator_picker::IndicatorPickerSurface::capture_keyboard;
                 script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
-                agent_popup: AgentPopupSurface => Surface::draw, ignore_keyboard;
                 bar_switch: BarSwitchSurface => Surface::draw, ignore_keyboard;
                 chart_settings: ChartSettingsSurface => Surface::draw, ignore_keyboard;
                 indicator_preview: IndicatorPreviewSurface => Surface::draw, ignore_keyboard;
@@ -21,6 +20,8 @@ macro_rules! surface_catalog {
             }
             modules { drawing_chrome; home; remove_chart; }
             models {
+                [] []
+                agent_popup: AgentPopup => agent_popup = "agent_popup.rs", agent_popup = "agent_popup.rs", agent_popup::effects, Overlay;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 chrome_title_first: ChromeTitleFirst => chrome_title_first = "chrome/probe_title_first.rs", chrome_title_first = "chrome/tests/title_first.rs", chrome_title_first::effects, TitleBar;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]

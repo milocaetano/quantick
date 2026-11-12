@@ -3080,6 +3080,7 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let popup = app
         .surfaces
         .agent_popup
+        .model_state
         .pending()
         .expect("the popup is on screen");
     assert_eq!(popup.message, "look at 108k");
@@ -6425,7 +6426,7 @@ fn the_window_routes_each_notification_to_its_own_lane() {
         app.surfaces.toast.message(),
         Some("hello — fake assistant (agent)")
     );
-    assert!(app.surfaces.agent_popup.pending().is_none());
+    assert!(app.surfaces.agent_popup.model_state.pending().is_none());
 
     let popup = serde_json::json!({ "message": "look at the bid" });
     crate::control::invoke_action(&mut app, &mut access, &actor, "notify.popup", popup)
@@ -6433,6 +6434,7 @@ fn the_window_routes_each_notification_to_its_own_lane() {
     let shown = app
         .surfaces
         .agent_popup
+        .model_state
         .pending()
         .expect("the popup is open");
     assert_eq!(shown.message, "look at the bid");
