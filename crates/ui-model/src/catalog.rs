@@ -16,8 +16,10 @@ macro_rules! surface_catalog {
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
-            modules { home; remove_chart; }
+            modules { remove_chart; }
             models {
+                [] []
+                home: Home => home = "home.rs", home = "home.rs", home::effects, HomeCanvas, Local;
                 [] []
                 drawing_chrome: DrawingChrome => drawing_chrome = "drawing_chrome.rs", drawing_chrome = "drawing_chrome/mod.rs", drawing_chrome::effects, PinnedInspector | DrawingChrome, Local;
                 [] []

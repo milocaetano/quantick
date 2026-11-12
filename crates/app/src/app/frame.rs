@@ -175,7 +175,14 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
     app.surfaces
         .drawing_chrome
         .sync_content_editing(&mut app.runtime.tabs);
-    if super::home_wiring::draw_stage(ctx, app.active_tab_mut(), background) {
+    if super::home_wiring::draw_stage(
+        ctx,
+        app.runtime
+            .bound_mut(&app.presentation.binding)
+            .active_tab_mut(),
+        background,
+        &mut app.surfaces,
+    ) {
         app.surfaces.market_palette.open("", None);
     }
 }

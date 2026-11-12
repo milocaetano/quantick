@@ -26,7 +26,7 @@ The existing frame surface host applies that response through domain ports;
 do not add another dispatcher or make a model reach into the application.
 
 `Surfaces::draw_all` drives overlays. Existing chrome owners call `draw_slot`
-with `Slot::{PaneHeader,TitleBar,Toolbar,MenuBar,TabStrip,StatusLine}`, a `ViewContext` containing
+with `Slot::{PaneHeader,TitleBar,Toolbar,MenuBar,TabStrip,StatusLine,HomeCanvas}`, a `ViewContext` containing
 their borrowed `Ui`, and explicit `SurfaceEnv` inputs. Forward the returned
 response to the existing host effect application. Slot calls do not consume
 another slot's intents. Keyboard capture and capture hooks are registered by
@@ -91,3 +91,10 @@ converted effects once. Borrowed geometry and application references stay on
 that stack, so the host can refresh them after the canvas without copying them
 into the model. Ordinary views continue through `draw_slot` with the same
 catalog membership check.
+
+Home uses `HomeCanvas` at the existing central-panel stage. Its only page-owned
+intent opens the market palette; the existing host applies that effect in the
+same frame. The earlier overlay stage paints it on the next frame, preserving
+the existing frame order. Workspace and chrome retain Home/market
+identity, tab keys and visibility decisions. Their egui/control integration
+regressions remain in app; the page action is tested without QuantickApp.
