@@ -53,7 +53,7 @@ impl FrameTailOwners<'_> {
                 FrameTailStage::ApplyNoticeAction => {
                     let active = self.tabs.active_index();
                     let tab = self.tabs.runtime_mut(active);
-                    match input.notice_action {
+                    match &input.notice_action {
                         feed_notice::NoticeAction::None => {}
                         feed_notice::NoticeAction::Reconnect => {
                             let _ = tab.reconnect_feed_with_spawn(self.config, spawn);
@@ -61,6 +61,8 @@ impl FrameTailOwners<'_> {
                         feed_notice::NoticeAction::Reload => {
                             let _ = tab.reload_feed_with_spawn(self.config, spawn);
                         }
+                        // Run where the drawings it carries are reachable.
+                        feed_notice::NoticeAction::Roll(to) => tab.link.auto_roll.press(to),
                     }
                 }
                 FrameTailStage::SettlePaperPanels => settle(self.tabs, self.toast, input.now),
@@ -80,7 +82,7 @@ impl FrameTailOwners<'_> {
                         input.chip_clicked,
                         input.chip_rect.is_some(),
                         input.dismissed,
-                        input.notice_action,
+                        input.notice_action.clone(),
                     )
                     .then_some(input.popup_tab);
                 }

@@ -313,9 +313,40 @@ pub struct FeedNoticeSnapshot {
     pub headline_present: bool,
     pub next_step_present: bool,
     pub text_availability: String,
+    /// The contract the venue reported it does not list, from the feed's
+    /// structured report — not from the redacted words. When it is the tab's
+    /// `active_symbol`, `feed.contract.roll` from it is the popup's Roll
+    /// button: same rule, same refusals. With `kind` `info` the tab already
+    /// rolled off it onto `active_symbol`, and the note stays through a connect
+    /// until any later notice or switch replaces it. Absent
+    /// otherwise; an optional field is an additive change to the v1 payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlisted_symbol: Option<String>,
+    /// The contract the notice's Roll moves the tab to: the popup's first
+    /// control, and the one beside the status word and on an empty chart.
+    /// Absent when no roll is on offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll_to: Option<String>,
+    /// Why the configured roll off `unlisted_symbol` cannot run right now, as
+    /// the popup and the status word's hover say it. A restored tab rolls by
+    /// itself once the reason clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll_refused: Option<String>,
 }
 
 impl FeedNoticeSnapshot {
+    /// The same view, naming the contract the venue does not list and the
+    /// roll off it: the target on offer, or why it is refused.
+    #[must_use]
+    pub fn with_unlisted(self, symbol: Option<&str>, roll: Option<Result<&str, &str>>) -> Self {
+        Self {
+            unlisted_symbol: symbol.map(str::to_owned),
+            roll_to: roll.and_then(Result::ok).map(str::to_owned),
+            roll_refused: roll.and_then(Result::err).map(str::to_owned),
+            ..self
+        }
+    }
+
     /// The redacted view of a notice, from its kind and which of its two
     /// texts it carries: the words name the venue and the terminal behind
     /// it, and the observe tier does not publish them.
@@ -331,6 +362,9 @@ impl FeedNoticeSnapshot {
                 "not_applicable"
             }
             .to_owned(),
+            unlisted_symbol: None,
+            roll_to: None,
+            roll_refused: None,
         }
     }
 }
@@ -439,5 +473,34 @@ pub fn market_data_provenance(
             "venue_reported".to_owned()
         },
         replay,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_notice_names_the_roll_on_offer_or_its_refusal_and_stays_v1() {
+        let attention = || FeedNoticeSnapshot::from_summary(("attention", true, true));
+        let bare = serde_json::to_value(attention()).unwrap();
+        assert_eq!(
+            bare,
+            serde_json::json!({
+                "kind": "attention",
+                "headline_present": true,
+                "next_step_present": true,
+                "text_availability": "redacted_pending_attention_scope",
+            }),
+            "a notice with no roll serializes exactly as v1 did"
+        );
+        let offered = attention().with_unlisted(Some("WINV26"), Some(Ok("WINZ26")));
+        assert_eq!(offered.roll_to.as_deref(), Some("WINZ26"));
+        assert_eq!(offered.roll_refused, None);
+        let refused = attention().with_unlisted(Some("WINV26"), Some(Err("Finish it first")));
+        assert_eq!(refused.roll_to, None);
+        assert_eq!(refused.roll_refused.as_deref(), Some("Finish it first"));
+        let read: FeedNoticeSnapshot = serde_json::from_value(bare).unwrap();
+        assert_eq!(read, attention(), "a v1 payload reads with no roll");
     }
 }

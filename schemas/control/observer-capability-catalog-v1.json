@@ -15509,7 +15509,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
+      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; so does the feed notice's Roll off a contract the venue no longer lists, and a restored tab's own roll off one, under the trader's hand with a `trigger`; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
@@ -31346,8 +31346,29 @@
               "next_step_present": {
                 "type": "boolean"
               },
+              "roll_refused": {
+                "description": "Why the configured roll off `unlisted_symbol` cannot run right now, as\nthe popup and the status word's hover say it. A restored tab rolls by\nitself once the reason clears.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "roll_to": {
+                "description": "The contract the notice's Roll moves the tab to: the popup's first\ncontrol, and the one beside the status word and on an empty chart.\nAbsent when no roll is on offer.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "text_availability": {
                 "type": "string"
+              },
+              "unlisted_symbol": {
+                "description": "The contract the venue reported it does not list, from the feed's\nstructured report — not from the redacted words. When it is the tab's\n`active_symbol`, `feed.contract.roll` from it is the popup's Roll\nbutton: same rule, same refusals. With `kind` `info` the tab already\nrolled off it onto `active_symbol`, and the note stays through a connect\nuntil any later notice or switch replaces it. Absent\notherwise; an optional field is an additive change to the v1 payload.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [

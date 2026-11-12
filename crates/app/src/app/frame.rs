@@ -134,6 +134,12 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
 /// (resets the chart) and apply its spec; a changed market moves its
 /// layouts along.
 fn apply_feed_switch(app: &mut QuantickApp) {
+    // A pressed Roll, and restored tabs on a contract no longer listed.
+    let port = app as &mut dyn super::control_host::ControlPort;
+    let settled = quantick_control_handlers::contract_roll::settle_auto_rolls(port);
+    if !settled.is_empty() {
+        super::tab_workspaces::as_hand(app, |_, journal| settled.journal(journal));
+    }
     let (tab, config) = app.active_with_config();
     let changed =
         tab.link.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
@@ -164,8 +170,7 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
         .background
         .unwrap_or_else(|| pane::background_color(&app.runtime.style));
     let popup_tab = app.runtime.tabs.active_id();
-    scratch.canvas =
-        canvas::CanvasAnswers::seeded(popup_tab, app.chrome.feed_popup_tab, &scratch.status);
+    scratch.canvas = canvas::CanvasAnswers::seeded(app, popup_tab, &scratch.status);
     app.drawings
         .chrome
         .sync_content_editing(&mut app.runtime.tabs);
@@ -669,8 +674,7 @@ impl QuantickApp {
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
-        let mut answers =
-            canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
+        let mut answers = canvas::CanvasAnswers::seeded(self, popup_tab, &scratch.status);
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -765,7 +769,7 @@ impl QuantickApp {
                 presentation: presented.then_some(ctx),
                 now,
                 tz: self.runtime.tz,
-                notice_action: answers.notice_action,
+                notice_action: answers.notice_action.clone(),
                 popup_tab: answers.popup_tab,
                 popup_open: answers.popup_open,
                 chip_clicked: answers.chip_clicked,

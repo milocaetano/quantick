@@ -19,6 +19,13 @@ use quantick_control_schema::contract_roll::{
 use quantick_control_schema::feed::MODULE_ID;
 use serde_json::{Value, json};
 
+mod unlisted;
+pub use unlisted::{
+    AUTOMATIC_TRIGGER, AutoRoll, PRESSED_TRIGGER, RollOffer, Settled, UnlistedContractPort,
+    notice_roll, roll_from_notice, settle_auto_rolls, switch_failed_toast, unlisted_roll,
+    unlisted_toast, waiting_toast,
+};
+
 /// What a roll needs beyond a source switch.
 pub trait ContractRollPort: FeedSourcePort {
     /// The contract the feed's config names after `symbol`.

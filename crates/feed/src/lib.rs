@@ -503,6 +503,19 @@ pub enum FeedNotice {
         headline: String,
         /// The single next step to fix it.
         next_step: String,
+        /// The contract the venue said it does not list, from the provider's
+        /// structured report: what a configured contract roll starts from.
+        unlisted: Option<String>,
+    },
+    /// The tab rolled off a contract the venue no longer lists onto the one
+    /// its config names next. Nothing is wrong and nothing needs a hand: an
+    /// explanation of why the tab shows another contract, kept through a
+    /// plain clear or a connect until any later notice or switch replaces it.
+    Rolled {
+        /// The contract the venue does not list.
+        from: String,
+        /// The contract the tab shows now.
+        to: String,
     },
 }
 
@@ -588,6 +601,7 @@ impl FeedNotice {
             Self::Clear => ("clear", false, false),
             Self::Working { .. } => ("working", true, false),
             Self::Attention { .. } => ("attention", true, true),
+            Self::Rolled { .. } => ("info", true, false),
         }
     }
 
@@ -613,6 +627,47 @@ impl FeedNotice {
         Self::Attention {
             headline: headline.into(),
             next_step: next_step.into(),
+            unlisted: None,
+        }
+    }
+
+    /// An attention notice that also names, as data, the contract the venue
+    /// does not list — `None` keeps it a plain [`Self::attention`].
+    #[must_use]
+    pub fn with_unlisted(self, symbol: Option<String>) -> Self {
+        match self {
+            Self::Attention {
+                headline,
+                next_step,
+                ..
+            } => Self::Attention {
+                headline,
+                next_step,
+                unlisted: symbol,
+            },
+            other => other,
+        }
+    }
+
+    /// The contract the venue reported it does not list, when this notice
+    /// says so: the one a roll starts from, or the one it already left.
+    #[must_use]
+    pub fn unlisted_symbol(&self) -> Option<&str> {
+        match self {
+            Self::Attention { unlisted, .. } => unlisted.as_deref(),
+            Self::Rolled { from, .. } => Some(from),
+            _ => None,
+        }
+    }
+
+    /// What a [`Self::Rolled`] note says.
+    #[must_use]
+    pub fn rolled_text(&self) -> Option<String> {
+        match self {
+            Self::Rolled { from, to } => {
+                Some(quantick_sources::recovery::rolled_sentence(from, to))
+            }
+            _ => None,
         }
     }
 }
