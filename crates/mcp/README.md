@@ -63,6 +63,14 @@ Inspect `feed.status.sources` for configured source choices before invoking
 `feed.source.set`; the capability reports source validation, replay refusal,
 and whether a change rebuilt the timeline.
 
+Alert definition deletion and history clearing require a separate opt-in:
+`quantick-mcp --profile cockpit --allow-alert-delete` requests
+`cockpit.alert.delete`. The window must grant that sensitive permission too.
+Default cockpit scopes remain unchanged. `alerts.delete` and
+`alerts.clear_history` are refused without either the client request or the
+window grant; inspect effective scopes with `quantick_describe` before acting.
+Setup preserves this flag and explains its destructive scope.
+
 The contract chains a fourth profile, `trader` (place, bracket and cancel
 orders). Its `trade` permission is sensitive with `default_grant: Denied`, the
 access panel filters it out, and `quantick-mcp` never requests it, so no
@@ -89,8 +97,8 @@ selected; with several and no choice the call fails with
 ## Running
 
 ```text
-quantick-mcp [serve] [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--instance <id>] [--instances-dir <path>]
-quantick-mcp setup --client codex|claude [--profile observer|analyst|annotator|cockpit] [--allow-recovery]
+quantick-mcp [serve] [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete] [--instance <id>] [--instances-dir <path>]
+quantick-mcp setup --client codex|claude [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--allow-alert-delete]
 ```
 
 `stdout` carries MCP frames only; diagnostics go to `stderr`. `setup` prints
