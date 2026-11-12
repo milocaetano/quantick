@@ -143,3 +143,49 @@ fn alert_target_binding_bottom_edge_button_commits_selected_rectangle() {
     let contents = std::fs::read_to_string(app.layout_adapter().store.market().path()).unwrap();
     assert!(contents.contains(&target.incarnation));
 }
+
+#[test]
+fn alert_target_binding_offers_every_straight_line() {
+    for (tool, anchors) in [
+        ("horizontal-line", &[egui::pos2(560.0, 320.0)][..]),
+        ("horizontal-ray", &[egui::pos2(560.0, 320.0)][..]),
+        (
+            "ray",
+            &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 360.0)][..],
+        ),
+        (
+            "extended-line",
+            &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 360.0)][..],
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let index = place_drawing(&mut app, &ctx, tool, anchors);
+        app.toolrail.arm(Tool::Pointer);
+        app.drawing_pane_mut().drawings.select(Some(index));
+        run_frame(&mut app, &ctx);
+        let output = run_frame(&mut app, &ctx);
+        let button = painted_text_center(&output, "Create alert")
+            .unwrap_or_else(|| panic!("{tool}: selected line offers an alert"));
+        click_chart(&mut app, &ctx, button);
+        run_frame(&mut app, &ctx);
+        let pane = app.active_tab().drawing_pane();
+        let target = pane.drawings.items()[index]
+            .durable_identity
+            .clone()
+            .unwrap_or_else(|| panic!("{tool}: click promoted the target"));
+        let choices = super::super::alerts_runtime::context(
+            app.active_tab(),
+            pane,
+            app.runtime.tabs.active_id(),
+            0,
+        )
+        .drawings;
+        let choice = choices
+            .iter()
+            .find(|choice| choice.target.as_ref() == Some(&target))
+            .unwrap_or_else(|| panic!("{tool}: editor lists the line"));
+        assert_eq!(choice.kind, quantick_alerts::TargetKind::Line, "{tool}");
+    }
+}

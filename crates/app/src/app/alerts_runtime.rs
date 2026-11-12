@@ -145,7 +145,7 @@ pub(crate) fn context(
     tab_id: u64,
     display_offset_minutes: i32,
 ) -> crate::surfaces::alerts::Context {
-    use quantick_alerts::{MarketRef, SourceContext, TargetKind};
+    use quantick_alerts::{MarketRef, SourceContext};
     use rust_decimal::prelude::ToPrimitive;
     crate::surfaces::alerts::Context {
         market: MarketRef {
@@ -174,12 +174,7 @@ pub(crate) fn context(
             .iter()
             .enumerate()
             .filter_map(|(index, drawing)| {
-                let kind = match drawing.tool.id() {
-                    "trend-line" => TargetKind::Line,
-                    "parallel-channel" => TargetKind::Channel,
-                    "rectangle" => TargetKind::Rectangle,
-                    _ => return None,
-                };
+                let kind = drawing.alert_target_kind()?;
                 Some(crate::surfaces::alerts::DrawingChoice {
                     selector: DrawingSelector {
                         tab_id,
