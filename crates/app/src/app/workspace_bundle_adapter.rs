@@ -64,11 +64,7 @@ impl WorkspaceBundleAdapter<'_> {
         );
     }
     fn note_workspace(&mut self, message: String) {
-        crate::surfaces::toast::note(
-            &mut self.arrangement.toast,
-            message,
-            std::time::Instant::now(),
-        );
+        crate::surfaces::toast::note(self.arrangement.toast, message, std::time::Instant::now());
     }
     /// Route the file dialog's answer: a chosen path runs the intent the
     /// dialog was opened for, a lost dialog is reported once.

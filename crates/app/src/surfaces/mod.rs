@@ -192,6 +192,7 @@ impl SurfaceResponse {
 
 /// App host operations for the shared typed Model/View adapter.
 pub(crate) trait Surface {
+    #[cfg(test)]
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
@@ -246,6 +247,7 @@ impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
         self.view.capture_keyboard(&self.model_state, ctx);
     }
+    #[cfg(test)]
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
