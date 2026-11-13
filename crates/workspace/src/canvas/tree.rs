@@ -6,8 +6,24 @@
 //! preset it came from are compared by one rule: [`PaneTree::shape`].
 
 use super::presets::PaneKind;
+use super::rail::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+
+/// How far inside the canvas an edge must sit to meet a neighbour, as
+/// [`super::bands::inset_seams`] reads it.
+const EDGE_SLACK_PX: f32 = 0.5;
+
+/// How a pane holds its extent when the tree is carved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Pin {
+    /// It shares the split by its share.
+    Open,
+    /// Minimized from its menu: a strip this many points thick.
+    Strip(f32),
+    /// Dragged shut by a seam: with every pane of its node, one rail.
+    Rail,
+}
 
 /// A pane's identity on its canvas. Stable for the pane's life and never
 /// reused while the canvas lives, so a pane keeps its slot when it floats,
@@ -205,26 +221,36 @@ impl PaneTree {
     /// spend the area once.
     #[must_use]
     pub fn rects(&self, area: CanvasRect) -> Vec<(PaneSlot, CanvasRect)> {
-        self.rects_with(area, &|_| None)
+        self.rects_with(area, &|_| Pin::Open)
     }
 
-    /// [`Self::rects`] where `fixed` may pin a pane's extent along its parent
-    /// split's axis (a minimized strip); the others share what is left.
+    /// [`Self::rects`] where `pin` may hold a pane's extent along its parent
+    /// split's axis (a minimized strip, a rail); the others share what is
+    /// left.
     pub(crate) fn rects_with(
         &self,
         area: CanvasRect,
-        fixed: &dyn Fn(PaneSlot) -> Option<f32>,
+        pin: &dyn Fn(PaneSlot) -> Pin,
     ) -> Vec<(PaneSlot, CanvasRect)> {
         let mut out = Vec::new();
-        self.carve(area, fixed, &mut out);
+        self.carve((area, area), pin, &mut out);
         out.sort_by_key(|(slot, _)| *slot);
         out
     }
 
+    /// Whether every pane this node holds is folded to a rail: the node is
+    /// one rail, however many panes it lays out.
+    pub(crate) fn railed(&self, pin: &dyn Fn(PaneSlot) -> Pin) -> bool {
+        match self {
+            Self::Pane { slot, .. } => pin(*slot) == Pin::Rail,
+            Self::Split { children, .. } => children.iter().all(|child| child.railed(pin)),
+        }
+    }
+
     fn carve(
         &self,
-        area: CanvasRect,
-        fixed: &dyn Fn(PaneSlot) -> Option<f32>,
+        (area, root): (CanvasRect, CanvasRect),
+        pin: &dyn Fn(PaneSlot) -> Pin,
         out: &mut Vec<(PaneSlot, CanvasRect)>,
     ) {
         let (axis, children, shares) = match self {
@@ -238,15 +264,23 @@ impl PaneTree {
                 shares,
             } => (*axis, children, shares),
         };
-        let extent = match axis {
-            SplitAxis::Row => area.w,
-            SplitAxis::Column => area.h,
+        let (extent, (first, last), (root_first, root_last)) = match axis {
+            SplitAxis::Row => (area.w, (area.x, area.right()), (root.x, root.right())),
+            SplitAxis::Column => (area.h, (area.y, area.bottom()), (root.y, root.bottom())),
         };
-        let mut pinned: Vec<Option<f32>> = children
-            .iter()
-            .map(|child| {
-                (children.len() > 1)
-                    .then(|| child.folded_extent(axis, fixed))
+        let count = children.len();
+        // A rail buys back the half divider the window insets on each of its
+        // edges that meets a neighbour, so it paints the column painter's width.
+        let rail = |index: usize| {
+            let before = index > 0 || first > root_first + EDGE_SLACK_PX;
+            let after = index + 1 < count || last < root_last - EDGE_SLACK_PX;
+            COLLAPSED_PANE_WIDTH_PX
+                + f32::from(u8::from(before) + u8::from(after)) * CANVAS_DIVIDER_PX / 2.0
+        };
+        let mut pinned: Vec<Option<f32>> = (children.iter().enumerate())
+            .map(|(index, child)| {
+                (count > 1)
+                    .then(|| child.folded_extent(axis, pin, rail(index)))
                     .flatten()
             })
             .collect();
@@ -289,29 +323,38 @@ impl PaneTree {
                 SplitAxis::Row => CanvasRect::new(area.x + start, area.y, end - start, area.h),
                 SplitAxis::Column => CanvasRect::new(area.x, area.y + start, area.w, end - start),
             };
-            child.carve(piece, fixed, out);
+            child.carve((piece, root), pin, out);
             start = end;
         }
     }
 
-    /// How far this node reaches along `axis` when `fixed` pins every pane
-    /// it holds: a pinned pane its strip, a split of pinned panes one strip
-    /// across `axis` or its strips end to end along it. `None` while any
-    /// pane it holds is open.
+    /// How far this node reaches along `axis` when `pin` holds every pane
+    /// it holds: a node folded to a rail `rail`, however many panes it lays
+    /// out; a minimized pane its strip, and a split of them one strip across
+    /// `axis` or its strips end to end along it. `None` while any pane it
+    /// holds is open.
     fn folded_extent(
         &self,
         axis: SplitAxis,
-        fixed: &dyn Fn(PaneSlot) -> Option<f32>,
+        pin: &dyn Fn(PaneSlot) -> Pin,
+        rail: f32,
     ) -> Option<f32> {
+        if self.railed(pin) {
+            return Some(rail);
+        }
         match self {
-            Self::Pane { slot, .. } => fixed(*slot),
+            Self::Pane { slot, .. } => match pin(*slot) {
+                Pin::Strip(px) => Some(px),
+                Pin::Rail => Some(rail),
+                Pin::Open => None,
+            },
             Self::Split {
                 axis: own,
                 children,
                 ..
             } => {
                 let extents = (children.iter())
-                    .map(|child| child.folded_extent(axis, fixed))
+                    .map(|child| child.folded_extent(axis, pin, rail))
                     .collect::<Option<Vec<f32>>>()?;
                 if *own == axis {
                     Some(extents.iter().sum())

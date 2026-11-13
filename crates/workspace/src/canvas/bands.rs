@@ -63,6 +63,9 @@ pub struct TreeBand {
     pub rect: CanvasRect,
     /// Folded to its strip by the canvas model.
     pub minimized: bool,
+    /// Folded with its node to one rail ([`super::tree_rails`] paints it),
+    /// so there is no strip to draw: `minimized` too.
+    pub railed: bool,
 }
 
 /// Where each docked pane of `state` draws when the canvas is `area`, with
@@ -88,6 +91,7 @@ pub fn tree_bands(
                 seat: seat(slot)?,
                 rect: inset_seams(rect, area, divider),
                 minimized: state.mode(slot) == Some(PaneMode::Minimized),
+                railed: state.railed().contains(&slot),
             })
         })
         .collect()

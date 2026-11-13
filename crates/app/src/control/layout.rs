@@ -66,13 +66,14 @@ impl LayoutHost for dyn ControlPort {
 
 impl LayoutTab for Tab {
     fn reading(&self) -> CanvasReading {
+        let (collapsed, flow_collapsed) = self.canvas.folds();
         CanvasReading {
             preset_id: self.canvas.layout.preset().id,
             pane_count: self.pane_count(),
             focused_pane: self.focused_side().index(),
             fraction: self.canvas.split_fraction,
-            collapsed: self.canvas.context_collapsed,
-            flow_collapsed: self.canvas.flow_collapsed,
+            collapsed,
+            flow_collapsed,
         }
     }
     fn has_pane(&self, pane: usize) -> bool {

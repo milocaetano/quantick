@@ -268,6 +268,7 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
         .expect("the seam before the flow pane");
     let grab = egui::pos2(seam.rect.x + seam.rect.w / 2.0, area.center().y);
     let slow = |app: &mut QuantickApp, from: egui::Pos2, to: egui::Pos2| {
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(from)]);
         run_frame_with_events(
             app,
             &ctx,
@@ -286,7 +287,10 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
     };
     slow(&mut app, grab, egui::pos2(area.right() - 1.0, grab.y));
     let state = &app.active_tab().canvas.state;
-    assert!(state.railed().contains(&flow), "the flow folded to its rail");
+    assert!(
+        state.railed().contains(&flow),
+        "the flow folded to its rail"
+    );
     let rails = tree_rails(state, whole, CANVAS_DIVIDER_PX);
     assert_eq!(rails.len(), 1);
     assert!(
@@ -314,13 +318,18 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
     let from = egui::pos2(rail.x + rail.w / 2.0, grab.y);
     slow(&mut app, from, egui::pos2(area.center().x, grab.y));
     let state = &app.active_tab().canvas.state;
-    assert!(state.railed().is_empty(), "dragged back past the threshold, open");
+    assert!(
+        state.railed().is_empty(),
+        "dragged back past the threshold, open"
+    );
     let flow_rect = (state.rects(whole).into_iter())
         .find(|(slot, _)| *slot == flow)
         .expect("the flow pane")
         .1;
+    // Pressed `grabbed` points past the seam's centre, it keeps them.
+    let grabbed = from.x - (rail.x - CANVAS_DIVIDER_PX / 2.0);
     assert!(
-        (flow_rect.x - area.center().x).abs() < 4.0,
+        (flow_rect.x - (area.center().x - grabbed)).abs() < 1.0,
         "it opened under the pointer: {flow_rect:?}"
     );
 }

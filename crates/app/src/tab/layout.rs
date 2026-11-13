@@ -38,6 +38,8 @@ pub struct TabCanvas {
     pub(super) context_stack: ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
     pub(super) drag: Option<(f32, bool, bool)>,
+    /// The tree seam drag in flight, its travel counted from the press.
+    pub(super) seam_drag: Option<quantick_workspace::canvas::SeamDrag>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
     pub(crate) last_canvas: egui::Rect,
     /// Which built time pane each time slot of [`Self::state`] shows, kept
@@ -87,6 +89,7 @@ impl Default for TabCanvas {
             flow_collapsed: false,
             context_stack: ContextStack::default(),
             drag: None,
+            seam_drag: None,
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
             menus: Default::default(),
@@ -228,10 +231,25 @@ impl TabCanvas {
     }
 
     /// Put the context column away, or bring it back, through the one
-    /// collapse path ([`fold_column`]). Answers whether anything changed.
+    /// collapse path ([`fold_column`]); on a canvas the tree paints, the
+    /// charts beside the flow pane fold to their rails. Answers whether
+    /// anything changed.
     pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
+        if !self.column_painted() {
+            return self.state.fold_flow_side(false, collapsed);
+        }
         let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
         fold_column(context, flow, collapsed)
+    }
+
+    /// Whether the context column and the flow pane are folded, by the
+    /// painter drawing.
+    pub(crate) fn folds(&self) -> (bool, bool) {
+        if self.column_painted() {
+            (self.context_collapsed, self.flow_collapsed)
+        } else {
+            self.state.flow_side_folds()
+        }
     }
 
     /// Whether the column painter draws this frame; anything else is painted
@@ -255,8 +273,12 @@ impl TabCanvas {
         }
     }
 
-    /// Fold or restore the flow pane while retaining the split's open width.
+    /// Fold or restore the flow pane while retaining the split's open width;
+    /// on a canvas the tree paints, to its rail.
     pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
+        if !self.column_painted() {
+            return self.state.fold_flow_side(true, collapsed);
+        }
         let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
         fold_column(flow, context, collapsed)
     }

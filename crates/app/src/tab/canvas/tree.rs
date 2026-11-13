@@ -8,10 +8,11 @@
 
 use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_control_handlers::canvas::item_capability;
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
-    CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
-    tree_seams,
+    CanvasRect, FloatHost, PaneKind, PaneMenuItem, PaneSlot, SplitAxis, slot_seat, strip_label,
+    tree_bands, tree_rails, tree_seams,
 };
 use smallvec::SmallVec;
 
@@ -42,7 +43,8 @@ impl Tab {
             canvas,
             CANVAS_DIVIDER_PX,
         );
-        let bands = bands.into_iter().map(|band| {
+        // A rail is painted over its whole node with the seams.
+        let bands = bands.into_iter().filter(|band| !band.railed).map(|band| {
             let at = egui::Rect::from_min_size(
                 egui::pos2(band.rect.x, band.rect.y),
                 egui::vec2(band.rect.w, band.rect.h),
@@ -129,39 +131,60 @@ impl Tab {
 
     /// The seams between the docked bands, painted as the column painter's
     /// dividers and dragged as they are: a resize cursor over each, and a
-    /// drag moving it through the canvas model. After the panes, so a seam's
-    /// grab margin wins over the chart beside it.
+    /// drag moving it through the canvas model, folding a side to its rail
+    /// at the edge. Then every rail, as the column painter paints its own.
+    /// After the panes, so a seam's grab margin wins over the chart beside it.
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        let rect =
+            |at: CanvasRect| egui::Rect::from_min_size((at.x, at.y).into(), (at.w, at.h).into());
+        let mut hot = None;
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let at = egui::Rect::from_min_size(
-                egui::pos2(seam.rect.x, seam.rect.y),
-                egui::vec2(seam.rect.w, seam.rect.h),
-            );
             ui.painter()
-                .rect_filled(at, egui::Rounding::ZERO, palette.border());
+                .rect_filled(rect(seam.rect), egui::Rounding::ZERO, palette.border());
             if !seam.resizable {
                 continue;
             }
             let row = seam.axis == SplitAxis::Row;
-            let margin = CANVAS_DIVIDER_HANDLE_PX;
-            let (grab, cursor) = if row {
-                (egui::vec2(margin, 0.0), egui::CursorIcon::ResizeHorizontal)
-            } else {
-                (egui::vec2(0.0, margin), egui::CursorIcon::ResizeVertical)
-            };
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
-            let handle = ui.interact(at.expand2(grab), id, egui::Sense::drag());
-            if handle.hovered() || handle.dragged() {
-                ui.ctx().set_cursor_icon(cursor);
+            let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
+            let mut handle = ui.interact(grab, id, egui::Sense::drag());
+            if seam.rail.is_some() {
+                handle = handle.on_hover_text("drag to show the folded chart again");
             }
-            // Every step the pointer took, as the column divider adds them up:
-            // an off-centre grab never jumps the seam.
+            if handle.hovered() || handle.dragged() {
+                let cursor = [
+                    egui::CursorIcon::ResizeVertical,
+                    egui::CursorIcon::ResizeHorizontal,
+                ];
+                ui.ctx().set_cursor_icon(cursor[usize::from(row)]);
+                hot = hot.or(seam.rail.map(|rail| rail.slot));
+            }
+            if handle.drag_started() {
+                self.canvas.seam_drag = None;
+            }
+            // Every step the pointer took since the press, as the column
+            // divider adds them up: an off-centre grab never jumps the seam,
+            // and travel past a floor still reaches the fold.
             let step = [handle.drag_delta().y, handle.drag_delta().x][usize::from(row)];
             if handle.dragged() && step.abs() > f32::EPSILON {
-                let _ = (self.canvas.state).move_seam(&seam.address, step, canvas);
+                let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
+                let _ = state.step_seam_drag(held, (&seam.address, step), canvas);
             }
+        }
+        for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
+            let (at, lit) = (rect(rail.rect), hot == Some(rail.slot));
+            if rail.axis == SplitAxis::Row {
+                let edge = [at.left(), at.right()][usize::from(rail.meets_after)];
+                super::paint_rail(ui.painter(), at, edge, lit);
+            } else {
+                let edge = [at.top(), at.bottom()][usize::from(rail.meets_after)];
+                paint_rail_across(ui.painter(), at, edge, lit);
+            }
+            let id = format!("pane_menu.{}.rail", rail.slot);
+            let restore = Some(item_capability(PaneMenuItem::Restore));
+            self.canvas.menus.publish(id, "Restore", at, restore);
         }
     }
 
@@ -344,4 +367,23 @@ impl Tab {
         });
         strip_label(kind, &bars.unwrap_or_default(), &self.symbol)
     }
+}
+
+/// [`super::paint_rail`] for a rail folded across a column: the edge where it
+/// meets the open chart at `edge_y`, the grip lying along it.
+fn paint_rail_across(painter: &egui::Painter, rail: egui::Rect, edge_y: f32, hot: bool) {
+    let palette = theme::get(painter.ctx());
+    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
+    painter.hline(
+        rail.x_range(),
+        edge_y,
+        egui::Stroke::new(1.0_f32, palette.border()),
+    );
+    let size = egui::vec2(
+        crate::tab::RAIL_GRIP_HEIGHT_PX,
+        crate::tab::RAIL_GRIP_WIDTH_PX,
+    );
+    let grip = egui::Rect::from_center_size(rail.center(), size);
+    let colour = [palette.text_muted(), palette.accent()][usize::from(hot)];
+    painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

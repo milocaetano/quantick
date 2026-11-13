@@ -108,7 +108,10 @@ fn a_seam_beside_a_strip_never_moves_but_one_beside_a_rail_reopens_it() {
         "a nudge never reopens a rail"
     );
     drag(&mut state, &root(0), COLLAPSE_AT_PX / 2.0);
-    assert!(state.railed().contains(&0), "short of the threshold: still a rail");
+    assert!(
+        state.railed().contains(&0),
+        "short of the threshold: still a rail"
+    );
     drag(&mut state, &root(0), 300.0);
     assert!(state.railed().is_empty() && state.minimized().is_empty());
     let reopened = rect_of(&state, 0).w;
@@ -155,7 +158,8 @@ fn along(rect: CanvasRect, axis: SplitAxis) -> f32 {
 
 /// Each child's extent along the split at `seam`'s path.
 fn extents(state: &CanvasState, seam: &SeamAddress) -> Vec<f32> {
-    let Some(PaneTree::Split { axis, children, .. }) = super::seams::node_at(state.tree(), &seam.path)
+    let Some(PaneTree::Split { axis, children, .. }) =
+        super::seams::node_at(state.tree(), &seam.path)
     else {
         panic!("{seam:?} names a split");
     };
@@ -192,7 +196,11 @@ fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
             assert_eq!(rails.len(), 1, "{name} by {by}: one rail");
             let rail = rails[0];
             assert_eq!(rail.axis, seam.axis, "{name}");
-            assert_eq!(rail.slot, first_slot(state, &seam.address, folded), "{name}: the far side");
+            assert_eq!(
+                rail.slot,
+                first_slot(state, &seam.address, folded),
+                "{name}: the far side"
+            );
             assert!(
                 (along(rail.rect, seam.axis) - COLLAPSED_PANE_WIDTH_PX).abs() < EPS,
                 "{name} by {by}: one rail wide, {:?}",
@@ -205,7 +213,10 @@ fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
                 "{name} by {by}: the other side fills the rest: {before:?} -> {after:?}"
             );
             for other in (0..before.len()).filter(|at| *at != index && *at != index + 1) {
-                assert!((after[other] - before[other]).abs() < EPS, "{name}: {other} kept");
+                assert!(
+                    (after[other] - before[other]).abs() < EPS,
+                    "{name}: {other} kept"
+                );
             }
             for _ in 0..16 {
                 let step = (&seam.address, -by / 16.0);
@@ -251,7 +262,11 @@ fn a_folded_grid_is_one_rail_wide() {
     assert_eq!(state.railed().len(), 4, "every chart of the grid folded");
     let rails = tree_rails(&state, AREA, DIVIDER);
     assert_eq!(rails.len(), 1);
-    assert!((rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < EPS, "{:?}", rails[0]);
+    assert!(
+        (rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < EPS,
+        "{:?}",
+        rails[0]
+    );
     assert_eq!(rails[0].rect.h, AREA.h);
     let seams = tree_seams(&state, AREA, DIVIDER);
     assert_eq!(seams.len(), 1, "no seam inside the rail");
@@ -286,7 +301,11 @@ fn a_restore_opens_a_rail_at_its_pre_drag_shares() {
     state.move_seam(&root(0), 200.0, AREA).unwrap();
     let before = root_shares(&state);
     drag(&mut state, &root(0), AREA.w);
-    assert_eq!(state.mode(1), Some(PaneMode::Minimized), "folded, as a reader sees it");
+    assert_eq!(
+        state.mode(1),
+        Some(PaneMode::Minimized),
+        "folded, as a reader sees it"
+    );
     assert_eq!(state.restore(1), Ok(true));
     let after = root_shares(&state);
     assert!((before[0] - after[0]).abs() < 1e-5 && (before[1] - after[1]).abs() < 1e-5);
@@ -303,8 +322,14 @@ fn the_collapse_calls_fold_either_side_of_the_flow_pane() {
     assert_eq!(state.flow_side_folds(), (false, false));
     assert!(state.fold_flow_side(true, true), "the flow folds");
     assert_eq!(state.flow_side_folds(), (false, true));
-    assert!(!state.fold_flow_side(true, true), "a repeat changes nothing");
-    assert!(state.fold_flow_side(false, true), "the charts fold, the flow opens");
+    assert!(
+        !state.fold_flow_side(true, true),
+        "a repeat changes nothing"
+    );
+    assert!(
+        state.fold_flow_side(false, true),
+        "the charts fold, the flow opens"
+    );
     assert_eq!(state.flow_side_folds(), (true, false));
     assert_eq!(state.railed().len(), 2);
     let flow = rect_of(&state, 2);
@@ -313,10 +338,16 @@ fn the_collapse_calls_fold_either_side_of_the_flow_pane() {
     assert_eq!(state.flow_side_folds(), (false, false));
     assert_eq!(state, canvas("time+time+flow"), "back as laid out");
     let mut alone = canvas("charts-2");
-    assert!(!alone.fold_flow_side(true, true), "no flow pane, nothing to fold");
+    assert!(
+        !alone.fold_flow_side(true, true),
+        "no flow pane, nothing to fold"
+    );
     let mut strip = canvas("time+flow");
     strip.minimize(0).unwrap();
-    assert!(!strip.fold_flow_side(true, true), "the last open chart stays open");
+    assert!(
+        !strip.fold_flow_side(true, true),
+        "the last open chart stays open"
+    );
 }
 
 /// A rail is saved with the canvas and read back as itself.

@@ -8,7 +8,7 @@
 
 use super::drop::{Corner, DockTarget, park_rect};
 use super::presets::{LayoutPreset, MAX_CANVAS_PANES, PaneKind, matching_preset, timeframes_with};
-use super::tree::{CanvasRect, PaneSlot, PaneTree};
+use super::tree::{CanvasRect, PaneSlot, PaneTree, Pin};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -128,6 +128,11 @@ pub struct CanvasState {
     maximized: Option<PaneSlot>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     minimized: BTreeSet<PaneSlot>,
+    /// The folded panes a seam drag or a collapse call put away to a rail
+    /// ([`super::rail`]) rather than to their strip: always inside
+    /// `minimized`, so every reader of a fold sees them folded.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    railed: BTreeSet<PaneSlot>,
     tree: PaneTree,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     floating: Vec<FloatingPane>,
@@ -141,6 +146,7 @@ impl CanvasState {
             next_slot: preset.kinds.len() as PaneSlot,
             maximized: None,
             minimized: BTreeSet::new(),
+            railed: BTreeSet::new(),
             tree: preset.tree.clone(),
             floating: Vec::new(),
         }
@@ -159,6 +165,36 @@ impl CanvasState {
     #[must_use]
     pub fn minimized(&self) -> &BTreeSet<PaneSlot> {
         &self.minimized
+    }
+
+    /// The folded panes shown as a rail rather than a strip.
+    #[must_use]
+    pub fn railed(&self) -> &BTreeSet<PaneSlot> {
+        &self.railed
+    }
+
+    /// How `slot` holds its extent when the tree is carved.
+    pub(super) fn pin(&self, slot: PaneSlot) -> Pin {
+        if self.railed.contains(&slot) {
+            Pin::Rail
+        } else if self.minimized.contains(&slot) {
+            Pin::Strip(MINIMIZED_STRIP_PX)
+        } else {
+            Pin::Open
+        }
+    }
+
+    /// Fold `slots` to one rail, or open them; answers whether any changed.
+    pub(super) fn set_railed(&mut self, slots: &[PaneSlot], railed: bool) -> bool {
+        let mut changed = false;
+        for slot in slots {
+            changed |= if railed {
+                self.minimized.insert(*slot) | self.railed.insert(*slot)
+            } else {
+                self.railed.remove(slot) && self.minimized.remove(slot)
+            };
+        }
+        changed
     }
 
     #[must_use]
@@ -223,10 +259,7 @@ impl CanvasState {
         if let Some(slot) = self.maximized {
             return vec![(slot, area)];
         }
-        let minimized = &self.minimized;
-        self.tree.rects_with(area, &|slot| {
-            minimized.contains(&slot).then_some(MINIMIZED_STRIP_PX)
-        })
+        self.tree.rects_with(area, &|slot| self.pin(slot))
     }
 
     /// Lay the docked panes out as `preset`. Each place of the preset takes a
@@ -279,6 +312,7 @@ impl CanvasState {
         self.next_slot = next;
         self.maximized = None;
         self.minimized.clear();
+        self.railed.clear();
         changed
     }
 
@@ -310,12 +344,14 @@ impl CanvasState {
         if self.maximized == Some(slot) {
             return Ok(false);
         }
+        self.unrail(slot);
         self.minimized.remove(&slot);
         self.maximized = Some(slot);
         Ok(true)
     }
 
-    /// Unfold a minimized pane, or bring a maximized one back to its place.
+    /// Unfold a minimized pane, every pane of the rail it folded to, or
+    /// bring a maximized one back to its place.
     ///
     /// # Errors
     /// The canvas holds no such pane.
@@ -323,7 +359,7 @@ impl CanvasState {
         if !self.holds(slot) {
             return Err(CanvasRefusal::UnknownPane(slot));
         }
-        if self.minimized.remove(&slot) {
+        if self.unrail(slot) || self.minimized.remove(&slot) {
             return Ok(true);
         }
         if self.maximized == Some(slot) {
@@ -443,6 +479,7 @@ impl CanvasState {
                 };
                 let tree = self.tree.replaced(&swapped);
                 self.minimized.remove(&other);
+                self.railed.remove(&other);
                 let (slot, kind) = (other, other_kind);
                 self.floating.push(FloatingPane { slot, kind, host });
                 tree
@@ -600,11 +637,13 @@ impl CanvasState {
             .ok_or(CanvasRefusal::LastDockedPane)?;
         self.tree = tree;
         self.minimized.remove(&slot);
+        self.railed.remove(&slot);
         if self.maximized == Some(slot) {
             self.maximized = None;
         }
         if self.minimized.len() >= self.tree.len() {
             self.minimized.clear();
+            self.railed.clear();
         }
         Ok(kind)
     }
