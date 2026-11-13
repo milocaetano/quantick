@@ -973,6 +973,8 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
     app.surfaces
         .strategy_popup
         .update(Intent::Edit(Field::Text(TextField::Quantity, "2".into())));
+    // The host refusal also adds a row; measure the retry after it settles.
+    run_frame(&mut app, &ctx);
     let painted = run_frame(&mut app, &ctx);
     click_chart(
         &mut app,
