@@ -176,6 +176,25 @@ impl TabRecipeSync {
         );
     }
 
+    /// `landed` settled, but its panes show other indicators than it named:
+    /// the panes on one strip layout show one set. The next read tells what
+    /// they show from what the recipe named, so the tab reads as held, a
+    /// change the trader can save.
+    pub fn owe_indicators(&mut self, tab: u64, landed: &WorkspaceRecipe) {
+        let Some(seen) = self.seen.get_mut(&tab) else {
+            return;
+        };
+        let mut told = seen.last.clone();
+        told.flow_indicators.clone_from(&landed.flow_indicators);
+        for (pane, named) in told.context_panes.iter_mut().zip(&landed.context_panes) {
+            pane.indicators.clone_from(&named.indicators);
+        }
+        if told != seen.last {
+            seen.last = told;
+            seen.signal = None;
+        }
+    }
+
     /// Whether a recipe has settled on this tab since it joined.
     #[must_use]
     pub fn is_settled(&self, tab: u64) -> bool {

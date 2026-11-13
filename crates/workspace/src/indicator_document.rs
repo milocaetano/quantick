@@ -33,6 +33,14 @@ impl SavedKind {
             Self::Script { name } => name.strip_suffix(".pine").unwrap_or(name).to_owned(),
         }
     }
+    /// The name the file stores: the catalog id or the library entry name.
+    #[must_use]
+    pub fn stable_name(&self) -> &str {
+        match self {
+            Self::Native { id } => id,
+            Self::Script { name } => name,
+        }
+    }
     /// A native entry for a catalog id.
     pub fn native(id: &str) -> Self {
         SavedKind::Native { id: id.to_owned() }

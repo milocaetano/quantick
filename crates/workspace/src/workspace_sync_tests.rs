@@ -1,4 +1,5 @@
 use super::*;
+use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
 use crate::session::{LayoutSession, OwnedCopies, PaneFacts};
 
@@ -65,6 +66,27 @@ fn a_tab_that_clamped_its_recipe_is_not_an_edit() {
     };
     sync.settle(1, clamped.clone());
     assert_eq!(sync.observe(1, clamped, &copy), None);
+}
+
+/// A recipe whose panes on one strip layout named two sets lands one: what
+/// the tab shows then is an edit of its copy, once. One that landed as named
+/// owes nothing.
+#[test]
+fn a_set_healed_on_landing_is_an_edit_once() {
+    let mut sync = TabRecipeSync::default();
+    let mut named = WorkspaceRecipe::default();
+    named.context_panes.push(Default::default());
+    named.context_panes[0].indicators = vec![ema()];
+    let mut shown = named.clone();
+    shown.flow_indicators = vec![ema()];
+    sync.settle(1, shown.clone());
+    sync.owe_indicators(1, &named);
+    assert_eq!(sync.observe(1, shown.clone(), &named), Some(shown.clone()));
+    assert_eq!(sync.observe(1, shown.clone(), &named), None);
+
+    sync.settle(2, named.clone());
+    sync.owe_indicators(2, &named);
+    assert_eq!(sync.observe(2, named.clone(), &named), None);
 }
 
 #[test]
@@ -247,15 +269,15 @@ fn switch(session: &mut LayoutSession, pane: u64, to: LayoutId) {
 }
 
 /// A recipe that gives two panes of a tab two sets parts nothing: a pane
-/// switched away and back lands on the tab's one copy, with the set its first
-/// pane was given, and the copy stays while the other pane holds it.
+/// switched away and back lands on the tab's one copy, with the fuller set it
+/// was given, and the copy stays while the other pane holds it.
 #[test]
 fn a_pane_back_from_a_switch_finds_its_tabs_one_copy() {
     let mut session = two_tabs_on_one_layout();
     let (shared, public) = (session.layout(1), session.book().active_id());
     let (none, one) = (Vec::new(), vec![ema()]);
     let shown = session.shared_sets([(1, none.as_slice()), (2, one.as_slice())]);
-    assert_eq!(shown, [(1, none.as_slice()), (2, none.as_slice())]);
+    assert_eq!(shown, [(1, one.as_slice()), (2, one.as_slice())]);
     assert_eq!(session.layout(2), shared, "nothing parted");
     session.indicators_mut(shared).unwrap().push(ema());
     let levels = session.create(Some("levels")).unwrap();
@@ -288,16 +310,11 @@ fn native(id: &str) -> crate::indicator_document::SavedIndicator {
     }
 }
 
-/// The trader's stored file: flow pane 1 and context panes 2 and 3 of one tab
-/// on three copies of one strip layout, each holding another set.
-fn three_twins() -> (LayoutSession, [LayoutId; 3]) {
+/// A stored file: flow pane 1 and context panes 2 and 3 of tab 10 on three
+/// copies of one strip layout, holding `sets` in that order.
+fn three_twins(sets: [Vec<SavedIndicator>; 3]) -> (LayoutSession, [LayoutId; 3]) {
     let mut book = LayoutBook::starter(Vec::new());
     let origin = book.active_id();
-    let sets = [
-        vec![script("force_bar.pine"), native("native.cvd")],
-        vec![script("force_bar.pine")],
-        vec![script("force_bar.pine"), script("cvd.pine")],
-    ];
     let copies = sets.map(|set| {
         let copy = book.make_private_copy(origin).unwrap();
         book.get_mut(copy).unwrap().indicators = set;
@@ -311,33 +328,45 @@ fn three_twins() -> (LayoutSession, [LayoutId; 3]) {
     (session, copies)
 }
 
+/// The trader's WINZ26 tab, as his stored file holds it.
+fn winz26() -> [Vec<SavedIndicator>; 3] {
+    [
+        vec![script("force_bar.pine"), native("native.cvd")],
+        vec![script("force_bar.pine")],
+        vec![script("force_bar.pine"), script("cvd.pine")],
+    ]
+}
+
 /// Inside one tab, the panes on one strip layout show one set. A recipe giving
-/// them two sets leaves them on one copy showing the first pane's; twin copies
-/// a stored file brings back merge into the flow pane's, every pane on it, and
-/// the merge reads back from the file as it was left.
+/// them two sets lands the fuller on both, a tie going to the first pane, and
+/// never reaches another tab's; twin copies a stored file brings back merge
+/// into the fullest, every pane on it, and the merge reads back from the file
+/// as it was left.
 #[test]
 fn panes_of_one_tab_on_one_strip_layout_always_share_a_set() {
     let session = two_tabs_on_one_layout();
-    let (shared, other_tab) = (session.layout(1), session.layout(3));
     let (none, one) = (Vec::new(), vec![ema()]);
-    let shown = session.shared_sets([(1, one.as_slice()), (2, none.as_slice())]);
+    let cvd = vec![native("native.cvd")];
+    let shown = session.shared_sets([(1, none.as_slice()), (2, one.as_slice())]);
     assert_eq!(
         shown,
         [(1, one.as_slice()), (2, one.as_slice())],
-        "the first pane decides"
+        "the fuller"
     );
-    assert_eq!(
-        [session.layout(1), session.layout(2)],
-        [shared; 2],
-        "one copy"
-    );
-    assert_eq!(session.layout(3), other_tab, "tab 20 untouched");
+    let tie = session.shared_sets([(1, cvd.as_slice()), (2, one.as_slice())]);
+    assert_eq!(tie, [(1, cvd.as_slice()), (2, cvd.as_slice())], "the first");
+    let apart = session.shared_sets([(1, none.as_slice()), (3, one.as_slice())]);
+    assert_eq!(apart, [(1, none.as_slice()), (3, one.as_slice())], "tab 20");
 
-    let (mut session, [flow, twin, other]) = three_twins();
+    let (mut session, [flow, twin, other]) = three_twins(winz26());
     let owned = session.own_copies([(10, 1), (10, 2), (10, 3)]);
     assert!(owned.changed);
     assert_eq!(owned.reshow, [2, 3], "the context panes showed another set");
-    assert_eq!([1, 2, 3].map(|pane| session.layout(pane)), [flow; 3]);
+    assert_eq!(
+        [1, 2, 3].map(|pane| session.layout(pane)),
+        [flow; 3],
+        "a tie"
+    );
     let force = vec![script("force_bar.pine"), native("native.cvd")];
     assert_eq!(session.book().get(flow).unwrap().indicators, force);
     assert!(session.book().get(twin).is_none() && session.book().get(other).is_none());
@@ -362,6 +391,27 @@ fn panes_of_one_tab_on_one_strip_layout_always_share_a_set() {
     assert_eq!(owned, OwnedCopies::default(), "nothing left to merge");
     assert_eq!([1, 2, 3].map(|pane| reread.layout(pane)), [flow; 3]);
     assert_eq!(reread.book().get(flow).unwrap().indicators, force);
+}
+
+/// Twins merge into the copy holding the most indicators, wherever its pane
+/// stands: an empty flow copy never empties its tab.
+#[test]
+fn the_fullest_twin_survives_a_merge() {
+    // The trader's Fluxo BTC tab: the context panes hold CVD, the flow pane not.
+    let fluxo = vec![script("force_bar.pine"), script("cvd.pine")];
+    let sets = [vec![script("force_bar.pine")], fluxo.clone(), fluxo.clone()];
+    let (mut session, [_, survivor, _]) = three_twins(sets);
+    let owned = session.own_copies([(10, 1), (10, 2), (10, 3)]);
+    assert_eq!(owned.reshow, [1], "only the flow pane showed less");
+    assert_eq!([1, 2, 3].map(|pane| session.layout(pane)), [survivor; 3]);
+    assert_eq!(session.book().get(survivor).unwrap().indicators, fluxo);
+
+    let (mut session, [flow, survivor, other]) = three_twins([Vec::new(), vec![ema()], Vec::new()]);
+    let owned = session.own_copies([(10, 1), (10, 2), (10, 3)]);
+    assert_eq!(owned.reshow, [1, 3]);
+    assert_eq!([1, 2, 3].map(|pane| session.layout(pane)), [survivor; 3]);
+    assert_eq!(session.book().get(survivor).unwrap().indicators, [ema()]);
+    assert!(session.book().get(flow).is_none() && session.book().get(other).is_none());
 }
 
 /// The restored-desk fallback: tab 30's pane seeded from tab 10's edited copy
@@ -443,23 +493,26 @@ fn another_tabs_private_copy_is_refused_by_the_strip_and_the_switch() {
     );
 }
 
-/// A recipe that gives two panes of a tab two sets parts nothing: both stay on
-/// the tab's copy and show what the first pane is given. One set stays one.
+/// A recipe that gives two panes of a tab two sets parts nothing: both show
+/// the fuller, a tie going to the first in the order given. One set stays one.
 #[test]
 fn a_recipe_never_parts_a_tabs_copy() {
     let session = two_tabs_on_one_layout();
-    let (shared, other_tab) = (session.layout(1), session.layout(3));
-    let (none, one) = (Vec::new(), vec![ema()]);
+    let (none, one, cvd) = (Vec::new(), vec![ema()], vec![native("native.cvd")]);
     let same = session.shared_sets([(1, none.as_slice()), (2, none.as_slice())]);
     assert_eq!(same, [(1, none.as_slice()), (2, none.as_slice())]);
-    let two = session.shared_sets([(2, one.as_slice()), (1, none.as_slice())]);
+    let two = session.shared_sets([(2, none.as_slice()), (1, one.as_slice())]);
     assert_eq!(
         two,
         [(2, one.as_slice()), (1, one.as_slice())],
-        "in the order given"
+        "the fuller"
     );
-    assert_eq!([session.layout(1), session.layout(2)], [shared; 2]);
-    assert_eq!(session.layout(3), other_tab, "tab 20 untouched");
+    let tie = session.shared_sets([(2, one.as_slice()), (1, cvd.as_slice())]);
+    assert_eq!(
+        tie,
+        [(2, one.as_slice()), (1, one.as_slice())],
+        "the first given"
+    );
 }
 
 /// A desk read from disk names the copies its tabs use; the rest are dropped.

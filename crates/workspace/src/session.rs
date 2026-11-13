@@ -379,10 +379,12 @@ impl LayoutSession {
         owned
     }
     /// Twin copies of one strip layout that one tab owns, as a stored file can
-    /// bring back, merge into the one its first pane in order holds, else the
-    /// first one a pane of it left: one set per strip layout per tab. Panes on
-    /// a twin move to the survivor and are told to show its set; a pane that
-    /// left a twin finds the survivor on its way back. The twins leave.
+    /// bring back, merge into one: one set per strip layout per tab. The copy
+    /// holding the most indicators survives; a tie goes to the one the first
+    /// pane in order holds, held copies before ones a pane left. Panes on a
+    /// twin move to the survivor and are told to show its set; a pane that
+    /// left a twin finds the survivor on its way back. The twins leave, each
+    /// logged with what it held that the survivor lacks.
     fn merge_twins(&mut self, seeded: &[(u64, u64, LayoutId)]) -> OwnedCopies {
         let own = |tab: u64, copy: LayoutId| (self.owner.get(&copy) == Some(&tab)).then_some(copy);
         let held = seeded
@@ -393,27 +395,45 @@ impl LayoutSession {
                 .filter(move |((by, _), _)| *by == pane)
                 .filter_map(move |(_, copy)| Some((tab, own(tab, *copy)?)))
         });
-        let mut first: BTreeMap<(u64, LayoutId), LayoutId> = BTreeMap::new();
-        let mut merged: BTreeMap<LayoutId, LayoutId> = BTreeMap::new();
+        let size = |id| {
+            self.book
+                .get(id)
+                .map_or(0, |layout| layout.indicators.len())
+        };
+        let mut seen: Vec<((u64, LayoutId), LayoutId)> = Vec::new();
+        let mut best: BTreeMap<(u64, LayoutId), LayoutId> = BTreeMap::new();
         for (tab, copy) in held.chain(left) {
-            let survivor = *first
-                .entry((tab, self.book.origin_of(copy)))
-                .or_insert(copy);
-            if survivor != copy {
-                merged.insert(copy, survivor);
+            let key = (tab, self.book.origin_of(copy));
+            if seen.contains(&(key, copy)) {
+                continue;
+            }
+            seen.push((key, copy));
+            let winner = best.entry(key).or_insert(copy);
+            if size(copy) > size(*winner) {
+                *winner = copy;
             }
         }
+        let merged: BTreeMap<LayoutId, (u64, LayoutId)> = seen
+            .into_iter()
+            .filter_map(|(key, copy)| {
+                let survivor = best[&key];
+                (survivor != copy).then_some((copy, (key.0, survivor)))
+            })
+            .collect();
         let mut owned = OwnedCopies::default();
         if merged.is_empty() {
             return owned;
         }
+        for (twin, (tab, survivor)) in &merged {
+            self.log_discarded(*tab, *twin, *survivor);
+        }
         for copy in self.kept.values_mut() {
-            if let Some(survivor) = merged.get(copy) {
+            if let Some((_, survivor)) = merged.get(copy) {
                 *copy = *survivor;
             }
         }
         for &(tab, pane, layout) in seeded {
-            let Some(survivor) = merged.get(&layout).copied() else {
+            let Some((_, survivor)) = merged.get(&layout).copied() else {
                 continue;
             };
             if self.owner.get(&layout) != Some(&tab) {
@@ -431,30 +451,68 @@ impl LayoutSession {
         owned.changed = true;
         owned
     }
+    /// Say what a twin merged into `survivor` held that the survivor lacks:
+    /// nothing a merge drops goes unsaid.
+    fn log_discarded(&self, tab: u64, twin: LayoutId, survivor: LayoutId) {
+        let kinds = |id| {
+            self.book
+                .get(id)
+                .map(|layout| layout.indicators.iter().map(|entry| &entry.kind))
+                .into_iter()
+                .flatten()
+        };
+        let kept: Vec<_> = kinds(survivor).collect();
+        let lacked: Vec<&str> = kinds(twin)
+            .filter(|kind| !kept.contains(kind))
+            .map(crate::indicator_document::SavedKind::stable_name)
+            .collect();
+        tracing::warn!(
+            target: "quantick::workspace",
+            schema_version = 1_u8,
+            event_code = "LAYOUT_TWIN_MERGED",
+            tab,
+            layout = self.book.origin_of(twin).0,
+            survivor = survivor.0,
+            discarded = twin.0,
+            lacked = ?lacked,
+            action = "survivor_set_shown",
+            "one tab held two copies of a layout; the fuller one stays"
+        );
+    }
     /// Before a recipe lands on one tab's panes, given as `(pane, set)` in
     /// pane order: the set each pane shows. The panes on one copy show one
-    /// set, the one the first of them is given; a recipe never parts a copy.
-    /// Call after [`Self::own_copies`].
+    /// set: the fullest they are given, a tie going to the first of them. A
+    /// recipe never parts a copy. Call after [`Self::own_copies`].
     #[must_use]
     pub fn shared_sets<'a>(
         &self,
         wanted: impl IntoIterator<Item = (u64, &'a [crate::indicator_document::SavedIndicator])>,
     ) -> Vec<(u64, &'a [crate::indicator_document::SavedIndicator])> {
-        let mut decided: Vec<(LayoutId, &'a [_])> = Vec::new();
-        let mut shown = Vec::new();
-        for (pane, set) in wanted {
-            let first = self.held(pane).map(|layout| {
-                match decided.iter().find(|(copy, _)| *copy == layout) {
-                    Some((_, first)) => *first,
-                    None => {
-                        decided.push((layout, set));
-                        set
-                    }
-                }
-            });
-            shown.push((pane, first.unwrap_or(set)));
+        let wanted: Vec<_> = wanted
+            .into_iter()
+            .map(|(pane, set)| (pane, self.held(pane), set))
+            .collect();
+        let mut best: Vec<(LayoutId, &'a [_])> = Vec::new();
+        for &(_, copy, set) in &wanted {
+            let Some(copy) = copy else {
+                continue;
+            };
+            match best.iter_mut().find(|(held, _)| *held == copy) {
+                Some((_, winner)) if set.len() > winner.len() => *winner = set,
+                Some(_) => {}
+                None => best.push((copy, set)),
+            }
         }
-        shown
+        let shown = |copy: Option<LayoutId>| {
+            let copy = copy?;
+            best.iter()
+                .find(|(held, _)| *held == copy)
+                .map(|(_, set)| *set)
+        };
+        wanted
+            .iter()
+            .map(|&(pane, copy, set)| (pane, shown(copy).unwrap_or(set)))
+            .collect()
     }
     pub fn replace_book(&mut self, book: LayoutBook) {
         let panes = std::mem::take(&mut self.panes);

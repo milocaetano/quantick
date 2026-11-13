@@ -100,7 +100,8 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
 }
 
 /// A recipe of two context panes reaches the second pane too, which is built a
-/// frame after the first. Its panes share one strip layout, so one set.
+/// frame after the first. Its panes share one strip layout, so the fuller set
+/// lands on all three: a change from the stored recipe the tab reads as held.
 #[test]
 fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-context-switch", "layouts.toml");
@@ -111,10 +112,9 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let (layer, on) = some_layer(&app, first, 2);
     let mut two = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(two.context_panes.len(), 2);
-    two.flow_indicators = vec![ema()];
-    for pane in &mut two.context_panes {
-        pane.indicators = vec![ema()];
-    }
+    two.flow_indicators = Vec::new();
+    two.context_panes[0].indicators = Vec::new();
+    two.context_panes[1].indicators = vec![ema()];
     two.context_panes[1]
         .layers
         .insert(layer.id().to_owned(), !on);
@@ -124,13 +124,26 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
 
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id_mut(second).expect("an open tab");
+    for pane in tab.panes_mut() {
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+    }
+    let built = tab.pane(PaneSide::Time(1)).indicators.all().len();
+    assert_eq!(built, 1, "the pane built a frame later shows its indicator");
     let live = live_recipe(&app.runtime, second).expect("an open tab");
     assert_eq!(live.context_panes.len(), 2);
     assert_eq!(live.context_panes[1].indicators, [ema()], "the second pane");
+    assert_eq!(
+        live.flow_indicators,
+        [ema()],
+        "one set for the strip layout"
+    );
     assert_eq!(live.context_panes[1].layers.get(layer.id()), Some(&!on));
     assert_eq!(
         app.runtime.workspace.book.tab_row(second),
-        ("Two".to_owned(), false)
+        ("Two".to_owned(), true),
+        "the healed set is a change the trader can save"
     );
 }
 
@@ -584,9 +597,9 @@ fn one_copy(app: &QuantickApp) -> quantick_workspace::layout_document::LayoutId 
 }
 
 /// The trader's Force report: inside one tab, the panes on one strip layout
-/// show one set. A recipe giving three panes three sets lands the flow pane's
-/// on all of them, and an add or a removal on a context pane reaches the flow
-/// pane and the other context pane.
+/// show one set. A recipe giving three panes three sets lands the fullest on
+/// all of them and opens the tab as held, and an add or a removal on a context
+/// pane reaches the flow pane and the other context pane.
 #[test]
 fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() {
     let layouts = crate::scratch::ScratchFile::new("workspace-one-set-a-tab", "layouts.toml");
@@ -607,25 +620,30 @@ fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() 
 
     set_tab_workspace(&mut app, a, "Three").expect("a known workspace");
     frames(&mut app, 5);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(a),
+        ("Three".to_owned(), true),
+        "a recipe of three sets lands as a change"
+    );
     let copy = one_copy(&app);
-    assert_eq!(three_counts(&mut app), [1; 3], "the flow pane's set");
+    assert_eq!(three_counts(&mut app), [2; 3], "the fullest set");
     let set = &app
         .layout_state()
         .layouts()
         .get(copy)
         .expect("held")
         .indicators;
-    assert_eq!(set, &[ema()]);
+    assert_eq!(set, &[ema(), ema()]);
 
     app.active_tab_mut().focus = PaneSide::Time(1);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     frames(&mut app, 2);
-    assert_eq!(three_counts(&mut app), [2; 3], "an add reaches every pane");
+    assert_eq!(three_counts(&mut app), [3; 3], "an add reaches every pane");
     let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
     app.active_tab_mut().focus = PaneSide::Time(0);
     app.apply_toolbar_action(ToolbarAction::RemoveIndicator(slot.0));
     frames(&mut app, 2);
-    assert_eq!(three_counts(&mut app), [1; 3], "and so does a removal");
+    assert_eq!(three_counts(&mut app), [2; 3], "and so does a removal");
     assert_eq!(one_copy(&app), copy);
 }
 
