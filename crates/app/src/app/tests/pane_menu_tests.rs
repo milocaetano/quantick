@@ -232,6 +232,39 @@ fn remove_cancel_and_escape_clear_pending_without_mutation() {
 }
 
 #[test]
+fn remove_clicked_answer_wins_over_simultaneous_escape() {
+    let (mut app, ctx) = saved_tab("time+flow");
+    let time = slot_of(&app, PaneKind::Time);
+    press(&mut app, &ctx, &format!("pane_menu.{time}"));
+    press(&mut app, &ctx, &format!("pane_menu.{time}.remove"));
+    let position = drawn(&app, "remove_chart.minimize_instead")
+        .unwrap()
+        .center();
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, true),
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, false),
+            key_press(egui::Key::Escape),
+        ],
+    );
+    frames(&mut app, &ctx, 2);
+    assert_eq!(mode(&app, time), Some(PaneMode::Minimized));
+    assert_eq!(pending(&mut app), None);
+}
+
+#[test]
 fn remove_pending_follows_tabs_and_prunes_only_closed_owners() {
     let (mut app, ctx) = saved_tab("time+flow");
     let first = app.runtime.tabs.active_id();
@@ -291,4 +324,50 @@ fn remove_pending_follows_tabs_and_prunes_only_closed_owners() {
         "tab IDs are not recycled"
     );
     assert_eq!(pending(&mut app), None);
+}
+
+#[test]
+fn refused_remove_still_consumes_the_pending_answer() {
+    use quantick_control_handlers::canvas::{CanvasAct, CanvasHost};
+    let (mut app, ctx) = saved_tab("time+flow");
+    let (time, flow) = (slot_of(&app, PaneKind::Time), slot_of(&app, PaneKind::Flow));
+    press(&mut app, &ctx, &format!("pane_menu.{time}"));
+    press(&mut app, &ctx, &format!("pane_menu.{time}.remove"));
+    app.act_on_canvas(CanvasAct::Remove {
+        slot: flow,
+        confirm: true,
+    })
+    .unwrap();
+    frames(&mut app, &ctx, 2);
+    assert_eq!(pending(&mut app), Some(time));
+    press(&mut app, &ctx, "remove_chart.remove");
+    assert_eq!(
+        mode(&app, time),
+        Some(PaneMode::Docked),
+        "the last chart cannot be removed"
+    );
+    assert_eq!(
+        pending(&mut app),
+        None,
+        "refusal does not reopen the dialog"
+    );
+    assert!(drawn(&app, "remove_chart.remove").is_none());
+}
+
+#[test]
+fn pane_menu_row_settles_once_after_canvas() {
+    let (mut app, ctx) = saved_tab("time+flow");
+    let slot = slot_of(&app, PaneKind::Time);
+    press(&mut app, &ctx, &format!("pane_menu.{slot}"));
+    press(&mut app, &ctx, &format!("pane_menu.{slot}.minimize"));
+    let tab = app.runtime.tabs.active_id();
+    assert_eq!(mode(&app, slot), Some(PaneMode::Minimized));
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
+    let after = app.active_tab().canvas.state.clone();
+    super::super::canvas_wiring::settle_canvas(&mut app, &ctx);
+    assert_eq!(app.active_tab().canvas.state, after);
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
+    press(&mut app, &ctx, &format!("pane_menu.{slot}.strip"));
+    assert_eq!(mode(&app, slot), Some(PaneMode::Docked));
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
 }

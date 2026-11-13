@@ -127,6 +127,48 @@ fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
     }
 }
 
+/// egui's held modifiers reach the model's chord: `Shift+F` is *flatten* and
+/// arms nothing, `Shift+T` arms the ray, and a held command keeps letters out.
+#[test]
+fn egui_modifiers_reach_the_shortcut_chord() {
+    let ctx = egui::Context::default();
+    let mut rail = ToolRail::new_rail();
+    let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
+        let event = egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let input = egui::RawInput {
+            events: vec![event],
+            modifiers,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| rail.handle_keys(ctx));
+        rail.tool().drawing_tool().map(DrawingTool::id)
+    };
+    assert_eq!(
+        send(&mut rail, egui::Key::F, egui::Modifiers::NONE),
+        Some("fib-retracement")
+    );
+    assert_eq!(
+        send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT),
+        Some("fib-retracement"),
+        "Shift+F must arm nothing new"
+    );
+    assert_eq!(
+        send(&mut rail, egui::Key::T, egui::Modifiers::SHIFT),
+        Some("ray")
+    );
+    rail.arm(Tool::Pointer);
+    assert_eq!(
+        send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND),
+        None
+    );
+}
+
 fn draw_rail_frame(
     rail: &mut ToolRail,
     ctx: &egui::Context,
@@ -436,17 +478,26 @@ fn the_pinned_button_arms_and_never_unstars() {
 
 /// The painted buttons are the scene's controls at every stage, so the
 /// stage table `painted_controls` owns in the model is what reaches pixels;
-/// only Minimal folds the global eye and lock into More.
+/// only Minimal folds the global eye and lock into More, only a stage that
+/// swallows tools paints More, and a family paints one slot (a second painted
+/// fib entry would name the family twice).
 #[test]
 fn painted_buttons_match_the_scene_controls_at_every_stage() {
     let ctx = egui::Context::default();
     let mut rail = ToolRail::new_rail();
-    rail.set_dock(ToolboxDock::Top);
     rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
     let mut drawings = Drawings::default();
-    // A horizontal rail: 400 px is Compact, 250 px Minimal, 900 px Full.
-    for (width, globals) in [(400.0, true), (250.0, false), (900.0, true)] {
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
+    // Along the top 400 px is Compact, 250 px Minimal, 900 px Full; down the
+    // left 700 px is Full.
+    for (dock, size, globals, more) in [
+        (ToolboxDock::Top, egui::vec2(400.0, 600.0), true, true),
+        (ToolboxDock::Top, egui::vec2(250.0, 600.0), false, true),
+        (ToolboxDock::Top, egui::vec2(900.0, 600.0), true, false),
+        (ToolboxDock::Left, egui::vec2(900.0, 700.0), true, false),
+    ] {
+        rail.set_dock(dock);
+        let width = format!("{dock:?} {size:?}");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
         let mut scene: Vec<_> = rail.painted_controls().iter().map(|c| c.id).collect();
         // A family slot paints its shown member; the scene names the family.
@@ -463,10 +514,11 @@ fn painted_buttons_match_the_scene_controls_at_every_stage() {
             .collect();
         painted.sort_unstable();
         scene.sort_unstable();
-        assert_eq!(painted, scene, "{width} px");
-        assert!(rail.view.objects_rect.is_some(), "{width} px keeps Objects");
-        assert_eq!(rail.view.hide_all_rect.is_some(), globals, "{width} px");
-        assert_eq!(rail.view.lock_all_rect.is_some(), globals, "{width} px");
+        assert_eq!(painted, scene, "{width}");
+        assert!(rail.view.objects_rect.is_some(), "{width} keeps Objects");
+        assert_eq!(rail.view.hide_all_rect.is_some(), globals, "{width}");
+        assert_eq!(rail.view.lock_all_rect.is_some(), globals, "{width}");
+        assert_eq!(rail.view.more_rect.is_some(), more, "{width} More");
     }
 }
 

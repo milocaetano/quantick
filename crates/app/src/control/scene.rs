@@ -504,8 +504,8 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     let owner = (SceneOwnerKindDto::Tab, tab_control_id(tab_id));
     push_drawn(controls, &tab.canvas.menus.drawn, owner);
     for (pane, _) in tab.panes() {
+        let flow = pane.flow_header_state();
         for &(control, rect) in &pane.frame.header_controls {
-            let flow = pane.flow_header_state();
             let glyph = |toggle| pane.header_glyph(toggle, style, capabilities);
             let panel = |control| {
                 settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)

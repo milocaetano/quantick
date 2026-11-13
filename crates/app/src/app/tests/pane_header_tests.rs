@@ -2293,10 +2293,10 @@ fn each_gear_menu_entry_opens_its_section() {
     }
 }
 
-/// Held by the market, both keys do nothing: the view stands and the hold stands,
-/// and a hand on the fold is the way out. The segments' refusal is the model's.
+/// Held by the market, both segments and both keys do nothing: the view stands and
+/// the hold stands, and a hand on the fold is the way out.
 #[test]
-fn a_market_hold_refuses_both_keys() {
+fn a_market_hold_refuses_both_segments_and_both_keys() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let quiet = quantick_chart::connection_state::ConnectionState {
@@ -2313,6 +2313,11 @@ fn a_market_hold_refuses_both_keys() {
     };
     assert!(held(&app));
     run_frame(&mut app, &ctx);
+    for control in [TAPE, TRAIL] {
+        click_side(&mut app, &ctx, control);
+        assert_eq!(view_of(&app), LaneView::Beside, "{control:?}");
+        assert!(held(&app), "{control:?}");
+    }
     let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
     for key in [egui::Key::T, egui::Key::R] {
         press_key(&mut app, &ctx, key, mods);
