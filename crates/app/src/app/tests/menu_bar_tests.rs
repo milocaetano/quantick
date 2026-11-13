@@ -477,9 +477,56 @@ fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
     app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
     assert!(!app.surfaces.access_panel.model_state.open);
     app.control.control_access = Some(crate::control::ControlAccess::new());
-    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
-    assert!(app.surfaces.access_panel.model_state.open);
+    app.chrome
+        .window_menu
+        .open_settings(ctx.viewport_id(), SettingsSection::AgentAccess);
     run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {
+        use quantick_control_schema::settings_sections::SettingRow;
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == SettingRow::ManageClients.label() => {
+                Some(text.visual_bounding_rect().center())
+            }
+            egui::Shape::Vec(shapes) => shapes
+                .iter()
+                .filter_map(button_center)
+                .max_by(|a, b| a.x.total_cmp(&b.x)),
+            _ => None,
+        }
+    }
+    // The row caption shares the button label; the button is on the right.
+    let manage = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| button_center(&clipped.shape))
+        .max_by(|a, b| a.x.total_cmp(&b.x))
+        .expect("Agent access settings paints Manage clients");
+    assert!(!app.surfaces.access_panel.model_state.open);
+    assert!(ctx.memory(|memory| {
+        memory
+            .area_rect(egui::Id::new("control_access_panel"))
+            .is_none()
+    }));
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(manage),
+            pointer_button(manage, true),
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(manage),
+            pointer_button(manage, false),
+        ],
+    );
+    assert!(app.surfaces.access_panel.model_state.open);
     assert!(ctx.memory(|memory| {
         memory
             .area_rect(egui::Id::new("control_access_panel"))
