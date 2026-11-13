@@ -73,14 +73,14 @@ impl crate::Model for Model {
                 {
                     state.pending = None;
                 }
-                if state.pending.is_none() {
-                    if let Some(message) = state.deferred.take() {
-                        state.pending = Some(Pending {
-                            message,
-                            shown_at: now,
-                            offers_undo: false,
-                        });
-                    }
+                if state.pending.is_none()
+                    && let Some(message) = state.deferred.take()
+                {
+                    state.pending = Some(Pending {
+                        message,
+                        shown_at: now,
+                        offers_undo: false,
+                    });
                 }
             }
             Intent::Undo => {
