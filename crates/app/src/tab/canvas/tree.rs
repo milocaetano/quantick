@@ -24,6 +24,12 @@ use crate::pane::{
 };
 use crate::{floating_panes, theme};
 
+/// The resize cursor over a seam laying charts top to bottom, then side by side.
+const CURSORS: [egui::CursorIcon; 2] = [
+    egui::CursorIcon::ResizeVertical,
+    egui::CursorIcon::ResizeHorizontal,
+];
+
 impl Tab {
     /// Lay the canvas out from the model's tree and spend each band's header,
     /// as the column painter does for its own bands.
@@ -154,37 +160,26 @@ impl Tab {
                 handle = handle.on_hover_text("drag to show the folded chart again");
             }
             if handle.hovered() || handle.dragged() {
-                let cursor = [
-                    egui::CursorIcon::ResizeVertical,
-                    egui::CursorIcon::ResizeHorizontal,
-                ];
-                ui.ctx().set_cursor_icon(cursor[usize::from(row)]);
+                ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
                 hot = hot.or(seam.rail.map(|rail| rail.slot));
-            }
-            if handle.drag_started() {
-                self.canvas.seam_drag = None;
             }
             // Every step the pointer took since the press, as the column
             // divider adds them up: an off-centre grab never jumps the seam,
             // and travel past a floor still reaches the fold.
             let step = [handle.drag_delta().y, handle.drag_delta().x][usize::from(row)];
-            if handle.dragged() && step.abs() > f32::EPSILON {
+            if handle.dragged() {
                 let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
-                let _ = state.step_seam_drag(held, (&seam.address, step), canvas);
+                let pressed = (&seam.address, step, handle.drag_started());
+                let _ = state.step_seam_drag(held, pressed, canvas);
             }
         }
         for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let (at, lit) = (rect(rail.rect), hot == Some(rail.slot));
-            if rail.axis == SplitAxis::Row {
-                let edge = [at.left(), at.right()][usize::from(rail.meets_after)];
-                super::paint_rail(ui.painter(), at, edge, lit);
-            } else {
-                let edge = [at.top(), at.bottom()][usize::from(rail.meets_after)];
-                paint_rail_across(ui.painter(), at, edge, lit);
-            }
-            let id = format!("pane_menu.{}.rail", rail.slot);
+            let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);
+            let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
+            let edge = (edges[usize::from(rail.meets_after)], across);
+            super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
             let restore = Some(item_capability(PaneMenuItem::Restore));
-            self.canvas.menus.publish(id, "Restore", at, restore);
+            (self.canvas.menus).publish(rail.control_id(), "Restore", at, restore);
         }
     }
 
@@ -367,23 +362,4 @@ impl Tab {
         });
         strip_label(kind, &bars.unwrap_or_default(), &self.symbol)
     }
-}
-
-/// [`super::paint_rail`] for a rail folded across a column: the edge where it
-/// meets the open chart at `edge_y`, the grip lying along it.
-fn paint_rail_across(painter: &egui::Painter, rail: egui::Rect, edge_y: f32, hot: bool) {
-    let palette = theme::get(painter.ctx());
-    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
-    painter.hline(
-        rail.x_range(),
-        edge_y,
-        egui::Stroke::new(1.0_f32, palette.border()),
-    );
-    let size = egui::vec2(
-        crate::tab::RAIL_GRIP_HEIGHT_PX,
-        crate::tab::RAIL_GRIP_WIDTH_PX,
-    );
-    let grip = egui::Rect::from_center_size(rail.center(), size);
-    let colour = [palette.text_muted(), palette.accent()][usize::from(hot)];
-    painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

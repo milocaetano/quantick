@@ -148,22 +148,24 @@ impl CanvasState {
         })
     }
 
-    /// The hand's drag of a seam, one frame: `drag` taken afresh when it is
-    /// `None` or holds another seam, `delta` added to its travel, the pair
-    /// laid out ([`Self::drag_seam`]). Answers whether anything moved.
+    /// The hand's drag of a seam, one frame: `drag` taken afresh on the
+    /// press (`pressed`) or when it is `None` or holds another seam, `delta`
+    /// added to its travel, the pair laid out ([`Self::drag_seam`]). A frame
+    /// the pointer did not move changes nothing. Answers whether anything
+    /// moved.
     ///
     /// # Errors
     /// As [`Self::begin_seam_drag`].
     pub fn step_seam_drag(
         &mut self,
         drag: &mut Option<SeamDrag>,
-        (seam, delta): (&SeamAddress, f32),
+        (seam, delta, pressed): (&SeamAddress, f32, bool),
         area: CanvasRect,
     ) -> Result<bool, CanvasRefusal> {
-        if drag.as_ref().is_none_or(|held| held.seam != *seam) {
+        if pressed || drag.as_ref().is_none_or(|held| held.seam != *seam) {
             *drag = Some(self.begin_seam_drag(seam, area)?);
         }
-        let Some(held) = drag.as_mut() else {
+        let Some(held) = drag.as_mut().filter(|_| delta.abs() > f32::EPSILON) else {
             return Ok(false);
         };
         held.travel_by(delta);

@@ -66,3 +66,64 @@ fn the_column_painter_draws_only_its_own_preset_untouched() {
     floated.float(slot, AREA).unwrap();
     assert!(!floated.column_painted(split, true));
 }
+
+/// A fold is one rail in the canvas model whichever painter draws it: folded
+/// on a column layout, it stays the same rail when a floating chart drops
+/// the tab onto the tree and when the chart leaves again, reads back the
+/// same both ways, and a drag from it reopens it.
+#[test]
+fn a_column_fold_stays_one_rail_across_the_painter_switch() {
+    for (id, flow) in [("time+flow", true), ("stack2+flow", false)] {
+        let preset = layout(id);
+        let mut state = CanvasState::from_preset(preset);
+        assert!(state.fold_flow_side(flow, true), "{id}");
+        let folds = state.flow_side_folds();
+        assert!(
+            state.column_painted(preset, true),
+            "{id}: the column painter draws its fold"
+        );
+        let one_rail = |state: &CanvasState| {
+            let rails = tree_rails(state, AREA, CANVAS_DIVIDER_PX);
+            rails.len() == 1 && (rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < 1e-3
+        };
+        assert!(one_rail(&state), "{id}");
+        let float = state.add(PaneKind::Time, AREA).unwrap();
+        assert!(
+            !state.column_painted(preset, true),
+            "{id}: the tree paints now"
+        );
+        assert!(one_rail(&state), "{id}: still one rail on the tree");
+        assert_eq!(state.flow_side_folds(), folds, "{id}: the same readback");
+        state.remove(float).unwrap();
+        assert!(
+            state.column_painted(preset, true),
+            "{id}: back on the columns"
+        );
+        assert!(one_rail(&state), "{id}: still one rail");
+        assert_eq!(state.flow_side_folds(), folds, "{id}");
+        let seam = SeamAddress {
+            path: Vec::new(),
+            index: 0,
+        };
+        let mut held = None;
+        let by = if flow { -800.0 } else { 800.0 };
+        state
+            .step_seam_drag(&mut held, (&seam, by, true), AREA)
+            .unwrap();
+        assert_eq!(
+            state.flow_side_folds(),
+            (false, false),
+            "{id}: a drag reopens it"
+        );
+        assert!(state.column_painted(preset, true), "{id}");
+    }
+}
+
+/// A strip from the pane menu is no column fold: the tree paints it.
+#[test]
+fn a_menu_strip_keeps_the_tree_painting() {
+    let preset = layout("time+flow");
+    let mut state = CanvasState::from_preset(preset);
+    state.minimize(0).unwrap();
+    assert!(!state.column_painted(preset, true));
+}

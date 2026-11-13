@@ -158,7 +158,7 @@ fn nine_hook_case(case: &str, env: Env) {
         "gallery-default" | "gallery" | "shared" | "bands" | "recut" => {
             if case == "shared" {
                 app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-                app.active_tab_mut().canvas.context_collapsed = true;
+                app.active_tab_mut().canvas.fold(false, true);
             }
             crate::app::demo_hooks::apply_drawing_demo(&mut app);
             assert!(!app.drawings.chrome.demos().gallery_requested());
@@ -187,7 +187,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 );
             }
             if case == "shared" {
-                assert!(!app.active_tab().canvas.context_collapsed);
+                assert!(!app.active_tab().canvas.folds().0);
                 assert!(
                     app.active_tab().time_panes.is_empty(),
                     "the canvas switch defers materialization"

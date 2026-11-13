@@ -546,7 +546,7 @@ impl WindowMenu<'_> {
         if !(self.tab.canvas.layout.shows_time() && self.tab.canvas.layout.shows_flow()) {
             return;
         }
-        let label = if self.tab.canvas.context_collapsed {
+        let label = if self.tab.canvas.folds().0 {
             "Show context charts"
         } else {
             "Hide context charts"

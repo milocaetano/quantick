@@ -127,7 +127,7 @@ fn drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
     let mut held = None;
     for _ in 0..16 {
         state
-            .step_seam_drag(&mut held, (seam, by / 16.0), AREA)
+            .step_seam_drag(&mut held, (seam, by / 16.0, false), AREA)
             .unwrap();
     }
 }
@@ -189,7 +189,7 @@ fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
             let (kept, mut live) = (index + index + 1 - folded, state.clone());
             let mut held = None;
             for _ in 0..16 {
-                let step = (&seam.address, by / 16.0);
+                let step = (&seam.address, by / 16.0, false);
                 live.step_seam_drag(&mut held, step, AREA).unwrap();
             }
             let rails = tree_rails(&live, AREA, DIVIDER);
@@ -219,7 +219,7 @@ fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
                 );
             }
             for _ in 0..16 {
-                let step = (&seam.address, -by / 16.0);
+                let step = (&seam.address, -by / 16.0, false);
                 live.step_seam_drag(&mut held, step, AREA).unwrap();
             }
             assert!(live.railed().is_empty(), "{name} by {by}: back open");

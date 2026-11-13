@@ -332,3 +332,53 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
         "it opened under the pointer: {flow_rect:?}"
     );
 }
+
+/// A flow pane folded by the column painter stays folded, the same rail,
+/// when a floating chart drops the tab onto the tree painter and when that
+/// chart leaves; the collapse readback agrees on both painters.
+#[test]
+fn a_column_fold_survives_the_switch_to_the_tree_painter_and_back() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    use quantick_workspace::canvas::{COLLAPSED_PANE_WIDTH_PX, PaneKind, tree_rails};
+    let ctx = egui::Context::default();
+    let (mut app, _evt, _cmd, _book) = test_app();
+    run_frame(&mut app, &ctx);
+    let preset = (LAYOUT_PRESETS.iter())
+        .find(|preset| preset.id == "time+flow")
+        .expect("the 1 TF + Flow preset is registered");
+    app.apply_layout_preset(preset);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    assert!(app.active_tab_mut().canvas.fold(true, true));
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().canvas.column_painted());
+    assert!(
+        app.active_tab().flow_rail_rect().is_some(),
+        "the column rail"
+    );
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let float = (app.active_tab_mut().canvas.state)
+        .add(PaneKind::Time, whole)
+        .expect("room for a floating chart");
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let tab = app.active_tab();
+    assert!(!tab.canvas.column_painted(), "the tree paints with a float");
+    let rails = tree_rails(&tab.canvas.state, whole, CANVAS_DIVIDER_PX);
+    assert_eq!(rails.len(), 1, "still folded on the tree");
+    assert!((rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01);
+    assert!(tab.reading().flow_collapsed && !tab.reading().collapsed);
+    (app.active_tab_mut().canvas.state).remove(float).unwrap();
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    assert!(app.active_tab().canvas.column_painted());
+    assert!(
+        app.active_tab().flow_rail_rect().is_some(),
+        "the column rail again"
+    );
+    assert!(app.active_tab().reading().flow_collapsed);
+}

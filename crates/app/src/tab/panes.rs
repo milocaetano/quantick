@@ -861,8 +861,8 @@ impl Tab {
         // Assigned before, a workspace saved with its charts put away reopened
         // with them out — and the next `capture_arrangement` wrote that over
         // the trader's choice.
-        self.canvas.context_collapsed = collapse.context;
-        self.canvas.flow_collapsed = collapse.flow && !collapse.context;
+        self.canvas.fold(false, collapse.context);
+        self.canvas.fold(true, collapse.flow && !collapse.context);
         self.canvas
             .restore_context_heights(collapse.heights, collapse.collapsed_slots);
         if let Some(fraction) = split_fraction {

@@ -388,13 +388,16 @@ fn the_panel_rows_open_the_order_flow_panel_only_on_a_shown_flow_pane() {
         run_frame(app, &ctx);
     };
     assert!(crate::orderflow_panel::flow_pane_shown(app.active_tab()));
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    let beside = crate::canvas_layout::preset("time+flow").expect("a registered preset");
+    app.apply_layout_preset(beside);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab_mut().canvas.fold(true, true));
     click_l2(&mut app);
     assert!(app.chrome.window_menu.open, "a greyed row does nothing");
     assert!(!app.active_tab().tape().settings_panel.is_open());
 
     app.chrome.window_menu.toggle(egui::ViewportId::ROOT, false);
-    app.active_tab_mut().canvas.set_flow_collapsed(false);
+    app.active_tab_mut().canvas.fold(true, false);
     click_l2(&mut app);
     assert!(!app.chrome.window_menu.open);
     assert!(app.active_tab().tape().settings_panel.is_open());

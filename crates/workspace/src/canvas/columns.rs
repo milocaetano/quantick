@@ -4,6 +4,7 @@
 //! what they become is decided here.
 
 use super::presets::{LayoutPreset, PaneKind};
+use super::rail::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX};
 use super::state::CanvasState;
 
 /// Put one column away (`collapsed`) or bring it back, `other` being the
@@ -62,13 +63,53 @@ impl LayoutPreset {
 impl CanvasState {
     /// Whether the column painter draws this canvas for the layout `preset`,
     /// a column layout when `column`: laid out as its preset, nothing
-    /// floating, folded or maximized. Anything else is painted from the tree.
+    /// floating or maximized, no strip folded, and at most one side of the
+    /// flow pane on its rail, the fold the column painter draws as its own.
+    /// Anything else is painted from the tree, the same rail kept.
     #[must_use]
     pub fn column_painted(&self, preset: &LayoutPreset, column: bool) -> bool {
+        let (context, flow) = self.flow_side_folds();
         column
             && self.floating().is_empty()
             && self.maximized().is_none()
-            && self.minimized().is_empty()
+            && self.minimized() == self.railed()
+            && (self.railed().is_empty() || context || flow)
             && self.preset() == Some(preset)
     }
+}
+
+/// What a column divider drag asks for with the pointer `wanted_px` into a
+/// `width` canvas, the drag having started with the context or the flow
+/// column folded (`from`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnDrag {
+    /// Nothing: a drag from a rail still pressed against its own edge.
+    Hold,
+    FoldContext,
+    FoldFlow,
+    /// Both columns open, the context column at this share of the width.
+    Open(f32),
+}
+
+/// The column painter's divider rule: within [`COLLAPSE_AT_PX`] of an edge
+/// that side folds; anywhere between, both open with the context column
+/// held to [`MIN_PANE_WIDTH_PX`] where the canvas affords two.
+#[must_use]
+pub fn column_drag(wanted_px: f32, width: f32, from: (bool, bool)) -> ColumnDrag {
+    let pressed = COLLAPSED_PANE_WIDTH_PX / 2.0;
+    if (from.0 && wanted_px <= pressed) || (from.1 && width - wanted_px <= pressed) {
+        return ColumnDrag::Hold;
+    }
+    if wanted_px < COLLAPSE_AT_PX {
+        return ColumnDrag::FoldContext;
+    }
+    if width - wanted_px < COLLAPSE_AT_PX {
+        return ColumnDrag::FoldFlow;
+    }
+    let px = if width >= 2.0 * MIN_PANE_WIDTH_PX {
+        wanted_px.clamp(MIN_PANE_WIDTH_PX, width - MIN_PANE_WIDTH_PX)
+    } else {
+        wanted_px.clamp(0.0, width)
+    };
+    ColumnDrag::Open((px / width).clamp(0.0, 1.0))
 }

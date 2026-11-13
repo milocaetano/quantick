@@ -1555,6 +1555,8 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
 fn a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
+    // A collapse needs a context column beside the flow pane to put away.
+    app.apply_layout_preset(crate::canvas_layout::preset("time+flow").expect("registered"));
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-v1-refusal");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2196,7 +2198,7 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    app.active_tab_mut().canvas.fold(true, true);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-focus-hidden");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");

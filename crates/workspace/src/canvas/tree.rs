@@ -339,9 +339,6 @@ impl PaneTree {
         pin: &dyn Fn(PaneSlot) -> Pin,
         rail: f32,
     ) -> Option<f32> {
-        if self.railed(pin) {
-            return Some(rail);
-        }
         match self {
             Self::Pane { slot, .. } => match pin(*slot) {
                 Pin::Strip(px) => Some(px),
@@ -356,6 +353,11 @@ impl PaneTree {
                 let extents = (children.iter())
                     .map(|child| child.folded_extent(axis, pin, rail))
                     .collect::<Option<Vec<f32>>>()?;
+                // Asked only once every pane is folded, so an open tree pays
+                // nothing for it.
+                if self.railed(pin) {
+                    return Some(rail);
+                }
                 if *own == axis {
                     Some(extents.iter().sum())
                 } else {

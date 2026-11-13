@@ -69,17 +69,17 @@ mod shared_routing_tests {
         let mut tab = tab_with_context_panes(1);
         tab.canvas.split_fraction = 0.42;
 
-        tab.canvas.context_collapsed = true;
+        tab.canvas.fold(false, true);
         assert_eq!(
             tab.canvas.split_fraction, 0.42,
             "the collapse spent the width it was supposed to remember"
         );
 
         // And again: a second collapse must not overwrite it either.
-        tab.canvas.context_collapsed = true;
+        tab.canvas.fold(false, true);
         assert_eq!(tab.canvas.split_fraction, 0.42);
 
-        tab.canvas.context_collapsed = false;
+        tab.canvas.fold(false, false);
         assert_eq!(
             tab.canvas.split_fraction, 0.42,
             "the column came back at a width the trader never chose"
@@ -111,7 +111,7 @@ mod shared_routing_tests {
             quantick_workspace::canvas::CanvasState::from_preset(tab.canvas.layout.preset());
         tab.canvas
             .restore_context_heights(&[0.4, 0.6], &[true, false]);
-        tab.canvas.set_flow_collapsed(true);
+        tab.canvas.fold(true, true);
         for stale_focus in [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(9)] {
             tab.focus = stale_focus;
             assert_eq!(tab.focused_side(), PaneSide::Time(1));
@@ -500,16 +500,22 @@ mod collapse_path_tests {
     #[test]
     fn collapsing_reports_change_and_is_idempotent() {
         let mut tab = tab();
+        // A fold needs two sides: the flow pane alone has nothing to put away.
         assert!(
-            tab.canvas.set_context_collapsed(true),
+            !tab.canvas.fold(false, true),
+            "nothing beside the flow pane"
+        );
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        assert!(
+            tab.canvas.fold(false, true),
             "the first collapse changes it"
         );
         assert!(
-            !tab.canvas.set_context_collapsed(true),
+            !tab.canvas.fold(false, true),
             "the second is a no-op and says so"
         );
-        assert!(tab.canvas.set_context_collapsed(false), "and it comes back");
-        assert!(!tab.canvas.set_context_collapsed(false));
+        assert!(tab.canvas.fold(false, false), "and it comes back");
+        assert!(!tab.canvas.fold(false, false));
     }
 
     /// The width the column springs back to is never spent by putting it away
@@ -519,8 +525,8 @@ mod collapse_path_tests {
         let mut tab = tab();
         tab.canvas.split_fraction = 0.42;
         for _ in 0..3 {
-            tab.canvas.set_context_collapsed(true);
-            tab.canvas.set_context_collapsed(false);
+            tab.canvas.fold(false, true);
+            tab.canvas.fold(false, false);
         }
         assert_eq!(
             tab.canvas.split_fraction, 0.42,
@@ -600,7 +606,7 @@ mod collapse_path_tests {
             &[60_000, 300_000],
             LegendFold::default(),
         );
-        assert!(tab.canvas.flow_collapsed);
+        assert!(tab.canvas.folds().1);
         assert!(tab.canvas.pane_collapsed(PaneSide::Time(0)));
         assert!(!tab.canvas.pane_collapsed(PaneSide::Time(1)));
         assert_eq!(tab.canvas.context_height_shares(), vec![0.4, 0.6]);
@@ -629,7 +635,7 @@ mod collapse_path_tests {
             },
         );
         assert!(
-            tab.canvas.context_collapsed,
+            tab.canvas.folds().0,
             "the workspace recorded a collapsed column and it opened expanded"
         );
         assert_eq!(
@@ -647,11 +653,11 @@ mod collapse_path_tests {
     fn re_picking_the_current_layout_brings_the_column_back() {
         let mut tab = tab();
         tab.set_layout(CanvasLayout::TimeAndFlow);
-        assert!(tab.canvas.set_context_collapsed(true));
+        assert!(tab.canvas.fold(false, true));
 
         tab.set_layout(CanvasLayout::TimeAndFlow);
         assert!(
-            !tab.canvas.context_collapsed,
+            !tab.canvas.folds().0,
             "the lit cell promised two panes and handed back a rail"
         );
     }
@@ -673,7 +679,7 @@ mod collapse_path_tests {
         tab.canvas.layout = CanvasLayout::Time;
         tab.canvas.state =
             quantick_workspace::canvas::CanvasState::from_preset(tab.canvas.layout.preset());
-        tab.canvas.context_collapsed = true;
+        tab.canvas.fold(false, true);
 
         assert_eq!(
             tab.focused_side(),

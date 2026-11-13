@@ -62,6 +62,14 @@ pub struct SeamRail {
     pub meets_after: bool,
 }
 
+impl SeamRail {
+    /// The scene's name for the rail: its restore, as the strip's is.
+    #[must_use]
+    pub fn control_id(&self) -> String {
+        format!("pane_menu.{}.rail", self.slot)
+    }
+}
+
 impl TreeSeam {
     /// What takes the drag: the seam with `handle` points either side, or,
     /// beside a rail, the rail's [`COLLAPSED_HIT_PX`] from its outer edge
@@ -195,7 +203,8 @@ pub fn tree_rails(state: &CanvasState, area: CanvasRect, divider: f32) -> Vec<Se
         }
     }
     let mut out = Vec::new();
-    if state.maximized().is_none() {
+    // Nothing folded, nothing to carve: the frame's usual case costs nothing.
+    if state.maximized().is_none() && !state.railed().is_empty() {
         let rects = state.rects(area);
         walk(state, state.tree(), (&rects, area, divider), &mut out);
     }
@@ -229,7 +238,7 @@ pub(super) fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
 
 /// Whether `child` is folded to one rail.
 pub(super) fn railed(state: &CanvasState, child: &PaneTree) -> bool {
-    child.railed(&|slot| state.pin(slot))
+    !state.railed().is_empty() && child.railed(&|slot| state.pin(slot))
 }
 
 /// The two children the seam after child `index` trades between: the

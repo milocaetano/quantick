@@ -12,7 +12,7 @@ fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().canvas.set_context_collapsed(true);
+    app.active_tab_mut().canvas.fold(false, true);
     run_frame(&mut app, &ctx);
 
     let context_ids = app
@@ -68,7 +68,7 @@ fn folded_flow_and_upper_context_have_no_stale_geometry_or_scene_canvases() {
     let tab = app.active_tab_mut();
     tab.canvas
         .restore_context_heights(&[0.4, 0.6], &[true, false]);
-    tab.canvas.set_flow_collapsed(true);
+    tab.canvas.fold(true, true);
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();

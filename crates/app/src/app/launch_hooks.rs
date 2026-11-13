@@ -806,10 +806,10 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
     // follows the layout choice because set_layout opens every selected pane.
     let tab = app.active_tab_mut();
     if env.var("QUANTICK_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.canvas.set_context_collapsed(true);
+        tab.canvas.fold(false, true);
     }
     if env.var("QUANTICK_FLOW_PANE_COLLAPSED").as_deref() == Some("1") {
-        tab.canvas.set_flow_collapsed(true);
+        tab.canvas.fold(true, true);
     }
     let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
     let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");

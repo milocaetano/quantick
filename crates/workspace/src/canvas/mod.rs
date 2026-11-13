@@ -33,7 +33,7 @@ pub use bands::{
     LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_drawn, seat_mode,
     seat_slot, signal, slot_seat, tree_bands,
 };
-pub use columns::{fold_column, revealed};
+pub use columns::{ColumnDrag, column_drag, fold_column, revealed};
 pub use drag::{
     DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX,
     ResizeEdges, open_panes,
