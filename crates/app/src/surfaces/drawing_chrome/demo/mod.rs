@@ -10,8 +10,6 @@ use crate::drawings::{DRAWING_TOOLS, DrawingTool};
 #[cfg(test)]
 use gallery::Look;
 use gallery::{AnchorHost, DrawingRecipient};
-#[cfg(test)]
-use std::ffi::OsString;
 
 pub(crate) use gallery::{apply_recut_marker, demo_recut_count};
 

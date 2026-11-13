@@ -79,6 +79,7 @@ fn capture_retains_conditional_reads_and_exact_grammars() {
 #[cfg(windows)]
 #[test]
 fn non_unicode_inputs_are_absent_without_subordinate_reads() {
+    use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     let mut reads = Vec::new();
     let input = DrawingDemoLaunch::capture(|name| {
