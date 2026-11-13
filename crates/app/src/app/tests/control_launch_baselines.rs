@@ -699,7 +699,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 );
                 if case == "F10" {
                     assert_ne!(
-                        app.surfaces.toast.message(),
+                        app.surfaces.toast.model_state.message(),
                         Some("Your assistant captured a picture of this window.")
                     );
                     assert!(
@@ -732,7 +732,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
             if case == "F12" {
                 assert!(!bundle["screenshot"].is_null());
                 assert_eq!(
-                    app.surfaces.toast.message(),
+                    app.surfaces.toast.model_state.message(),
                     Some("Your assistant captured a picture of this window.")
                 );
             }

@@ -178,9 +178,9 @@ fn settle_paper_panels_where(
         }
     }
     if let Some(message) = background {
-        toast.note(message, now);
+        crate::surfaces::toast::note(toast, message, now);
     }
     if let Some(message) = watched {
-        toast.note(message, now);
+        crate::surfaces::toast::note(toast, message, now);
     }
 }

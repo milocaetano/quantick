@@ -253,6 +253,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
         assert!(
             app.surfaces
                 .toast
+                .model_state
                 .message()
                 .unwrap()
                 .contains("could not save")
@@ -440,7 +441,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
         tab.paper.show_toast(format!("message{index}"));
     }
     run(&mut app);
-    assert_eq!(app.surfaces.toast.message(), Some("message0"));
+    assert_eq!(app.surfaces.toast.model_state.message(), Some("message0"));
     assert!(
         app.runtime
             .tabs
@@ -459,7 +460,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
         .show_toast("second".to_owned());
     run(&mut app);
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("BACKGROUND \u{00b7} first")
     );
 }

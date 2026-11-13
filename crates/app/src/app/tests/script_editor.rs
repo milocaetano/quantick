@@ -716,7 +716,7 @@ fn script_editor_rejected_paste_restores_visible_buffer_and_external_open_refres
     );
     assert_eq!(editor(&app).revision, revision);
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("source exceeds 256 KiB"),
         "source paste must reach the host refusal; focus: {:?}",
         ctx.memory(|memory| memory.focused())

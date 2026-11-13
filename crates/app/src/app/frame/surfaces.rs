@@ -252,7 +252,7 @@ fn apply_bar_switch(
         return;
     };
     if let Err(error) = tab.set_pane_bar_spec(request.side.index(), request.config) {
-        toast.note(format!("Bars not changed: {error}"), Instant::now());
+        crate::surfaces::toast::note(toast, format!("Bars not changed: {error}"), Instant::now());
     }
 }
 
@@ -325,7 +325,7 @@ mod bar_switch_tests {
         tabs.append(tabs.plan_open(), tab(200, &dir));
         let active = tabs.active_id();
         assert_ne!(active, 10);
-        let mut toast = crate::surfaces::ToastSurface::default();
+        let mut toast = crate::surfaces::toast::new();
         let request = crate::surfaces::BarSwitchRequest {
             tab: 10,
             side: PaneSide::Time(0),
@@ -345,7 +345,7 @@ mod bar_switch_tests {
             &crate::state::BarSpec::Tick(50)
         );
         assert_eq!(tabs.active_id(), active);
-        assert_eq!(toast.message(), None);
+        assert_eq!(toast.model_state.message(), None);
         apply_bar_switch(
             &mut tabs,
             &mut toast,
@@ -359,10 +359,10 @@ mod bar_switch_tests {
             &crate::state::BarSpec::Time(300_000)
         );
         assert_eq!(
-            toast.message(),
+            toast.model_state.message(),
             Some("Bars not changed: this source quotes prices but prints no traded volume")
         );
-        toast.clear();
+        toast.model_state = Default::default();
         apply_bar_switch(
             &mut tabs,
             &mut toast,
@@ -371,7 +371,7 @@ mod bar_switch_tests {
                 ..request
             },
         );
-        assert_eq!(toast.message(), None);
+        assert_eq!(toast.model_state.message(), None);
         assert_eq!(tabs.active_id(), active);
     }
 }

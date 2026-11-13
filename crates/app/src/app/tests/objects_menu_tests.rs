@@ -192,7 +192,7 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
     assert!(!app.active_tab().flow_pane.model.menu.confirm_clear);
     assert_eq!(count(&app), 0, "every object goes, locked too");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("All drawings deleted."),
         "the manager's own note, with its Undo"
     );

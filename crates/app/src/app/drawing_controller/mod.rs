@@ -69,9 +69,9 @@ impl DrawingEffects {
         }
         for (message, now, undo) in self.notices {
             if undo {
-                toast.note_with_undo(message, now);
+                crate::surfaces::toast::note_with_undo(toast, message, now);
             } else {
-                toast.note(message, now);
+                crate::surfaces::toast::note(toast, message, now);
             }
         }
     }

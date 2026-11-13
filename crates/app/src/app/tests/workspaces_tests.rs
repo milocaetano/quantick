@@ -420,6 +420,7 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
     assert!(
         !app.surfaces
             .toast
+            .model_state
             .message()
             .is_some_and(|message| message.contains("Workspace saved")),
         "an autosave nobody asked for by name does not talk over the trader"
@@ -763,6 +764,7 @@ fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
     let toast = app
         .surfaces
         .toast
+        .model_state
         .message()
         .expect("a background tab is still heard");
     assert!(
@@ -786,13 +788,14 @@ fn saving_the_workspace_acknowledges_itself() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("notice"));
-    assert!(app.surfaces.toast.message().is_none());
+    assert!(app.surfaces.toast.model_state.message().is_none());
 
     app.workspace_save_adapter().save_workspace("test");
 
     let toast = app
         .surfaces
         .toast
+        .model_state
         .message()
         .expect("the save reports itself");
     assert!(
@@ -800,7 +803,7 @@ fn saving_the_workspace_acknowledges_itself() {
         "the answer has to say what happened, got '{toast}'"
     );
     assert!(
-        !app.surfaces.toast.offers_undo(),
+        !app.surfaces.toast.model_state.offers_undo(),
         "the file it replaced is gone; an Undo button here would lie"
     );
     assert!(

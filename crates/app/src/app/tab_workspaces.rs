@@ -43,7 +43,7 @@ fn as_hand<I: IntoIterator<Item = String>>(
     let notes = act(app, access.as_mut().zip(hand.as_ref()));
     app.control.control_access = access;
     for message in notes {
-        app.surfaces.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(&mut app.surfaces.toast, message, Instant::now());
     }
 }
 

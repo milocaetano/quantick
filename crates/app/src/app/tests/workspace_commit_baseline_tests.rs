@@ -96,10 +96,10 @@ fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
         .drawing_chrome
         .restore_inspector_position(Some([120.0, 240.0]));
     app.runtime.workspace.session_mut().inspector_moved();
-    let before = app.surfaces.toast.message().map(str::to_owned);
+    let before = app.surfaces.toast.model_state.message().map(str::to_owned);
     maintain(&mut app, false);
     assert!(!app.runtime.workspace.session().inspector_pending());
-    assert_eq!(app.surfaces.toast.message(), before.as_deref());
+    assert_eq!(app.surfaces.toast.model_state.message(), before.as_deref());
     assert_eq!(
         std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE

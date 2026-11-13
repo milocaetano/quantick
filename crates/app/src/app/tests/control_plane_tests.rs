@@ -4711,7 +4711,7 @@ fn a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image(
         test_screenshot(width, height),
     );
     assert!(
-        app.surfaces.toast.message().is_some(),
+        app.surfaces.toast.model_state.message().is_some(),
         "the trader is told when a picture of their window is taken"
     );
     let manifest = success_result(&response).clone();
@@ -6423,7 +6423,7 @@ fn the_window_routes_each_notification_to_its_own_lane() {
     crate::control::invoke_action(&mut app, &mut access, &actor, "notify.toast", toast)
         .expect("a toast within budget is raised");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("hello — fake assistant (agent)")
     );
     assert!(app.surfaces.agent_popup.model_state.pending().is_none());
@@ -6440,7 +6440,7 @@ fn the_window_routes_each_notification_to_its_own_lane() {
     assert_eq!(shown.message, "look at the bid");
     assert_eq!(shown.author, "fake assistant (agent)");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("hello — fake assistant (agent)"),
         "a popup posts nothing to the toast lane"
     );

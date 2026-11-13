@@ -1,5 +1,5 @@
 //! Shared surface catalog adapters. Models own cached state; views paint and
-//! emit intents. Legacy entries keep their behavior until migrated.
+//! emit intents through the typed adapter.
 //! See quantick-ui-model/src/catalog.rs for the single registration seam.
 
 use std::time::Instant;
@@ -190,41 +190,13 @@ impl SurfaceResponse {
     }
 }
 
-/// One floating surface: it owns its state, draws itself, and reports what it
-/// needs the host to do.
+/// App host operations for the shared typed Model/View adapter.
 pub(crate) trait Surface {
-    /// Stable identifier. Each surface paints under `egui::Id::new(self.id())`
-    /// rather than a literal of its own, so the name a screenshot, a hook and a
-    /// log line use cannot drift from the layer the pixels are actually on.
-    fn id(&self) -> &'static str;
-
-    /// Draw this frame. A surface with nothing on screen returns early and
-    /// costs a branch, which is what keeps [`Surfaces::draw_all`] cheap
-    /// enough to run unconditionally per frame.
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse;
-
-    /// Modal input runs before chrome hotkeys.
-    fn capture_keyboard(&mut self, _ctx: &egui::Context) {}
-
-    /// Shared entry for a floating view or a view inside existing chrome.
-    fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        self.draw(target.context(), env)
+    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
-
-    /// Open whatever this surface's `QUANTICK_*` capture hook asks for, once,
-    /// before the first frame is drawn. Takes the same [`SurfaceEnv`] the
-    /// draw does, so a hook that needs to know something about the
-    /// application — where the focused chart is, which markets are open —
-    /// reads it from the one place a surface is allowed to read.
-    ///
-    /// On the trait rather than in a list held beside it, so a surface that
-    /// forgets its hook shows up as an empty override instead of compiling
-    /// silently: `ui-harness` requires one per surface, and a hook nobody
-    /// wrote is invisible to every test and to the size guard alike. The
-    /// default is no hook, which is the honest answer for a surface that
-    /// needs none.
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
+    fn capture_keyboard(&mut self, ctx: &egui::Context);
+    fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse;
 }
 
 /// The existing egui host supplies either an overlay context or its chrome Ui.
@@ -274,9 +246,6 @@ impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
         self.view.capture_keyboard(&self.model_state, ctx);
     }
-    fn id(&self) -> &'static str {
-        self.view.id()
-    }
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
@@ -289,30 +258,6 @@ impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
             },
         );
         response
-    }
-}
-
-fn ignore_keyboard<S>(_: &mut S, _: &egui::Context) {}
-
-struct LegacyView<'a, S> {
-    surface: &'a mut S,
-    keyboard: fn(&mut S, &egui::Context),
-    draw: fn(&mut S, &egui::Context, &SurfaceEnv<'_>) -> SurfaceResponse,
-}
-impl<S: Surface> View<quantick_ui_model::Legacy<SurfaceResponse>> for LegacyView<'_, S> {
-    fn capture_keyboard(&mut self, _: &(), ctx: &egui::Context) {
-        (self.keyboard)(self.surface, ctx);
-    }
-    fn id(&self) -> &'static str {
-        self.surface.id()
-    }
-    fn paint(
-        &mut self,
-        _: &(),
-        target: &mut ViewContext<'_>,
-        env: Option<&SurfaceEnv<'_>>,
-    ) -> Option<SurfaceResponse> {
-        env.map(|env| (self.draw)(self.surface, target.context(), env))
     }
 }
 
@@ -342,19 +287,16 @@ macro_rules! register_host_routes {
 }
 
 macro_rules! register_surfaces {
-    (legacy { $( $legacy:ident: $ty:ident => $draw:path, $keyboard:path; )* }
-     modules { $($module:ident;)* }
+    (modules { $($module:ident;)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {
         register_host_routes! { [] ; $(
             $dispatch [$($view_attr),*] $tag $model $field;
         )* }
-        $(pub(crate) mod $legacy;)*
         $(pub(crate) mod $module;)*
         $($(#[$view_attr])* #[path = $view_file] pub(crate) mod $view;)*
         pub(crate) struct Surfaces {
-            $(pub $legacy: $legacy::$ty,)*
             $($(#[$view_attr])* pub $field: Adapter<quantick_ui_model::$model::Model, $view::View>,)*
             pub widgets: crate::widget_surfaces::WidgetSurfaces,
             #[cfg(any(feature = "scenario-harness", test))]
@@ -365,7 +307,6 @@ macro_rules! register_surfaces {
         impl Default for Surfaces {
             fn default() -> Self {
                 Self {
-                    $($legacy: Default::default(),)*
                     $($(#[$view_attr])* $field: Adapter::new(Default::default(), $effects).in_slots(&[quantick_ui_model::Slot::$slot $(, quantick_ui_model::Slot::$additional_slot)*]),)*
                     widgets: Default::default(),
                     #[cfg(any(feature = "scenario-harness", test))]
@@ -392,7 +333,6 @@ macro_rules! register_surfaces {
             /// Modal input follows the catalog before host hotkeys.
             pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
                 $($(#[$view_attr])* if self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) { #[cfg(test)] self.trace_phase("capture", stringify!($field)); self.$field.capture_keyboard(ctx); })*
-                $(#[cfg(test)] self.trace_phase("capture", stringify!($legacy)); Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).capture_keyboard(ctx);)*
                 $($(#[$view_attr])* if !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) { #[cfg(test)] self.trace_phase("capture", stringify!($field)); self.$field.capture_keyboard(ctx); })*
             }
             /// Route only entries belonging to this existing frame location.
@@ -406,15 +346,11 @@ macro_rules! register_surfaces {
                             #[cfg(test)] self.trace_phase("hook", stringify!($field));
                             if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); }
                         })*
-                        $(#[cfg(test)] self.trace_phase("hook", stringify!($legacy)); self.$legacy.apply_env_hook(env);)*
                         $($(#[$view_attr])* if !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) {
                             #[cfg(test)] self.trace_phase("hook", stringify!($field));
                             if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); }
                         })*
                     }
-                }
-                if slot == quantick_ui_model::Slot::Overlay {
-                    $(#[cfg(test)] self.trace_phase("paint", stringify!($legacy)); response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
                 }
                 $($(#[$view_attr])* if self.$field.supports_pass(slot) && (slot != quantick_ui_model::Slot::Overlay || !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay)) { #[cfg(test)] self.trace_phase("paint", stringify!($field)); response.merge(self.$field.draw_in(target, env)); })*
                 response
@@ -627,48 +563,9 @@ mod tests {
         );
     }
 
-    /// The second implementation of the port, which is what proves it is a
-    /// port at all: a surface written entirely outside this module, wired in
-    /// by nothing but the trait. `new-extension` asks for exactly this before
-    /// an abstraction is allowed to call itself one.
-    #[derive(Default)]
-    struct FakeSurface {
-        drawn: usize,
-        asks_undo: bool,
-        /// A request that carries a **value**, not a flag. Added when the
-        /// second batch of surfaces did: a fake that only ever raises a
-        /// boolean cannot show that the fold keeps a payload, which is the
-        /// half of [`SurfaceResponse::merge`] a new field is most likely to
-        /// get wrong.
-        asks_style: Option<crate::style::ChartStyle>,
-    }
-
-    impl Surface for FakeSurface {
-        fn id(&self) -> &'static str {
-            "fake"
-        }
-
-        fn draw(&mut self, _ctx: &egui::Context, _env: &SurfaceEnv<'_>) -> SurfaceResponse {
-            self.drawn += 1;
-            SurfaceResponse {
-                undo_drawing: self.asks_undo,
-                style: self.asks_style,
-                ..SurfaceResponse::default()
-            }
-        }
-    }
-
     fn env() -> SurfaceEnv<'static> {
         SurfaceEnv::quiet(Instant::now())
     }
-
-    /// Fold a surface's response exactly as [`Surfaces::draw_all`] does.
-    ///
-    /// The registry names its members as fields, so a fake cannot be inserted
-    /// into it. What can be shared is the thing that actually defines the
-    /// port: the call through `&mut dyn Surface` and the fold of what comes
-    /// back. Driving an outside type and a shipped one through the *same*
-    /// function is what makes this a port test rather than a cast.
     fn drive(
         surface: &mut dyn Surface,
         ctx: &egui::Context,
@@ -678,51 +575,51 @@ mod tests {
         response.merge(surface.draw(ctx, env));
         response
     }
-
-    /// A type declared outside this module satisfies [`Surface`] and its
-    /// request survives the fold — no field on the registry, no branch in the
-    /// host, nothing but the trait. `new-extension` asks for exactly this
-    /// before an abstraction is allowed to call itself a port.
     #[test]
-    fn a_second_implementation_needs_only_the_trait() {
-        let ctx = egui::Context::default();
-        let mut fake = FakeSurface {
-            asks_undo: true,
-            ..FakeSurface::default()
-        };
-        assert_eq!(Surface::id(&fake), "fake");
-        let response = drive(&mut fake, &ctx, &env());
-        assert!(
-            response.undo_drawing,
-            "an outside surface's ask reaches the host through the fold"
+    fn an_outside_typed_view_delivers_boolean_and_value_requests() {
+        let mut adapter = Adapter::<quantick_ui_model::first::Model, _>::new(
+            first_view::View {
+                enabled: true,
+                intent: Some((8, 17)),
+                ..Default::default()
+            },
+            |effect| {
+                let mut response = first_view::effects(effect);
+                let mut style = crate::style::ChartStyle::default();
+                style.canvas.grid_enabled = !style.canvas.grid_enabled;
+                response.style = Some(style);
+                response
+            },
         );
-        assert_eq!(fake.drawn, 1);
-    }
-
-    /// The port grew six fields when the second batch of surfaces moved onto
-    /// it, and the point of them being *fields* is that an outside type can
-    /// raise one without this module knowing it exists. A fake asking for a
-    /// chart appearance — a request carrying a whole value, not a flag —
-    /// reaches the host through the same fold as everything else.
-    #[test]
-    fn an_outside_surface_can_raise_a_request_that_carries_a_value() {
+        assert_eq!(adapter.view.id(), "first-fixture");
         let ctx = egui::Context::default();
-        let mut appearance = crate::style::ChartStyle::default();
-        appearance.canvas.grid_enabled = !appearance.canvas.grid_enabled;
-        let mut fake = FakeSurface {
-            asks_style: Some(appearance),
-            ..FakeSurface::default()
-        };
-        let response = drive(&mut fake, &ctx, &env());
+        let mut response = SurfaceResponse::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            response = drive(&mut adapter, ctx, &env());
+        });
+        assert!(response.undo_drawing);
+        assert_eq!(response.model_effects, vec![HostEffect::First((8, 17))]);
         assert_eq!(
-            response.style.map(|style| style.canvas.grid_enabled),
-            Some(appearance.canvas.grid_enabled),
-            "the value arrives as it was asked for, not as a default"
+            response.style.unwrap().canvas.grid_enabled,
+            !crate::style::ChartStyle::default().canvas.grid_enabled
         );
+        assert_eq!(adapter.view.painted, Some(0));
+        adapter.view.intent = Some((1, 18));
+        let _ = ctx.run(Default::default(), |ctx| {
+            response = drive(&mut adapter, ctx, &env());
+        });
         assert!(
             !response.undo_drawing,
-            "and asking for one thing does not ask for another"
+            "a value request does not imply Undo"
         );
+        assert_eq!(response.model_effects, vec![HostEffect::First((9, 18))]);
+        assert_eq!(
+            response.style.unwrap().canvas.grid_enabled,
+            !crate::style::ChartStyle::default().canvas.grid_enabled
+        );
+        let _ = ctx.run(Default::default(), |ctx| {
+            assert_eq!(drive(&mut adapter, ctx, &env()), SurfaceResponse::default());
+        });
     }
 
     /// Every value-carrying request folds first-wins, not just the workspace
@@ -794,37 +691,25 @@ mod tests {
         assert_eq!(first.test_alert, Some(crate::audio::Cue::default()));
     }
 
-    /// The same function drives a surface that really ships, so the fake is
-    /// held to the contract the product is held to rather than a private one.
     #[test]
-    fn a_shipped_surface_and_a_fake_take_the_same_path() {
+    fn a_shipped_surface_and_an_outside_typed_view_take_the_same_path() {
         let ctx = egui::Context::default();
         let mut real = Adapter::<quantick_ui_model::agent_popup::Model, _>::new(
             agent_popup::View,
             agent_popup::effects,
         );
-        let mut fake = FakeSurface::default();
-        let quiet_real = ctx.run(Default::default(), |ctx| {
-            let _ = drive(&mut real, ctx, &env());
-        });
-        let _ = quiet_real;
-        assert_eq!(
-            drive(&mut fake, &ctx, &env()),
-            SurfaceResponse::default(),
-            "a surface with nothing to show asks for nothing, whoever wrote it"
+        let mut outside = Adapter::<quantick_ui_model::second::Model, _>::new(
+            second_view::View::default(),
+            second_view::effects,
         );
-    }
-
-    /// A surface that declares no capture hook gets the trait's default and
-    /// does nothing, rather than failing to compile — which is what lets the
-    /// trait carry the requirement without forcing every surface to restate
-    /// it.
-    #[test]
-    fn a_surface_without_a_hook_uses_the_default() {
-        let mut fake = FakeSurface::default();
-        fake.apply_env_hook(&env());
-        assert_eq!(fake.drawn, 0);
-        assert!(!fake.asks_undo);
+        assert_eq!(outside.view.id(), "second-fixture");
+        assert_eq!(outside.view.apply_env_hook(&env()), None);
+        assert_eq!(outside.model_state, 0);
+        let _ = ctx.run(Default::default(), |ctx| {
+            assert_eq!(drive(&mut real, ctx, &env()), SurfaceResponse::default());
+            assert_eq!(drive(&mut outside, ctx, &env()), SurfaceResponse::default());
+        });
+        assert_eq!(outside.view.painted, None);
     }
 
     /// A response is built once per registered surface and once for the

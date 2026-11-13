@@ -1,6 +1,6 @@
 use crate::{Adapter, HostEffect, Slot};
 macro_rules! registry {
-    (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
+    (modules { $($modules:tt)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {

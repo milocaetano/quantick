@@ -9,7 +9,8 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
     tracing::warn!(target: "quantick::app", schema_version = 1_u8,
         event_code = "WORKSPACE_PICKER_LOST", action = "picker_reset",
         "the file dialog closed without an answer");
-    toast.note(
+    crate::surfaces::toast::note(
+        toast,
         "The file chooser could not open — see the log. Try again.",
         std::time::Instant::now(),
     );
@@ -63,9 +64,11 @@ impl WorkspaceBundleAdapter<'_> {
         );
     }
     fn note_workspace(&mut self, message: String) {
-        self.arrangement
-            .toast
-            .note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(
+            &mut self.arrangement.toast,
+            message,
+            std::time::Instant::now(),
+        );
     }
     /// Route the file dialog's answer: a chosen path runs the intent the
     /// dialog was opened for, a lost dialog is reported once.

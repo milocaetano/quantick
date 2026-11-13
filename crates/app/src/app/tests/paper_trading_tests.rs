@@ -2241,7 +2241,7 @@ fn the_repeat_pin_keeps_the_drawing_tool_armed() {
 #[test]
 fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     let (mut app, _commands) = app_with_history(50);
-    assert!(app.surfaces.toast.message().is_none());
+    assert!(app.surfaces.toast.model_state.message().is_none());
 
     app.runtime
         .tabs
@@ -2255,12 +2255,12 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     );
 
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("SIM: dropped at the fill - no bid"),
         "the panel posts, the window's one toast shows it"
     );
     assert!(
-        !app.surfaces.toast.offers_undo(),
+        !app.surfaces.toast.model_state.offers_undo(),
         "a fill cannot be taken back, so no button pretends it can"
     );
 }
@@ -2281,14 +2281,14 @@ fn a_paper_acknowledgement_is_handed_over_once() {
         &mut app.surfaces.toast,
         Instant::now(),
     );
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     frame_tail::settle_paper_panels(
         &mut app.runtime.tabs,
         &mut app.surfaces.toast,
         Instant::now(),
     );
     assert!(
-        app.surfaces.toast.message().is_none(),
+        app.surfaces.toast.model_state.message().is_none(),
         "the outbox was emptied by the first drain"
     );
 }

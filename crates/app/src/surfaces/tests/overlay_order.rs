@@ -31,20 +31,30 @@ fn order(registry: &Surfaces, phase: &str) -> Vec<&'static str> {
         .unwrap()
         .iter()
         .filter_map(|(p, entry)| {
-            (*p == phase && matches!(*entry, "first" | "toast" | "script_editor" | "second"))
-                .then_some(*entry)
+            (*p == phase
+                && matches!(
+                    *entry,
+                    "strategy_popup" | "first" | "toast" | "script_editor" | "second"
+                ))
+            .then_some(*entry)
         })
         .collect()
 }
 #[test]
-fn leading_overlay_preserves_hooks_capture_and_actual_legacy_interleaving() {
+fn leading_overlay_preserves_hooks_capture_and_actual_toast_interleaving() {
     let mut registry = registry();
     let ctx = egui::Context::default();
     let env = SurfaceEnv::quiet(Instant::now());
     registry.capture_keyboard(&ctx);
     assert_eq!(
         order(&registry, "capture"),
-        vec!["first", "toast", "script_editor", "second"]
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ]
     );
     let mut response = SurfaceResponse::default();
     let _ = ctx.run(Default::default(), |ctx| {
@@ -62,11 +72,23 @@ fn leading_overlay_preserves_hooks_capture_and_actual_legacy_interleaving() {
     assert!(!registry.hooks_pending());
     assert_eq!(
         order(&registry, "hook"),
-        vec!["first", "toast", "script_editor", "second"]
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ]
     );
     assert_eq!(
         order(&registry, "paint"),
-        vec!["first", "toast", "script_editor", "second"]
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ]
     );
     let trace = registry.phase_trace.as_ref().unwrap();
     let first_paint = trace
@@ -94,7 +116,13 @@ fn leading_overlay_preserves_hooks_capture_and_actual_legacy_interleaving() {
     assert!(order(&registry, "hook").is_empty());
     assert_eq!(
         order(&registry, "paint"),
-        vec!["first", "toast", "script_editor", "second"],
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ],
         "dual-slot entry paints once"
     );
 }
@@ -108,7 +136,13 @@ fn direct_ordinary_overlay_initializes_all_hooks_but_never_paints_leading_entrie
     });
     assert_eq!(
         order(&registry, "hook"),
-        vec!["first", "toast", "script_editor", "second"]
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ]
     );
     assert_eq!(
         order(&registry, "paint"),
@@ -131,7 +165,13 @@ fn ordinary_nonoverlay_keyboard_capture_is_retained_once() {
     registry.capture_keyboard(&egui::Context::default());
     assert_eq!(
         order(&registry, "capture"),
-        vec!["first", "toast", "script_editor", "second"]
+        vec![
+            "strategy_popup",
+            "first",
+            "toast",
+            "script_editor",
+            "second"
+        ]
     );
 }
 
@@ -179,7 +219,7 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
             )),
         });
     let now = Instant::now();
-    registry.toast.note_with_undo("removed fixture", now);
+    crate::surfaces::toast::note_with_undo(&mut registry.toast, "removed fixture", now);
     let ctx = egui::Context::default();
     let env = SurfaceEnv::quiet(now);
     let input = |events| egui::RawInput {
@@ -202,8 +242,9 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
     }
     let at = registry
         .toast
+        .view
         .undo_rect()
-        .expect("real legacy undo button")
+        .expect("real typed toast undo button")
         .center();
     let mut response = SurfaceResponse::default();
     for pressed in [true, false] {
@@ -228,7 +269,7 @@ fn leading_effect_wins_and_real_toast_undo_survives_the_same_overlay_fold() {
     }
     assert!(
         response.undo_drawing,
-        "actual legacy effect survives between model passes"
+        "actual toast effect survives between model passes"
     );
     assert_eq!(
         response.test_alert,
