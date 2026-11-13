@@ -59,6 +59,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "ui-model",
         &[
+            "control",
             "strategy",
             "indicators",
             "drawings",

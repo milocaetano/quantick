@@ -17,6 +17,7 @@ use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface}
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
+use quantick_ui_model::access_panel::Intent as AccessPanelIntent;
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
 use std::time::Instant;
 
@@ -377,8 +378,8 @@ impl QuantickApp {
             MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
             MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
             MenuCommand::OpenAgentAccess => {
-                if let Some(access) = self.control.control_access.as_mut() {
-                    access.open_panel();
+                if self.control.control_access.is_some() {
+                    self.surfaces.access_panel.update(AccessPanelIntent::Open);
                 }
             }
             MenuCommand::OpenReplayFormatHelp => self.surfaces.replay_browser.open_format_help(),

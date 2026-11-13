@@ -16,7 +16,10 @@ fn state(launch: ControlLaunch, access: crate::control::ControlAccess) -> Contro
         control_access: None,
         scenarios: LaunchScenarios::default(),
     };
-    state.apply_launch(launch);
+    state.apply_launch(
+        launch,
+        &mut crate::surfaces::Surfaces::default().access_panel,
+    );
     state.control_access = Some(access);
     state
 }
@@ -152,4 +155,32 @@ fn screenshot_permission_is_checked_before_waiting() {
         }
     ));
     assert_eq!(state.scenarios.evidence_frames(), 0);
+}
+
+#[test]
+fn local_launch_panel_requires_the_current_host_and_opens_before_scope_refusal() {
+    let mut state = ControlState {
+        control_access: None,
+        scenarios: LaunchScenarios::default(),
+    };
+    let mut surfaces = crate::surfaces::Surfaces::default();
+    let input = || {
+        launch(&[
+            ("QUANTICK_CONTROL_PANEL", "1"),
+            ("QUANTICK_CONTROL_SCOPES", "unknown.permission"),
+        ])
+    };
+    state.apply_launch(input(), &mut surfaces.access_panel);
+    assert!(!surfaces.access_panel.model_state.open);
+    state.control_access = Some(crate::control::ControlAccess::new());
+    assert!(
+        !surfaces.access_panel.model_state.open,
+        "no deferred accepted-open flag survives an absent host"
+    );
+    state.apply_launch(input(), &mut surfaces.access_panel);
+    assert!(
+        surfaces.access_panel.model_state.open,
+        "scope refusal does not reverse the earlier local open"
+    );
+    assert!(!state.control_access.as_ref().unwrap().needs_frame_service());
 }
