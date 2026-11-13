@@ -18,6 +18,7 @@ use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
+use crate::surfaces::{AccessPanelEnv, BorrowedSurfaceEnv, ViewContext};
 use crate::toolrail::ToolRailExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
@@ -364,9 +365,13 @@ impl QuantickApp {
             FrameStage::MarketKeys => handle_market_keys(self, ctx, now),
             FrameStage::MenuBar => {
                 self.draw_menu_bar(ctx);
-                if let Some(access) = self.control.control_access.as_mut() {
-                    access.draw_panel(ctx);
-                }
+                self.surfaces.draw_slot_unscoped_with_env(
+                    quantick_ui_model::Slot::MenuDialogs,
+                    &mut ViewContext { ctx, ui: None },
+                    Some(&mut BorrowedSurfaceEnv::Access(AccessPanelEnv {
+                        access: self.control.control_access.as_mut(),
+                    })),
+                );
             }
             FrameStage::HomeToolbar => super::home_wiring::stand_in_for_toolbar(self),
             FrameStage::Toolbar => super::chrome::toolbar::draw(self, ctx),

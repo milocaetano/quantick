@@ -21,8 +21,13 @@ pub(crate) struct IndicatorPanelEnv<'a> {
     pub presets: &'a mut crate::indicators::preset_file::PresetStore,
     pub presets_path: &'a std::path::Path,
 }
+/// The access host is optional during initialization and teardown.
+pub(crate) struct AccessPanelEnv<'a> {
+    pub access: Option<&'a mut crate::control::ControlAccess>,
+}
 /// A pass lends one domain facet; models and responses never retain it.
 pub(crate) enum BorrowedSurfaceEnv<'a> {
+    Access(AccessPanelEnv<'a>),
     Indicators(IndicatorPanelEnv<'a>),
     Paper(PaperPanelEnv<'a>),
     Drawings(&'a DrawingEnv<'a>),

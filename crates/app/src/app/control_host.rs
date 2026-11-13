@@ -1185,11 +1185,13 @@ impl ControlLaunch {
 
 #[cfg(any(feature = "control-harness", test))]
 impl ControlState {
-    pub(super) fn apply_launch(&mut self, launch: ControlLaunch) {
-        if launch.panel
-            && let Some(access) = self.control_access.as_mut()
-        {
-            access.open_panel();
+    pub(super) fn apply_launch(
+        &mut self,
+        launch: ControlLaunch,
+        panel: &mut crate::surfaces::access_panel::AccessPanelSurface,
+    ) {
+        if launch.panel && self.control_access.is_some() {
+            panel.update(quantick_ui_model::access_panel::Intent::Open);
         }
         if let Some(scopes) = launch.scopes
             && let Some(access) = self.control_access.as_mut()

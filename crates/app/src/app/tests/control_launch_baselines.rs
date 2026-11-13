@@ -216,7 +216,17 @@ fn constructor_case(case: &str, env: Env) {
         assert!(access.journal().read(1, 64, 1 << 20).events.is_empty());
         // Paint only the access panel: a full app frame would consume ACCESS.
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| access.draw_panel(ctx));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let mut env =
+                crate::surfaces::BorrowedSurfaceEnv::Access(crate::surfaces::AccessPanelEnv {
+                    access: Some(access),
+                });
+            app.surfaces.draw_slot_unscoped_with_env(
+                quantick_ui_model::Slot::MenuDialogs,
+                &mut crate::surfaces::ViewContext { ctx, ui: None },
+                Some(&mut env),
+            );
+        });
         assert_eq!(
             ctx.memory(|memory| memory
                 .area_rect(egui::Id::new("control_access_panel"))
