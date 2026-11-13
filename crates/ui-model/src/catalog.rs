@@ -13,8 +13,10 @@ macro_rules! surface_catalog {
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
-            modules { remove_chart; }
+            modules {}
             models {
+                [] []
+                remove_chart: RemoveChart => remove_chart = "remove_chart.rs", remove_chart = "remove_chart.rs", remove_chart::effects, Overlay, Local;
                 [] []
                 market_palette: MarketPalette => market_palette = "market_palette.rs", market_palette = "market_palette.rs", market_palette::effects, Overlay, Local;
                 [] []
