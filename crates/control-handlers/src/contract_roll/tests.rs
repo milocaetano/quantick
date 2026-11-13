@@ -512,3 +512,62 @@ fn a_pressed_roll_runs_on_the_next_settle_once_and_is_journaled() {
     assert!(settled.rolls.is_empty());
     assert_eq!(refused.switches, 0);
 }
+
+fn call_journaled(window: &mut Window, from: &str) -> (Result<Value, ControlError>, FakeAccess) {
+    let mut access = FakeAccess::with_budget(0);
+    let result = roll(
+        window,
+        &mut access,
+        &FakeWindow::assistant(),
+        &json!({ "tab_id": "7", "from_symbol": from }),
+    );
+    (result, access)
+}
+
+/// An agent's roll off the contract the feed reports unlisted is the
+/// notice's Roll under the caller's name: the attach explains it and the
+/// journal says a call asked. A plain calendar roll explains nothing.
+#[test]
+fn a_capability_roll_off_an_unlisted_contract_leaves_the_notices_note() {
+    let mut window = unlisted_on("AAAZ26", &[]);
+    window.auto.arm("AAAZ26");
+    let (result, access) = call_journaled(&mut window, "AAAZ26");
+    let result = result.unwrap();
+    assert_eq!(result["symbol"], "AAAG27");
+    assert_eq!(result["changed"], true);
+    assert_eq!(result["drawings_carried"], 3);
+    assert_eq!(
+        window.explained,
+        rolled("AAAZ26", "AAAG27"),
+        "the attach explains the roll, as after a press"
+    );
+    assert!(
+        !window.auto.is_armed(),
+        "a call is a hand: the licence ends"
+    );
+    assert_eq!(access.events.len(), 1);
+    assert_eq!(access.events[0].kind.as_str(), CONTRACT_ROLL_EVENT_KIND);
+    assert_eq!(
+        access.events[0].payload,
+        json!({ "contract_roll": result, "trigger": CAPABILITY_TRIGGER })
+    );
+
+    let mut plain = Window::on("AAAZ26");
+    let (result, access) = call_journaled(&mut plain, "AAAZ26");
+    let result = result.unwrap();
+    assert_eq!(result["symbol"], "AAAG27");
+    assert_eq!(plain.explained, None, "a listed contract leaves no note");
+    assert_eq!(
+        access.events[0].payload,
+        json!({ "contract_roll": result }),
+        "and no trigger"
+    );
+
+    let mut stuck = unlisted_on("AAAZ26", &[]);
+    stuck.stuck = true;
+    let before = stuck.auto.clone();
+    let (result, access) = call_journaled(&mut stuck, "AAAZ26");
+    assert_eq!(result.unwrap_err().message, "Could not switch to AAAG27");
+    assert!(access.events.is_empty(), "nothing is journaled");
+    assert_eq!(stuck.auto, before, "nothing decided");
+}

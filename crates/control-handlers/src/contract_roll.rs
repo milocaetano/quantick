@@ -21,9 +21,9 @@ use serde_json::{Value, json};
 
 mod unlisted;
 pub use unlisted::{
-    AUTOMATIC_TRIGGER, AutoRoll, PRESSED_TRIGGER, RollOffer, Settled, UnlistedContractPort,
-    notice_roll, roll_from_notice, settle_auto_rolls, switch_failed_toast, unlisted_roll,
-    unlisted_toast, waiting_toast,
+    AUTOMATIC_TRIGGER, AutoRoll, CAPABILITY_TRIGGER, PRESSED_TRIGGER, RollOffer, Settled,
+    UnlistedContractPort, notice_roll, roll_from_notice, settle_auto_rolls, switch_failed_toast,
+    unlisted_roll, unlisted_toast, waiting_toast,
 };
 
 /// What a roll needs beyond a source switch.
@@ -188,13 +188,13 @@ pub fn offer<H: ContractRollPort + ?Sized>(host: &H) -> Option<(String, Option<&
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
-    H: ContractRollPort + ?Sized,
+    H: UnlistedContractPort + ?Sized,
     A: NotifyAccess,
 {
     registry.register(quantick_control_schema::contract_roll::descriptor(), roll)
 }
 
-fn roll<H: ContractRollPort + ?Sized, A: NotifyAccess>(
+fn roll<H: UnlistedContractPort + ?Sized, A: NotifyAccess>(
     host: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -237,6 +237,16 @@ fn roll<H: ContractRollPort + ?Sized, A: NotifyAccess>(
         });
     }
     let next = resolve(host, index, &current.feed_id, &current.symbol, false)?;
+    // Off a contract the feed reports unlisted, the roll is the notice's Roll
+    // under the caller's name: the attach explains it, and the journal says
+    // what asked for it.
+    if host.unlisted_contract(index).as_deref() == Some(current.symbol.as_str()) {
+        let payload = unlisted::roll_off(host, index, &current.symbol, &next, CAPABILITY_TRIGGER)
+            .ok_or_else(|| ControlError::invalid_request(switch_failed_toast(&next)))?;
+        let result = payload["contract_roll"].clone();
+        journal(access, actor, payload);
+        return Ok(result);
+    }
     let carried = apply(host, index, &next).ok_or_else(tab_closed)?;
     let selected = host.feed_selection(index).ok_or_else(tab_closed)?;
     let result = answer(ContractRollResult {
@@ -247,13 +257,17 @@ fn roll<H: ContractRollPort + ?Sized, A: NotifyAccess>(
         changed: true,
         drawings_carried: carried as u64,
     })?;
+    journal(access, actor, json!({ "contract_roll": result.clone() }));
+    Ok(result)
+}
+
+fn journal<A: NotifyAccess>(access: &mut A, actor: &ActorContext, payload: Value) {
     access.record_event(NewEvent::by(
         MODULE_ID,
         CONTRACT_ROLL_EVENT_KIND,
         actor,
-        json!({ "contract_roll": result.clone() }),
+        payload,
     ));
-    Ok(result)
 }
 
 fn answer(result: ContractRollResult) -> Result<Value, ControlError> {

@@ -9,7 +9,8 @@ pub const CONTRACT_ROLL_CAPABILITY_ID: &str = "feed.contract.roll";
 /// contracts. Its payload is the call's result under `contract_roll`; a roll
 /// off a contract the venue no longer lists adds `trigger` — `notice_roll`
 /// for the notice's Roll button, `workspace_restore` for a restored tab that
-/// rolled itself — both under the trader's hand.
+/// rolled itself, both under the trader's hand, and `capability` for a
+/// `feed.contract.roll` call under the caller's name.
 pub const CONTRACT_ROLL_EVENT_KIND: &str = "feed.contract.rolled";
 
 /// The feed config names a contract after the tab's (`contract_rolls`). Fixed
@@ -58,7 +59,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         CONTRACT_ROLL_CAPABILITY_ID,
         "Roll the tab to its next contract",
-        "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; so does the feed notice's Roll off a contract the venue no longer lists, and a restored tab's own roll off one, under the trader's hand with a `trigger`; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
+        "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; so does the feed notice's Roll off a contract the venue no longer lists, and a restored tab's own roll off one, under the trader's hand with a `trigger`, and a call that rolls off one adds trigger `capability` and the same feed.status notice.rolled_from note; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
         true,
         generated_schema::<ContractRollInput>(),
     );
