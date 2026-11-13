@@ -910,7 +910,7 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
     pane.drawings
         .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
     pane.drawings
-        .place(rectangle, drawings::ChartPoint::at(29.0, 110.0));
+        .place(rectangle, drawings::ChartPoint::at(60.0, 110.0));
     let drawing = pane.drawings.items()[0].id;
     pane.drawings.select(None);
     let mut form =
@@ -983,7 +983,12 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
     );
     assert!(
         !app.surfaces.strategy_popup.model_state.is_open(),
-        "real TabRuntime success settles the dialog"
+        "real TabRuntime success settles the dialog: {:?}",
+        app.surfaces
+            .strategy_popup
+            .model_state
+            .popup()
+            .map(|popup| &popup.error)
     );
     assert!(
         app.active_tab()
