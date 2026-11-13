@@ -14,9 +14,7 @@ use quantick_control::annotation as ids;
 // Gated inside the file (`#![cfg]`), so the file itself says it is harness.
 mod launch;
 #[cfg(any(feature = "quick-range-harness", test))]
-pub(crate) use launch::HOOKS as QUICK_RANGE_HOOKS;
-#[cfg(any(feature = "quick-range-harness", test))]
-pub(crate) use launch::QuickRangeLaunch;
+pub(crate) use HOOKS as QUICK_RANGE_HOOKS;
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
@@ -92,9 +90,7 @@ pub(crate) struct View {
     geometry: Option<Geometry>,
     action_rects: [Option<egui::Rect>; ACTION_COUNT],
     #[cfg(any(feature = "quick-range-harness", test))]
-    demo_requested: Option<core::DemoRequest>,
-    #[cfg(any(feature = "quick-range-harness", test))]
-    pending_launch: Option<QuickRangeLaunch>,
+    rejected_launch: Option<String>,
 }
 
 pub(crate) struct QuickRange<'a> {
@@ -231,13 +227,12 @@ impl QuickRange<'_> {
         conversion: PendingConversion,
         outcome: PlacementOutcome,
     ) -> ConversionReadback {
-        *self
-            .emit(Intent::FinishConversion {
-                conversion,
-                outcome,
-            })
-            .quick_range_readback
-            .expect("conversion completion is a host operation")
+        self.emit(Intent::FinishConversion {
+            conversion,
+            outcome,
+        })
+        .take_quick_range_readback()
+        .expect("conversion completion is a host operation")
     }
 }
 
@@ -360,3 +355,86 @@ impl Read<'_> {
             .find(|control| control.action == Action::Profile)
     }
 }
+
+#[cfg(any(feature = "quick-range-harness", test))]
+use quantick_ui_model::drawing_chrome::quick_range::Staging;
+#[cfg(any(feature = "quick-range-harness", test))]
+use std::ffi::OsString;
+#[cfg(any(feature = "quick-range-harness", test))]
+type Staged = ([ChartPoint; 2], NewDrawing);
+#[cfg(any(feature = "quick-range-harness", test))]
+#[derive(Default)]
+pub(crate) struct QuickRangeLaunch {
+    requested: Option<core::DemoRequest>,
+    rejected: Option<String>,
+}
+
+#[cfg(any(feature = "quick-range-harness", test))]
+impl QuickRangeLaunch {
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<OsString>) -> Self {
+        let Some(value) =
+            lookup("QUANTICK_QUICK_RANGE_DEMO").and_then(|value| value.into_string().ok())
+        else {
+            return Self::default();
+        };
+        let requested = core::DemoRequest::parse(value.trim());
+        Self {
+            rejected: requested.is_none().then(|| value.trim().to_owned()),
+            requested,
+        }
+    }
+
+    #[cfg(test)]
+    fn deliver(self, request: impl FnOnce(core::DemoRequest)) {
+        if let Some(requested) = self.requested {
+            request(requested);
+        }
+        if let Some(value) = self.rejected {
+            tracing::warn!(value, "unknown quick-range demo state");
+        }
+    }
+}
+
+#[cfg(any(feature = "quick-range-harness", test))]
+impl QuickRange<'_> {
+    /// Construction queues only the input; the drawing launch phase applies it.
+    pub fn queue_launch(&mut self, input: QuickRangeLaunch) {
+        self.emit(Intent::QueueLaunch(input.requested));
+        self.view.rejected_launch = input.rejected;
+    }
+
+    pub fn apply_launch(&mut self) {
+        self.emit(Intent::ApplyLaunch);
+        if let Some(value) = self.view.rejected_launch.take() {
+            tracing::warn!(value, "unknown quick-range demo state");
+        }
+    }
+
+    /// `opening` reads the asked band: `Ok(None)` waits for it to have
+    /// values, `Err` is a band the chart will not show, which drops the ask.
+    pub fn stage_demo(
+        &mut self,
+        owner: Owner,
+        opening: impl FnOnce(&DrawingBand, bool) -> Result<Option<Staged>, &'static str>,
+    ) {
+        let Some(request) = self.model().demo_requested() else {
+            return;
+        };
+        let staging = match opening(&request.band, request.future) {
+            Ok(Some((anchors, look))) => Staging::Ready {
+                owner,
+                anchors,
+                look,
+            },
+            Ok(None) => Staging::Wait,
+            Err(reason) => {
+                tracing::warn!(reason, "quick-range demo band refused");
+                Staging::Refused
+            }
+        };
+        self.emit(Intent::StageDemo(staging));
+    }
+}
+
+#[cfg(any(feature = "quick-range-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];

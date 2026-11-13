@@ -8,9 +8,8 @@ use super::{Drawing, DrawingEdit, PresetWrite, SavedDefault, quick_range};
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub struct DrawingChromeAsk {
-    /// Synchronous host readback; does not request a domain mutation.
-    pub quick_range_readback:
-        Option<Box<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback>>,
+    /// Synchronous host continuations, absent on idle frames.
+    pub readbacks: Option<Box<Readbacks>>,
     pub clipboard_paste: Option<(Box<Drawing>, u32)>,
     pub inspector_position_dirty: bool,
     pub inline_started: bool,
@@ -103,10 +102,11 @@ impl DrawingChromeAsk {
     /// A debug build says so loudly; a release frame keeps the first like
     /// every other valued ask rather than aborting on the UI thread.
     pub fn merge(&mut self, other: Self) {
-        self.quick_range_readback = self
-            .quick_range_readback
-            .take()
-            .or(other.quick_range_readback);
+        if let Some(other) = other.readbacks {
+            let own = self.readbacks.get_or_insert_with(Default::default);
+            own.scenario = own.scenario.take().or(other.scenario);
+            own.quick_range = own.quick_range.take().or(other.quick_range);
+        }
         self.clipboard_paste = self.clipboard_paste.take().or(other.clipboard_paste);
         self.inspector_position_dirty |= other.inspector_position_dirty;
         self.inline_started |= other.inline_started;
@@ -145,5 +145,41 @@ impl DrawingChromeAsk {
         self.sweep_authored |= other.sweep_authored;
         self.saved_default = self.saved_default.or(other.saved_default);
         self.presets.extend(other.presets);
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Readbacks {
+    pub scenario: Option<super::scenario::Effect>,
+    pub quick_range:
+        Option<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback>,
+}
+impl DrawingChromeAsk {
+    pub fn scenario(effect: Option<super::scenario::Effect>) -> Self {
+        Self {
+            readbacks: effect.map(|effect| {
+                Box::new(Readbacks {
+                    scenario: Some(effect),
+                    ..Default::default()
+                })
+            }),
+            ..Default::default()
+        }
+    }
+    pub fn take_scenario(&mut self) -> Option<super::scenario::Effect> {
+        self.readbacks.as_mut()?.scenario.take()
+    }
+    pub fn take_quick_range_readback(
+        &mut self,
+    ) -> Option<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback> {
+        self.readbacks.as_mut()?.quick_range.take()
+    }
+    pub fn set_quick_range_readback(
+        &mut self,
+        value: quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback,
+    ) {
+        self.readbacks
+            .get_or_insert_with(Default::default)
+            .quick_range = Some(value);
     }
 }

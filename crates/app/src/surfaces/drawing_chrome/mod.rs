@@ -202,7 +202,7 @@ pub(crate) struct View {
     #[cfg(test)]
     manager_rects: Vec<(usize, &'static str, egui::Rect)>,
     #[cfg(any(feature = "drawing-harness", test))]
-    scenario: launch::DrawingScenario,
+    rejected_tab: Option<String>,
 }
 /// Delivery stays with the adapter transaction; host operations return their effects.
 pub(super) enum Session<'a> {
@@ -365,7 +365,9 @@ impl Chrome<'_> {
     /// and photographing nothing.
     #[cfg(any(feature = "drawing-harness", test))]
     pub fn note_text_note_placed(&mut self) {
-        self.view.scenario.acknowledge_placement(true);
+        self.emit(Intent::Scenario(
+            quantick_ui_model::drawing_chrome::scenario::Intent::NotePlaced(true),
+        ));
     }
 
     /// Drop an undo baseline that describes this pane, rather than record it.
@@ -558,7 +560,9 @@ impl Chrome<'_> {
     }
 
     pub fn set_pending_text_note(&mut self, pending: bool) {
-        self.view.scenario.request_note(pending);
+        self.emit(Intent::Scenario(
+            quantick_ui_model::drawing_chrome::scenario::Intent::RequestNote(pending),
+        ));
     }
 
     /// Forget the rectangle the bar was last drawn at, so a test can prove a

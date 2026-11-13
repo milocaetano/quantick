@@ -77,9 +77,12 @@ pub(crate) trait DrawingChromeExt {
     #[cfg(test)]
     fn manager_action_rects(&self) -> &[(usize, &'static str, egui::Rect)];
     #[cfg(any(feature = "drawing-harness", test))]
-    fn demos(&self) -> &super::demo::DrawingDemoState;
+    fn demos(&self) -> &quantick_ui_model::drawing_chrome::scenario::State;
     #[cfg(any(feature = "drawing-harness", test))]
-    fn demos_mut(&mut self) -> &mut super::demo::DrawingDemoState;
+    fn scenario(
+        &mut self,
+        intent: quantick_ui_model::drawing_chrome::scenario::Intent,
+    ) -> Option<quantick_ui_model::drawing_chrome::scenario::Effect>;
     #[cfg(any(feature = "drawing-harness", test))]
     fn queue_launch(&mut self, input: DrawingChromeLaunch);
 }
@@ -270,12 +273,15 @@ impl DrawingChromeExt for Owner {
         &self.view.manager_rects
     }
     #[cfg(any(feature = "drawing-harness", test))]
-    fn demos(&self) -> &super::demo::DrawingDemoState {
-        self.view.scenario.demos()
+    fn demos(&self) -> &quantick_ui_model::drawing_chrome::scenario::State {
+        &self.model_state.scenario
     }
     #[cfg(any(feature = "drawing-harness", test))]
-    fn demos_mut(&mut self) -> &mut super::demo::DrawingDemoState {
-        self.view.scenario.demos_mut()
+    fn scenario(
+        &mut self,
+        intent: quantick_ui_model::drawing_chrome::scenario::Intent,
+    ) -> Option<quantick_ui_model::drawing_chrome::scenario::Effect> {
+        borrow(self).emit(Intent::Scenario(intent)).take_scenario()
     }
     #[cfg(any(feature = "drawing-harness", test))]
     fn queue_launch(&mut self, input: DrawingChromeLaunch) {

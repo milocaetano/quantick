@@ -257,7 +257,7 @@ impl DrawingControllerAccess<'_> {
         let Some(tool) = crate::surfaces::drawing_chrome::launch::NotePlacement::tool() else {
             return false;
         };
-        let Some(point) = host.text_note_point() else {
+        let Some(point) = host.text_note_point(self.chrome) else {
             return false;
         };
         // Through the same door the click path uses, saved defaults and all —

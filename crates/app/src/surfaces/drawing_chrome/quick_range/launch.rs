@@ -1,52 +1,7 @@
-//! Opt-in quick-range launch input. The executable captures the value before
-//! construction; this owner applies it at the existing drawing-hook phase.
+//! Capture and staging adapter proofs for the feature-gated quick-range host.
 #![cfg(any(feature = "quick-range-harness", test))]
-
-use std::ffi::OsString;
-
-use super::{Owner, QuickRange};
-use crate::drawings::{ChartPoint, DrawingBand, NewDrawing};
-
-/// A demo leg's two anchors and the look it opens with.
-type Staged = ([ChartPoint; 2], NewDrawing);
-use eframe::egui;
-use quantick_chart_interaction::quick_range as core;
-
-#[derive(Default)]
-pub(crate) struct QuickRangeLaunch {
-    requested: Option<core::DemoRequest>,
-    rejected: Option<String>,
-}
-
-impl QuickRangeLaunch {
-    pub fn capture(mut lookup: impl FnMut(&str) -> Option<OsString>) -> Self {
-        let Some(value) =
-            lookup("QUANTICK_QUICK_RANGE_DEMO").and_then(|value| value.into_string().ok())
-        else {
-            return Self::default();
-        };
-        let requested = core::DemoRequest::parse(value.trim());
-        Self {
-            rejected: requested.is_none().then(|| value.trim().to_owned()),
-            requested,
-        }
-    }
-
-    pub fn apply(self, quick: &mut QuickRange) {
-        self.deliver(|request| quick.view.demo_requested = Some(request));
-    }
-
-    fn deliver(self, request: impl FnOnce(core::DemoRequest)) {
-        if let Some(requested) = self.requested {
-            request(requested);
-        }
-        if let Some(value) = self.rejected {
-            tracing::warn!(value, "unknown quick-range demo state");
-        }
-    }
-}
-
-crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];
+#[cfg(test)]
+use super::*;
 
 #[cfg(test)]
 mod tests {
@@ -81,57 +36,6 @@ mod tests {
     }
 }
 
-impl QuickRange<'_> {
-    /// Construction queues only the input; the drawing launch phase applies it.
-    pub fn queue_launch(&mut self, input: QuickRangeLaunch) {
-        self.view.pending_launch = Some(input);
-    }
-
-    pub fn apply_launch(&mut self) {
-        if let Some(input) = self.view.pending_launch.take() {
-            input.apply(self);
-        }
-    }
-
-    /// `opening` reads the asked band: `Ok(None)` waits for it to have
-    /// values, `Err` is a band the chart will not show, which drops the ask.
-    pub fn stage_demo(
-        &mut self,
-        owner: Owner,
-        opening: impl FnOnce(&DrawingBand, bool) -> Result<Option<Staged>, &'static str>,
-    ) {
-        let Some(request) = self.view.demo_requested.take() else {
-            return;
-        };
-        let (anchors, look) = match opening(&request.band, request.future) {
-            Ok(Some(staged)) => staged,
-            Ok(None) => return self.view.demo_requested = Some(request),
-            Err(reason) => return tracing::warn!(reason, "quick-range demo band refused"),
-        };
-        let ready = request.ready;
-        self.press(
-            owner,
-            egui::pos2(0.0, 0.0),
-            anchors[0],
-            core::GestureEligibility {
-                pointer_tool: true,
-                unoccluded: true,
-                area: core::GestureArea {
-                    min: [0.0; 2],
-                    max: [20.0; 2],
-                },
-            },
-            request.band,
-        );
-        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, false, || {
-            look
-        });
-        if ready {
-            self.release(owner);
-        }
-    }
-}
-
 #[cfg(test)]
 mod stage_tests {
     use super::*;
@@ -159,14 +63,13 @@ mod stage_tests {
             let mut quick = QuickRange::new(session, &mut view);
             quick.queue_launch(QuickRangeLaunch::capture(|_| Some(raw.into())));
             assert!(
-                quick.view.demo_requested.is_none(),
+                quick.model().demo_requested().is_none(),
                 "construction must not stage a demo"
             );
             quick.stage_demo(owner, |_, _| {
                 panic!("the launch phase has not applied its input")
             });
             quick.apply_launch();
-            assert!(quick.view.pending_launch.is_none());
             assert!(
                 !quick.model().present(),
                 "launch waits for the staging phase"
@@ -204,11 +107,10 @@ mod stage_tests {
         };
         let mut model = quantick_ui_model::drawing_chrome::State::default();
         let session = super::super::super::Session::Host(&mut model);
-        let mut view = super::super::View {
-            demo_requested: core::DemoRequest::parse("future"),
-            ..Default::default()
-        };
+        let mut view = super::super::View::default();
         let mut quick = QuickRange::new(session, &mut view);
+        quick.queue_launch(QuickRangeLaunch::capture(|_| Some("future".into())));
+        quick.apply_launch();
         quick.stage_demo(owner, |_, future| {
             assert!(future);
             let tool = drawings::DrawingTool::by_id("measure").unwrap();
