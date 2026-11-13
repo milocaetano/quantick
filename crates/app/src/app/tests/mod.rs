@@ -144,7 +144,7 @@ impl QuantickApp {
             config: &self.config,
             toolrail: &self.surfaces.toolrail,
             tz: &self.runtime.tz,
-            dock: &self.dock,
+            dock: &self.surfaces.dock.model_state,
             show_perf: self.health.show_perf,
             record_deals: self.chrome.record_deals,
             history: &self.runtime.history,

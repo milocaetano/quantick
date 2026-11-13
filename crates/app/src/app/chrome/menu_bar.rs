@@ -100,7 +100,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
         replaying: tab.link.replay.is_some(),
         startup_saved: app.runtime.workspace.session().saved(),
         save_on_exit: app.runtime.workspace.session().save_on_exit(),
-        dock_visible: app.dock.visible(),
+        dock_visible: app.surfaces.dock.visible(),
         selected_rows,
         flow_pane_shown: crate::orderflow_panel::flow_pane_shown(tab),
         toolbox_dock: app
@@ -108,7 +108,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
             .toolrail
             .visible()
             .then(|| app.surfaces.toolrail.dock()),
-        dock_tab: app.dock.tab(),
+        dock_tab: app.surfaces.dock.tab(),
         workspace,
         layouts: layout
             .layouts()

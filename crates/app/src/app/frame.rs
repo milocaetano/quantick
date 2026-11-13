@@ -33,6 +33,7 @@ use eframe::egui;
 
 use crate::dock::DockTab;
 use crate::pane;
+use crate::replay_view::ReplayAction;
 use crate::statusbar;
 use crate::tab::CanvasChrome;
 
@@ -125,7 +126,7 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
             &mut *app.audio.alerts,
             ctx,
             now,
-            crate::dock::holds_pointer(&app.dock, ctx),
+            crate::dock::holds_pointer(&app.surfaces.dock.model_state, ctx),
         );
     effects.apply(&mut app.surfaces.toast, &mut app.surfaces.toolrail);
 }
@@ -405,14 +406,13 @@ impl QuantickApp {
             // Chrome like the dock: declared before the central canvas so
             // the chart pays its width.
             FrameStage::PinnedInspector => {
-                let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
-                if let Some(ask) = drawings.draw_pinned_inspector(
+                let ask = panels::draw_pinned_inspector(
                     ctx,
-                    &DrawingReadAccess::new(&self.runtime.tabs),
-                    &self.surfaces.toolrail,
-                ) {
-                    self.resolve_drawing_response(ask, now);
-                }
+                    &self.drawings,
+                    &mut self.surfaces,
+                    &self.runtime.tabs,
+                );
+                self.resolve_drawing_response(ask, now);
             }
             FrameStage::LayoutSwitches => apply_layout_switches(self),
             FrameStage::FeedSwitch => apply_feed_switch(self),
@@ -588,7 +588,7 @@ impl QuantickApp {
             super::desk_wiring::open_settings_on(&mut self.chrome.window_menu, ctx);
         }
         if scratch.status.open_trading_tab {
-            self.dock.open_tab(DockTab::Trading);
+            self.surfaces.dock.open_tab(DockTab::Trading);
         }
     }
 
@@ -618,11 +618,11 @@ impl QuantickApp {
     fn draw_dock_stage(&mut self, ctx: &egui::Context) {
         let response = panels::draw_dock(
             ctx,
-            &mut self.dock,
+            &mut self.surfaces,
             &mut self.runtime.tabs,
-            &mut self.surfaces.replay_browser,
             self.runtime.tz,
         );
+        let response = response.paper_panel.map(|paper| *paper).unwrap_or_default();
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
@@ -632,11 +632,12 @@ impl QuantickApp {
             self.paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
-        if let Some(action) = response.replay_action {
+        if response.close_replay {
             // A click that lost its slot has the trader's next click behind
             // it; only the one-shot hook cares about the answer.
             let (tab, config) = self.active_with_config();
-            let _ = super::replay_and_history::apply_replay_action(tab, config, action);
+            let _ =
+                super::replay_and_history::apply_replay_action(tab, config, ReplayAction::Close);
         }
         if let Some((opened, closed)) = response.navigate_to_trade {
             panels::center_flow_pane_on_trade(self.active_tab_mut(), opened, closed);

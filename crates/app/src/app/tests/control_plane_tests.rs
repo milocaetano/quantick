@@ -653,7 +653,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.active_tab_mut().canvas.split_fraction = 0.35;
     app.active_tab_mut().focus = PaneSide::Flow;
     app.runtime.tz = TzOffset::new(-180);
-    app.dock.open_tab(DockTab::Trading);
+    app.surfaces.dock.open_tab(DockTab::Trading);
     app.surfaces.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
 
@@ -4099,8 +4099,8 @@ fn the_scene_names_the_same_controls_two_frames_running() {
     // be renamed by that alone, and an assistant told to press it a moment
     // later would press whatever had slid into its place.
     let before = scene_control_ids(&first);
-    let dock_was_open = app.dock.visible();
-    app.dock.toggle_visible();
+    let dock_was_open = app.surfaces.dock.visible();
+    app.surfaces.dock.toggle_visible();
     run_frame(&mut app, &ctx);
     let after = scene_control_ids(&observer_scene(&app));
     let dock_now_listed = after.iter().any(|id| id.starts_with("dock."));

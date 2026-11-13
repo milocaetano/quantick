@@ -82,7 +82,6 @@ use menu_bar::{
 };
 
 use crate::config::AppConfig;
-use crate::dock::Dock;
 #[cfg(test)]
 use crate::drawings;
 #[cfg(test)]
@@ -207,7 +206,6 @@ pub struct QuantickApp {
     added_symbols: AddedSymbols,
     config: AppConfig,
     control: control_host::ControlState,
-    dock: Dock,
     surfaces: crate::surfaces::Surfaces,
     drawings: drawing_controller::DrawingController,
     audio: replay_and_history::AlertState,
@@ -252,7 +250,7 @@ macro_rules! arrangement_adapter {
             harness: &$app.chrome.harness,
             toolrail: &mut $app.surfaces.toolrail,
             tz: &mut $app.runtime.tz,
-            dock: &mut $app.dock,
+            dock: &mut $app.surfaces.dock,
             show_perf: &mut $app.health.show_perf,
             record_deals: &mut $app.chrome.record_deals,
             history: &mut $app.runtime.history,
@@ -508,7 +506,6 @@ impl QuantickApp {
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
-            dock: Dock::new(),
             surfaces: crate::surfaces::Surfaces::default(),
             drawings: drawing_controller::DrawingController::new(),
             audio: replay_and_history::AlertState {

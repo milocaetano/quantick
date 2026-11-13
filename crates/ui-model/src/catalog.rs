@@ -44,8 +44,10 @@ macro_rules! surface_catalog {
                 chrome_edge_second: ChromeEdgeSecond => chrome_edge_second = "chrome/probe_edge_second.rs", chrome_edge_second = "chrome/tests/edge_second.rs", chrome_edge_second::effects, EdgePanels, Host;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 borrowed_first: BorrowedFirst => borrowed_first = "chrome/borrowed_first.rs", borrowed_first = "chrome/tests/borrowed_first.rs", borrowed_first::effects, LateEdgePanels, Local;
+                [] []
+                dock: Dock => dock = "dock.rs", dock = "dock.rs", dock::effects, LateEdgePanels, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
-                borrowed_second: BorrowedSecond => borrowed_second = "chrome/borrowed_second.rs", borrowed_second = "chrome/tests/borrowed_second.rs", borrowed_second::effects, LateEdgePanels, Local;
+                borrowed_second: BorrowedSecond => borrowed_second = "chrome/borrowed_second.rs", borrowed_second = "chrome/tests/borrowed_second.rs", borrowed_second::effects, LateEdgePanels | PinnedInspector, Local;
                 [] []
                 drawing_chrome: DrawingChrome => drawing_chrome = "drawing_chrome.rs", drawing_chrome = "drawing_chrome/mod.rs", drawing_chrome::effects, PinnedInspector | DrawingChrome, Local;
                 [] []

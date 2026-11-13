@@ -305,7 +305,7 @@ impl QuantickApp {
                 let (tab, config) = self.active_with_config();
                 tab.close_replay(config);
             }
-            MenuCommand::ToggleDock => self.dock.toggle_visible(),
+            MenuCommand::ToggleDock => self.surfaces.dock.toggle_visible(),
             MenuCommand::ToggleLayer(layer) => {
                 let pane = self.focused_pane();
                 let capabilities = self.active_tab().capabilities(&self.config);
@@ -369,7 +369,7 @@ impl QuantickApp {
             }
             MenuCommand::SetToolboxDock(dock) => self.surfaces.toolrail.set_dock(dock),
             MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
-            MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
+            MenuCommand::OpenDockTab(tab) => self.surfaces.dock.open_tab(tab),
             MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,

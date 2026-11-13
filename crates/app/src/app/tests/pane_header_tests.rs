@@ -1674,16 +1674,16 @@ fn a_click_outside_the_library_hands_the_app_back() {
             .is_none()
     );
 
-    let dock = app.dock.visible();
+    let dock = app.surfaces.dock.visible();
     let shortcut = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
     press_key(&mut app, &ctx, egui::Key::B, shortcut);
     assert_ne!(
-        app.dock.visible(),
+        app.surfaces.dock.visible(),
         dock,
         "dismissal returns keyboard input to chrome"
     );
     press_key(&mut app, &ctx, egui::Key::B, shortcut);
-    assert_eq!(app.dock.visible(), dock);
+    assert_eq!(app.surfaces.dock.visible(), dock);
     run_frame(&mut app, &ctx);
     let glyph = glyph_of(&app, &ctx, PaneSide::Flow);
     click_chart(&mut app, &ctx, glyph.center());
@@ -1934,7 +1934,11 @@ fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
         app.arrangement_adapter()
             .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
         assert!(panel_open(&app), "{old:?}");
-        assert_eq!(app.dock.tab(), None, "{old:?} is no dock tab any more");
+        assert_eq!(
+            app.surfaces.dock.tab(),
+            None,
+            "{old:?} is no dock tab any more"
+        );
         // The scroll to the section is animated; a header out of view is not listed.
         for _ in 0..60 {
             run_frame(&mut app, &ctx);

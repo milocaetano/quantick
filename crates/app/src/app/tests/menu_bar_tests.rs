@@ -93,7 +93,7 @@ fn a_submenu_opens_to_the_left_of_its_row() {
 fn a_row_carries_out_its_command_and_closes_the_menu() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
-    let visible = app.dock.visible();
+    let visible = app.surfaces.dock.visible();
     let output = open_menu(&mut app, &ctx);
     let label = if visible {
         "Hide panels"
@@ -101,7 +101,7 @@ fn a_row_carries_out_its_command_and_closes_the_menu() {
         "Show panels"
     };
     click_entry(&mut app, &ctx, &output, label);
-    assert_eq!(app.dock.visible(), !visible);
+    assert_eq!(app.surfaces.dock.visible(), !visible);
     assert!(!app.chrome.window_menu.open);
 }
 

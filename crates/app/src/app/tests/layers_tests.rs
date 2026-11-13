@@ -1368,7 +1368,7 @@ fn a_rail_hidden_this_frame_names_no_buttons_before_the_next_draw() {
 fn layer_shortcuts_toggle_candles_without_toggling_the_dock() {
     let (mut app, _events, _commands, _book) = test_app();
     let ctx = egui::Context::default();
-    let dock = app.dock.visible();
+    let dock = app.surfaces.dock.visible();
     for (key, layer) in [
         (egui::Key::B, ChartLayer::Bubbles),
         (egui::Key::F, ChartLayer::Footprint),
@@ -1380,7 +1380,7 @@ fn layer_shortcuts_toggle_candles_without_toggling_the_dock() {
             vec![key_press_with(key, egui::Modifiers::CTRL)],
         );
         assert_eq!(layer_on(&app, layer), !before);
-        assert_eq!(app.dock.visible(), dock);
+        assert_eq!(app.surfaces.dock.visible(), dock);
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -1397,7 +1397,7 @@ fn layer_shortcuts_toggle_candles_without_toggling_the_dock() {
             egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
         )],
     );
-    assert_eq!(app.dock.visible(), !dock);
+    assert_eq!(app.surfaces.dock.visible(), !dock);
     assert_eq!(layer_on(&app, ChartLayer::Bubbles), bubbles);
 }
 

@@ -48,7 +48,7 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
     let capabilities = toolbar_caps(app.active_tab(), &app.config);
     let candles_held = app.active_tab().session.venue_candles_held();
     let older_candles = app.active_tab().older_candles(capabilities);
-    let dock_visible = app.dock.visible();
+    let dock_visible = app.surfaces.dock.visible();
     // The History button names this tab's target and run.
     let history = toolbar::HistoryButton {
         main: app.active_tab().session.main_history_reach(),
@@ -172,7 +172,7 @@ impl QuantickApp {
             | ToolbarAction::ToggleAddMenu
             | ToolbarAction::ToggleWorkspaceMenu
             | ToolbarAction::SaveWorkspace => {}
-            ToolbarAction::ToggleDock => self.dock.toggle_visible(),
+            ToolbarAction::ToggleDock => self.surfaces.dock.toggle_visible(),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to

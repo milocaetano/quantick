@@ -66,7 +66,7 @@ fn layout_readability_combined() {
                 app.surfaces
                     .toolrail
                     .set_dock(crate::toolrail::ToolboxDock::Top);
-                app.dock.open_tab(crate::dock::DockTab::Trading);
+                app.surfaces.dock.open_tab(crate::dock::DockTab::Trading);
                 let paper = &mut app.active_tab_mut().paper;
                 paper.seed(&trade(0));
                 paper.market(quantick_engine::Side::Buy);

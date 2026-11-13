@@ -964,7 +964,7 @@ fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let title = crate::dock::DockTab::Trading.title();
-    app.dock.open_tab(crate::dock::DockTab::Trading);
+    app.surfaces.dock.open_tab(crate::dock::DockTab::Trading);
     frame(&mut app, &ctx);
     let output = frame(&mut app, &ctx);
     assert!(painted_text_center(&output, title).is_some(), "on a market");
@@ -974,7 +974,7 @@ fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, title).is_none(), "on Home");
     }
-    assert!(app.dock.visible(), "hidden with Home, not closed");
+    assert!(app.surfaces.dock.visible(), "hidden with Home, not closed");
 
     app.chrome.title_bar.surface.show_market();
     let output = frame(&mut app, &ctx);
@@ -1037,9 +1037,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");
 
     // What is not the chart's still works, and the window stays on Home.
-    let dock = app.dock.visible();
+    let dock = app.surfaces.dock.visible();
     app.apply_menu_command(MenuCommand::ToggleDock);
-    assert_ne!(app.dock.visible(), dock, "window commands");
+    assert_ne!(app.surfaces.dock.visible(), dock, "window commands");
     app.apply_menu_command(MenuCommand::OpenReplayBrowser);
     assert!(on_home(&app));
     app.apply_tab_action(TabAction::Activate(0));

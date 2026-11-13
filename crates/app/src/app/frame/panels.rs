@@ -8,11 +8,11 @@ use eframe::egui;
 
 use crate::app::arrangement_host::ArrangementHost;
 use crate::config::AppConfig;
-use crate::dock::{Dock, DockEnv, DockResponse};
 use crate::loading::LoadingTask;
 use crate::replay_view::ReplayAction;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
+use crate::surfaces::{BorrowedSurfaceEnv, PaperPanelEnv, SurfaceResponse};
 use crate::surfaces::{HostEffect, Surfaces, ViewContext};
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
@@ -107,26 +107,35 @@ pub(in crate::app) fn settle_rail_effects(
 /// and the session panel beside it.
 pub(super) fn draw_dock(
     ctx: &egui::Context,
-    dock: &mut Dock,
+    surfaces: &mut Surfaces,
     tabs: &mut ArrangementHost,
-    replay_view: &mut ReplayBrowser,
     tz: TzOffset,
-) -> DockResponse {
+) -> SurfaceResponse {
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
-    let mut response = crate::dock::draw(
-        dock,
-        ctx,
-        &mut DockEnv {
-            replay_view,
-            replay: link.replay.as_ref(),
-            paper,
-            tz,
-        },
+    let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        replay: link.replay.as_ref(),
+        paper,
+        timezone: tz,
+    });
+    let mut response = surfaces.draw_slot_unscoped_with_env(
+        quantick_ui_model::Slot::LateEdgePanels,
+        &mut ViewContext { ctx, ui: None },
+        Some(&mut env),
     );
-    // A session edit is app-wide: every tab's live file is refused and every
-    // ledger re-reads. The answer goes to the toast lane.
-    if let Some(edit) = response.journal_edit.take() {
+    // Domain borrows end before host effects fan out across all accounts.
+    if let Some(edit) = response
+        .paper_panel
+        .as_mut()
+        .and_then(|paper| paper.journal_edit.take())
+    {
         let _ = super::super::paper_wiring::apply_journal_edit_across(tabs, &edit);
+    }
+    if response
+        .paper_panel
+        .as_ref()
+        .is_some_and(|paper| paper.open_replay_browser)
+    {
+        surfaces.replay_browser.open_browser();
     }
     response
 }
@@ -211,4 +220,36 @@ pub(super) fn mirror_loading_waits(replay_view: &ReplayBrowser, tabs: &mut Arran
     tab.loading
         .set_active(LoadingTask::ReplaySession, replay_loading);
     tab.loading.set_active(LoadingTask::BookSync, book_syncing);
+}
+
+/// Paint the full borrowed drawing pass before resolving its host effects.
+pub(super) fn draw_pinned_inspector(
+    ctx: &egui::Context,
+    drawings: &crate::app::drawing_controller::DrawingController,
+    surfaces: &mut Surfaces,
+    tabs: &ArrangementHost,
+) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
+    use crate::app::drawing_controller::DrawingReadAccess;
+    let response = {
+        let host = DrawingReadAccess::new(tabs);
+        let env = drawings.pinned_env(
+            ctx,
+            &host,
+            &surfaces.toolrail,
+            surfaces.drawing_chrome.inspector_pinned(),
+        );
+        let mut borrowed = crate::surfaces::BorrowedSurfaceEnv::Drawings(&env);
+        surfaces.draw_slot_unscoped_with_env(
+            quantick_ui_model::Slot::PinnedInspector,
+            &mut crate::surfaces::ViewContext { ctx, ui: None },
+            Some(&mut borrowed),
+        )
+    };
+    let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+    for effect in response.model_effects {
+        if let quantick_ui_model::HostEffect::DrawingChrome(effect) = effect {
+            ask.merge(effect);
+        }
+    }
+    ask
 }
