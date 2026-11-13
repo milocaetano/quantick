@@ -1,27 +1,28 @@
 use super::*;
 use quantick_ui_model::Slot;
 fn registry() -> Surfaces {
-    let mut registry = Surfaces::default();
-    registry.phase_trace = Some(vec![]);
-    registry.first = Adapter::new(
-        first_view::View {
-            enabled: true,
-            hook_intent: Some((3, 10)),
-            ..Default::default()
-        },
-        first_view::effects,
-    )
-    .in_slots(&[Slot::LeadingOverlay, Slot::Overlay]);
-    registry.second = Adapter::new(
-        second_view::View {
-            enabled: true,
-            intent: Some((4, 17)),
-            ..Default::default()
-        },
-        second_view::effects,
-    )
-    .in_slots(&[Slot::Overlay]);
-    registry
+    Surfaces {
+        phase_trace: Some(vec![]),
+        first: Adapter::new(
+            first_view::View {
+                enabled: true,
+                hook_intent: Some((3, 10)),
+                ..Default::default()
+            },
+            first_view::effects,
+        )
+        .in_slots(&[Slot::LeadingOverlay, Slot::Overlay]),
+        second: Adapter::new(
+            second_view::View {
+                enabled: true,
+                intent: Some((4, 17)),
+                ..Default::default()
+            },
+            second_view::effects,
+        )
+        .in_slots(&[Slot::Overlay]),
+        ..Default::default()
+    }
 }
 fn order(registry: &Surfaces, phase: &str) -> Vec<&'static str> {
     registry
