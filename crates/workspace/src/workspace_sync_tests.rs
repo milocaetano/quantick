@@ -317,7 +317,7 @@ fn three_twins() -> (LayoutSession, [LayoutId; 3]) {
 /// the merge reads back from the file as it was left.
 #[test]
 fn panes_of_one_tab_on_one_strip_layout_always_share_a_set() {
-    let mut session = two_tabs_on_one_layout();
+    let session = two_tabs_on_one_layout();
     let (shared, other_tab) = (session.layout(1), session.layout(3));
     let (none, one) = (Vec::new(), vec![ema()]);
     let shown = session.shared_sets([(1, one.as_slice()), (2, none.as_slice())]);
@@ -447,7 +447,7 @@ fn another_tabs_private_copy_is_refused_by_the_strip_and_the_switch() {
 /// the tab's copy and show what the first pane is given. One set stays one.
 #[test]
 fn a_recipe_never_parts_a_tabs_copy() {
-    let mut session = two_tabs_on_one_layout();
+    let session = two_tabs_on_one_layout();
     let (shared, other_tab) = (session.layout(1), session.layout(3));
     let (none, one) = (Vec::new(), vec![ema()]);
     let same = session.shared_sets([(1, none.as_slice()), (2, none.as_slice())]);

@@ -100,7 +100,7 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
 }
 
 /// A recipe of two context panes reaches the second pane too, which is built a
-/// frame after the first.
+/// frame after the first. Its panes share one strip layout, so one set.
 #[test]
 fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-context-switch", "layouts.toml");
@@ -111,7 +111,10 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let (layer, on) = some_layer(&app, first, 2);
     let mut two = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(two.context_panes.len(), 2);
-    two.context_panes[1].indicators = vec![ema()];
+    two.flow_indicators = vec![ema()];
+    for pane in &mut two.context_panes {
+        pane.indicators = vec![ema()];
+    }
     two.context_panes[1]
         .layers
         .insert(layer.id().to_owned(), !on);
@@ -626,8 +629,14 @@ fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() 
     assert_eq!(one_copy(&app), copy);
 }
 
-/// Bring `saved` back as the whole desk, as a launch reads it.
-fn restore_desk(app: &mut QuantickApp, saved: quantick_workspace::arrangement_document::SavedTab) {
+/// Bring `saved` back as the whole desk, as a launch reads it: on a market no
+/// open tab shows, so its panes open fresh on the layouts it names.
+fn restore_desk(
+    app: &mut QuantickApp,
+    mut saved: quantick_workspace::arrangement_document::SavedTab,
+    symbol: &str,
+) {
+    symbol.clone_into(&mut saved.symbol);
     let config = app.config.clone();
     let desk = ui_state::Workspace::new(true, None, 0, vec![saved], None);
     app.arrangement_adapter()
@@ -668,7 +677,7 @@ fn a_desk_on_twin_copies_comes_back_on_the_flow_panes_set() {
     saved.context_layouts = vec![copies[1].0, copies[2].0];
     app.runtime.workspace.layouts_mut().set_book(book);
 
-    restore_desk(&mut app, saved);
+    restore_desk(&mut app, saved, "ETHUSDT");
     assert_eq!(one_copy(&app), copies[0], "the flow pane's copy");
     assert_eq!(three_counts(&mut app), [2; 3]);
     let book = app.layout_state().layouts();
@@ -682,8 +691,13 @@ fn a_desk_on_twin_copies_comes_back_on_the_flow_panes_set() {
     );
     let text = toml::to_string(app.layout_state().layouts()).expect("a book writes");
     let reread = quantick_workspace::layout_document::parse(&text).expect("and reads back");
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let relaunch = crate::scratch::ScratchFile::new("workspace-twin-relaunch", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(relaunch.to_path_buf());
     app.runtime.workspace.layouts_mut().set_book(reread);
-    restore_desk(&mut app, saved);
+    restore_desk(&mut app, saved, "ETHUSDT");
     assert_eq!(one_copy(&app), copies[0], "after a relaunch too");
     assert_eq!(three_counts(&mut app), [2; 3]);
 }
