@@ -237,3 +237,90 @@ fn a_tree_seam_grabbed_off_centre_moves_only_as_far_as_the_pointer() {
         "back where it was pressed, unmoved: {before:?} -> {after:?} ({moved} px)"
     );
 }
+
+/// "2 TF + Flow", which the tree paints: its seam dragged slowly to the
+/// right edge folds the flow pane to the column painter's 8 px rail, the
+/// scene names the rail with its restore, the collapse call reads it back,
+/// and a drag back from the rail reopens the flow.
+#[test]
+fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    use quantick_workspace::canvas::{COLLAPSED_PANE_WIDTH_PX, PaneKind, tree_rails, tree_seams};
+    let ctx = egui::Context::default();
+    let (mut app, _evt, _cmd, _book) = test_app();
+    run_frame(&mut app, &ctx);
+    let preset = (LAYOUT_PRESETS.iter())
+        .find(|preset| preset.id == "time+time+flow")
+        .expect("the 2 TF + Flow preset is registered");
+    app.apply_layout_preset(preset);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let state = &app.active_tab().canvas.state;
+    let flow = (state.tree().panes().into_iter())
+        .find(|(_, kind)| *kind == PaneKind::Flow)
+        .expect("a flow pane")
+        .0;
+    let seam = (tree_seams(state, whole, CANVAS_DIVIDER_PX).into_iter())
+        .find(|seam| seam.address.path.is_empty() && seam.address.index == 1)
+        .expect("the seam before the flow pane");
+    let grab = egui::pos2(seam.rect.x + seam.rect.w / 2.0, area.center().y);
+    let slow = |app: &mut QuantickApp, from: egui::Pos2, to: egui::Pos2| {
+        run_frame_with_events(
+            app,
+            &ctx,
+            vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+        );
+        for step in 1..=24 {
+            let at = from.lerp(to, step as f32 / 24.0);
+            run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        }
+        run_frame_with_events(
+            app,
+            &ctx,
+            vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+        );
+        run_frame(app, &ctx);
+    };
+    slow(&mut app, grab, egui::pos2(area.right() - 1.0, grab.y));
+    let state = &app.active_tab().canvas.state;
+    assert!(state.railed().contains(&flow), "the flow folded to its rail");
+    let rails = tree_rails(state, whole, CANVAS_DIVIDER_PX);
+    assert_eq!(rails.len(), 1);
+    assert!(
+        (rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < 0.01,
+        "the column painter's rail width: {:?}",
+        rails[0].rect
+    );
+    assert_eq!(
+        app.active_tab().reading().flow_collapsed,
+        true,
+        "the layout call reads the fold"
+    );
+    let scene = crate::control::scene_snapshot(&app);
+    let named = format!("pane_menu.{flow}.rail");
+    let control = (scene.controls.iter())
+        .find(|control| control.control_id == named)
+        .expect("the scene names the rail");
+    assert_eq!(
+        control.capability_id.as_deref(),
+        Some(quantick_control_handlers::canvas::item_capability(
+            quantick_workspace::canvas::PaneMenuItem::Restore
+        ))
+    );
+    let rail = rails[0].rect;
+    let from = egui::pos2(rail.x + rail.w / 2.0, grab.y);
+    slow(&mut app, from, egui::pos2(area.center().x, grab.y));
+    let state = &app.active_tab().canvas.state;
+    assert!(state.railed().is_empty(), "dragged back past the threshold, open");
+    let flow_rect = (state.rects(whole).into_iter())
+        .find(|(slot, _)| *slot == flow)
+        .expect("the flow pane")
+        .1;
+    assert!(
+        (flow_rect.x - area.center().x).abs() < 4.0,
+        "it opened under the pointer: {flow_rect:?}"
+    );
+}
