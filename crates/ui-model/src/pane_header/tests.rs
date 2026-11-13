@@ -285,3 +285,112 @@ fn window_picks_use_the_latest_flow_projection() {
     assert!(state.window_label.is_none());
     assert!(state.window_options.is_empty());
 }
+
+// Migrated from app::tests::pane_header_tests: the scene rows of the side keys in
+// every view and under a market hold, as the header reads them.
+#[test]
+fn the_scene_reads_the_side_switches() {
+    use quantick_chart::pane_header::{TAPE_DESCRIPTION, TRAIL_DESCRIPTION};
+    use quantick_control_schema::scene::SceneRoleDto;
+    let last = Some("the_last_side_showing_stays");
+    let held = |mut state: FlowHeaderState| {
+        state.market_held = true;
+        state.shown_view = LaneView::CandlesOnly;
+        state
+    };
+    let in_view = |view| {
+        let mut state = flow().flow.unwrap();
+        (state.view, state.shown_view) = (view, view);
+        state
+    };
+    // Each row: Trail's (label, selected, refusal), then Tape's.
+    for (state, trail, tape) in [
+        (
+            in_view(LaneView::Beside),
+            ("Trail", true, None),
+            ("Tape", true, None),
+        ),
+        (
+            in_view(LaneView::CandlesOnly),
+            ("Trail", true, last),
+            ("Tape", false, None),
+        ),
+        (
+            in_view(LaneView::TapeOnly),
+            ("Trail", false, None),
+            ("Tape", true, last),
+        ),
+        (
+            held(in_view(LaneView::Beside)),
+            ("Trail", true, last),
+            ("Market closed", false, Some("market_closed")),
+        ),
+    ] {
+        for (side, (label, selected, refusal), description) in [
+            (LaneSide::Trail, trail, TRAIL_DESCRIPTION),
+            (LaneSide::Tape, tape, TAPE_DESCRIPTION),
+        ] {
+            let row = scene_row(
+                HeaderControl::Side(side),
+                Some(&state),
+                |_| unreachable!("a side key reads no glyph"),
+                |_| unreachable!("nor the panel"),
+            );
+            assert_eq!(
+                row,
+                (
+                    label,
+                    SceneRoleDto::Toggle,
+                    selected,
+                    refusal,
+                    "orderflow.tape.view.set",
+                    Some(description)
+                ),
+                "{:?} {side:?}",
+                state.view
+            );
+        }
+    }
+}
+
+#[test]
+fn the_scene_rows_of_glyphs_samples_window_and_panel() {
+    use quantick_control_schema::scene::SceneRoleDto;
+    use quantick_workspace::orderflow_panel::PanelControl;
+    let unreached = |_: PanelControl| -> SceneRow { unreachable!("only settings reads the panel") };
+    for on in [false, true] {
+        let glyph = |toggle| LayerGlyph {
+            toggle,
+            on,
+            blocked: None,
+        };
+        let row = scene_row(
+            HeaderControl::Layer(LayerToggle::TapeHeatmap),
+            None,
+            glyph,
+            unreached,
+        );
+        let call = "layers.visibility.set";
+        assert_eq!(row, ("Tape L2", SceneRoleDto::Toggle, on, None, call, None));
+    }
+    let row = scene_row(
+        HeaderControl::Sample(BubbleSample::Tape),
+        None,
+        |_| unreachable!(),
+        unreached,
+    );
+    assert_eq!(
+        (row.1, row.4),
+        (SceneRoleDto::Action, "orderflow.bubbles.size.set")
+    );
+    let row = scene_row(
+        HeaderControl::TapeWindow,
+        None,
+        |_| unreachable!(),
+        unreached,
+    );
+    assert_eq!(row.1, SceneRoleDto::Action);
+    let panel = ("x", SceneRoleDto::Action, true, None, "y", None);
+    let gear = HeaderControl::Settings(PanelControl::Gear);
+    assert_eq!(scene_row(gear, None, |_| unreachable!(), |_| panel), panel);
+}
