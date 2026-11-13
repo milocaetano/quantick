@@ -267,23 +267,28 @@ pub fn bar_outline(
     bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, right, TAB_CORNER_PT))
 }
 
-/// The line in the workspace's colour under the toolbar capsule, and the bar
-/// at a workspace menu row's left edge with the indent its name takes past
-/// it, in points.
-pub const WORKSPACE_UNDERLINE_PT: f32 = 3.0;
-/// The capsule's bottom band the underline fills: its 1 pt border and the line.
-pub const WORKSPACE_UNDERLINE_BAND_PT: f32 = 1.0 + WORKSPACE_UNDERLINE_PT;
+/// How much of the workspace's colour tints the toolbar capsule's fill; its
+/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+pub const WORKSPACE_TINT: f32 = 0.12;
 
-/// How far the capsule's content rises so it centres in the room above its
-/// underline: half the line when the workspace has a colour, else none.
+/// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
+/// straight sRGB, the base's alpha kept.
 #[must_use]
-pub fn underline_lift(coloured: bool) -> f32 {
-    if coloured {
-        WORKSPACE_UNDERLINE_PT / 2.0
-    } else {
-        0.0
-    }
+pub fn workspace_tint(base: [u8; 4], colour: [u8; 4]) -> [u8; 4] {
+    let mix = |b: u8, c: u8| {
+        let (b, c) = (f32::from(b), f32::from(c));
+        (b + (c - b) * WORKSPACE_TINT).round().clamp(0.0, 255.0) as u8
+    };
+    [
+        mix(base[0], colour[0]),
+        mix(base[1], colour[1]),
+        mix(base[2], colour[2]),
+        base[3],
+    ]
 }
+
+/// The bar at a workspace menu row's left edge and the indent its name takes
+/// past it, in points.
 pub const WORKSPACE_ROW_BAR_PT: f32 = 7.0;
 pub const WORKSPACE_ROW_INDENT_PT: f32 = 8.0;
 /// The workspace menu's colour swatches: 22 pt squares 8 pt apart, one held
@@ -296,6 +301,31 @@ pub const WORKSPACE_SWATCH_USED_ALPHA: f32 = 0.38;
 mod tests {
     use super::*;
     use crate::{LIGHT, ResolvedTheme};
+
+    /// The tint moves the capsule's fill a fixed share toward the colour and
+    /// keeps the name readable on every palette colour in both themes.
+    #[test]
+    fn a_tinted_capsule_keeps_its_name_readable() {
+        assert_eq!(
+            workspace_tint([255, 255, 255, 255], [255, 255, 255, 255]),
+            [255; 4]
+        );
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0, 255]),
+            [12, 24, 0, 200]
+        );
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let base = theme.color(Token::Control).to_array();
+            let ink = theme.color(Token::TextPrimary);
+            for token in WORKSPACE_TOKENS {
+                let fill = workspace_tint(base, theme.color(token).to_array());
+                let ratio = contrast_ratio(ink, PremultipliedRgba::from_premultiplied(fill));
+                assert!(ratio >= 4.5, "{} {}: {ratio}", theme.name, token.key());
+            }
+        }
+    }
 
     #[test]
     fn each_feed_state_has_its_own_shape_or_colour() {

@@ -12,7 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
-use quantick_appearance::tab_strip::{WORKSPACE_UNDERLINE_BAND_PT as BAND, underline_lift};
+use quantick_appearance::tab_strip::WORKSPACE_TINT;
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -131,42 +131,39 @@ pub fn draw(
     );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    painter.rect(
-        whole,
-        ROUNDING_PX,
-        ui.visuals().widgets.inactive.weak_bg_fill,
-        stroke,
-    );
+    // A workspace's colour tints the fill (as `workspace_tint`) and takes the border.
+    let (fill, edge) = match model.colour.and_then(|c| palette.workspace(c.index())) {
+        Some(ink) => (
+            palette.control().lerp_to_gamma(ink, WORKSPACE_TINT),
+            (stroke.width, ink).into(),
+        ),
+        None => (palette.control(), stroke),
+    };
+    painter.rect(whole, ROUNDING_PX, fill, edge);
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
     ] {
         if lit || response.hovered() {
-            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, palette.control());
+            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
         }
     }
-    // The workspace's colour along the bottom edge, inside the border and its corners.
-    if let Some(ink) = model.colour.and_then(|c| palette.workspace(c.index())) {
-        let under = painter.with_clip_rect(whole.with_min_y(whole.bottom() - BAND));
-        under.rect_filled(whole.shrink(1.0), ROUNDING_PX - 1.0, ink);
-    }
-    let mid = miniature.translate(egui::vec2(0.0, -underline_lift(model.colour.is_some())));
-    painter.vline(miniature.right() + 0.5, mid.y_range().shrink(4.0), stroke);
-    let face = egui::Rect::from_center_size(mid.center(), MINIATURE);
+    painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
+    let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
     paint_tree(painter, face, model.tree);
     if model.layout_unsaved {
         painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
     let text_left = name_rect.left() + PAD_PX;
     painter.galley(
-        egui::pos2(text_left, mid.center().y - name.size().y / 2.0),
+        egui::pos2(text_left, whole.center().y - name.size().y / 2.0),
         name,
         palette.text_primary(),
     );
     painter.galley(
         egui::pos2(
             name_rect.right() - PAD_PX - caret.size().x,
-            mid.center().y - caret.size().y / 2.0,
+            whole.center().y - caret.size().y / 2.0,
         ),
         caret,
         palette.text_muted(),
