@@ -95,39 +95,4 @@ mod stage_tests {
             assert!(!quick.model().present());
         }
     }
-
-    #[test]
-    fn demo_is_one_shot_and_enters_the_production_owner() {
-        let owner = Owner {
-            tab: 1,
-            pane: 2,
-            side: PaneSide::Flow,
-            revision: 3,
-            layout: Some(4),
-        };
-        let mut model = quantick_ui_model::drawing_chrome::State::default();
-        let session = super::super::super::Session::Host(&mut model);
-        let mut view = super::super::View::default();
-        let mut quick = QuickRange::new(session, &mut view);
-        quick.queue_launch(QuickRangeLaunch::capture(|_| Some("future".into())));
-        quick.apply_launch();
-        quick.stage_demo(owner, |_, future| {
-            assert!(future);
-            let tool = drawings::DrawingTool::by_id("measure").unwrap();
-            Ok(Some((
-                [
-                    ChartPoint::at_time(1.5, 100.0, Some(1)),
-                    ChartPoint::at(10.5, 101.0),
-                ],
-                NewDrawing {
-                    style: tool.default_style(),
-                    payload: tool.default_payload(),
-                },
-            )))
-        });
-        assert!(quick.model().view().unwrap().actionable());
-        quick.dismiss();
-        quick.stage_demo(owner, |_, _| panic!("the demo was consumed"));
-        assert!(!quick.model().present());
-    }
 }

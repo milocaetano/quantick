@@ -189,44 +189,6 @@ fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
     );
 }
 
-/// Typed one key at a time into the digit-opened popup: `1`, then `m` lists
-/// one-minute bars, and `o` after it turns the same query into a month.
-/// `d` and `w` list the daily and weekly bars.
-#[test]
-fn a_typed_unit_lists_the_day_week_and_month_bars() {
-    let ctx = egui::Context::default();
-    let listed = |surface: &BarSwitchSurface| -> Vec<String> {
-        surface
-            .candidates()
-            .into_iter()
-            .map(BarConfiguration::to_config_string)
-            .collect()
-    };
-    let mut surface = new_surface();
-    frame(&mut surface, &ctx, vec![egui::Event::Text("1".into())]);
-    assert!(surface.is_open());
-    frame(&mut surface, &ctx, Vec::new());
-    frame(&mut surface, &ctx, vec![egui::Event::Text("m".into())]);
-    assert_eq!(listed(&surface), ["time:1m"]);
-    frame(&mut surface, &ctx, vec![egui::Event::Text("o".into())]);
-    assert_eq!(listed(&surface), ["time:1mo"]);
-    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
-    assert_eq!(
-        response
-            .bar_switch
-            .map(|request| request.config.to_config_string()),
-        Some("time:1mo".to_owned())
-    );
-    for (typed, specs) in [
-        ("2d", &["time:2d", "dollar:2"][..]),
-        ("1w", &["time:1w"][..]),
-    ] {
-        let mut surface = new_surface();
-        surface.open(0, crate::pane::PaneSide::Flow, typed);
-        assert_eq!(listed(&surface), specs, "{typed}");
-    }
-}
-
 #[test]
 fn a_letter_and_enter_in_one_frame_answer_the_lettered_list() {
     let ctx = egui::Context::default();

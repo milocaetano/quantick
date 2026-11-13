@@ -164,3 +164,42 @@ fn nested_local_handlers_are_rejected_instead_of_silently_replacing_the_owner() 
         },
     );
 }
+#[test]
+fn declared_passes_share_state_and_local_receipts_use_the_converter() {
+    let mut adapter =
+        Adapter::<crate::first::Model, bool, (i64, u64)>::new(false, |(v, t)| (v, t + 1000))
+            .in_slots(&[Slot::PinnedInspector, Slot::DrawingChrome]);
+    let mut effects = vec![];
+    let mut pass = |adapter: &mut Adapter<_, bool, _>, slot, delta| {
+        adapter.with_pass(
+            slot,
+            |effect| effects.push(effect),
+            |view: &mut bool, session: &mut UpdateSession<'_, crate::first::Model>| {
+                let seen = (*view, *session.state());
+                *view = true;
+                session.update((delta, 17));
+                seen
+            },
+        )
+    };
+    assert_eq!(
+        pass(&mut adapter, Slot::PinnedInspector, 3),
+        Some((false, 0))
+    );
+    assert_eq!(pass(&mut adapter, Slot::Toolbar, 99), None, "undeclared");
+    assert_eq!(pass(&mut adapter, Slot::DrawingChrome, 7), Some((true, 3)));
+    adapter.with_updates(
+        |effect| effects.push(effect),
+        |_, session| {
+            session.with_local_effects(&mut |effect| (effect, Some((1, 99))), |session| {
+                session.update((2, 20))
+            })
+        },
+    );
+    assert_eq!(adapter.model_state, 13);
+    assert_eq!(
+        effects,
+        [(3, 1017), (10, 1017), (12, 1020), (13, 1099)],
+        "each pass and receipt folds once, through the converter, in order"
+    );
+}

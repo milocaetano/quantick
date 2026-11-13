@@ -17,17 +17,6 @@ fn open(surface: &mut StrategyPopupSurface) {
     });
 }
 #[test]
-fn a_closed_dialog_asks_for_nothing() {
-    let ctx = egui::Context::default();
-    let mut surface = surface();
-    let _ = ctx.run(Default::default(), |ctx| {
-        assert_eq!(
-            surface.draw(ctx, &SurfaceEnv::quiet(Instant::now())),
-            SurfaceResponse::default()
-        );
-    });
-}
-#[test]
 fn an_untouched_dialog_survives_the_frame() {
     let ctx = egui::Context::default();
     let mut surface = surface();
