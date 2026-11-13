@@ -6,7 +6,7 @@ snapshots; paint never builds projections or runs domain decisions. Domain
 crates remain authoritative. A refresh intent should carry a revision so the
 model can retain its projection when the source has not changed.
 
-`src/catalog.rs` is the only registration list. Move a legacy entry into
+`src/catalog.rs` is the only registration list. Register each surface in
 `models { [] [] name: Name => model_module = "model_module.rs",
 view_module = "view_module.rs", view_module::effects, Overlay, Host; }`.
 The two metadata lists apply to the model and view declarations respectively;

@@ -585,7 +585,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         )
         .is_none()
     );
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         DrawingChromeAsk {
             place_quick_range: Some(placement),
@@ -594,7 +594,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         Instant::now(),
     );
     assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
-    assert!(app.surfaces.toast.message().is_none());
+    assert!(app.surfaces.toast.model_state.message().is_none());
     let retry = app
         .surfaces
         .drawing_chrome
@@ -622,7 +622,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
         .convert(QuickRangeAction::Profile)
         .unwrap();
     app.active_tab_mut().flow_pane.rebuild_bars();
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         DrawingChromeAsk {
             place_quick_range: Some(placement),
@@ -632,7 +632,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
     );
     assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("The drawing could not be placed; the temporary range is still available.")
     );
     run_frame(&mut app, &ctx);

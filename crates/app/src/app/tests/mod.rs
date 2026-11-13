@@ -1265,7 +1265,7 @@ fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str
         .set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
     app.workspace_save_adapter().save_workspace("test");
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     assert!(
         app.runtime.workspace.ui_state_path().exists(),
         "the cockpit is on disk"

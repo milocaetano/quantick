@@ -1,5 +1,5 @@
 //! One registration owns module declarations, storage, effects and frame slot.
-//! Migrate a legacy row to `models { [] [] field: Name => model_module = "model.rs",
+//! Register a surface with `models { [] [] field: Name => model_module = "model.rs",
 //! view_module = "view.rs", effect_conversion, Slot, Host; }`. Model files live beside lib.rs; view files
 //! live under app/src/surfaces. Implement View and convert typed effects into
 //! the existing SurfaceResponse; its host dispatch remains authoritative.
@@ -8,13 +8,12 @@
 macro_rules! surface_catalog {
     ($consumer:ident) => {
         $consumer! {
-            legacy {
-                toast: ToastSurface => Surface::draw, ignore_keyboard;
-            }
             modules {}
             models {
                 [] []
                 strategy_popup: StrategyPopup => strategy_popup = "strategy_popup.rs", strategy_popup = "strategy_popup.rs", strategy_popup::effects, LeadingOverlay, Local;
+                [] []
+                toast: Toast => toast = "toast.rs", toast = "toast.rs", toast::effects, Overlay, Local;
                 [] []
                 script_editor: ScriptEditor => script_editor = "script_editor.rs", script_editor = "script_editor.rs", script_editor::effects, Overlay, Local;
                 [] []

@@ -16,6 +16,7 @@
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::toast;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
@@ -132,7 +133,7 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
         Ok(None) => {}
         Ok(Some(note)) => {
             app.surfaces.market_palette.update(PaletteUiIntent::Close);
-            app.surfaces.toast.note(note, std::time::Instant::now());
+            toast::note(&mut app.surfaces.toast, note, std::time::Instant::now());
         }
         Err(reason) => {
             app.surfaces
@@ -837,7 +838,7 @@ impl QuantickApp {
             if let Err(error) = result {
                 tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_ACTION_REFUSED",action=action.action_id,code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
                 if explain {
-                    self.surfaces.toast.note(QUICK_RANGE_REFUSED, now);
+                    toast::note(&mut self.surfaces.toast, QUICK_RANGE_REFUSED, now);
                 }
             }
         }

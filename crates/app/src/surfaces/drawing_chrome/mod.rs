@@ -615,7 +615,7 @@ fn apply_actions(
 /// Read the five `QUANTICK_*` capture hooks this surface owns.
 ///
 /// Called from the constructor, where every launch hook is read — **not**
-/// from [`super::Surface::apply_env_hook`], which the registry applies on the first
+/// from [`super::View::apply_env_hook`], which the registry applies on the first
 /// *drawn* frame. That is too late for two of these: the demo appliers run
 /// earlier in that same frame, and `QUANTICK_DRAWING_INSPECTOR=1` is a state
 /// they read (`carry_across_selection` asks whether the panel is open before

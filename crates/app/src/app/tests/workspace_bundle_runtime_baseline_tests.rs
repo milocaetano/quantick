@@ -31,7 +31,7 @@ fn bundle_runtime_baseline_idle_and_pending_picker_do_no_allocating_work() {
         assert_eq!(work.reallocs, 0);
         assert_eq!(work.realloc_copy_bytes, 0);
         assert_eq!(app.runtime.workspace.picker_open(), pending);
-        assert_eq!(app.surfaces.toast.message(), None);
+        assert_eq!(app.surfaces.toast.model_state.message(), None);
         assert!(app.runtime.workspace.session().recent().is_empty());
         assert!(!app.runtime.workspace.ui_state_path().exists());
     }
@@ -48,9 +48,9 @@ fn bundle_runtime_baseline_cancel_clears_once_and_stays_silent() {
     sender.send(None).unwrap();
     app.workspace_bundle_adapter().poll_picker();
     assert!(!app.runtime.workspace.picker_open());
-    assert_eq!(app.surfaces.toast.message(), None);
+    assert_eq!(app.surfaces.toast.model_state.message(), None);
     app.workspace_bundle_adapter().poll_picker();
-    assert_eq!(app.surfaces.toast.message(), None);
+    assert_eq!(app.surfaces.toast.model_state.message(), None);
     assert!(!app.runtime.workspace.ui_state_path().exists());
 }
 
@@ -66,12 +66,12 @@ fn bundle_runtime_baseline_lost_picker_clears_and_reports_once() {
     app.workspace_bundle_adapter().poll_picker();
     assert!(!app.runtime.workspace.picker_open());
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("The file chooser could not open — see the log. Try again.")
     );
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.workspace_bundle_adapter().poll_picker();
-    assert_eq!(app.surfaces.toast.message(), None);
+    assert_eq!(app.surfaces.toast.model_state.message(), None);
 }
 
 #[test]
@@ -98,6 +98,7 @@ fn bundle_runtime_baseline_chosen_export_writes_and_visits() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .starts_with("Workspace exported to ")
@@ -123,6 +124,7 @@ fn bundle_runtime_baseline_chosen_refusal_preserves_runtime_and_recent() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .starts_with("Workspace not opened — ")
@@ -140,6 +142,7 @@ fn bundle_runtime_baseline_failed_export_does_not_visit() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .starts_with("Workspace not exported — ")
@@ -163,6 +166,7 @@ fn bundle_runtime_baseline_import_reloads_store_absent_from_bundle() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .contains("0 settings groups restored")

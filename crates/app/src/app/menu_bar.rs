@@ -9,12 +9,14 @@
 use super::arrangement_adapter::StripAsk;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
+use crate::surfaces::toast;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 use quantick_ui_model::market_palette::Intent as PaletteIntent;
+use std::time::Instant;
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
@@ -320,9 +322,7 @@ impl QuantickApp {
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {
                 if let Err(error) = self.layout_adapter().switch_layout_index(index) {
-                    self.surfaces
-                        .toast
-                        .note(error.to_string(), std::time::Instant::now());
+                    toast::note(&mut self.surfaces.toast, error.to_string(), Instant::now());
                 }
             }
             MenuCommand::Strip(action) => self.layout_adapter().apply_strip_action(action),

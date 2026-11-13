@@ -735,7 +735,7 @@ impl<'a> Alerts<'a> {
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
     pub(crate) fn show_toast(self, message: String) {
-        self.surfaces.toast.note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(&mut self.surfaces.toast, message, std::time::Instant::now());
     }
 
     /// Ask for the platform's attention sound, through the same sink the

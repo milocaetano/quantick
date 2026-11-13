@@ -170,17 +170,6 @@ where
     }
 }
 
-/// Compatibility transition while a view still owns its legacy state.
-pub struct Legacy<E>(std::marker::PhantomData<E>);
-impl<E> Model for Legacy<E> {
-    type State = ();
-    type Intent = E;
-    type Effects = E;
-    fn update(_: &mut (), intent: E) -> E {
-        intent
-    }
-}
-
 /// Existing frame locations available to catalog entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
@@ -199,7 +188,7 @@ pub enum Slot {
 }
 
 macro_rules! models {
-    (legacy { $($legacy:tt)* } modules { $($modules:tt)* }
+    (modules { $($modules:tt)* }
      models { $( [$($model_attr:meta),*] [$($view_attr:meta),*]
         $field:ident: $tag:ident => $model:ident = $model_file:literal, $view:ident = $view_file:literal,
         $effects:path, $slot:ident $(| $additional_slot:ident)*, $dispatch:ident; )* }) => {

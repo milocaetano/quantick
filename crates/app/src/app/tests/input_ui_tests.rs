@@ -381,7 +381,7 @@ fn button_manager_and_keyboard_send_the_same_delete_command() {
         "the manager's Delete lands the same command"
     );
     assert!(
-        app.surfaces.toast.message().is_some(),
+        app.surfaces.toast.model_state.message().is_some(),
         "the manager delete raises the same Undo toast as the keyboard"
     );
     run_frame_with_modifiers(
@@ -971,7 +971,7 @@ fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             force_delete: true,
@@ -980,8 +980,11 @@ fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
         },
         Instant::now(),
     );
-    assert_eq!(app.surfaces.toast.message(), Some("Drawing deleted."));
-    assert!(app.surfaces.toast.offers_undo());
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some("Drawing deleted.")
+    );
+    assert!(app.surfaces.toast.model_state.offers_undo());
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 }
 
@@ -1003,7 +1006,7 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
     });
     drawings.select(Some(2));
     drawings.set_selected_locked(true);
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             request_delete: true,
@@ -1021,8 +1024,11 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
         Instant::now(),
     );
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
-    assert_eq!(app.surfaces.toast.message(), Some("All drawings deleted."));
-    assert!(app.surfaces.toast.offers_undo());
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some("All drawings deleted.")
+    );
+    assert!(app.surfaces.toast.model_state.offers_undo());
     app.active_tab_mut().flow_pane.drawings.undo();
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
     assert!(

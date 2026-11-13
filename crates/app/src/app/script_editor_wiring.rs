@@ -169,7 +169,7 @@ pub(super) fn frame(
 ) {
     for action in actions {
         if let Err(error) = apply(surfaces, indicators, tabs, action) {
-            surfaces.toast.note(error, now);
+            crate::surfaces::toast::note(&mut surfaces.toast, error, now);
         }
     }
     let view = &mut surfaces.script_editor.view;

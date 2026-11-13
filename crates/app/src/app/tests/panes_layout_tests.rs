@@ -1694,7 +1694,7 @@ fn the_watched_market_wins_the_slot() {
         Instant::now(),
     );
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some(format!("message from tab {watched}").as_str()),
         "the chart on screen is the one whose acknowledgement stays"
     );
@@ -3090,6 +3090,7 @@ fn a_press_on_a_floating_window_does_not_move_pane_focus() {
     let undo = app
         .surfaces
         .toast
+        .view
         .undo_rect()
         .expect("the toast offers Undo");
     let divider = app

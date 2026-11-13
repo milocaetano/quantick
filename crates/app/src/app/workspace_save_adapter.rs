@@ -442,7 +442,7 @@ impl WorkspaceSaveAdapter<'_> {
         }
     }
     fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(self.toast, message, Instant::now());
     }
 }
 

@@ -40,7 +40,7 @@ fn capture_fixture(
     }
     let response = client.read().unwrap();
     assert_eq!(response.request_id, request_id);
-    assert!(app.surfaces.toast.message().is_some());
+    assert!(app.surfaces.toast.model_state.message().is_some());
     success_result(&response).clone()
 }
 

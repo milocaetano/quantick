@@ -203,7 +203,7 @@ impl LayoutAdapter<'_> {
         &self.tabs[self.active]
     }
     fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(self.toast, message, Instant::now());
     }
     fn end_inline_text_edit(&mut self) {
         self.drawing_chrome.commit_inline_text(self.tabs);
