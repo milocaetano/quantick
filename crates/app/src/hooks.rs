@@ -219,7 +219,7 @@ const DRAWING_OWNERS: &[(&str, &[HookSpec])] = &[
 /// The quick-range demo: `quick-range-harness`.
 #[cfg(any(feature = "quick-range-harness", test))]
 const QUICK_RANGE_OWNERS: &[(&str, &[HookSpec])] = &[(
-    "crates/app/src/surfaces/drawing_chrome/quick_range/launch.rs",
+    "crates/app/src/surfaces/drawing_chrome/quick_range.rs",
     crate::surfaces::drawing_chrome::QUICK_RANGE_HOOKS,
 )];
 

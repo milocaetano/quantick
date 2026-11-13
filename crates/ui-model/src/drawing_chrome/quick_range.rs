@@ -44,6 +44,8 @@ pub struct Paint<'a> {
 
 #[derive(Default)]
 pub struct State {
+    pending_launch: Option<core::DemoRequest>,
+    demo_requested: Option<core::DemoRequest>,
     model: core::QuickRangeModel,
     side: Option<PaneSide>,
     look: Option<NewDrawing>,
@@ -62,6 +64,10 @@ fn point(anchor: core::Anchor) -> ChartPoint {
 }
 
 impl State {
+    pub fn demo_requested(&self) -> Option<&core::DemoRequest> {
+        self.demo_requested.as_ref()
+    }
+
     fn reconcile(&mut self, owner: Option<Owner>) {
         match owner {
             Some(owner) => self.reconcile_owner(owner),
@@ -230,6 +236,9 @@ impl State {
 
 /// Input crossing the drawing-chrome model boundary. Domain transitions stay in their owner.
 pub enum Intent {
+    QueueLaunch(Option<core::DemoRequest>),
+    ApplyLaunch,
+    StageDemo(Staging),
     Reconcile(Option<Owner>),
     Selection {
         pane: u64,
@@ -263,6 +272,13 @@ pub enum Intent {
 pub fn update(state: &mut State, intent: Intent) -> super::DrawingChromeAsk {
     let mut effects = super::DrawingChromeAsk::default();
     match intent {
+        Intent::QueueLaunch(request) => state.pending_launch = request,
+        Intent::ApplyLaunch => {
+            if let Some(request) = state.pending_launch.take() {
+                state.demo_requested = Some(request);
+            }
+        }
+        Intent::StageDemo(staging) => state.stage_demo(staging),
         Intent::Reconcile(owner) => state.reconcile(owner),
         Intent::Selection { pane, selected } => state.note_selection(pane, selected),
         Intent::Press {
@@ -295,10 +311,7 @@ pub fn update(state: &mut State, intent: Intent) -> super::DrawingChromeAsk {
         Intent::FinishConversion {
             conversion,
             outcome,
-        } => {
-            effects.quick_range_readback =
-                Some(Box::new(state.finish_conversion(conversion, outcome)))
-        }
+        } => effects.set_quick_range_readback(state.finish_conversion(conversion, outcome)),
     }
     effects
 }
@@ -306,3 +319,10 @@ pub fn update(state: &mut State, intent: Intent) -> super::DrawingChromeAsk {
 #[cfg(test)]
 #[path = "quick_range/tests/conversion.rs"]
 mod conversion_tests;
+
+#[path = "quick_range/scenario.rs"]
+mod scenario;
+pub use scenario::Staging;
+#[cfg(test)]
+#[path = "quick_range/tests/scenario.rs"]
+mod tests;

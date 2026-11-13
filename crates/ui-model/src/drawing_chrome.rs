@@ -11,6 +11,8 @@ pub mod inspector;
 mod presets;
 #[path = "drawing_chrome/quick_range.rs"]
 pub mod quick_range;
+#[path = "drawing_chrome/scenario.rs"]
+pub mod scenario;
 #[path = "drawing_chrome/types.rs"]
 mod types;
 pub use actions::{ActionInput, apply as apply_actions};
@@ -58,11 +60,13 @@ pub struct Core {
 }
 #[derive(Default)]
 pub struct State {
+    pub scenario: scenario::State,
     pub core: Core,
     pub inspector: inspector::State,
     pub quick_range: quick_range::State,
 }
 pub enum Intent {
+    Scenario(scenario::Intent),
     Actions(ActionInput),
     Ask(DrawingChromeAsk),
     QuickRange(quick_range::Intent),
@@ -134,6 +138,7 @@ impl crate::Model for Model {
     fn update(state: &mut State, intent: Intent) -> DrawingChromeAsk {
         let mut effects = DrawingChromeAsk::default();
         match intent {
+            Intent::Scenario(intent) => return scenario::update(state, intent),
             Intent::Ask(ask) => return ask,
             Intent::QuickRange(intent) => {
                 return quick_range::update(&mut state.quick_range, intent);

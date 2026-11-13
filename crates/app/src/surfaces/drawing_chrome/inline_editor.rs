@@ -56,7 +56,7 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
     // that would photograph nothing at all.
     let mut ask = DrawingChromeAsk {
         #[cfg(any(feature = "drawing-harness", test))]
-        place_text_note: chrome.view.scenario.note_requested(),
+        place_text_note: chrome.state().scenario.note_requested(),
         ..DrawingChromeAsk::default()
     };
     // A placement that asked for the caret gets it here, on the frame it

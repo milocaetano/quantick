@@ -49,14 +49,14 @@ fn finish(
     conversion: PendingConversion,
     outcome: PlacementOutcome,
 ) -> ConversionReadback {
-    *update(
+    update(
         state,
         Intent::FinishConversion {
             conversion,
             outcome,
         },
     )
-    .quick_range_readback
+    .take_quick_range_readback()
     .unwrap()
 }
 
@@ -114,4 +114,35 @@ fn dismiss_before_finishing_cannot_restore_a_range() {
         ),
         ConversionReadback::default()
     );
+}
+#[test]
+fn simultaneous_readbacks_merge_independently_and_consumption_preserves_the_other() {
+    use crate::drawing_chrome::scenario::Effect;
+    let mut quick = ready();
+    let placement = convert(&mut quick, Action::Profile).unwrap();
+    let mut ask = update(
+        &mut quick,
+        Intent::FinishConversion {
+            conversion: placement.conversion,
+            outcome: PlacementOutcome::ActionRefused,
+        },
+    );
+    ask.merge(DrawingChromeAsk::scenario(Some(Effect::GallerySelection(
+        Some(7),
+    ))));
+    ask.merge(DrawingChromeAsk::scenario(Some(Effect::KeepSelectedLocal)));
+    let mut later = DrawingChromeAsk::default();
+    later.set_quick_range_readback(ConversionReadback::default());
+    ask.merge(later);
+    assert_eq!(ask.take_scenario(), Some(Effect::GallerySelection(Some(7))));
+    assert!(ask.take_scenario().is_none());
+    assert!(ask.take_quick_range_readback().unwrap().view.is_some());
+    assert!(ask.take_quick_range_readback().is_none());
+    let mut ask = DrawingChromeAsk::scenario(Some(Effect::KeepSelectedLocal));
+    ask.set_quick_range_readback(ConversionReadback::default());
+    assert_eq!(
+        ask.take_quick_range_readback(),
+        Some(ConversionReadback::default())
+    );
+    assert_eq!(ask.take_scenario(), Some(Effect::KeepSelectedLocal));
 }

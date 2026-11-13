@@ -189,10 +189,11 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
             .set_ui_state_path(scratch_ui_state("stage-order-demo-inspector"));
         app.surfaces.drawing_chrome.set_inspector_pinned(true);
         app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
-        app.surfaces
-            .drawing_chrome
-            .demos_mut()
-            .arm_drawings_demo(DrawingsDemo::default());
+        app.surfaces.drawing_chrome.scenario(
+            quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(
+                DrawingsDemo::default(),
+            ),
+        );
         for _ in 0..8 {
             staged_frame(&mut app, &ctx, order);
             if !app.surfaces.drawing_chrome.demos().gallery_requested() {

@@ -3377,8 +3377,7 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
         .set_ui_state_path(scratch_ui_state("demo-inspector"));
     app.surfaces
         .drawing_chrome
-        .demos_mut()
-        .arm_drawings_demo(DrawingsDemo::default());
+        .scenario(quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(DrawingsDemo::default()));
     app.surfaces.drawing_chrome.set_inspector_open(true);
 
     for _ in 0..4 {
@@ -3432,8 +3431,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
         .set_ui_state_path(scratch_ui_state("hook-inspector"));
     app.surfaces
         .drawing_chrome
-        .demos_mut()
-        .arm_drawings_demo(DrawingsDemo::default());
+        .scenario(quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(DrawingsDemo::default()));
 
     assert!(
         app.surfaces.drawing_chrome.inspector_open(),

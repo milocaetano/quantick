@@ -153,10 +153,11 @@ fn nine_hook_case(case: &str, env: Env) {
     };
     let (mut app, _commands) = app_with_history_and_launch(count, launch);
     if case == "gallery-default" {
-        app.surfaces
-            .drawing_chrome
-            .demos_mut()
-            .arm_drawings_demo(DrawingsDemo::default());
+        app.surfaces.drawing_chrome.scenario(
+            quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(
+                DrawingsDemo::default(),
+            ),
+        );
     }
     app.active_tab_mut().flow_pane.frame.chart_area = Some(egui::Rect::from_min_size(
         egui::pos2(100.0, 100.0),
