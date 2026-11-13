@@ -254,7 +254,8 @@ fn a_workspace_save_never_invents_a_replay_folder() {
 #[test]
 fn a_workspace_save_carries_the_pick_that_was_made() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.replay_view = ReplayView::new(Some("D:/tape"), None);
+    app.surfaces.replay_browser =
+        crate::surfaces::replay_browser::ReplayBrowser::new_browser(Some("D:/tape"), None);
     assert_eq!(
         app.workspace_state()
             .capture_workspace()

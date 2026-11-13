@@ -157,7 +157,7 @@ impl QuantickApp {
         workspace_save_adapter::WorkspaceRead {
             arrangement: self.arrangement_state(),
             session: self.runtime.workspace.session(),
-            replay_view: &self.replay_view,
+            replay_view: &self.surfaces.replay_browser,
         }
     }
 

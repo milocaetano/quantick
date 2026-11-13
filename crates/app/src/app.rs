@@ -89,9 +89,9 @@ use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::Harness;
-use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
 #[cfg(test)]
@@ -207,7 +207,6 @@ pub struct QuantickApp {
     added_symbols: AddedSymbols,
     config: AppConfig,
     control: control_host::ControlState,
-    replay_view: ReplayView,
     dock: Dock,
     surfaces: crate::surfaces::Surfaces,
     drawings: drawing_controller::DrawingController,
@@ -270,7 +269,7 @@ impl QuantickApp {
     ) -> workspace_bundle_adapter::WorkspaceBundleAdapter<'_> {
         workspace_bundle_adapter::WorkspaceBundleAdapter {
             arrangement: arrangement_adapter!(self),
-            replay_view: &self.replay_view,
+            replay_view: &self.surfaces.replay_browser,
             dialogs: &mut self.surfaces.layout_dialogs,
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
@@ -295,7 +294,7 @@ impl QuantickApp {
     pub(crate) fn workspace_save_adapter(
         &mut self,
     ) -> workspace_save_adapter::WorkspaceSaveAdapter<'_> {
-        arrangement_adapter!(self).into_save(&self.replay_view)
+        arrangement_adapter!(self).into_save(&self.surfaces.replay_browser)
     }
 
     pub(crate) fn symbol_catalog(&mut self) -> quantick_stores::symbol_catalog::SymbolCatalog<'_> {
@@ -509,10 +508,6 @@ impl QuantickApp {
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
-            replay_view: ReplayView::new(
-                workspace.replay_folder.as_deref(),
-                workspace.replay_day_before,
-            ),
             dock: Dock::new(),
             surfaces: crate::surfaces::Surfaces::default(),
             drawings: drawing_controller::DrawingController::new(),
@@ -522,6 +517,10 @@ impl QuantickApp {
             },
             health: health::HealthCounters::new(),
         };
+        app.surfaces.replay_browser.initialize(
+            workspace.replay_folder.as_deref(),
+            workspace.replay_day_before,
+        );
         crate::surfaces::feed_notice::initialize(&mut app.surfaces.feed_notice, FIRST_TAB_ID);
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.

@@ -30,6 +30,12 @@ macro_rules! surface_catalog {
                 indicator_picker: IndicatorPicker => indicator_picker = "indicator_picker.rs", indicator_picker = "indicator_picker.rs", indicator_picker::effects, Overlay, Host;
                 [] []
                 home: Home => home = "home.rs", home = "home.rs", home::effects, HomeCanvas, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_early_first: ChromeEarlyFirst => chrome_early_first = "chrome/probe_early_first.rs", chrome_early_first = "chrome/tests/early_first.rs", chrome_early_first::effects, EarlyEdgePanels, Host;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_early_second: ChromeEarlySecond => chrome_early_second = "chrome/probe_early_second.rs", chrome_early_second = "chrome/tests/early_second.rs", chrome_early_second::effects, EarlyEdgePanels, Host;
+                [] []
+                replay_browser: ReplayBrowser => replay_browser = "replay_browser.rs", replay_browser = "replay_browser.rs", replay_browser::effects, EarlyEdgePanels, Local;
                 [] []
                 toolrail: ToolRail => tool_rail = "tool_rail.rs", toolrail = "../toolrail/mod.rs", toolrail::effects, EdgePanels, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]

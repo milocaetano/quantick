@@ -19,7 +19,7 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
 pub(crate) struct WorkspaceBundleAdapter<'a> {
     /// The tab strip and chrome ports an import restores, borrowed once.
     pub(super) arrangement: super::arrangement_adapter::ArrangementAdapter<'a>,
-    pub(super) replay_view: &'a crate::replay_view::ReplayView,
+    pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
     pub(super) added_symbols: &'a mut crate::symbols_file::AddedSymbols,
     pub(super) drawing_presets: &'a mut crate::drawings::presets::PresetStore,

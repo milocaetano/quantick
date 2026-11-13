@@ -10,8 +10,9 @@ use crate::app::arrangement_host::ArrangementHost;
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockResponse};
 use crate::loading::LoadingTask;
-use crate::replay_view::{ReplayAction, ReplayView};
+use crate::replay_view::ReplayAction;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
 use crate::surfaces::{HostEffect, Surfaces, ViewContext};
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
@@ -23,7 +24,7 @@ use quantick_ui_model::tool_rail::{Effect, Facts, Intent};
 /// at a time (§11).
 pub(super) fn draw_replay_browser(
     ctx: &egui::Context,
-    replay_view: &mut ReplayView,
+    surfaces: &mut Surfaces,
     tabs: &ArrangementHost,
     config: &AppConfig,
 ) -> Option<ReplayAction> {
@@ -37,7 +38,7 @@ pub(super) fn draw_replay_browser(
     // source itself answers: offering a Binance pair to a MetaTrader
     // exporter would be a click that can only end in a refusal, and
     // the chart behind this window is often on another venue entirely.
-    let serves = replay_view.download_provider();
+    let serves = surfaces.replay_browser.download_provider();
     let market = crate::replay_view::MarketMenu {
         current: (config.provider_of(&tab.feed_id) == Some(serves)).then_some(tab.symbol.as_str()),
         catalogue: config
@@ -47,7 +48,14 @@ pub(super) fn draw_replay_browser(
             .flat_map(|feed| feed.symbols.iter().map(String::as_str))
             .collect(),
     };
-    replay_view.draw(ctx, tab.link.replay.as_ref(), &market)
+    surfaces
+        .replay_browser
+        .bind_pass(tab.link.replay.as_ref(), &market);
+    let response = surfaces.draw_slot_unscoped(
+        quantick_ui_model::Slot::EarlyEdgePanels,
+        &mut ViewContext { ctx, ui: None },
+    );
+    crate::surfaces::replay_browser::take_action(&mut surfaces.replay_browser, response)
 }
 
 /// The drawing rail, listing and managing the focused pane's objects: what
@@ -101,7 +109,7 @@ pub(super) fn draw_dock(
     ctx: &egui::Context,
     dock: &mut Dock,
     tabs: &mut ArrangementHost,
-    replay_view: &mut ReplayView,
+    replay_view: &mut ReplayBrowser,
     tz: TzOffset,
 ) -> DockResponse {
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
@@ -196,7 +204,7 @@ pub(super) fn observe_connections(
 
 /// Waits owned by other components, mirrored level-style each frame so the
 /// overlay needs no push notifications from either.
-pub(super) fn mirror_loading_waits(replay_view: &ReplayView, tabs: &mut ArrangementHost) {
+pub(super) fn mirror_loading_waits(replay_view: &ReplayBrowser, tabs: &mut ArrangementHost) {
     let replay_loading = replay_view.is_loading();
     let tab = tabs.runtime_mut(tabs.active_index());
     let book_syncing = tab.tape().is_syncing();

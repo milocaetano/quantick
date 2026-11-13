@@ -14,7 +14,8 @@ pub use quantick_workspace::dock::{DOCK_MAX_WIDTH, DOCK_MIN_WIDTH, Dock, DockTab
 
 use crate::paper_chrome::{fmt_decimal, position_word};
 use crate::paper_trading::{LedgerAction, PaperTrading, TradingTabAction};
-use crate::replay_view::{ReplayAction, ReplayView};
+use crate::replay_view::ReplayAction;
+use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::widgets::{IconButton, RAIL_ICON};
@@ -39,7 +40,7 @@ pub fn tab_icon(tab: DockTab) -> &'static str {
 /// borrowed mutably alongside them.
 pub struct DockEnv<'a> {
     /// The replay browser the Session tab opens.
-    pub replay_view: &'a mut ReplayView,
+    pub replay_view: &'a mut ReplayBrowser,
     /// The playing session, if any.
     pub replay: Option<&'a ReplayLink>,
     /// The paper-trading host the Trading and Trades tabs drive.
@@ -325,7 +326,7 @@ mod tests {
     fn the_dock_draws_every_tab_against_a_real_context() {
         let ctx = egui::Context::default();
         let mut dock = Dock::new();
-        let mut replay_view = ReplayView::new(None, None);
+        let mut replay_view = ReplayBrowser::new_browser(None, None);
         let mut paper = PaperTrading::new();
         for tab in DockTab::ALL {
             dock.open_tab(tab);
@@ -379,7 +380,7 @@ mod tests {
                         dock,
                         ctx,
                         &mut DockEnv {
-                            replay_view: &mut ReplayView::new(None, None),
+                            replay_view: &mut ReplayBrowser::new_browser(None, None),
                             replay: None,
                             paper,
                             tz: TzOffset::default(),

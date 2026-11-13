@@ -1,6 +1,7 @@
 //! Executes workspace persistence effects over explicit arrangement/session/file ports.
 use super::arrangement_adapter::ArrangementRead;
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::ui_state;
 use eframe::egui;
 use quantick_workspace::workspace_commit::{
@@ -12,13 +13,13 @@ use crate::toolrail::ToolRailExt as _;
 pub(crate) struct WorkspaceRead<'a> {
     pub(super) arrangement: ArrangementRead<'a>,
     pub(super) session: &'a WorkspaceCommitSession,
-    pub(super) replay_view: &'a crate::replay_view::ReplayView,
+    pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
 }
 pub(crate) struct WorkspaceSaveAdapter<'a> {
     pub(super) arrangement: ArrangementRead<'a>,
     pub(super) session: &'a mut WorkspaceCommitSession,
     pub(super) path: &'a Path,
-    pub(super) replay_view: &'a crate::replay_view::ReplayView,
+    pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
 }
 
@@ -453,7 +454,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
     /// half is assembled for production.
     pub(super) fn into_save(
         self,
-        replay_view: &'a crate::replay_view::ReplayView,
+        replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
     ) -> WorkspaceSaveAdapter<'a> {
         let (session, path, workspace_book) = self.workspace.commit_parts();
         WorkspaceSaveAdapter {

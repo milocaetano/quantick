@@ -539,6 +539,108 @@ mod tests {
     }
 
     #[test]
+    fn early_edge_panels_dispatch_in_order_before_rail_and_dock() {
+        use quantick_ui_model::{Slot, chrome_early_first, chrome_early_second, chrome_edge_first};
+        let mut registry = Surfaces::default();
+        registry.update(HostIntent::ChromeEarlyFirst(Box::new(
+            chrome_early_first::Intent::Show(true),
+        )));
+        registry.update(HostIntent::ChromeEarlySecond(Box::new(
+            chrome_early_second::Intent::Show(true),
+        )));
+        registry
+            .chrome_edge_first
+            .update(chrome_edge_first::Intent::Show(true));
+        let ctx = egui::Context::default();
+        let mut effects = Vec::new();
+        let mut dock = egui::Rect::NOTHING;
+        let mut canvas = egui::Rect::NOTHING;
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                effects.extend(
+                    registry
+                        .draw_slot_unscoped(
+                            Slot::EarlyEdgePanels,
+                            &mut ViewContext { ctx, ui: None },
+                        )
+                        .model_effects,
+                );
+                assert!(
+                    registry.chrome_edge_first.view.painted.is_none(),
+                    "the drawing rail stage has not run"
+                );
+                effects.extend(
+                    registry
+                        .draw_slot_unscoped(Slot::EdgePanels, &mut ViewContext { ctx, ui: None })
+                        .model_effects,
+                );
+                dock = egui::SidePanel::right("probe-dock")
+                    .frame(egui::Frame::none())
+                    .show(ctx, |_| {})
+                    .response
+                    .rect;
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none())
+                    .show(ctx, |ui| {
+                        canvas = ui.max_rect();
+                    });
+            },
+        );
+        let first = registry.chrome_early_first.view.painted.unwrap();
+        let second = registry.chrome_early_second.view.painted.unwrap();
+        let rail = registry.chrome_edge_first.view.painted.unwrap();
+        assert_eq!(first.left(), 0.0);
+        assert_eq!(first.width(), 37.0);
+        assert_eq!(second.left(), first.right());
+        assert_eq!(second.top(), 0.0);
+        assert_eq!(second.height(), 29.0);
+        let drawing_rail = egui::containers::panel::PanelState::load(
+            &ctx,
+            egui::Id::new((ctx.viewport_id(), "drawing_toolbox_left")),
+        )
+        .expect("the real registered drawing rail reserves its panel")
+        .rect;
+        assert_eq!(drawing_rail.left(), first.right());
+        assert_eq!(drawing_rail.top(), second.bottom());
+        assert_eq!(
+            drawing_rail.width(),
+            quantick_chart_interaction::tool_rail::TOOLBOX_THICKNESS_PX
+        );
+        assert_eq!(rail.left(), drawing_rail.right());
+        assert_eq!(rail.top(), second.bottom());
+        assert_eq!(dock.top(), second.bottom());
+        assert_eq!(canvas.left(), rail.right());
+        assert_eq!(canvas.right(), dock.left());
+        assert_eq!(canvas.top(), second.bottom());
+        let probes: Vec<_> = effects
+            .into_iter()
+            .filter(|effect| {
+                matches!(
+                    effect,
+                    HostEffect::ChromeEarlyFirst(_)
+                        | HostEffect::ChromeEarlySecond(_)
+                        | HostEffect::ChromeEdgeFirst(_)
+                )
+            })
+            .collect();
+        assert_eq!(
+            probes,
+            vec![
+                HostEffect::ChromeEarlyFirst(chrome_early_first::Effects(Some(1))),
+                HostEffect::ChromeEarlySecond(chrome_early_second::Effects(Some(1))),
+                HostEffect::ChromeEdgeFirst(chrome_edge_first::Effects(Some(1))),
+            ]
+        );
+    }
+
+    #[test]
     fn catalog_passes_share_state_and_fold_each_effect_once() {
         use quantick_ui_model::Slot;
         let mut registry = Surfaces::default();

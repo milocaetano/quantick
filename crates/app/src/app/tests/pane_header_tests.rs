@@ -450,7 +450,7 @@ fn the_trail_key_mirrors_the_tape_key_and_never_opens_replay() {
     press_key(&mut app, &ctx, egui::Key::R, mods);
     assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
     assert!(
-        !app.replay_view.browser_is_open(),
+        !app.surfaces.replay_browser.browser_is_open(),
         "and it never reached the replay browser"
     );
 }
