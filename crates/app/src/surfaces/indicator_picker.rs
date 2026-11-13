@@ -9,6 +9,7 @@ use quantick_ui_model::indicator_picker::{
     ActiveAction, ActiveEntry, Effect, Intent, Model, State, Status,
 };
 
+#[cfg(test)]
 pub(crate) type IndicatorPickerSurface = super::Adapter<Model, View>;
 
 #[derive(Default)]

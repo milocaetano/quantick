@@ -150,6 +150,8 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) store: &'a mut crate::workspace_store::LayoutStore,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
+    pub(super) indicator_settings:
+        &'a mut crate::surfaces::indicator_settings::IndicatorSettingsSurface,
     pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
 }
 
@@ -617,14 +619,13 @@ impl LayoutAdapter<'_> {
             return false;
         }
         self.indicators.registry.move_context_pane(tab_id, from, to);
-        if self.indicators.indicator_settings_target.tab == tab_id {
-            self.indicators.indicator_settings_target.side =
-                quantick_chart::indicator_registry::remap_side(
-                    self.indicators.indicator_settings_target.side,
-                    from,
-                    to,
-                );
-        }
+        self.indicator_settings.update(
+            quantick_ui_model::indicator_settings::Intent::ContextPaneMoved {
+                tab: tab_id,
+                from,
+                to,
+            },
+        );
         true
     }
 
