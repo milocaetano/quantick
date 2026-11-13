@@ -62,9 +62,10 @@ fn autosave_on_greys_save_and_flips_the_switch() {
     let (switch, save) = (&menu.head[0], &menu.head[3]);
     assert!(switch.on);
     assert_eq!(switch.command, Some(WorkspaceCommand::SetAutosave(false)));
-    assert!(!save.enabled && !save.dot);
+    assert_eq!(save.unavailable, Some(AUTOSAVE_SAVES_REASON));
+    assert!(!save.dot);
     let rename = &menu.head[5];
-    assert!(!rename.enabled, "Default cannot be renamed");
+    assert_eq!(rename.unavailable, Some(DEFAULT_PROTECTED_REASON));
     assert!(rename.disabled_hover.is_some());
 }
 
@@ -79,7 +80,7 @@ fn a_held_edit_lights_save_and_its_dot() {
     let menu = cell_menu(&book, 1, "Ctrl+S");
     assert_eq!(menu.head[1].label, "Save with Ctrl+S");
     let save = &menu.head[3];
-    assert!(save.enabled && save.dot);
+    assert!(save.unavailable.is_none() && save.dot);
     assert_eq!(save.command, Some(WorkspaceCommand::SaveTo));
 }
 
@@ -109,4 +110,44 @@ fn the_window_menu_s_action_rows_are_the_cell_menu_s() {
     let autosave = action_row(&book, 1, RowId::WorkspaceAutosave).expect("a workspace row");
     assert_eq!(autosave.command, Some(WorkspaceCommand::SetAutosave(true)));
     assert_eq!(action_row(&book, 1, RowId::SaveToWorkspace), None);
+}
+
+#[test]
+fn a_greyed_row_is_listed_unavailable_with_its_reason() {
+    let menu = cell_menu(&book(false), 1, "Ctrl+S");
+    let save = menu.head[3].scene_control("toolbar", None);
+    assert_eq!(save.control_id, "toolbar.workspace_menu.save");
+    assert!(!save.availability.available);
+    assert_eq!(save.availability.reason.as_deref(), Some(NO_EDITS_REASON));
+    assert!(!save.bounds_availability.available, "no rectangle given");
+    let new = menu.foot[1].scene_control("toolbar", None);
+    assert!(new.availability.available);
+    assert_eq!(
+        new.capability_id.as_deref(),
+        Some(calls::WORKSPACE_NEW_CAPABILITY_ID)
+    );
+}
+
+#[test]
+fn the_signature_moves_with_the_words_and_nothing_else() {
+    let mut book = book(false);
+    let before = cell_menu(&book, 1, "Ctrl+S").signature();
+    assert_eq!(cell_menu(&book, 1, "Ctrl+S").signature(), before);
+    assert_ne!(cell_menu(&book, 1, "Ctrl+Alt+S").signature(), before);
+    book.set_autosave(true);
+    assert_ne!(
+        cell_menu(&book, 1, "Ctrl+S").signature(),
+        before,
+        "the caption's words"
+    );
+}
+
+#[test]
+fn the_window_menu_list_names_the_tabs_on_each_workspace() {
+    let book = book(true);
+    let rows = window_list(&book, 1, |tabs| {
+        tabs.iter().map(|tab| format!("T{tab}")).collect()
+    });
+    assert_eq!(rows[0].beside, "T1");
+    assert!(rows[0].lit());
 }

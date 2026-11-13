@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_control_handlers::workspace_cell_menu::CellRow;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::{
     self, HOME_SHOWN_HOVER, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId,
@@ -66,6 +67,8 @@ pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) help: Option<HelpPage>,
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
+    /// The chip menu's rows in view, as last drawn, for the scene.
+    pub(in crate::app) cell_rows: Vec<(CellRow, egui::Rect)>,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
     /// The pane whose first row takes the keyboard next.
     focus_pane: Option<usize>,

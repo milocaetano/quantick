@@ -12,7 +12,6 @@ use crate::orderflow_panel as panel;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
-use quantick_control_handlers::workspace_cell_menu::CellRow;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
@@ -423,13 +422,13 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
 
 /// The capsule's workspace name: a click, or Ctrl+Shift+O from anywhere in
 /// the window, opens its menu below the name on this window's tab. A torn-off
-/// window's capsule reaches its own tab and no other. Answers the rows in view.
+/// window's capsule reaches its own tab and no other.
 pub(super) fn workspace_cell(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     cell: Option<egui::Rect>,
     clicked: bool,
-) -> Vec<(CellRow, egui::Rect)> {
+) {
     let (tab, window) = (
         app.runtime.tabs.active_id(),
         app.runtime.tabs.presented_window_ids(),
@@ -447,7 +446,7 @@ pub(super) fn workspace_cell(
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }
-    drawn.unwrap_or_default()
+    app.chrome.window_menu.cell_rows = drawn.unwrap_or_default();
 }
 
 /// The commands that need to know which window asked, then all the others.

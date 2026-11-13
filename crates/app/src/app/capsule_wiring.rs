@@ -3,7 +3,6 @@
 //! to the observer scene, and what their presses do.
 
 use eframe::egui;
-use quantick_control_handlers::workspace_cell_menu::{CellRow, MENU_CAPABILITY_ID};
 use quantick_control_schema::canvas::{OPEN_WINDOW_MENU_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_workspace::canvas::{LayoutMarks, PaneTree};
@@ -140,21 +139,21 @@ pub(super) fn settle(
         app.chrome.layout_picker_open = !(outside || picked);
         cells = drawn;
     }
-    let menu = super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
+    super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
     super::canvas_wiring::add_from_menu(app, ctx);
-    publish(app, viewport, state, rects, door, (&cells, &menu));
+    publish(app, viewport, state, rects, door, &cells);
     rest
 }
 
-/// The list door, the capsule's parts, the popover's cells and menu rows, as drawn.
+/// The list door, the capsule's parts and the popover's cells, as drawn.
 fn publish(
     app: &mut QuantickApp,
     viewport: egui::ViewportId,
     state: &CapsuleState,
     rects: CapsuleRects,
     door: Option<egui::Rect>,
-    (cells, menu_rows): (&[layout_popover::DrawnCell], &[(CellRow, egui::Rect)]),
+    cells: &[layout_popover::DrawnCell],
 ) {
     let control = |id: &str, label: &str, rect, selected, capability| DrawnControl {
         id: format!("toolbar.{id}"),
@@ -194,12 +193,8 @@ fn publish(
         &state.workspace,
         rects.name,
         workspace_open,
-        Some(MENU_CAPABILITY_ID),
+        Some(quantick_control_handlers::workspace_cell_menu::MENU_CAPABILITY_ID),
     ));
-    for (row, rect) in menu_rows {
-        let id = row.scene_id();
-        controls.push(control(&id, &row.label, *rect, row.on, row.capability));
-    }
     if let Some(floppy) = rects.floppy {
         let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);
         controls.push(control(

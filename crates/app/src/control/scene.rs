@@ -260,6 +260,9 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
 fn push_toolbar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
     let owner = (SceneOwnerKindDto::Toolbar, TOOLBAR_OWNER_ID.to_owned());
     push_drawn(controls, app.chrome_reads().toolbar, owner);
+    for (row, rect) in app.chrome_reads().cell_menu() {
+        controls.push(row.scene_control(TOOLBAR_OWNER_ID, rect_bounds(*rect).into_snapshot()));
+    }
 }
 
 /// Controls a surface published as it drew them, under `owner`.

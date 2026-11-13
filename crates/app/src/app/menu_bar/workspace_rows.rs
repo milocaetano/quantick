@@ -4,10 +4,11 @@
 
 use eframe::egui;
 use quantick_control_handlers::workspace_cell_menu::{CellRow, RowKind, action_row, cell_menu};
+use quantick_control_handlers::workspace_cell_menu::{state_of, window_list};
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
 use quantick_session::workspace_menu::{self as model, ChipSizing, MenuBounds, MenuMetrics};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
-use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
+use quantick_stores::workspaces::WorkspaceBook;
 
 use super::MenuCommand;
 use crate::app::QuantickApp;
@@ -35,14 +36,6 @@ impl<'a> WorkspaceRows<'a> {
         }
     }
 
-    fn state(&self) -> (&str, bool) {
-        self.book
-            .tab_state(self.tab)
-            .map_or((DEFAULT_WORKSPACE, false), |state| {
-                (state.workspace, state.modified)
-            })
-    }
-
     fn symbols(&self, tabs: &[u64]) -> Vec<String> {
         crate::app::tab_workspaces::symbols_of(self.tabs, tabs)
     }
@@ -58,7 +51,7 @@ impl<'a> WorkspaceRows<'a> {
         keys: String,
         commands: &mut Vec<MenuCommand>,
     ) -> egui::Response {
-        let (workspace, modified) = self.state();
+        let (workspace, modified) = state_of(self.book, self.tab);
         let row = row_of(RowId::SaveToWorkspace);
         let followers = self.book.save_to_preview(self.tab).unwrap_or_default();
         let response = ui
@@ -77,17 +70,9 @@ impl<'a> WorkspaceRows<'a> {
 
     /// Every workspace, the active tab's lit, beside the tabs on it.
     pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let (current, _) = self.state();
-        for row in self.book.list() {
-            let beside = self.symbols(&row.tabs).join(", ");
-            let response = ui.add(
-                egui::Button::new(row.name.as_str())
-                    .selected(row.name == current)
-                    .shortcut_text(crate::theme::supporting_text(ui, beside)),
-            );
-            if response.clicked() {
-                Self::push(commands, WorkspaceCommand::Set(row.name));
-            }
+        for row in window_list(self.book, self.tab, |tabs| self.symbols(tabs)) {
+            let asked = cell_row(ui, &row, &mut ChipSizing::default(), &mut Vec::new());
+            commands.extend(asked.map(MenuCommand::Workspace));
         }
     }
 
@@ -121,8 +106,9 @@ impl<'a> WorkspaceRows<'a> {
         if !menu.chip_menu_on(self.tab) {
             return drawn;
         }
-        let (recorded, measuring) = (commands.len(), menu.chip_sizing.begin_frame());
         let rows = cell_menu(self.book, self.tab, &keys);
+        let (recorded, (measuring, shown)) =
+            (commands.len(), menu.chip_sizing.frame(rows.signature()));
         let id = egui::Id::new(("tab_workspace_menu", self.tab));
         let area = egui::Area::new(id)
             .order(egui::Order::Foreground)
@@ -138,9 +124,10 @@ impl<'a> WorkspaceRows<'a> {
                 let n = rows.list.len();
                 let budget = model::chip_menu_budget(at(ctx.screen_rect()), at(anchor), n, m);
                 ui.set_max_width(ui.available_width().min(budget.width(measuring)));
-                if measuring {
+                if !shown {
                     ui.set_invisible();
-                } else {
+                }
+                if !measuring {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 }
                 let layout = egui::Layout::default().with_cross_justify(!measuring);
@@ -154,27 +141,26 @@ impl<'a> WorkspaceRows<'a> {
                             }
                         };
                         draw(ui, &rows.head);
+                        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                         egui::ScrollArea::vertical()
-                            .max_height(budget.list_height)
+                            .max_height(budget.list_max())
                             .show(ui, |ui| draw(ui, &rows.list));
                         draw(ui, &rows.foot);
                     });
                 });
             });
+        let rect = area.response.rect;
+        let outside = |at: egui::Pos2| !anchor.contains(at) && !rect.contains(at);
         let dismissed = ctx.input_mut(|input| {
-            let escape = input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
-            let outside = input.pointer.any_pressed()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|at| !anchor.contains(at) && !area.response.rect.contains(at));
-            escape || outside
+            let pressed =
+                input.pointer.any_pressed() && input.pointer.interact_pos().is_some_and(outside);
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || pressed
         });
         if commands.len() > recorded || dismissed {
             menu.close_chip_menu();
         }
-        drawn.insert(0, (CellRow::menu(), area.response.rect));
-        drawn.retain(|_| !measuring); // The measuring frame shows nothing to press.
+        drawn.insert(0, (CellRow::menu(), rect));
+        drawn.retain(|_| shown); // An unseen frame shows nothing to press.
         drawn
     }
 }
@@ -194,7 +180,7 @@ fn cell_row(
         RowKind::Press => {
             let beside = crate::theme::supporting_text(ui, row.beside.as_str());
             let button = egui::Button::new(label).selected(on).shortcut_text(beside);
-            ui.add_enabled(row.enabled, button)
+            ui.add_enabled(row.unavailable.is_none(), button)
         }
     };
     let asked = response.intrinsic_size.map_or(0.0, |size| size.x);
@@ -205,13 +191,17 @@ fn cell_row(
     if let Some(text) = row.disabled_hover {
         response = response.on_disabled_hover_text(text);
     }
+    if response.gained_focus() || (row.lit() && sizing.measuring()) {
+        response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+    }
     if row.dot {
         let at = response.rect.left_center() + egui::vec2(model::CHIP_MENU_DOT_INSET_PT, 0.0);
         let accent = crate::theme::get(ui.ctx()).accent();
         ui.painter().circle_filled(at, 2.5, accent);
     }
-    if !row.key.is_empty() && ui.is_rect_visible(response.rect) {
-        drawn.push((row.clone(), response.rect));
+    let seen = response.rect.intersect(ui.clip_rect());
+    if !row.key.is_empty() && seen.height() * 2.0 >= response.rect.height() {
+        drawn.push((row.clone(), seen));
     }
     response.clicked().then(|| row.command.clone()).flatten()
 }
