@@ -417,9 +417,8 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
             super::super::frame_tail::FrameTailOwners {
                 tabs: &mut app.runtime.tabs,
                 config: &app.config,
-                toast: &mut app.surfaces.toast,
+                surfaces: &mut app.surfaces,
                 chip_rect: &mut chip,
-                popup: &mut app.surfaces.feed_notice,
             }
             .execute(
                 super::super::frame_tail::FrameTailInput {
@@ -484,9 +483,8 @@ fn feed_notice_settles_only_for_the_presented_view() {
         super::super::frame_tail::FrameTailOwners {
             tabs: &mut app.runtime.tabs,
             config: &app.config,
-            toast: &mut app.surfaces.toast,
+            surfaces: &mut app.surfaces,
             chip_rect: &mut app.chrome.feed_chip_rect,
-            popup: &mut app.surfaces.feed_notice,
         }
         .execute(
             super::super::frame_tail::FrameTailInput {
@@ -509,4 +507,178 @@ fn feed_notice_settles_only_for_the_presented_view() {
         assert_eq!(app.chrome.feed_chip_rect, (!presented).then_some(chip));
         assert_eq!(app.chrome_reads().feed_popup_open(), !presented);
     }
+}
+
+#[test]
+fn paper_tail_registered_second_row_settles_after_borrow_before_next_stage() {
+    use quantick_chart_interaction::frame_tail_plan::FrameTailStage::*;
+    use quantick_ui_model::paper_tail_probe::Intent;
+    const REFUSAL: &str =
+        "This trade is outside the bars on the flow chart - nothing to centre on.";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let (other, _events, _commands2, _book) = test_app();
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime
+        .tabs
+        .append(opening, other.runtime.tabs.into_single_runtime());
+    app.runtime.tabs.select(0);
+    app.presentation.context = Some(ctx.clone());
+    app.surfaces.dock.restore(false, None);
+    assert!(!app.active_tab().paper.report_state().is_open());
+    app.runtime
+        .tabs
+        .runtime_mut(1)
+        .paper
+        .show_toast("background untouched".to_owned());
+    let arm = |app: &mut QuantickApp, mixed| {
+        app.surfaces.paper_tail_probe.update(Intent::Arm {
+            opened: -20_000,
+            closed: -10_000,
+            mixed,
+        });
+    };
+    arm(&mut app, false);
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+    });
+    assert_eq!(
+        app.surfaces.paper_tail_probe.model_state.report_open,
+        Some(false)
+    );
+    assert_eq!(app.surfaces.paper_tail_probe.model_state.visits, 1);
+    assert_eq!(
+        app.active_tab_mut().paper.take_toast().as_deref(),
+        Some(REFUSAL)
+    );
+    assert!(
+        app.active_tab_mut().paper.take_toast().is_none(),
+        "the supported request settles once"
+    );
+    assert_eq!(
+        app.runtime
+            .tabs
+            .runtime_mut(1)
+            .paper
+            .take_toast()
+            .as_deref(),
+        Some("background untouched")
+    );
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+    });
+    assert_eq!(
+        app.surfaces.paper_tail_probe.model_state.visits, 1,
+        "unarmed row stays quiet"
+    );
+    assert!(app.active_tab_mut().paper.take_toast().is_none());
+
+    // In the actual production order the refusal waits for the existing later
+    // settlement. A reordered test iterator proves settlement precedes its next item.
+    arm(&mut app, false);
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(
+            app.run_report_tail_test(ctx, [SettlePaperPanels, DrawPaperReport])
+                .is_empty()
+        );
+    });
+    assert_ne!(app.surfaces.toast.model_state.message(), Some(REFUSAL));
+    assert_eq!(
+        app.active_tab_mut().paper.take_toast().as_deref(),
+        Some(REFUSAL)
+    );
+    arm(&mut app, false);
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(
+            app.run_report_tail_test(ctx, [DrawPaperReport, SettlePaperPanels])
+                .is_empty()
+        );
+    });
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some(REFUSAL),
+        "the next stage sees host settlement"
+    );
+    assert!(app.active_tab_mut().paper.take_toast().is_none());
+
+    arm(&mut app, false);
+    let visits = app.surfaces.paper_tail_probe.model_state.visits;
+    app.presentation
+        .rebind(
+            &app.runtime,
+            egui::ViewportId::from_hash_of("paper-tail-elsewhere"),
+        )
+        .unwrap();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+    });
+    assert_eq!(app.surfaces.paper_tail_probe.model_state.visits, visits);
+    assert!(
+        app.surfaces.paper_tail_probe.model_state.armed.is_some(),
+        "presentation absence never consumes input"
+    );
+    assert!(app.active_tab_mut().paper.take_toast().is_none());
+}
+
+#[test]
+fn paper_tail_unsupported_mixed_output_preserves_the_complete_response() {
+    use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+    use crate::surfaces::{PaperPanelEffects, SurfaceResponse};
+    use quantick_chart_interaction::frame_tail_plan::FrameTailStage::DrawPaperReport;
+    use quantick_ui_model::paper_tail_probe::Intent;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    app.presentation.context = Some(ctx.clone());
+    app.active_tab_mut()
+        .paper
+        .show_toast("report refusal".to_owned());
+    app.surfaces.paper_tail_probe.update(Intent::Arm {
+        opened: -20_000,
+        closed: -10_000,
+        mixed: true,
+    });
+    let mut retained = Vec::new();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        retained = app.run_report_tail_test(ctx, [DrawPaperReport]);
+    });
+    let expected = SurfaceResponse {
+        paper_panel: Some(Box::new(PaperPanelEffects {
+            navigate_to_trade: Some((-20_000, -10_000)),
+            ..Default::default()
+        })),
+        undo_drawing: true,
+        ..Default::default()
+    };
+    assert_eq!(retained, vec![expected]);
+    assert_eq!(
+        app.surfaces.paper_tail_probe.model_state.visits, 1,
+        "direct model mutation is retained, not rolled back"
+    );
+    assert_eq!(
+        app.active_tab_mut().paper.take_toast().as_deref(),
+        Some("report refusal"),
+        "unsupported output cannot overwrite the report toast"
+    );
+    assert!(!app.surfaces.replay_browser.browser_is_open());
+    let response = SurfaceResponse {
+        paper_panel: Some(Box::new(PaperPanelEffects {
+            open_replay_browser: true,
+            navigate_to_trade: Some((-20_000, -10_000)),
+            ..Default::default()
+        })),
+        undo_drawing: true,
+        ..Default::default()
+    };
+    let retained = app.settle_paper_response_test(response).unwrap_err();
+    assert!(retained.undo_drawing);
+    assert!(retained.paper_panel.as_ref().unwrap().open_replay_browser);
+    assert_eq!(
+        retained.paper_panel.as_ref().unwrap().navigate_to_trade,
+        Some((-20_000, -10_000))
+    );
+    assert!(
+        !app.surfaces.replay_browser.browser_is_open(),
+        "validation precedes the prefix too"
+    );
+    assert!(app.active_tab_mut().paper.take_toast().is_none());
 }

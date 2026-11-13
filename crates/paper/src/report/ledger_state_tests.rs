@@ -323,3 +323,38 @@ fn a_tag_suggestion_completes_the_token_being_typed() {
     assert_eq!(complete_tag("#open #m", "msc"), "#open #msc ");
     assert_eq!(complete_tag("#open ", "msc"), "#open #msc ");
 }
+
+#[test]
+fn borrowed_cut_projection_leaves_installation_to_the_owner() {
+    let history = history(&["one.csv", "two.csv"]);
+    let mut state = LedgerState::default();
+    let projected = state
+        .project_cut(Some(&history), LiveCloses::default(), UTC)
+        .unwrap();
+    assert!(state.cut.is_none(), "projecting never installs a cut");
+    state.ensure_cut(Some(&history), LiveCloses::default(), UTC);
+    let installed = state.cut.as_ref().unwrap();
+    assert_eq!(projected.kept, installed.kept);
+    assert_eq!(projected.filter, installed.filter);
+    assert_eq!(projected.tz, installed.tz);
+    assert_eq!(projected.live, installed.live);
+    assert_eq!(
+        projected.labels.keys().collect::<Vec<_>>(),
+        installed.labels.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        state
+            .project_cut(Some(&history), LiveCloses::default(), UTC)
+            .is_none()
+    );
+    state.view.filter.search = "#msc".to_owned();
+    let projected = state
+        .project_cut(Some(&history), LiveCloses::default(), UTC)
+        .unwrap();
+    assert_eq!(
+        state.cut.as_ref().unwrap().kept.len(),
+        2,
+        "the old cut remains until installation"
+    );
+    assert_eq!(projected.kept.len(), 1);
+}

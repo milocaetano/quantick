@@ -57,7 +57,9 @@ macro_rules! surface_catalog {
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 borrowed_first: BorrowedFirst => borrowed_first = "chrome/borrowed_first.rs", borrowed_first = "chrome/tests/borrowed_first.rs", borrowed_first::effects, LateEdgePanels, Local;
                 [] []
-                dock: Dock => dock = "dock.rs", dock = "dock.rs", dock::effects, LateEdgePanels, Local;
+                dock: Dock => dock = "dock.rs", dock = "dock.rs", dock::effects, LateEdgePanels | FrameTailPaperPanels, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                paper_tail_probe: PaperTailProbe => paper_tail_probe = "chrome/paper_tail_probe.rs", paper_tail_probe = "chrome/tests/paper_tail_probe.rs", paper_tail_probe::effects, FrameTailPaperPanels, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 borrowed_second: BorrowedSecond => borrowed_second = "chrome/borrowed_second.rs", borrowed_second = "chrome/tests/borrowed_second.rs", borrowed_second::effects, LateEdgePanels | PinnedInspector, Local;
                 [] []

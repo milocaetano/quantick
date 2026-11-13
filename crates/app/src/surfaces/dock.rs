@@ -288,12 +288,16 @@ impl super::View<Model> for View {
         slot: Slot,
         env: Option<&mut BorrowedSurfaceEnv<'_>>,
     ) -> SurfaceResponse {
-        if slot != Slot::LateEdgePanels {
-            return SurfaceResponse::default();
-        }
         let Some(BorrowedSurfaceEnv::Paper(env)) = env else {
             return SurfaceResponse::default();
         };
+        if slot == Slot::FrameTailPaperPanels {
+            env.paper.draw_report_window(target.context(), env.timezone);
+            return SurfaceResponse::default();
+        }
+        if slot != Slot::LateEdgePanels {
+            return SurfaceResponse::default();
+        }
         let paper = draw(session, target.context(), env);
         SurfaceResponse {
             paper_panel: (paper != PaperPanelEffects::default()).then(|| Box::new(paper)),

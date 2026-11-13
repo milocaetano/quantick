@@ -789,3 +789,140 @@ fn the_report_before_the_seek_drains_misses_the_round_trip_it_closed() {
         "projected before the drain, the report misses it for the frame"
     );
 }
+
+#[test]
+fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
+    use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+    use quantick_chart_interaction::frame_tail_plan::FrameTailStage::DrawPaperReport;
+    use quantick_ui_model::paper_tail_probe::Intent;
+    use quantick_workspace::dock::DockTab;
+
+    fn dock_frame(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                app.draw_frame_stage_test_order(
+                    ctx,
+                    Instant::now(),
+                    &mut |_, _, _, _| panic!("Dock does not spawn a feed"),
+                    [FrameStage::Dock],
+                );
+            },
+        )
+    }
+
+    // Completed cancelled choices exercise both real pollers without OS dialogs.
+    fn ready_pickers(app: &mut QuantickApp) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(None).unwrap();
+        app.runtime.workspace.open_trades_dir_picker(receiver);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(None).unwrap();
+        app.runtime
+            .workspace
+            .picker_mut()
+            .set_pending_for_test(crate::workspace_picker::WorkspacePick::Import, receiver);
+    }
+
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands, _book) = test_app();
+    app.surfaces.dock.open_tab(DockTab::Session);
+    for _ in 0..3 {
+        let _ = dock_frame(&mut app, &ctx, Vec::new());
+    }
+    let painted = dock_frame(&mut app, &ctx, Vec::new());
+    let browser_text = painted_text(&painted)
+        .into_iter()
+        .find(|text| text.contains("Open session browser"))
+        .expect("the actual registered Paper body paints its browser button");
+    let browser = painted_text_center(&painted, &browser_text).unwrap();
+    let _ = dock_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(browser),
+            egui::Event::PointerButton {
+                pos: browser,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert!(!app.surfaces.replay_browser.browser_is_open());
+    ready_pickers(&mut app);
+    let (_, dock_steps) = super::frame::paper_panel_steps::observe(|| {
+        dock_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: browser,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        )
+    });
+    assert_eq!(
+        dock_steps,
+        [
+            "journal-fanout",
+            "replay-browser",
+            "strategy-editor",
+            "strategy-editor-settled",
+            "close-replay",
+            "navigation",
+            "trades-picker-open",
+            "order-settings",
+            "command-settings",
+            "risk-settings",
+            "trades-picker-poll",
+            "bundle-picker-poll",
+        ],
+        "the actual Dock recipient surrounds its editor/persistence section and polls once"
+    );
+    assert!(app.surfaces.replay_browser.browser_is_open());
+    assert!(!app.runtime.workspace.trades_dir_picker_open());
+    assert!(!app.runtime.workspace.picker_open());
+
+    ready_pickers(&mut app);
+    app.surfaces.dock.restore(false, None);
+    app.surfaces.paper_tail_probe.update(Intent::Arm {
+        opened: -20_000,
+        closed: -10_000,
+        mixed: false,
+    });
+    let (_, tail_steps) = super::frame::paper_panel_steps::observe(|| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+        });
+    });
+    assert_eq!(
+        tail_steps,
+        [
+            "journal-fanout",
+            "replay-browser",
+            "close-replay",
+            "navigation",
+            "trades-picker-open",
+            "order-settings",
+            "command-settings",
+            "risk-settings",
+        ],
+        "the real tail recipient has the same prefix/suffix and no editor or extra polling"
+    );
+    assert_eq!(
+        app.active_tab_mut().paper.take_toast().as_deref(),
+        Some("This trade is outside the bars on the flow chart - nothing to centre on.")
+    );
+    assert!(app.runtime.workspace.trades_dir_picker_open());
+    assert!(app.runtime.workspace.picker_open());
+}

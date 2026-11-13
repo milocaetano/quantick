@@ -32,6 +32,9 @@ quantick-sources = { path = "../sources" }
 quantick-workspace = { path = "../workspace" }
 
 [dev-dependencies]
+quantick-trading = { path = "../trading" }
+quantick-sim = { path = "../sim" }
+rust_decimal.workspace = true
 quantick-drawings = { path = "../drawings", features = ["test-support"] }
 
 [lints]

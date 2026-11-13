@@ -77,6 +77,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "replay",
             "sources",
             "workspace",
+            "sim",
+            "trading",
         ],
     ),
     ("appearance", &[]),
