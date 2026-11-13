@@ -9,12 +9,13 @@ macro_rules! surface_catalog {
     ($consumer:ident) => {
         $consumer! {
             legacy {
-                script_editor: ScriptEditorSurface => script_editor::draw, script_editor::ScriptEditorSurface::capture_keyboard;
                 strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
             modules {}
             models {
+                [] []
+                script_editor: ScriptEditor => script_editor = "script_editor.rs", script_editor = "script_editor.rs", script_editor::effects, Overlay, Local;
                 [] []
                 remove_chart: RemoveChart => remove_chart = "remove_chart.rs", remove_chart = "remove_chart.rs", remove_chart::effects, Overlay, Local;
                 [] []
