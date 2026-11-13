@@ -601,7 +601,19 @@ mod tests {
         assert_eq!(second.left(), first.right());
         assert_eq!(second.top(), 0.0);
         assert_eq!(second.height(), 29.0);
-        assert_eq!(rail.left(), first.right());
+        let drawing_rail = egui::containers::panel::PanelState::load(
+            &ctx,
+            egui::Id::new((ctx.viewport_id(), "drawing_toolbox_left")),
+        )
+        .expect("the real registered drawing rail reserves its panel")
+        .rect;
+        assert_eq!(drawing_rail.left(), first.right());
+        assert_eq!(drawing_rail.top(), second.bottom());
+        assert_eq!(
+            drawing_rail.width(),
+            quantick_chart_interaction::tool_rail::TOOLBOX_THICKNESS_PX
+        );
+        assert_eq!(rail.left(), drawing_rail.right());
         assert_eq!(rail.top(), second.bottom());
         assert_eq!(dock.top(), second.bottom());
         assert_eq!(canvas.left(), rail.right());

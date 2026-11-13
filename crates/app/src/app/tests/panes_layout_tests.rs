@@ -4031,14 +4031,21 @@ fn replay_loaded_payload_opens_active_tab_and_clears_host_wait() {
         app.runtime.tabs[0].link.replay.is_none(),
         "background tab receives no Open"
     );
-    assert!(
-        !app.active_tab()
-            .loading
-            .is_active(LoadingTask::ReplaySession)
-    );
     assert!(!app.surfaces.replay_browser.is_loading());
+    assert!(
+        app.active_tab()
+            .loading
+            .is_active(LoadingTask::ReplaySession),
+        "MirrorLoadingWaits precedes ReplayBrowser and sampled the pending load"
+    );
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::ReplaySession),
+            "the next frame mirrors the completed load and keeps the wait clear"
+        );
         assert!(
             std::sync::Arc::ptr_eq(
                 &session,
