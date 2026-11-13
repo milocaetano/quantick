@@ -28,6 +28,7 @@
 //! Reordering them changes what a launch opens with, and no compiler catches
 //! it.
 
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::dock::DockTab;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::hooks::ScenarioInputs;
@@ -35,7 +36,6 @@ use crate::hooks::ScenarioInputs;
 use crate::indicator_worker::IndicatorSource;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::indicators::state_file::SavedKind;
-#[cfg(any(feature = "scenario-harness", test))]
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
