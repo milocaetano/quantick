@@ -9,11 +9,12 @@ macro_rules! surface_catalog {
     ($consumer:ident) => {
         $consumer! {
             legacy {
-                strategy_popup: StrategyPopupSurface => Surface::draw, ignore_keyboard;
                 toast: ToastSurface => Surface::draw, ignore_keyboard;
             }
             modules {}
             models {
+                [] []
+                strategy_popup: StrategyPopup => strategy_popup = "strategy_popup.rs", strategy_popup = "strategy_popup.rs", strategy_popup::effects, LeadingOverlay, Local;
                 [] []
                 script_editor: ScriptEditor => script_editor = "script_editor.rs", script_editor = "script_editor.rs", script_editor::effects, Overlay, Local;
                 [] []

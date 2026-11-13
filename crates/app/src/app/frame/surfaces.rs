@@ -36,7 +36,12 @@ pub(super) fn open_requested_strategy_popups(
         if let Some(drawing) = tab.pane_mut(side).strategies.popup_request.take() {
             let form =
                 crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
-            popup.open(tab_id, side, drawing, form);
+            popup.update(quantick_ui_model::strategy_popup::Intent::Open {
+                tab: tab_id,
+                side,
+                drawing,
+                form: Box::new(form),
+            });
         }
     }
 }
@@ -95,7 +100,7 @@ pub(super) fn draw_surfaces(
     // bar only means something where the rule closes on a count. Built only
     // while that dialog is open, like the open markets below.
     let counted_bar_sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> =
-        if staging || registry.strategy_popup.is_open() {
+        if staging || registry.strategy_popup.model_state.is_open() {
             focused_tab
                 .sides()
                 .filter(|side| {

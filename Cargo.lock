@@ -3400,6 +3400,7 @@ dependencies = [
  "quantick-session",
  "quantick-sources",
  "quantick-stores",
+ "quantick-strategy",
  "quantick-workspace",
  "toml 0.8.20",
 ]

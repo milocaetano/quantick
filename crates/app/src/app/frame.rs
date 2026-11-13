@@ -22,6 +22,7 @@ use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
 use quantick_control_handlers::market_palette::MarketPaletteHost;
 use quantick_feed::stall::Stall;
 use quantick_ui_model::market_palette::Intent as PaletteUiIntent;
+use quantick_ui_model::strategy_popup::Intent::SettleArm;
 use quantick_workspace::market_list::PaletteIntent;
 use std::time::{Duration, Instant};
 
@@ -556,7 +557,7 @@ impl QuantickApp {
                     &request.form,
                     request.label,
                 );
-            self.surfaces.strategy_popup.settle_arm(outcome);
+            self.surfaces.strategy_popup.update(SettleArm(outcome));
         }
         if let Some(request) = asks.market {
             apply_palette_intent(self, request);
