@@ -13,8 +13,17 @@ pub(crate) struct PaperPanelEnv<'a> {
     pub replay: Option<&'a quantick_feed::ReplayLink>,
     pub timezone: crate::timezone::TzOffset,
 }
+/// Validated indicator address and authoritative descriptor/preset services.
+pub(crate) struct IndicatorPanelEnv<'a> {
+    pub target: Option<quantick_chart::indicator_registry::TabSlot>,
+    pub view: Option<&'a mut crate::indicators::IndicatorView>,
+    pub kind: Option<&'a quantick_workspace::indicator_document::SavedKind>,
+    pub presets: &'a mut crate::indicators::preset_file::PresetStore,
+    pub presets_path: &'a std::path::Path,
+}
 /// A pass lends one domain facet; models and responses never retain it.
 pub(crate) enum BorrowedSurfaceEnv<'a> {
+    Indicators(IndicatorPanelEnv<'a>),
     Paper(PaperPanelEnv<'a>),
     Drawings(&'a DrawingEnv<'a>),
 }

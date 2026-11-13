@@ -2,8 +2,6 @@
 //!
 //! The process keeps this payload while a view changes presentation. Existing
 //! stores remain I/O adapters, including legacy installation-local fields.
-//! Indicator settings retain their captured owner target with the workspace;
-//! splitting that dialog from its bookkeeping is deferred until two views exist.
 use eframe::egui;
 use quantick_workspace::lifetime::{
     LifetimeError, PresentationId, ResourceError, ViewId, WorkspaceId, WorkspaceLifetime,
@@ -47,7 +45,6 @@ impl WorkspaceRuntime {
             ),
             indicators: super::indicator_manager::IndicatorState::new(
                 super::WORKSPACE_ID,
-                super::FIRST_TAB_ID,
                 &indicator_presets_path,
             ),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
@@ -73,27 +70,6 @@ impl WorkspaceRuntime {
                 trades_dir,
             ),
         }
-    }
-
-    /// Settings retain the pane they captured, regardless of window or focus.
-    pub(super) fn draw_indicator_settings(
-        &mut self,
-        ctx: &egui::Context,
-    ) -> Option<super::indicator_manager::SettingsChange> {
-        let slot = self.indicators.indicator_settings.as_ref()?.slot;
-        let target = self.indicators.indicator_settings_target;
-        let valid = self.validate_target(target).is_ok();
-        let view = self
-            .tabs
-            .by_id_mut(target.tab)
-            .filter(|_| valid)
-            .and_then(|tab| tab.pane_at_mut(target.side.index()))
-            .filter(|pane| pane.id == target.pane)
-            .and_then(|pane| pane.indicators.view_mut(slot));
-        Some(
-            self.indicators
-                .draw_settings(ctx, view, self.workspace.indicator_presets_path()),
-        )
     }
 
     /// Intake follows workspace ownership even while no native view can paint.

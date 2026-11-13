@@ -273,6 +273,7 @@ impl QuantickApp {
             drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.runtime.footprint_config,
             chart_settings: &mut self.surfaces.chart_settings.model_state,
+            indicator_settings: &mut self.surfaces.indicator_settings,
         }
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
@@ -281,10 +282,7 @@ impl QuantickApp {
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
         indicator_wiring::IndicatorWiring {
             runtime: self.runtime.bound_mut(&self.presentation.binding),
-            picker: &mut self.surfaces.indicator_picker,
-            drawing_chrome: &mut self.surfaces.drawing_chrome,
-            toast: &mut self.surfaces.toast,
-            dialogs: &mut self.surfaces.layout_dialogs,
+            surfaces: &mut self.surfaces,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &mut self.chrome.harness,
         }

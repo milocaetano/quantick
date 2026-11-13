@@ -181,6 +181,7 @@ pub enum Slot {
     TitleBar,
     Toolbar,
     MenuBar,
+    EditorDialogs,
     TabStrip,
     StatusLine,
     PinnedInspector,

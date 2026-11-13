@@ -12,10 +12,7 @@ use smallvec::SmallVec;
 /// layout chrome an edit can toast or confirm through.
 pub(super) struct IndicatorWiring<'a> {
     pub(super) runtime: &'a mut WorkspaceRuntime,
-    pub(super) picker: &'a mut crate::surfaces::indicator_picker::IndicatorPickerSurface,
-    pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
-    pub(super) toast: &'a mut crate::surfaces::ToastSurface,
-    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
+    pub(super) surfaces: &'a mut crate::surfaces::Surfaces,
     #[cfg(any(feature = "scenario-harness", test))]
     pub(super) harness: &'a mut crate::harness::Harness,
 }
@@ -29,9 +26,10 @@ impl<'a> IndicatorWiring<'a> {
             tabs: &mut self.runtime.tabs,
             indicators: &mut self.runtime.indicators,
             store: self.runtime.workspace.layouts_mut(),
-            drawing_chrome: self.drawing_chrome,
-            toast: self.toast,
-            dialogs: self.dialogs,
+            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            toast: &mut self.surfaces.toast,
+            dialogs: &mut self.surfaces.layout_dialogs,
+            indicator_settings: &mut self.surfaces.indicator_settings,
         }
     }
 }
@@ -40,10 +38,7 @@ impl IndicatorWiring<'_> {
     fn layout(&mut self) -> LayoutAdapter<'_> {
         IndicatorWiring {
             runtime: self.runtime,
-            picker: self.picker,
-            drawing_chrome: self.drawing_chrome,
-            toast: self.toast,
-            dialogs: self.dialogs,
+            surfaces: self.surfaces,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: self.harness,
         }
@@ -59,7 +54,8 @@ impl IndicatorWiring<'_> {
             self.runtime.tabs.active_id(),
             self.runtime.active_tab().focused_pane().id,
         );
-        self.picker
+        self.surfaces
+            .indicator_picker
             .update(quantick_ui_model::indicator_picker::Intent::Open(target));
     }
 
@@ -72,10 +68,7 @@ impl IndicatorWiring<'_> {
     }
 
     pub(super) fn apply_indicator_settings_change(&mut self, change: SettingsChange) {
-        if change
-            .target()
-            .is_some_and(|target| self.runtime.validate_target(target).is_err())
-        {
+        if self.runtime.validate_target(change.target()).is_err() {
             return;
         }
         let worker = change.worker_target().and_then(|target| {
@@ -99,11 +92,12 @@ impl IndicatorWiring<'_> {
         let Some(tab) = self.runtime.tabs.by_id_mut(tab_id) else {
             return;
         };
-        if let Some(edit) =
-            self.runtime
-                .indicators
-                .legend_action(tab.pane_mut(side), (tab_id, side), action)
-        {
+        if let Some(edit) = self.runtime.indicators.legend_action(
+            &mut self.surfaces.indicator_settings,
+            tab.pane_mut(side),
+            (tab_id, side),
+            action,
+        ) {
             self.apply_indicator_edit(edit);
         }
     }
@@ -117,6 +111,7 @@ impl IndicatorWiring<'_> {
         {
             let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
             if self.runtime.indicators.open_autostart(
+                &mut self.surfaces.indicator_settings,
                 tab_id,
                 (
                     tab.focused_side(),
@@ -167,6 +162,7 @@ impl IndicatorWiring<'_> {
         {
             let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
             if self.runtime.indicators.open_first_editable(
+                &mut self.surfaces.indicator_settings,
                 self.runtime.tabs.active_id(),
                 (tab.flow_pane.id, tab.flow_pane.indicators.all()),
                 self.harness.wants_indicator_settings_dialog(),
@@ -174,8 +170,36 @@ impl IndicatorWiring<'_> {
                 self.harness.indicator_settings_dialog_opened();
             }
         }
-        if let Some(change) = self.runtime.draw_indicator_settings(ctx) {
-            self.apply_indicator_settings_change(change);
+        let target = self.surfaces.indicator_settings.model_state.target();
+        let valid_target = target.filter(|target| self.runtime.validate_target(*target).is_ok());
+        let view = valid_target.and_then(|target| {
+            self.runtime
+                .tabs
+                .by_id_mut(target.tab)
+                .and_then(|tab| tab.pane_at_mut(target.side.index()))
+                .filter(|pane| pane.id == target.pane)
+                .and_then(|pane| pane.indicators.view_mut(target.slot))
+        });
+        let kind = valid_target.and_then(|target| self.runtime.indicators.registry.kind(target));
+        let mut facet =
+            crate::surfaces::BorrowedSurfaceEnv::Indicators(crate::surfaces::IndicatorPanelEnv {
+                target: valid_target,
+                view,
+                kind,
+                presets: &mut self.runtime.indicators.indicator_presets,
+                presets_path: self.runtime.workspace.indicator_presets_path(),
+            });
+        let response = self.surfaces.draw_slot_unscoped_with_env(
+            quantick_ui_model::Slot::EditorDialogs,
+            &mut crate::surfaces::ViewContext { ctx, ui: None },
+            Some(&mut facet),
+        );
+        for effect in response.model_effects {
+            if let quantick_ui_model::HostEffect::IndicatorSettings(effects) = effect {
+                for change in effects.changes {
+                    self.apply_indicator_settings_change(change.into());
+                }
+            }
         }
         let tab_id = self.runtime.tabs.active_id();
         let tab = self.runtime.active_tab();
@@ -193,6 +217,7 @@ impl IndicatorWiring<'_> {
             let tabs = &mut self.runtime.tabs;
             let pane = tabs.runtime_mut(tabs.active_index()).pane_mut(side);
             for action in self.runtime.indicators.draw_legend(
+                &self.surfaces.indicator_settings.model_state,
                 ctx,
                 pane,
                 (tab_id, side),

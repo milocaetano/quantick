@@ -484,7 +484,12 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
         app.runtime.validate_target(target),
         Err(ResourceError::MissingPane)
     );
-    let moved = app.runtime.indicators.indicator_settings_target;
+    let moved = app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .target()
+        .expect("dialog target");
     assert_eq!(moved.pane, target.pane);
     assert_eq!(moved.side, PaneSide::Time(1));
     assert_eq!(app.runtime.validate_target(moved), Ok(()));

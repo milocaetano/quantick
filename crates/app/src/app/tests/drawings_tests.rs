@@ -4903,20 +4903,44 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
     assert!(
-        app.runtime.indicators.indicator_settings.is_some(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some(),
         "the dialog opened"
     );
 
-    if let Some(dialog) = app.runtime.indicators.indicator_settings.as_mut()
-        && let Some(quantick_indicators::InputValue::Int(len)) = dialog.draft.first_mut()
+    if app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .dialog()
+        .is_some_and(|dialog| {
+            matches!(
+                dialog.draft.first(),
+                Some(quantick_indicators::InputValue::Int(_))
+            )
+        })
     {
-        *len = 21;
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::EditInput {
+                index: 0,
+                value: quantick_indicators::InputValue::Int(21),
+            },
+        );
     }
-    let change = app.runtime.indicators.apply_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Apply,
+    );
     assert!(
-        app.runtime.indicators.indicator_settings.is_some(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some(),
         "Apply keeps the dialog open for the next nudge"
     );
     settle_indicators(&mut app);

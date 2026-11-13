@@ -34,7 +34,13 @@ pub(super) fn set_numeric_input(
     {
         return Err("open the attached script before editing its inputs".into());
     }
-    if app.runtime.indicators.indicator_settings.is_some() {
+    if app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .dialog()
+        .is_some()
+    {
         return Err("close indicator settings before editing inputs through control".into());
     }
     let target = attached_target(app, id).ok_or("script is not attached to the focused pane")?;

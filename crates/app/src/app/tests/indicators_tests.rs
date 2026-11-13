@@ -485,22 +485,32 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     app.active_tab_mut().flow_pane.request_settings(slot);
     app.service_indicator_requests();
     let dialog = app
-        .runtime
-        .indicators
+        .surfaces
         .indicator_settings
-        .as_ref()
+        .model_state
+        .dialog()
         .expect("the dialog opened");
-    assert_eq!(dialog.slot, slot, "on the indicator the gesture named");
+    assert_eq!(
+        dialog.target.slot, slot,
+        "on the indicator the gesture named"
+    );
     assert_eq!(
         dialog.draft,
         app.active_tab().flow_pane.indicators.all()[0].input_values,
         "holding that indicator's own values"
     );
 
-    app.runtime.indicators.indicator_settings = None;
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Close,
+    );
     app.service_indicator_requests();
     assert!(
-        app.runtime.indicators.indicator_settings.is_none(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_none(),
         "the request was taken, not left to fire again next frame"
     );
 }
@@ -595,14 +605,19 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     app.service_indicator_requests();
 
     let dialog = app
-        .runtime
-        .indicators
+        .surfaces
         .indicator_settings
-        .as_ref()
+        .model_state
+        .dialog()
         .expect("the hook found the indicator on the pane that has one");
-    assert_eq!(dialog.slot, slot);
+    assert_eq!(dialog.target.slot, slot);
     assert_eq!(
-        app.runtime.indicators.indicator_settings_target.side,
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .target()
+            .expect("dialog target")
+            .side,
         PaneSide::Time(0),
         "and addressed it on the focused pane, which carries the layout too"
     );
@@ -663,9 +678,20 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    assert!(app.runtime.indicators.indicator_settings.is_some());
+    assert!(
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some()
+    );
     assert_eq!(
-        app.runtime.indicators.indicator_settings_target.side,
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .target()
+            .expect("dialog target")
+            .side,
         PaneSide::Time(0),
         "the dialog's Apply will land on the legend's pane"
     );

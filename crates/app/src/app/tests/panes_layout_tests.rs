@@ -2882,25 +2882,35 @@ fn a_previewed_input_never_reaches_the_layout() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    app.runtime
-        .indicators
+    app.surfaces
         .indicator_settings
-        .as_mut()
-        .expect("dialog")
-        .draft = vec![
+        .model_state
+        .dialog()
+        .expect("dialog");
+    for (index, value) in [
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
-    ];
-    let change = app.runtime.indicators.preview_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::EditInput { index, value },
+        );
+    }
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Preview,
+    );
     assert!(
         pane_set(&app, PaneSide::Flow)[0].inputs.is_empty(),
         "a preview is not a commit"
     );
-    let change = app.runtime.indicators.apply_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Apply,
+    );
     assert_eq!(
         pane_set(&app, PaneSide::Flow)[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),

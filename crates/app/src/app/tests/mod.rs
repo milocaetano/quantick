@@ -38,6 +38,29 @@ use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
 
+pub(crate) fn update_indicator_settings(
+    app: &mut QuantickApp,
+    intent: quantick_ui_model::indicator_settings::Intent,
+) {
+    let mut effects = Vec::new();
+    app.surfaces.indicator_settings.with_updates(
+        |effect| effects.extend(effect.model_effects),
+        |_, session| session.update(intent),
+    );
+    for effect in effects {
+        if let quantick_ui_model::HostEffect::IndicatorSettings(effects) = effect {
+            assert!(
+                effects.local_operation.is_none(),
+                "fixture does not execute preset IO"
+            );
+            for change in effects.changes {
+                app.indicator_wiring()
+                    .apply_indicator_settings_change(change.into());
+            }
+        }
+    }
+}
+
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;

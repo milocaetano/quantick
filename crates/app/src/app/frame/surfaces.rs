@@ -12,13 +12,11 @@ use crate::app::arrangement_host::ArrangementHost;
 use crate::app::indicator_manager::IndicatorState;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::footprint_config::FootprintConfig;
-use crate::indicator_panel::SettingsDialog;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
 use quantick_chart::bar_progress::BarProgressReading;
-
-use super::super::TabSlot;
+use quantick_ui_model::indicator_settings::State as SettingsState;
 
 /// A pane's right-click asked to arm one of its drawings. Drained into the
 /// surface that owns the dialog: the click happens while the canvas draws,
@@ -186,8 +184,7 @@ pub(super) fn draw_surfaces(
             now,
             indicator_preview_area: indicator_preview_area(
                 tabs,
-                indicators.indicator_settings.as_ref(),
-                indicators.indicator_settings_target,
+                &registry.indicator_settings.model_state,
             ),
             focused_chart_area: focused_pane.frame.chart_area,
             style_surface: editor_pane.surface(),
@@ -264,12 +261,9 @@ fn apply_bar_switch(
 /// belongs over the numbers that are actually provisional. Per-frame, and
 /// shaped to leave immediately: no dialog open — the ordinary case — is one
 /// `Option` test before the tab scan is reached.
-fn indicator_preview_area(
-    tabs: &ArrangementHost,
-    dialog: Option<&SettingsDialog>,
-    target: TabSlot,
-) -> Option<egui::Rect> {
-    if target.workspace != tabs.owner() || !dialog.is_some_and(|dialog| dialog.previewed) {
+fn indicator_preview_area(tabs: &ArrangementHost, settings: &SettingsState) -> Option<egui::Rect> {
+    let target = settings.target()?;
+    if target.workspace != tabs.owner() || !settings.previewed() {
         return None;
     }
     tabs.by_id(target.tab)

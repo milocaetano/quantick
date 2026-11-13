@@ -10,6 +10,12 @@ macro_rules! surface_catalog {
         $consumer! {
             modules {}
             models {
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_editor_first: ChromeEditorFirst => chrome_editor_first = "chrome/probe_editor_first.rs", chrome_editor_first = "chrome/tests/editor_first.rs", chrome_editor_first::effects, EditorDialogs, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_editor_second: ChromeEditorSecond => chrome_editor_second = "chrome/probe_editor_second.rs", chrome_editor_second = "chrome/tests/editor_second.rs", chrome_editor_second::effects, EditorDialogs, Local;
+                [] []
+                indicator_settings: IndicatorSettings => indicator_settings = "indicator_settings.rs", indicator_settings = "indicator_settings.rs", indicator_settings::effects, EditorDialogs, Local;
                 [] []
                 layout_dialogs: LayoutDialogs => layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs::effects, Overlay, Local;
                 [] []
