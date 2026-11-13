@@ -17,6 +17,8 @@ pub mod presets;
 mod fib;
 mod geometry;
 mod style;
+pub(crate) mod text;
+mod text_properties;
 mod tool_tabs;
 
 #[cfg(test)]

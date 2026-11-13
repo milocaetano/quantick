@@ -6568,6 +6568,595 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "The text properties bar's T workflow: place an independent note at the supplied market time and price, copying only the source note's appearance. Words are empty unless explicitly supplied; source content, lock and identity are never copied. The source remains unchanged. One undo step. A required idempotency key prevents a transport retry from placing two notes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 16384
+      },
+      "id": "annotate.text.repeat",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "TextAnchor": {
+            "additionalProperties": false,
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "TextTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "drawing_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/$defs/TextAnchor"
+          },
+          "source": {
+            "$ref": "#/$defs/TextTarget"
+          },
+          "text": {
+            "description": "New content only; omission creates an empty, independently editable note.",
+            "maxLength": 16384,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "anchor"
+        ],
+        "title": "RepeatInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "Family": {
+            "enum": [
+              "proportional",
+              "monospace"
+            ],
+            "type": "string"
+          },
+          "TextProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "background": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "border": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "color": {
+                "description": "Straight RGBA bytes.",
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              "family": {
+                "$ref": "#/$defs/Family"
+              },
+              "italic": {
+                "type": "boolean"
+              },
+              "size_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Canonical decimal string from 6 through 72 screen pixels, inclusive."
+              },
+              "wrap_width_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Canonical decimal string from 40 through 1200 screen pixels; null disables wrapping."
+              }
+            },
+            "required": [
+              "size_px",
+              "family",
+              "bold",
+              "italic",
+              "color"
+            ],
+            "type": "object"
+          },
+          "TextTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "drawing_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "properties": {
+            "$ref": "#/$defs/TextProperties"
+          },
+          "target": {
+            "$ref": "#/$defs/TextTarget"
+          },
+          "text_present": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target",
+          "properties",
+          "text_present",
+          "changed"
+        ],
+        "title": "TextResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "This adds an independent note and does not overwrite the source; unknown source or time is refused.",
+      "title": "Place another note with the same style",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Reads and optionally edits a text drawing's family, size, bold, italic, RGBA text/background/border colors, wrap width, words and market-time/price anchor. Omit properties, text and anchor to inspect. Properties replace the whole appearance. Words are redacted in results and events. Locked notes refuse edits. Invalid inputs change nothing. One undo step; saves with drawings. For a new note use annotate.label.create, then this call; for repeated placement use annotate.text.repeat.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.text.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "Family": {
+            "enum": [
+              "proportional",
+              "monospace"
+            ],
+            "type": "string"
+          },
+          "TextAnchor": {
+            "additionalProperties": false,
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "TextProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "background": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "border": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "color": {
+                "description": "Straight RGBA bytes.",
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              "family": {
+                "$ref": "#/$defs/Family"
+              },
+              "italic": {
+                "type": "boolean"
+              },
+              "size_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Canonical decimal string from 6 through 72 screen pixels, inclusive."
+              },
+              "wrap_width_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Canonical decimal string from 40 through 1200 screen pixels; null disables wrapping."
+              }
+            },
+            "required": [
+              "size_px",
+              "family",
+              "bold",
+              "italic",
+              "color"
+            ],
+            "type": "object"
+          },
+          "TextTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "drawing_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reposition the note on its existing value axis."
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextProperties"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omit properties and text to inspect. Words are never returned."
+          },
+          "target": {
+            "$ref": "#/$defs/TextTarget"
+          },
+          "text": {
+            "maxLength": 16384,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "SetInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "Family": {
+            "enum": [
+              "proportional",
+              "monospace"
+            ],
+            "type": "string"
+          },
+          "TextProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "background": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "border": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "color": {
+                "description": "Straight RGBA bytes.",
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              "family": {
+                "$ref": "#/$defs/Family"
+              },
+              "italic": {
+                "type": "boolean"
+              },
+              "size_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Canonical decimal string from 6 through 72 screen pixels, inclusive."
+              },
+              "wrap_width_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Canonical decimal string from 40 through 1200 screen pixels; null disables wrapping."
+              }
+            },
+            "required": [
+              "size_px",
+              "family",
+              "bold",
+              "italic",
+              "color"
+            ],
+            "type": "object"
+          },
+          "TextTarget": {
+            "additionalProperties": false,
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "drawing_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "properties": {
+            "$ref": "#/$defs/TextProperties"
+          },
+          "target": {
+            "$ref": "#/$defs/TextTarget"
+          },
+          "text_present": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target",
+          "properties",
+          "text_present",
+          "changed"
+        ],
+        "title": "TextResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Explicit values make retries harmless; identifiers are pane-scoped and locked notes refuse edits.",
+      "title": "Edit or inspect an anchored note",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Draws a trend line between two chart coordinates.",
       "destructive": false,
       "dry_run_supported": false,

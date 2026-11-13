@@ -1,0 +1,5 @@
+# Text properties add egui controls and bundled font/layout bindings.
+# Text model, layout geometry, repeat decisions and control handlers remain headless.
+# The inline egui editor retains legacy theme contrast alongside authored rich colors.
+crates/app +130
+!budget +130

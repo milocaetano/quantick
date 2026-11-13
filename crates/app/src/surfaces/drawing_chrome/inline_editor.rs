@@ -18,17 +18,6 @@ use crate::theme;
 const INLINE_TEXT_AREA_ID: &str = "inline-text-editor";
 /// What an empty note's field says before anything is typed.
 pub(crate) const INLINE_TEXT_HINT: &str = "Add text";
-/// Width of the field. Wide enough for a sentence, narrow enough that it does
-/// not cover the price it is annotating.
-const INLINE_TEXT_WIDTH_PX: f32 = 180.0;
-/// Type size the editor falls back to when the tool declares none.
-const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
-/// Line height as a multiple of the type size, and the frame's own vertical
-/// padding — together, how tall the one-line field stands. Used to decide
-/// whether it still fits above the anchor.
-const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
-const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
-
 /// The editor's state: at most one open edit.
 #[derive(Default)]
 pub(crate) struct InlineEditor {
@@ -155,78 +144,74 @@ fn draw_inner(
     // editor is open, and the drawing behind it carries a boxed payload.
     let mut buffer = text.to_owned();
     let before = buffer.clone();
-    let size_px = tool
-        .glyph_size(drawing)
-        .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
-    let color = crate::drawings::to_color32(palette.resolved.legible_drawing(drawing.style.color));
+    let Some(payload) = drawing
+        .payload
+        .as_any()
+        .downcast_ref::<quantick_drawings::TextPayload>()
+    else {
+        close(&mut ask, chrome);
+        return ask;
+    };
     if drawing.locked {
         close(&mut ask, chrome);
         return ask;
     }
-
-    // Where the words are painted — above the anchor — unless there is no
-    // room up there, in which case it opens below it instead. A field pinned
-    // upward against the top of the chart lands on the flow legend and covers
-    // the very key it is annotating; flipping keeps both readable, the way a
-    // popover does.
-    //
-    // Constrained to the chart either way, like every other floating drawing
-    // surface: the object stands down while the editor is up, so a field that
-    // ran off the window would leave the trader typing blind into a widget
-    // they cannot see.
-    let field_height = size_px * INLINE_TEXT_LINE_FACTOR + INLINE_TEXT_FRAME_PAD_PX;
-    let (position, pivot) = if bbox.bottom() - field_height < chart.top() {
-        (bbox.left_top(), egui::Align2::LEFT_TOP)
+    let format = payload.format();
+    let legacy = payload.appearance == quantick_drawings::text::TextAppearance::default();
+    let color = crate::drawings::to_color32(if legacy {
+        palette.resolved.legible_drawing(drawing.style.color)
     } else {
-        (
-            egui::pos2(bbox.left(), bbox.bottom()),
-            egui::Align2::LEFT_BOTTOM,
-        )
+        drawing.style.color
+    });
+    // Reverse the measured body bounds to recover the chart anchor. Navigation changes this
+    // projection every frame; the editor must never clamp or flip at an edge.
+    let anchor = quantick_drawings::text::anchor_from_bounds(
+        crate::drawings::px_rect(bbox.shrink(crate::pane::DRAWING_ANCHOR_RADIUS_PX)),
+        payload.appearance,
+    );
+    let bounds =
+        crate::drawings::egui_rect(payload.bounds(anchor, &crate::drawings::text::TextFonts(ctx)));
+    let pad = payload.appearance.padding();
+    let background = if legacy {
+        crate::drawings::text_backing(&palette, color, palette.chrome()).unwrap_or(palette.chrome())
+    } else {
+        payload
+            .appearance
+            .background
+            .map_or(egui::Color32::TRANSPARENT, |rgba| {
+                egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
+            })
     };
     let inner = egui::Area::new(egui::Id::new(INLINE_TEXT_AREA_ID))
         .order(egui::Order::Foreground)
-        .fixed_pos(position)
-        .pivot(pivot)
-        .constrain_to(chart)
+        .fixed_pos(bounds.min)
+        .constrain(false)
         .show(ctx, |ui| {
-            // A frame around it, in the accent: over a candle chart an
-            // unframed field is a rectangle of dark on dark, and the one
-            // thing this surface has to say is "the keyboard is here now".
-            // The fill is opaque for the same reason — words typed over wicks
-            // are words nobody can read back.
+            ui.set_clip_rect(chart);
             egui::Frame::none()
-                .fill(
-                    crate::drawings::text_backing(&palette, color, palette.chrome())
-                        .unwrap_or(palette.chrome()),
-                )
+                .fill(background)
                 .stroke(egui::Stroke::new(1.0_f32, palette.accent()))
-                .rounding(egui::Rounding::same(3.0))
-                .inner_margin(egui::Margin::symmetric(4.0, 2.0))
+                .inner_margin(egui::Margin::same(pad))
                 .show(ui, |ui| {
+                    let mut layouter = |ui: &egui::Ui, text: &str, _width: f32| {
+                        crate::drawings::text::layout(ui.ctx(), text, format, color)
+                    };
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut buffer)
-                            .font(egui::FontId::new(
-                                size_px,
-                                match drawing
-                                    .payload
-                                    .as_any()
-                                    .downcast_ref::<quantick_drawings::TextPayload>()
-                                    .map(|payload| payload.family)
-                                {
-                                    Some(quantick_drawings::FontFamily::Monospace) => {
-                                        egui::FontFamily::Monospace
-                                    }
-                                    _ => egui::FontFamily::Proportional,
-                                },
-                            ))
+                            .font(crate::drawings::text::font_id(format))
+                            .layouter(&mut layouter)
                             .text_color(color)
                             .hint_text(INLINE_TEXT_HINT)
                             .desired_rows(1)
+                            .margin(0.0)
                             .frame(false)
-                            .desired_width(INLINE_TEXT_WIDTH_PX),
+                            .desired_width(
+                                format
+                                    .appearance
+                                    .wrap_width_px
+                                    .unwrap_or(bounds.width() - 2.0 * pad),
+                            ),
                     );
-                    // The caret on the first frame: a field that opens
-                    // unfocused asks for a click nobody was told about.
                     if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
                         response.request_focus();
                     }
