@@ -12,6 +12,41 @@ use quantick_sim::history;
 use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
+#[test]
+fn delivered_effects_keep_import_and_latest_present_outputs_after_local_loads() {
+    let mut output = Effects::default();
+    output.append_delivered(Effects {
+        load: Some(Load::Report(None)),
+        start_import: true,
+        toast: Some("first".to_owned()),
+        ledger: Some(LedgerAction::OpenTicket),
+    });
+    output.append_delivered(Effects::default());
+    assert_eq!(
+        output,
+        Effects {
+            start_import: true,
+            toast: Some("first".to_owned()),
+            ledger: Some(LedgerAction::OpenTicket),
+            ..Default::default()
+        }
+    );
+    output.append_delivered(Effects {
+        toast: Some("latest".to_owned()),
+        ledger: Some(LedgerAction::Navigate(10, 20)),
+        ..Default::default()
+    });
+    assert_eq!(
+        output,
+        Effects {
+            start_import: true,
+            toast: Some("latest".to_owned()),
+            ledger: Some(LedgerAction::Navigate(10, 20)),
+            ..Default::default()
+        }
+    );
+}
+
 // Fixture-compatible access keeps every transferred assertion and actual domain
 // datum intact. Only projection installation and actions call Model::update.
 struct ReportFixture(State);

@@ -124,6 +124,18 @@ pub struct Effects {
     pub toast: Option<String>,
     pub ledger: Option<LedgerAction>,
 }
+impl Effects {
+    /// Collect outputs after the local handler has completed synchronous loads.
+    pub fn append_delivered(&mut self, effects: Self) {
+        self.start_import |= effects.start_import;
+        if effects.toast.is_some() {
+            self.toast = effects.toast;
+        }
+        if effects.ledger.is_some() {
+            self.ledger = effects.ledger;
+        }
+    }
+}
 /// The host moves a completed load back before dependent painting resumes.
 pub struct LoadedReport {
     pub history: LoadedHistory,

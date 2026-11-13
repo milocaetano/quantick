@@ -135,15 +135,7 @@ impl ReportAdapter {
     ) -> (R, Effects) {
         let mut output = Effects::default();
         let result = self.adapter.with_updates(
-            |effects| {
-                output.start_import |= effects.start_import;
-                if effects.toast.is_some() {
-                    output.toast = effects.toast;
-                }
-                if effects.ledger.is_some() {
-                    output.ledger = effects.ledger;
-                }
-            },
+            |effects| output.append_delivered(effects),
             |native, session| {
                 session.with_local_effects(&mut |effects| local_effects(effects, env), |updates| {
                     paint(&mut Paint { updates, native })
