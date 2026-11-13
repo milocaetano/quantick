@@ -1112,8 +1112,12 @@ fn the_cell_menu_stays_inside_the_window_and_narrows_when_its_rows_do() {
         let id = format!("toolbar.workspace_menu.{fixed}");
         assert!(rows.contains(&id), "{id} never scrolls away: {rows:?}");
     }
+    let stored = app.runtime.workspace.book.book().list().len();
     let listed = rows.iter().filter(|id| id.contains(".workspace.")).count();
-    assert!((1..41).contains(&listed), "{listed} rows in view of 41");
+    assert!(
+        (1..stored).contains(&listed),
+        "{listed} rows in view of {stored}"
+    );
     let wide = menu.width();
 
     app.chrome.window_menu.tab_workspace.close_chip_menu();
@@ -1124,8 +1128,9 @@ fn the_cell_menu_stays_inside_the_window_and_narrows_when_its_rows_do() {
     }
     let (menu, _, rows) = open_cell_menu(&mut app, &ctx, 3);
     assert!(menu.width() < wide, "{} after {wide}", menu.width());
+    let stored = app.runtime.workspace.book.book().list().len();
     let listed = rows.iter().filter(|id| id.contains(".workspace.")).count();
-    assert_eq!(listed, 2, "Default and Desk 01: {rows:?}");
+    assert_eq!(listed, stored, "every row in view: {rows:?}");
 }
 
 /// The trader's nine workspaces fit whole below the capsule, and the capsule
@@ -1137,10 +1142,14 @@ fn nine_workspaces_fit_below_the_capsule_and_the_name_names_its_call() {
     let (mut app, first, _) = two_tabs(&layouts);
     app.runtime.tabs.select(0);
     let book = app.runtime.workspace.book.book_mut();
-    for n in 1..9 {
+    for n in 1.. {
+        if book.list().len() >= 9 {
+            break;
+        }
         book.create(first, &format!("Scalp {n}"))
             .expect("a fresh name");
     }
+    assert_eq!(book.list().len(), 9, "the fixture seeds fewer than nine");
     let ctx = egui::Context::default();
     let (menu, name, rows) = open_cell_menu(&mut app, &ctx, 3);
     assert!(menu.width() <= CHIP_MENU_MAX_WIDTH_PT);

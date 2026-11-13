@@ -139,10 +139,11 @@ pub(super) fn settle(
         app.chrome.layout_picker_open = !(outside || picked);
         cells = drawn;
     }
-    super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
+    let menu = super::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
     super::canvas_wiring::add_from_menu(app, ctx);
     publish(app, viewport, state, rects, door, &cells);
+    app.chrome.toolbar_controls.extend(menu);
     rest
 }
 
@@ -187,13 +188,15 @@ fn publish(
         app.chrome.layout_picker_open,
         None,
     ));
+    // The name opens the menu of workspaces, which `workspace.list` reads.
     let workspace_open = menu.tab_workspace.chip_menu_on(tab);
+    let list = Some(quantick_control_schema::workspace_book::WORKSPACE_LIST_CAPABILITY_ID);
     controls.push(control(
         "capsule.workspace",
         &state.workspace,
         rects.name,
         workspace_open,
-        None,
+        list,
     ));
     if let Some(floppy) = rects.floppy {
         let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);

@@ -4,17 +4,26 @@
 
 use eframe::egui;
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
-use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
+use quantick_control_schema::workspace_book as calls;
+use quantick_session::workspace_menu::{
+    CHIP_MENU_DROP_PT, CHIP_MENU_MIN_WIDTH_PT, MenuBounds, MenuMetrics, NameDialogMode,
+    WorkspaceCommand, WorkspaceMenuState, chip_menu_budget,
+};
 use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook};
 
 use super::MenuCommand;
 use crate::app::QuantickApp;
 use crate::app::arrangement_host::ArrangementHost;
+use crate::toolbar::DrawnControl;
 
-const CHIP_MENU_MIN_WIDTH_PT: f32 = 200.0;
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
-/// How far below the capsule the menu hangs.
-const MENU_DROP_PT: f32 = 4.0;
+/// The height egui gives a horizontal separator before the gap after it.
+const SEPARATOR_PT: f32 = 6.0;
+/// The unsaved dot's centre, in from the Save row's left edge: inside the row,
+/// in the padding before its text.
+const UNSAVED_DOT_INSET_PT: f32 = 5.0;
+/// The scene id of the cell's menu; its rows are `<this>.<row>`.
+const CHIP_MENU_CONTROL: &str = "toolbar.workspace_menu";
 
 /// What the workspace rows read this frame.
 #[derive(Clone, Copy)]
@@ -77,48 +86,70 @@ impl<'a> WorkspaceRows<'a> {
     }
 
     /// Every workspace, the active tab's lit, beside the tabs on it or, in the
-    /// cell's menu, its one-line summary.
-    pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>, summary: bool) {
+    /// cell's menu, its one-line summary with the name cut to fit and whole on
+    /// hover. Answers the rows in view, for the scene.
+    pub(super) fn list(
+        self,
+        ui: &mut egui::Ui,
+        commands: &mut Vec<MenuCommand>,
+        summary: bool,
+    ) -> Vec<(String, egui::Rect)> {
         let (current, _) = self.state();
+        let mut shown = Vec::new();
         for row in self.book.list() {
             let beside = if summary {
                 self.book.summary(&row.name)
             } else {
                 self.symbols(&row.tabs).join(", ")
             };
+            let beside = egui::WidgetText::from(crate::theme::supporting_text(ui, beside));
+            let (name, cut) = fitted(ui, &row.name, &beside, summary);
             let response = ui.add(
-                egui::Button::new(row.name.as_str())
+                egui::Button::new(name)
                     .selected(row.name == current)
-                    .shortcut_text(crate::theme::supporting_text(ui, beside)),
+                    .shortcut_text(beside),
             );
+            let response = if cut {
+                response.on_hover_text(row.name.as_str())
+            } else {
+                response
+            };
+            if ui.is_rect_visible(response.rect) {
+                shown.push((row.name.clone(), response.rect));
+            }
             if response.clicked() {
                 Self::push(commands, WorkspaceCommand::Set(row.name));
             }
         }
+        shown
     }
 
     /// The rows that act on the tab's workspace. Handles the rows `menus` routes
-    /// here and answers false for any other.
+    /// here and answers `None` for any other.
     pub(super) fn action_row(
         self,
         ui: &mut egui::Ui,
         id: RowId,
         commands: &mut Vec<MenuCommand>,
-    ) -> bool {
+    ) -> Option<egui::Response> {
         let (workspace, _) = self.state();
         let on_default = workspace == DEFAULT_WORKSPACE;
         let row = row_of(id);
-        match id {
+        let response = match id {
             RowId::WorkspaceSaveAsNew => {
-                if ui.button(row.label).clicked() {
+                let response = ui.button(row.label);
+                if response.clicked() {
                     Self::push(commands, WorkspaceCommand::BeginSaveAs);
                 }
+                response
             }
             RowId::WorkspaceNew => {
                 let hover = row.hover.unwrap_or_default();
-                if ui.button(row.label).on_hover_text(hover).clicked() {
+                let response = ui.button(row.label).on_hover_text(hover);
+                if response.clicked() {
                     Self::push(commands, WorkspaceCommand::BeginNew);
                 }
+                response
             }
             RowId::WorkspaceRename => {
                 let response = ui
@@ -128,29 +159,33 @@ impl<'a> WorkspaceRows<'a> {
                     let from = workspace.to_owned();
                     Self::push(commands, WorkspaceCommand::BeginRename(from));
                 }
+                response
             }
             RowId::WorkspaceAutosave => {
                 let mut on = self.book.autosave();
-                if ui.checkbox(&mut on, row.label).changed() {
+                let response = ui.checkbox(&mut on, row.label);
+                if response.changed() {
                     Self::push(commands, WorkspaceCommand::SetAutosave(on));
                 }
+                response
             }
             RowId::ManageWorkspaces => {
-                if ui
-                    .button(row.label)
-                    .on_hover_text(row.hover.unwrap_or_default())
-                    .clicked()
-                {
+                let hover = row.hover.unwrap_or_default();
+                let response = ui.button(row.label).on_hover_text(hover);
+                if response.clicked() {
                     Self::push(commands, WorkspaceCommand::BeginManage);
                 }
+                response
             }
-            _ => return false,
-        }
-        true
+            _ => return None,
+        };
+        Some(response)
     }
 
     /// The menu below the capsule's workspace name (designer 01): auto save,
-    /// save, save as, rename, the workspaces, new and manage.
+    /// save, save as, rename, the workspaces, new and manage. It keeps to the
+    /// budget [`chip_menu_budget`] sets, the workspaces alone scrolling, and
+    /// answers the menu and its rows in view, for the scene.
     pub(super) fn chip_menu(
         self,
         ctx: &egui::Context,
@@ -158,53 +193,42 @@ impl<'a> WorkspaceRows<'a> {
         menu: &mut WorkspaceMenuState,
         keys: String,
         commands: &mut Vec<MenuCommand>,
-    ) {
+    ) -> Vec<DrawnControl> {
+        let mut drawn = Vec::new();
         if !menu.chip_menu_on(self.tab) {
-            return;
+            return drawn;
         }
         let recorded = commands.len();
-        let (workspace, modified) = self.state();
-        let auto = self.book.autosave();
-        let area = egui::Area::new(egui::Id::new("tab_workspace_menu"))
+        let workspaces = self.book.list().len();
+        let mut sizing = false;
+        // An area is laid out inside its last frame's size, so one kept across
+        // openings would never narrow: each opening and each tab gets its own.
+        let id = ("tab_workspace_menu", self.tab, menu.chip_menu_opened);
+        let area = egui::Area::new(egui::Id::new(id))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_TOP)
-            .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, MENU_DROP_PT))
+            .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, CHIP_MENU_DROP_PT))
+            .default_width(CHIP_MENU_MIN_WIDTH_PT)
             .constrain(true)
             .show(ctx, |ui| {
+                super::menus::flat_rows(ui);
+                let (screen, at) = (bounds(ctx.screen_rect()), bounds(anchor));
+                let budget = chip_menu_budget(screen, at, workspaces, metrics(ui));
+                // The first pass measures every row whole; the next cut to fit.
+                sizing = ui.is_sizing_pass();
+                if !sizing {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    ui.set_max_width(ui.available_width().min(budget.max_width));
+                }
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(CHIP_MENU_MIN_WIDTH_PT);
+                    ui.set_min_width(budget.min_width);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        super::menus::flat_rows(ui);
-                        self.action_row(ui, RowId::WorkspaceAutosave, commands);
-                        let line = if auto {
-                            "Every change is saved".to_owned()
-                        } else {
-                            format!("Save with {keys}")
+                        let rows = ChipRows {
+                            id,
+                            list_height: budget.list_height,
+                            keys,
                         };
-                        ui.label(crate::theme::supporting_text(ui, line));
-                        ui.separator();
-                        let save = egui::Button::new(format!("Save \u{201c}{workspace}\u{201d}"))
-                            .shortcut_text(crate::theme::supporting_text(ui, keys));
-                        let save = ui.add_enabled(modified && !auto, save);
-                        if modified && !auto {
-                            let dot = save.rect.left_center() + egui::vec2(-1.0, 0.0);
-                            ui.painter().circle_filled(
-                                dot,
-                                2.5,
-                                crate::theme::get(ui.ctx()).accent(),
-                            );
-                        }
-                        if save.clicked() {
-                            Self::push(commands, WorkspaceCommand::SaveTo);
-                        }
-                        self.action_row(ui, RowId::WorkspaceSaveAsNew, commands);
-                        self.action_row(ui, RowId::WorkspaceRename, commands);
-                        ui.separator();
-                        ui.label(crate::theme::supporting_text(ui, "WORKSPACES"));
-                        self.list(ui, commands, true);
-                        ui.separator();
-                        self.action_row(ui, RowId::WorkspaceNew, commands);
-                        self.action_row(ui, RowId::ManageWorkspaces, commands);
+                        self.chip_rows(ui, rows, commands, &mut drawn);
                     });
                 });
             });
@@ -220,7 +244,178 @@ impl<'a> WorkspaceRows<'a> {
         if commands.len() > recorded || dismissed {
             menu.close_chip_menu();
         }
+        if sizing {
+            // The measuring pass draws nothing a reader could press.
+            drawn.clear();
+        } else {
+            let list = calls::WORKSPACE_LIST_CAPABILITY_ID;
+            let rect = area.response.rect;
+            drawn.insert(0, chip_control("", "Workspace menu", rect, true, list));
+        }
+        drawn
     }
+
+    /// The cell menu's rows, top to bottom, each one in view written to
+    /// `drawn` with the call that does what it does.
+    fn chip_rows(
+        self,
+        ui: &mut egui::Ui,
+        rows: ChipRows,
+        commands: &mut Vec<MenuCommand>,
+        drawn: &mut Vec<DrawnControl>,
+    ) {
+        let (workspace, modified) = self.state();
+        let auto = self.book.autosave();
+        let autosave = calls::WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID;
+        let label = row_of(RowId::WorkspaceAutosave).label;
+        if let Some(it) = self.action_row(ui, RowId::WorkspaceAutosave, commands) {
+            drawn.push(chip_control("autosave", label, it.rect, auto, autosave));
+        }
+        let line = if auto {
+            "Every change is saved".to_owned()
+        } else {
+            format!("Save with {}", rows.keys)
+        };
+        ui.label(crate::theme::supporting_text(ui, line));
+        ui.separator();
+        let label = format!("Save \u{201c}{workspace}\u{201d}");
+        let save = egui::Button::new(label.as_str())
+            .shortcut_text(crate::theme::supporting_text(ui, rows.keys));
+        let save = ui.add_enabled(modified && !auto, save);
+        if modified && !auto {
+            let inset = egui::vec2(UNSAVED_DOT_INSET_PT, 0.0);
+            let accent = crate::theme::get(ui.ctx()).accent();
+            ui.painter()
+                .circle_filled(save.rect.left_center() + inset, 2.5, accent);
+        }
+        let save_to = calls::WORKSPACE_SAVE_TO_CAPABILITY_ID;
+        drawn.push(chip_control("save", &label, save.rect, false, save_to));
+        if save.clicked() {
+            Self::push(commands, WorkspaceCommand::SaveTo);
+        }
+        let save_as = calls::WORKSPACE_SAVE_AS_CAPABILITY_ID;
+        self.chip_action(ui, RowId::WorkspaceSaveAsNew, save_as, commands, drawn);
+        let rename = calls::WORKSPACE_RENAME_CAPABILITY_ID;
+        self.chip_action(ui, RowId::WorkspaceRename, rename, commands, drawn);
+        ui.separator();
+        ui.label(crate::theme::supporting_text(ui, "WORKSPACES"));
+        let shown = egui::ScrollArea::vertical()
+            .id_salt(rows.id)
+            .max_height(rows.list_height)
+            .min_scrolled_height(rows.list_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| self.list(ui, commands, true))
+            .inner;
+        let set = calls::TAB_WORKSPACE_SET_CAPABILITY_ID;
+        for (name, rect) in shown {
+            let key = format!("workspace.{name}");
+            drawn.push(chip_control(&key, &name, rect, name == workspace, set));
+        }
+        ui.separator();
+        let new = calls::WORKSPACE_NEW_CAPABILITY_ID;
+        self.chip_action(ui, RowId::WorkspaceNew, new, commands, drawn);
+        let list = calls::WORKSPACE_LIST_CAPABILITY_ID;
+        self.chip_action(ui, RowId::ManageWorkspaces, list, commands, drawn);
+    }
+
+    /// One action row of the cell menu, written to `drawn` under its key.
+    fn chip_action(
+        self,
+        ui: &mut egui::Ui,
+        id: RowId,
+        call: &'static str,
+        commands: &mut Vec<MenuCommand>,
+        drawn: &mut Vec<DrawnControl>,
+    ) {
+        let key = match id {
+            RowId::WorkspaceSaveAsNew => "save_as",
+            RowId::WorkspaceRename => "rename",
+            RowId::WorkspaceNew => "new",
+            _ => "manage",
+        };
+        if let Some(it) = self.action_row(ui, id, commands) {
+            drawn.push(chip_control(key, row_of(id).label, it.rect, false, call));
+        }
+    }
+}
+
+/// What the cell menu's rows need besides the book.
+struct ChipRows {
+    /// The menu's area id, which its list's scroll state hangs off.
+    id: (&'static str, u64, u64),
+    list_height: f32,
+    keys: String,
+}
+
+/// One part of the cell menu as the scene reads it; an empty `key` is the
+/// menu itself.
+fn chip_control(
+    key: &str,
+    label: &str,
+    rect: egui::Rect,
+    selected: bool,
+    call: &'static str,
+) -> DrawnControl {
+    let id = if key.is_empty() {
+        CHIP_MENU_CONTROL.to_owned()
+    } else {
+        format!("{CHIP_MENU_CONTROL}.{key}")
+    };
+    DrawnControl {
+        id,
+        label: label.to_owned(),
+        rect,
+        selected,
+        capability: Some(call),
+    }
+}
+
+/// A rect as the headless budget reads it.
+fn bounds(rect: egui::Rect) -> MenuBounds {
+    MenuBounds {
+        left: rect.left(),
+        top: rect.top(),
+        right: rect.right(),
+        bottom: rect.bottom(),
+    }
+}
+
+/// The heights the menu's style draws a row, a separator and the frame at.
+fn metrics(ui: &egui::Ui) -> MenuMetrics {
+    let spacing = ui.spacing();
+    let text = ui.text_style_height(&egui::TextStyle::Button);
+    let button = (text + 2.0 * spacing.button_padding.y).max(spacing.interact_size.y);
+    let stroke = ui.visuals().window_stroke().width;
+    MenuMetrics {
+        row_pt: button + spacing.item_spacing.y,
+        separator_pt: SEPARATOR_PT + spacing.item_spacing.y,
+        frame_pt: spacing.menu_margin.sum().y + 2.0 * stroke,
+    }
+}
+
+/// `name` cut to the room its row leaves beside `beside`, and whether it was
+/// cut. Only the cell menu cuts, and never in the pass that measures it.
+fn fitted(
+    ui: &egui::Ui,
+    name: &str,
+    beside: &egui::WidgetText,
+    cut: bool,
+) -> (egui::WidgetText, bool) {
+    if !cut || ui.is_sizing_pass() {
+        return (name.into(), false);
+    }
+    let spacing = ui.spacing();
+    let style = egui::TextStyle::Button;
+    let extend = Some(egui::TextWrapMode::Extend);
+    let beside = (beside.clone()).into_galley(ui, extend, f32::INFINITY, style.clone());
+    let room = ui.available_width()
+        - 2.0 * spacing.button_padding.x
+        - spacing.item_spacing.x
+        - beside.size().x;
+    let truncate = Some(egui::TextWrapMode::Truncate);
+    let galley = egui::WidgetText::from(name).into_galley(ui, truncate, room, style);
+    let elided = galley.elided;
+    (galley.into(), elided)
 }
 
 /// The workspace dialogs: the one asking a name over the Manage one.

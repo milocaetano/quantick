@@ -93,6 +93,9 @@ pub struct WorkspaceMenuState {
     /// and acts in the window presenting that tab, so a torn-off window's
     /// cell never reaches another window's tab.
     pub chip_menu: Option<u64>,
+    /// Counts the menu's openings: each one is laid out afresh, so it is as
+    /// wide as what it shows now and not the widest it ever showed.
+    pub chip_menu_opened: u64,
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
@@ -103,6 +106,9 @@ impl WorkspaceMenuState {
     /// on that tab, or close it when it was already open there.
     pub fn toggle_chip_menu(&mut self, tab: u64) {
         self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
+        if self.chip_menu.is_some() {
+            self.chip_menu_opened = self.chip_menu_opened.wrapping_add(1);
+        }
     }
 
     pub fn close_chip_menu(&mut self) {
@@ -213,6 +219,89 @@ impl WorkspaceMenuState {
 
     pub fn close_dialog(&mut self) {
         self.dialog = None;
+    }
+}
+
+/// The widest the cell's menu draws, in points: a workspace name of about
+/// twenty characters beside its one-line summary. A longer name is cut short
+/// in its row and reads whole on hover.
+pub const CHIP_MENU_MAX_WIDTH_PT: f32 = 360.0;
+/// The narrowest the cell's menu draws, in points.
+pub const CHIP_MENU_MIN_WIDTH_PT: f32 = 200.0;
+/// How far below the capsule the menu hangs, in points.
+pub const CHIP_MENU_DROP_PT: f32 = 4.0;
+/// What the menu keeps clear of the window's edges, in points: room for the
+/// small differences between the measured rows and the drawn ones.
+pub const CHIP_MENU_EDGE_PT: f32 = 8.0;
+/// The workspace rows the list keeps in view however short the window. Below
+/// that the menu overruns the window and is pushed up rather than show none.
+pub const CHIP_MENU_MIN_LIST_ROWS: usize = 3;
+/// The rows that never scroll: auto save and its line, Save, Save as,
+/// Rename, the WORKSPACES caption, New and Manage.
+pub const CHIP_MENU_FIXED_ROWS: usize = 8;
+/// The separators between the menu's groups.
+pub const CHIP_MENU_SEPARATORS: usize = 3;
+
+/// A rectangle in points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuBounds {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// The heights the menu's style draws, in points, separators and the frame
+/// included: what turns row counts into a height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuMetrics {
+    /// One row and the gap after it.
+    pub row_pt: f32,
+    /// One separator and the gap after it.
+    pub separator_pt: f32,
+    /// The frame's margins, top and bottom together.
+    pub frame_pt: f32,
+}
+
+/// The size the cell's menu may take this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChipMenuBudget {
+    pub min_width: f32,
+    pub max_width: f32,
+    /// The scrolled workspace list's height; the rest of the menu never
+    /// scrolls.
+    pub list_height: f32,
+    /// The whole menu's height: over the room below the capsule only when
+    /// the window cannot hold [`CHIP_MENU_MIN_LIST_ROWS`] rows.
+    pub max_height: f32,
+}
+
+/// What the cell's menu may take on `screen`, hanging below `anchor` with
+/// `workspaces` rows in its list: no wider than [`CHIP_MENU_MAX_WIDTH_PT`] or
+/// the window, and no lower than the window's bottom edge, the list shrinking
+/// to scroll first.
+#[must_use]
+pub fn chip_menu_budget(
+    screen: MenuBounds,
+    anchor: MenuBounds,
+    workspaces: usize,
+    metrics: MenuMetrics,
+) -> ChipMenuBudget {
+    let window_width = (screen.right - screen.left - 2.0 * CHIP_MENU_EDGE_PT).max(0.0);
+    let max_width = CHIP_MENU_MAX_WIDTH_PT.min(window_width);
+    let top = anchor.bottom + CHIP_MENU_DROP_PT;
+    let room = (screen.bottom - CHIP_MENU_EDGE_PT - top).max(0.0);
+    let fixed = CHIP_MENU_FIXED_ROWS as f32 * metrics.row_pt
+        + CHIP_MENU_SEPARATORS as f32 * metrics.separator_pt
+        + metrics.frame_pt;
+    let whole = workspaces as f32 * metrics.row_pt;
+    let floor = workspaces.min(CHIP_MENU_MIN_LIST_ROWS) as f32 * metrics.row_pt;
+    let list_height = (room - fixed).min(whole).max(floor);
+    ChipMenuBudget {
+        min_width: CHIP_MENU_MIN_WIDTH_PT.min(max_width),
+        max_width,
+        list_height,
+        max_height: fixed + list_height,
     }
 }
 
