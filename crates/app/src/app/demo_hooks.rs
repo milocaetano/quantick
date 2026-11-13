@@ -20,6 +20,7 @@
 
 #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+#[cfg(any(feature = "drawing-harness", test))]
 use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "control-harness", test))]
 use eframe::egui;
