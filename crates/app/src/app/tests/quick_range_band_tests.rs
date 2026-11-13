@@ -253,10 +253,10 @@ fn a_range_goes_with_its_hidden_pane_and_escape_reaches_the_next_layer() {
             .is_none(),
         "the range went with its pane"
     );
-    app.toolrail.arm(Tool::Crosshair);
+    app.surfaces.toolrail.arm(Tool::Crosshair);
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "Escape is not swallowed by a range nobody can see"
     );

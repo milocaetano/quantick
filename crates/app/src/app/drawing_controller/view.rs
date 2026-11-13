@@ -9,6 +9,7 @@
 //! the chrome around it.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 
 use crate::drawings;

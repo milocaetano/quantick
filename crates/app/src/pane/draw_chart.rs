@@ -20,6 +20,7 @@
 //! orchestrator, because the slices of the series are borrowed across the
 //! frame and a `&mut self` method cannot run under them.
 
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 

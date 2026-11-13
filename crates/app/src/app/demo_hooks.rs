@@ -20,6 +20,8 @@
 
 #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+#[cfg(any(feature = "drawing-harness", test))]
+use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "control-harness", test))]
 use eframe::egui;
 
@@ -545,7 +547,7 @@ pub(super) fn apply_drawing_draft(app: &mut QuantickApp) {
         app.surfaces
             .drawing_chrome
             .scenario(ScenarioIntent::DraftReady {
-                tool: app.toolrail.tool().drawing_tool(),
+                tool: app.surfaces.toolrail.tool().drawing_tool(),
                 chart_available: chart.is_some(),
                 series: facts,
             })

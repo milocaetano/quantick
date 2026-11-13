@@ -57,7 +57,7 @@ mod placement_characterization {
         assert_eq!(slot_of(drawing.points[0].bar), slot);
         assert_eq!(drawing.points[0].time_ms, Some(expected_time));
         assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
-        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+        assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
         let closed = run_frame(&mut app, &ctx);
         assert!(
             !painted_text(&closed)
@@ -122,7 +122,7 @@ mod placement_characterization {
         assert_eq!(pane.drawings.items()[0].points.len(), 3);
         assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
         assert_eq!(pane.drawings.draft_len(), 0);
-        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+        assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
     }
 
     #[test]
@@ -1850,7 +1850,7 @@ fn holding_shift_lays_a_channel_dead_level() {
 fn shift_levels_the_armed_ruler_to_the_exact_price() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     run_frame(&mut app, &ctx);
 
     let y = price_y(&app, PaneSide::Flow, 100.0);
@@ -2877,7 +2877,7 @@ fn every_toolbox_drawing_can_be_plotted_on_the_chart() {
             })
     );
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "placing a complete drawing restores navigation"
     );
@@ -2888,7 +2888,8 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -2932,7 +2933,8 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let anchor = egui::pos2(700.0, 300.0);
     click_chart(&mut app, &ctx, anchor);
@@ -2984,7 +2986,8 @@ fn a_canvas_drag_keeps_running_while_crossing_the_inspector() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3016,7 +3019,8 @@ fn drawing_actions_visible_without_scroll_at_360px() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
@@ -3131,7 +3135,8 @@ fn double_clicking_the_title_bar_returns_to_automatic_placement() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3186,7 +3191,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
 
     // A finished object with the tool disarmed is what a trader has in
     // hand when they reach for the bar.
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(avwap));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -3471,7 +3476,8 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
             .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
         "this proof needs a chart narrower than the auto-pin threshold"
     );
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, narrow, egui::pos2(600.0, 300.0));
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
@@ -3547,7 +3553,8 @@ fn hovering_the_inspector_sets_no_chart_cursor() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3590,6 +3597,7 @@ fn the_object_manager_opens_beside_the_rail() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let objects = app
+        .surfaces
         .toolrail
         .objects_button_rect()
         .expect("the rail shows the Objects entry");
@@ -3672,7 +3680,7 @@ fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
         .last()
         .map(|mark| mark.points[0].price);
 
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
     assert_eq!(
@@ -4083,7 +4091,7 @@ fn the_pencil_draws_a_path_from_one_held_drag() {
         "the whole stroke is one undo entry, not one per captured point"
     );
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "finishing the stroke restores navigation, like every other tool"
     );
@@ -4120,7 +4128,10 @@ fn the_bar_pencil_rearms_the_pencil_for_the_next_stroke() {
     );
     click_chart(&mut app, &ctx, pencil.center());
     run_frame(&mut app, &ctx);
-    assert_eq!(app.toolrail.tool(), Tool::Drawing(drawing_tool("brush")));
+    assert_eq!(
+        app.surfaces.toolrail.tool(),
+        Tool::Drawing(drawing_tool("brush"))
+    );
 
     drag_chart(
         &mut app,
@@ -4139,7 +4150,8 @@ fn a_level_bar_has_no_pencil() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -4216,7 +4228,8 @@ fn selecting_a_drawing_raises_the_context_bar_not_the_panel() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -4247,7 +4260,8 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -4364,7 +4378,8 @@ fn the_gear_on_the_context_bar_opens_the_inspector() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -4398,7 +4413,8 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -4448,7 +4464,8 @@ fn a_locked_drawing_asks_before_it_goes_from_the_bar() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -4540,7 +4557,8 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -4666,11 +4684,12 @@ fn escape_walks_confirm_draft_selection_then_pointer() {
         app.active_tab().flow_pane.drawings.draft().is_none(),
         "Esc cancels the draft"
     );
-    assert_eq!(app.toolrail.tool(), Tool::Pointer);
+    assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
 
     // A locked selection with a pending confirmation: Esc peels one
     // layer per press — confirm, then selection, then nothing new.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -5706,7 +5725,8 @@ fn a_drawing_lands_on_the_pane_under_the_cursor() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -5725,7 +5745,8 @@ fn a_drawing_lands_on_the_pane_under_the_cursor() {
         "and nowhere else"
     );
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
@@ -5752,7 +5773,8 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
 
     // A mark kept to each pane, so an index means something on both.
     for side in [PaneSide::Time(0), PaneSide::Flow] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);

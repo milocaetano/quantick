@@ -393,7 +393,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     // `[Tool::Pointer, Tool::Crosshair]` here would let a third non-drawing
     // tool ship unclaimed with this guard green, which is the failure the
     // guard exists to catch.
-    for variant in enum_variants("app", "Tool") {
+    for variant in enum_variants("ui-model", "Tool") {
         entries.push(Registered::new(Source::RailTool, variant));
     }
     for preset in crate::canvas_layout::LAYOUT_PRESETS {

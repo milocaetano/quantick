@@ -11,10 +11,11 @@ use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockResponse};
 use crate::loading::LoadingTask;
 use crate::replay_view::{ReplayAction, ReplayView};
-use crate::surfaces::drawing_chrome::{DrawingChromeExt as _, DrawingChromeSurface};
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::{HostEffect, Surfaces, ViewContext};
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use quantick_ui_model::tool_rail::{Effect, Facts, Intent};
 
 /// The browser window and, while the *active* tab plays a session, its
 /// transport bar. A background tab's recording keeps advancing on its own
@@ -53,17 +54,44 @@ pub(super) fn draw_replay_browser(
 /// a click on the canvas would act on.
 pub(super) fn draw_drawing_rail(
     ctx: &egui::Context,
-    toolrail: &mut ToolRail,
+    surfaces: &mut Surfaces,
     tabs: &mut ArrangementHost,
-    chrome: &mut DrawingChromeSurface,
 ) {
     let side = tabs[tabs.active_index()].focused_side();
-    // The flag lives with the window it opens, so it travels through a local
-    // rather than a `&mut` handed out of the surface.
-    let mut manager_open = chrome.manager_open();
     let tab = tabs.runtime_mut(tabs.active_index());
-    toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
-    chrome.set_manager_open(manager_open);
+    let drawings = &mut tab.pane_mut(side).drawings;
+    surfaces.toolrail.update(Intent::Observe(Facts {
+        count: drawings.items().len(),
+        draft: drawings.draft().is_some(),
+        draft_len: drawings.draft_len(),
+        all_hidden: drawings.all_hidden(),
+        all_locked: drawings.all_locked(),
+        manager_open: surfaces.drawing_chrome.manager_open(),
+    }));
+    let response = surfaces.draw_slot_unscoped(
+        quantick_ui_model::Slot::EdgePanels,
+        &mut ViewContext { ctx, ui: None },
+    );
+    settle_rail_effects(response, drawings, &mut surfaces.drawing_chrome);
+}
+
+pub(in crate::app) fn settle_rail_effects(
+    response: crate::surfaces::SurfaceResponse,
+    drawings: &mut crate::drawings::Drawings,
+    chrome: &mut crate::surfaces::DrawingChromeSurface,
+) {
+    for effect in response.model_effects {
+        if let HostEffect::ToolRail(effects) = effect {
+            for effect in effects {
+                match effect {
+                    Effect::SetAllHidden(hidden) => drawings.set_all_hidden(hidden),
+                    Effect::SetAllLocked(locked) => drawings.set_all_locked(locked),
+                    Effect::SetManagerOpen(open) => chrome.set_manager_open(open),
+                    Effect::UnknownFavorites(_) => {}
+                }
+            }
+        }
+    }
 }
 
 /// The right dock. The Trading tab speaks for the market on screen: one tab,

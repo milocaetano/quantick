@@ -17,6 +17,7 @@ use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_RE
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::surfaces::toast;
+use crate::toolrail::ToolRailExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
@@ -45,6 +46,8 @@ quantick_chart_interaction::frame_stages!(
 );
 
 mod canvas;
+#[cfg(test)]
+pub(super) use panels::settle_rail_effects;
 mod panels;
 mod surfaces;
 
@@ -111,19 +114,19 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
     if asking.is_some() {
         return;
     }
-    app.toolrail.handle_keys(ctx);
+    app.surfaces.toolrail.handle_keys(ctx);
     let effects = app
         .drawings
         .with(&mut app.surfaces.drawing_chrome)
         .handle_drawing_keys(
             &mut DrawingAccess::new(&mut app.runtime.tabs),
-            &mut app.toolrail,
+            &mut app.surfaces.toolrail,
             &mut *app.audio.alerts,
             ctx,
             now,
             crate::dock::holds_pointer(&app.dock, ctx),
         );
-    effects.apply(&mut app.surfaces.toast, &mut app.toolrail);
+    effects.apply(&mut app.surfaces.toast, &mut app.surfaces.toolrail);
 }
 
 /// Do what the palette asked. A refusal stays under its field.
@@ -385,20 +388,15 @@ impl QuantickApp {
             FrameStage::LayoutDialogs => self.layout_adapter().draw_layout_delete_confirm(ctx),
             FrameStage::ReplayBrowser => self.draw_replay_browser_stage(ctx),
             FrameStage::DrawingRail => {
-                panels::draw_drawing_rail(
-                    ctx,
-                    &mut self.toolrail,
-                    &mut self.runtime.tabs,
-                    &mut self.surfaces.drawing_chrome,
-                );
+                panels::draw_drawing_rail(ctx, &mut self.surfaces, &mut self.runtime.tabs);
                 // A star clicked this frame is on disk this frame: the pinned
                 // rail is what the trader reaches for without looking, and
                 // rebuilding it after a crash is not a thing anyone should
                 // have to do twice.
-                if self.toolrail.take_favorites_change() {
+                if self.surfaces.toolrail.take_favorites_change() {
                     self.workspace_save_adapter().write_favorites();
                 }
-                if let Some(on) = self.toolrail.take_magnet_request() {
+                if let Some(on) = self.surfaces.toolrail.take_magnet_request() {
                     crate::control::flip_rail_magnet(self, on);
                 }
             }
@@ -410,7 +408,7 @@ impl QuantickApp {
                 if let Some(ask) = drawings.draw_pinned_inspector(
                     ctx,
                     &DrawingReadAccess::new(&self.runtime.tabs),
-                    &self.toolrail,
+                    &self.surfaces.toolrail,
                 ) {
                     self.resolve_drawing_response(ask, now);
                 }
@@ -695,7 +693,6 @@ impl QuantickApp {
                     self.runtime.tabs.with_panel_folds(active).expect("active");
                 let mut chrome = CanvasChrome {
                     surfaces: &mut self.surfaces,
-                    toolrail: &mut self.toolrail,
                     presets: &self.drawings.presets,
                     begin_text_edit: &mut answers.begin_text_edit,
                     style: &self.runtime.style,
@@ -749,7 +746,7 @@ impl QuantickApp {
         let ask = drawings.draw_drawing_chrome(
             ctx,
             &DrawingReadAccess::new(&self.runtime.tabs),
-            &self.toolrail,
+            &self.surfaces.toolrail,
         );
         self.resolve_drawing_response(ask, now);
     }
@@ -859,7 +856,7 @@ impl QuantickApp {
         if effects.inspector_moved {
             self.runtime.workspace.session_mut().inspector_moved();
         }
-        effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
+        effects.apply(&mut self.surfaces.toast, &mut self.surfaces.toolrail);
     }
 }
 

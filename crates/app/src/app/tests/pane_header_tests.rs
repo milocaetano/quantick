@@ -670,7 +670,8 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
     let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
     let before = on(&app, ChartLayer::Bubbles);
     let focus = app.active_tab().focus;
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(crate::toolrail::Tool::Drawing(super::drawing_tool(
             "horizontal-line",
         )));
@@ -681,7 +682,7 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
         app.active_tab().flow_pane.drawings.items().is_empty(),
         "no anchor landed under the capsule"
     );
-    app.toolrail.arm(crate::toolrail::Tool::Pointer);
+    app.surfaces.toolrail.arm(crate::toolrail::Tool::Pointer);
     run_frame(&mut app, &ctx);
     let secondary = |at, pressed| egui::Event::PointerButton {
         pos: at,

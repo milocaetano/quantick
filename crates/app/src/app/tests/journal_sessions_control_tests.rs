@@ -328,7 +328,8 @@ fn delete_over_the_dock_never_deletes_the_selected_drawing() {
     let ctx = egui::Context::default();
     app.dock.open_tab(crate::dock::DockTab::Trades);
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let chart = egui::pos2(500.0, 300.0);
     click_chart(&mut app, &ctx, chart);

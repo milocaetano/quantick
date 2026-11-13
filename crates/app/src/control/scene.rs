@@ -44,6 +44,7 @@
 //! regions read existing frame state. A capture builds the list twice, once for
 //! module revision and once for scope, as other capture-derived projections do.
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) use quantick_control_schema::scene::*;
 
 use crate::app::{ChromePort, TabsPort};

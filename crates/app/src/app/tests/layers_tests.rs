@@ -700,7 +700,7 @@ fn a_hidden_layer_paints_nothing() {
     }
     // The crosshair is a mode: it paints under a pointer, with its own tool
     // armed. Both are set here so the layer has something to switch off.
-    app.toolrail.arm(Tool::Crosshair);
+    app.surfaces.toolrail.arm(Tool::Crosshair);
 
     let shapes = |app: &mut QuantickApp| -> usize {
         with_flow_pane(app, |pane, chrome| {
@@ -932,7 +932,7 @@ fn arming_a_tool_unhides_the_layer_it_draws_on() {
         ),
         (Tool::Crosshair, ChartLayer::Crosshair),
     ] {
-        app.toolrail.arm(Tool::Pointer);
+        app.surfaces.toolrail.arm(Tool::Pointer);
         switch_layer(&mut app, layer, false);
         navigate(&mut app);
         assert!(
@@ -940,7 +940,7 @@ fn arming_a_tool_unhides_the_layer_it_draws_on() {
             "{} must stay hidden while nothing needs it",
             layer.id()
         );
-        app.toolrail.arm(tool);
+        app.surfaces.toolrail.arm(tool);
         navigate(&mut app);
         assert!(
             layer_on(&app, layer),
@@ -955,7 +955,8 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let stroke_position = egui::pos2(700.0, 300.0);
     click_chart(&mut app, &ctx, stroke_position);
@@ -1355,7 +1356,7 @@ fn a_rail_hidden_this_frame_names_no_buttons_before_the_next_draw() {
     );
 
     // Hidden, and captured before the next frame paints anything.
-    app.toolrail.toggle_visible();
+    app.surfaces.toolrail.toggle_visible();
     let folded = scene_control_ids(&observer_scene(&app));
     assert!(
         !folded.iter().any(|id| id.starts_with("tool_rail.")),

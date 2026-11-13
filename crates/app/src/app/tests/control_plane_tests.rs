@@ -654,7 +654,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.active_tab_mut().focus = PaneSide::Flow;
     app.runtime.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);
-    app.toolrail.set_dock(ToolboxDock::Bottom);
+    app.surfaces.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
 
     let workspace = app.workspace_state().capture_workspace();
@@ -4276,7 +4276,7 @@ fn a_starred_tool_is_a_button_the_scene_names_in_its_own_right() {
     );
 
     let starred = drawings::DRAWING_TOOLS[0];
-    app.toolrail.toggle_favorite(starred);
+    app.surfaces.toolrail.toggle_favorite(starred);
     run_frame(&mut app, &ctx);
     let pinned = scene_control_ids(&observer_scene(&app));
     let expected = format!("tool_rail.favorite.{}", starred.id());

@@ -8,6 +8,7 @@ use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};
 use quantick_feed::{self as feed, FeedHandle, history_reach};
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) config: &'a AppConfig,

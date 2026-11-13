@@ -7,6 +7,7 @@ use eframe::egui;
 use quantick_control_schema::window_menu::{self as menu, RowId};
 use quantick_ui_model::chrome_menu_bar::{Action, Snapshot, Workspace};
 
+use crate::toolrail::ToolRailExt as _;
 pub(in crate::app) fn draw(
     app: &mut QuantickApp,
     ctx: &egui::Context,
@@ -102,7 +103,11 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
         dock_visible: app.dock.visible(),
         selected_rows,
         flow_pane_shown: crate::orderflow_panel::flow_pane_shown(tab),
-        toolbox_dock: app.toolrail.visible().then(|| app.toolrail.dock()),
+        toolbox_dock: app
+            .surfaces
+            .toolrail
+            .visible()
+            .then(|| app.surfaces.toolrail.dock()),
         dock_tab: app.dock.tab(),
         workspace,
         layouts: layout

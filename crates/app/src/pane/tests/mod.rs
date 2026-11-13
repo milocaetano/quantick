@@ -1,5 +1,6 @@
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::theme;
+use crate::toolrail::ToolRailExt as _;
 mod pane_model_tests;
 
 // The `pane.rs` unit tests, moved out of the file so a session opening
@@ -1221,7 +1222,7 @@ fn drive_navigation_asking(
     area: egui::Rect,
     events: Vec<egui::Event>,
 ) -> (Option<SlotId>, quantick_layers::LayerActions) {
-    let mut toolrail = crate::toolrail::ToolRail::new();
+    let mut toolrail = crate::toolrail::ToolRail::new_rail();
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
     );
@@ -1279,7 +1280,7 @@ fn drive_navigation_asking(
 /// that does not exist, so the fixture reads nothing off the developer's
 /// disk.
 fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R {
-    let mut toolrail = crate::toolrail::ToolRail::new();
+    let mut toolrail = crate::toolrail::ToolRail::new_rail();
     toolrail.arm(tool);
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),

@@ -980,7 +980,7 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         "horizontal-line",
         &[egui::pos2(700.0, 300.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
 
@@ -2315,7 +2315,8 @@ fn the_keyboard_deletes_from_the_focused_pane() {
     let (mut app, _commands) = split_app(&ctx, 200);
 
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
@@ -3004,7 +3005,8 @@ fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() 
 fn leaving_the_split_keeps_the_time_panes_work_and_its_bars() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -3099,7 +3101,8 @@ fn a_press_on_a_floating_window_does_not_move_pane_focus() {
 
     // A mark on the time pane, then delete it: the toast comes up with an
     // Undo that acts on whatever pane has focus.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);

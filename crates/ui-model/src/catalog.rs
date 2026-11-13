@@ -31,6 +31,12 @@ macro_rules! surface_catalog {
                 [] []
                 home: Home => home = "home.rs", home = "home.rs", home::effects, HomeCanvas, Local;
                 [] []
+                toolrail: ToolRail => tool_rail = "tool_rail.rs", toolrail = "../toolrail/mod.rs", toolrail::effects, EdgePanels, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_edge_first: ChromeEdgeFirst => chrome_edge_first = "chrome/probe_edge_first.rs", chrome_edge_first = "chrome/tests/edge_first.rs", chrome_edge_first::effects, EdgePanels, Host;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_edge_second: ChromeEdgeSecond => chrome_edge_second = "chrome/probe_edge_second.rs", chrome_edge_second = "chrome/tests/edge_second.rs", chrome_edge_second::effects, EdgePanels, Host;
+                [] []
                 drawing_chrome: DrawingChrome => drawing_chrome = "drawing_chrome.rs", drawing_chrome = "drawing_chrome/mod.rs", drawing_chrome::effects, PinnedInspector | DrawingChrome, Local;
                 [] []
                 chart_settings: ChartSettings => chart_settings = "chart_settings.rs", chart_settings = "chart_settings/mod.rs", chart_settings::effects, Overlay, Host;

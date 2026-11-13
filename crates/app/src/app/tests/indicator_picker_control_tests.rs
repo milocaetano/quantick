@@ -76,7 +76,8 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
     let (mut app, _) = app_with_history(20);
     run_frame(&mut app, &ctx);
     let dock = app.dock.visible();
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let side = app.active_tab().focused_side();
     app.indicator_wiring().open_indicator_picker_on(side);
@@ -106,7 +107,7 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
     );
     // Escape normally disarms the drawing rail. The modal alone consumed it.
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Drawing(drawing_tool("horizontal-line"))
     );
 }

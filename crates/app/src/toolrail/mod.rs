@@ -5,14 +5,10 @@
 //! matching list in this module. Geometry, states and docking behaviour
 //! follow `docs/drawing-toolbar-ux.md`.
 
-use std::collections::BTreeMap;
-
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::drawings::{
-    DRAWING_TOOLS, DrawingTool, Drawings, IconDots, IconLetter, IconStrokes, ToolFamily,
-};
+use crate::drawings::{DRAWING_TOOLS, DrawingTool, IconDots, IconLetter, IconStrokes, ToolFamily};
 use crate::theme;
 use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
 use quantick_chart_interaction::scripted_hand::Area;
@@ -27,6 +23,7 @@ pub(crate) use quantick_chart_interaction::tool_rail::{RailControl, RailControlK
 mod band;
 mod flyout;
 mod state;
+pub(crate) use state::ToolRailExt;
 #[cfg(any(feature = "drawing-harness", test))]
 pub(crate) use state::ToolRailLaunch;
 
@@ -86,38 +83,15 @@ const BAND_ARROW_GLYPH_PX: f32 = 12.0;
 #[cfg(test)]
 const TOOLBOX_BUTTON_COUNT: usize = DRAWING_TOOLS.len() + 4;
 
-/// A chart-acting tool. Only one is armed at a time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Tool {
-    #[default]
-    Pointer,
-    Crosshair,
-    Drawing(DrawingTool),
+pub use quantick_ui_model::tool_rail::Tool;
+
+trait ToolIcon {
+    fn icon(self) -> &'static str;
+    fn icon_strokes(self) -> IconStrokes;
+    fn icon_dots(self) -> IconDots;
+    fn icon_letter(self) -> Option<IconLetter>;
 }
-
-impl Tool {
-    /// The stable wire name, for the places that name a tool rather than draw
-    /// it. The drawing tools lend their own registered identifier, so a tool
-    /// is called the same thing in the rail, in a saved workspace and in the
-    /// semantic scene.
-    #[must_use]
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::Pointer => "pointer",
-            Self::Crosshair => "crosshair",
-            Self::Drawing(tool) => tool.id(),
-        }
-    }
-
-    #[must_use]
-    pub fn drawing_tool(self) -> Option<DrawingTool> {
-        match self {
-            Self::Drawing(tool) => Some(tool),
-            Self::Pointer | Self::Crosshair => None,
-        }
-    }
-
-    #[must_use]
+impl ToolIcon for Tool {
     fn icon(self) -> &'static str {
         match self {
             Self::Pointer => icons::CURSOR,
@@ -126,7 +100,6 @@ impl Tool {
         }
     }
 
-    #[must_use]
     fn icon_strokes(self) -> IconStrokes {
         match self {
             Self::Pointer | Self::Crosshair => &[],
@@ -134,7 +107,6 @@ impl Tool {
         }
     }
 
-    #[must_use]
     fn icon_dots(self) -> IconDots {
         match self {
             Self::Pointer | Self::Crosshair => &[],
@@ -142,46 +114,10 @@ impl Tool {
         }
     }
 
-    #[must_use]
     fn icon_letter(self) -> Option<IconLetter> {
         match self {
             Self::Pointer | Self::Crosshair => None,
             Self::Drawing(tool) => tool.icon_letter(),
-        }
-    }
-
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Pointer => "Pointer",
-            Self::Crosshair => "Crosshair",
-            Self::Drawing(tool) => tool.name(),
-        }
-    }
-
-    #[must_use]
-    fn hover_text(self) -> &'static str {
-        match self {
-            Self::Pointer => "Pointer - pan, zoom, select and move (1, Esc)",
-            Self::Crosshair => "Crosshair (2)",
-            Self::Drawing(tool) => tool.hover_text(),
-        }
-    }
-
-    /// The shortcut label shown in menus, `None` when the tool has no key.
-    #[must_use]
-    fn shortcut_label(self) -> Option<String> {
-        match self {
-            Self::Pointer => Some("1".to_owned()),
-            Self::Crosshair => Some("2".to_owned()),
-            Self::Drawing(tool) => tool.shortcut().map(|shortcut| {
-                let key = shortcut.key.to_string();
-                if shortcut.shift {
-                    format!("Shift+{key}")
-                } else {
-                    key.to_owned()
-                }
-            }),
         }
     }
 }
@@ -229,15 +165,6 @@ fn tool_slots() -> &'static [RailSlot] {
     })
 }
 
-/// The magnet's state, and the flip a hand asked for this frame — which the
-/// window applies through `annotate.magnet.set`, so it journals like a
-/// script's.
-#[derive(Debug, Default)]
-struct MagnetSwitch {
-    on: bool,
-    asked: Option<bool>,
-}
-
 /// The button edge the active marker hugs: the one facing the window
 /// border this dock sits against.
 #[must_use]
@@ -258,9 +185,7 @@ fn nearest_dock(pointer: egui::Pos2, screen: egui::Rect) -> ToolboxDock {
 /// Toolbar chrome state. The panel is always outside `CentralPanel`, so the
 /// chart never renders behind it.
 #[derive(Debug)]
-pub struct ToolRail {
-    tool: Tool,
-    visible: bool,
+pub(crate) struct View {
     /// The stage the last draw settled on, or `None` before the first — and
     /// again once the rail is hidden, because nothing is painted then.
     ///
@@ -273,26 +198,6 @@ pub struct ToolRail {
     /// clips, so this is the difference between the buttons the rail owns and
     /// the buttons a trader can see — the scene reports the second.
     last_band: Option<BandWindow>,
-    dock: ToolboxDock,
-    /// The repeat pin: `true` keeps a drawing tool armed after it completes
-    /// an object; the default is one-shot back to Pointer.
-    repeat: bool,
-    /// The magnet: anchors snap to the nearest OHLC of the bar under the
-    /// pointer. Off by default — a magnet nobody asked for moves marks the
-    /// trader placed deliberately.
-    magnet: MagnetSwitch,
-    /// Last-armed member of each tool family, keyed by family id.
-    last_family_member: BTreeMap<&'static str, DrawingTool>,
-    /// Starred tools, in the order the trader starred them — the pinned
-    /// section at the rail's tool end. Star order, not registry order, so a
-    /// favorite keeps the position the trader learned.
-    favorites: Vec<DrawingTool>,
-    /// A star was clicked and the choice has not been written down yet. Read
-    /// and cleared by [`ToolRail::take_favorites_change`]; set by the toggle
-    /// only, never by [`ToolRail::set_favorites`] — restoring the saved list
-    /// is not the trader making a choice, and saving it straight back would
-    /// rewrite the file on every launch for nothing.
-    favorites_changed: bool,
     /// Scroll offset of the tool band along the rail's long axis, in px.
     /// Only the Scroll stage spends it; every other stage clamps it back to
     /// zero, so unstarring back down to a rail that fits leaves no residue.
@@ -300,23 +205,6 @@ pub struct ToolRail {
     /// An offset a chevron click asked for, handed to the band on the next
     /// frame. `None` leaves the band to the wheel and to drag scrolling.
     band_target: Option<f32>,
-    /// The armed tool changed and the band has not yet been asked to show
-    /// it. The spec's standing promise is that the armed tool always keeps a
-    /// real slot (§2.8); a keyboard shortcut can arm a tool the band has
-    /// scrolled past, and a trader who cannot see what is armed does not
-    /// know what their next click will draw. Set on arming only, never held,
-    /// so scrolling away from the armed tool by hand stays where it was put.
-    reveal_armed: bool,
-    /// Currently-nearest drop edge while a grip drag is live.
-    drag_preview: Option<ToolboxDock>,
-    dragging: bool,
-    drag_cancelled: bool,
-    /// Open family flyout: the family id and the slot rect it anchors to.
-    flyout: Option<(&'static str, egui::Rect)>,
-    /// A family flyout a validation hook asked for before the first frame —
-    /// honoured by the family slot once it knows its rect, then cleared.
-    #[cfg(any(feature = "drawing-harness", test))]
-    hook_flyout: Option<String>,
     #[cfg(test)]
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
     #[cfg(test)]
@@ -348,30 +236,16 @@ pub struct ToolRail {
     /// this — allocation alone proves nothing once the band clips.
     #[cfg(test)]
     band_rect: Option<egui::Rect>,
+    flyout_anchor: Option<egui::Rect>,
 }
-
-impl Default for ToolRail {
+impl Default for View {
     fn default() -> Self {
         Self {
-            tool: Tool::Pointer,
-            visible: true,
             last_stage: None,
             last_band: None,
-            dock: ToolboxDock::Left,
-            repeat: false,
-            magnet: MagnetSwitch::default(),
-            last_family_member: BTreeMap::new(),
-            favorites: Vec::new(),
-            favorites_changed: false,
+            flyout_anchor: None,
             band_offset: 0.0,
             band_target: None,
-            reveal_armed: false,
-            drag_preview: None,
-            dragging: false,
-            drag_cancelled: false,
-            flyout: None,
-            #[cfg(any(feature = "drawing-harness", test))]
-            hook_flyout: None,
             #[cfg(test)]
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
             #[cfg(test)]
@@ -404,12 +278,12 @@ impl Default for ToolRail {
     }
 }
 
-impl ToolRail {
+impl RailPaint<'_, '_> {
     /// Draw the rail docked against its edge. Drag the grip and release: the
     /// nearest window edge becomes the new dock, previewed live by a band.
     /// The rail also hosts the object-manager entry and the global protection
     /// toggles (hide-all / lock-all), which act on the store.
-    pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
+    pub fn draw(&mut self, ctx: &egui::Context) {
         let palette = theme::get(ctx);
         if !self.visible {
             return;
@@ -421,47 +295,42 @@ impl ToolRail {
                 .exact_width(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
-                .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
+                .show(ctx, |ui| self.draw_contents(ui)),
             ToolboxDock::Top => egui::TopBottomPanel::top(panel_id("drawing_toolbox_top"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
-                .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
+                .show(ctx, |ui| self.draw_contents(ui)),
             ToolboxDock::Bottom => egui::TopBottomPanel::bottom(panel_id("drawing_toolbox_bottom"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
-                .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
+                .show(ctx, |ui| self.draw_contents(ui)),
         };
 
-        if let Some(target) = self.drag_preview.take() {
+        if let Some(target) = self.drag_preview {
             paint_drop_preview(ctx, target);
         }
     }
 
-    fn draw_contents(
-        &mut self,
-        ui: &mut egui::Ui,
-        drawings: &mut Drawings,
-        manager_open: &mut bool,
-    ) {
+    fn draw_contents(&mut self, ui: &mut egui::Ui) {
         let palette = theme::get(ui.ctx());
         #[cfg(test)]
         {
-            self.button_rects.fill(None);
-            self.grip_rect = None;
-            self.magnet_rect = None;
-            self.more_rect = None;
-            self.hide_all_rect = None;
-            self.lock_all_rect = None;
-            self.objects_rect = None;
-            self.rail_rect = Some(ui.max_rect().expand(TOOLBOX_MARGIN_PX));
-            self.flyout_rects.clear();
-            self.flyout_star_rects.clear();
-            self.favorite_rects.clear();
-            self.band_leading_arrow = None;
-            self.band_trailing_arrow = None;
-            self.band_rect = None;
+            self.view.button_rects.fill(None);
+            self.view.grip_rect = None;
+            self.view.magnet_rect = None;
+            self.view.more_rect = None;
+            self.view.hide_all_rect = None;
+            self.view.lock_all_rect = None;
+            self.view.objects_rect = None;
+            self.view.rail_rect = Some(ui.max_rect().expand(TOOLBOX_MARGIN_PX));
+            self.view.flyout_rects.clear();
+            self.view.flyout_star_rects.clear();
+            self.view.favorite_rects.clear();
+            self.view.band_leading_arrow = None;
+            self.view.band_trailing_arrow = None;
+            self.view.band_rect = None;
         }
 
         let vertical = self.dock.is_vertical();
@@ -477,7 +346,7 @@ impl ToolRail {
         // it drew. A single enum store per frame, and the only way the
         // semantic scene can answer "what has a button right now" without
         // re-deriving a layout it did not measure.
-        self.last_stage = Some(stage);
+        self.view.last_stage = Some(stage);
 
         // Chart-facing hairline: the only stroke the rail paints — a
         // four-sided stroke would draw a seam against the window edge.
@@ -515,41 +384,41 @@ impl ToolRail {
             ui.spacing_mut().item_spacing = egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
             ui.set_min_size(egui::Vec2::ZERO);
             self.draw_grip(ui, vertical);
-            self.draw_button(ui, Tool::Pointer, drawings);
+            self.draw_button(ui, Tool::Pointer);
             if stage != RailStage::Minimal {
-                self.draw_button(ui, Tool::Crosshair, drawings);
+                self.draw_button(ui, Tool::Crosshair);
                 self.draw_separator(ui, vertical);
             }
             match stage {
                 RailStage::Full => {
-                    self.band_offset = 0.0;
-                    self.band_target = None;
-                    self.last_band = None;
-                    self.draw_favorites_section(ui, vertical, drawings, 0..favorite_count);
+                    self.view.band_offset = 0.0;
+                    self.view.band_target = None;
+                    self.view.last_band = None;
+                    self.draw_favorites_section(ui, vertical, 0..favorite_count);
                     for slot in slots {
                         match slot {
                             RailSlot::Single(tool) => {
-                                self.draw_button(ui, Tool::Drawing(*tool), drawings);
+                                self.draw_button(ui, Tool::Drawing(*tool));
                             }
                             RailSlot::Family { family, members } => {
-                                self.draw_family_slot(ui, *family, members, drawings);
+                                self.draw_family_slot(ui, *family, members);
                             }
                         }
                     }
                 }
                 RailStage::Scroll => {
                     let anchored = anchored_favorites(available, favorite_count);
-                    self.draw_favorites_section(ui, vertical, drawings, 0..anchored);
-                    self.draw_band(ui, vertical, drawings, slots, anchored, available);
+                    self.draw_favorites_section(ui, vertical, 0..anchored);
+                    self.draw_band(ui, vertical, slots, anchored, available);
                 }
                 RailStage::Compact | RailStage::Minimal => {
-                    self.band_offset = 0.0;
-                    self.band_target = None;
-                    self.last_band = None;
+                    self.view.band_offset = 0.0;
+                    self.view.band_target = None;
+                    self.view.last_band = None;
                     if let Some(armed) = self.tool.drawing_tool() {
-                        self.draw_button(ui, Tool::Drawing(armed), drawings);
+                        self.draw_button(ui, Tool::Drawing(armed));
                     }
-                    self.draw_more_menu(ui, drawings, stage);
+                    self.draw_more_menu(ui, stage);
                 }
             }
         }
@@ -565,10 +434,10 @@ impl ToolRail {
         {
             let ui = &mut trailing_ui;
             ui.spacing_mut().item_spacing = egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
-            self.draw_objects_button(ui, drawings, manager_open);
+            self.draw_objects_button(ui);
             self.draw_separator(ui, vertical);
             if stage != RailStage::Minimal {
-                self.draw_global_buttons(ui, drawings);
+                self.draw_global_buttons(ui);
                 self.draw_repeat_button(ui);
                 self.draw_magnet_button(ui);
                 self.draw_separator(ui, vertical);
@@ -589,7 +458,7 @@ impl ToolRail {
         let (rect, grip) = ui.allocate_exact_size(size, egui::Sense::drag());
         #[cfg(test)]
         {
-            self.grip_rect = Some(rect);
+            self.view.grip_rect = Some(rect);
         }
         if ui.is_rect_visible(rect) {
             // The dots always run across the rail, reading as a handle.
@@ -616,31 +485,28 @@ impl ToolRail {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
         if grip.drag_started() {
-            self.dragging = true;
-            self.drag_cancelled = false;
+            self.update(Intent::BeginDrag);
         }
         if self.dragging && ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
             // Esc aborts the drag and keeps the current dock — the topmost
             // level of the app's escape stack.
-            self.dragging = false;
-            self.drag_cancelled = true;
+            self.update(Intent::CancelDrag);
         }
         if self.dragging {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             if let Some(pointer) = ui.ctx().input(|input| input.pointer.interact_pos()) {
-                self.drag_preview = Some(nearest_dock(pointer, ui.ctx().screen_rect()));
+                self.update(Intent::PreviewDrag(nearest_dock(
+                    pointer,
+                    ui.ctx().screen_rect(),
+                )));
             }
         }
         if grip.drag_stopped() {
-            if self.dragging
-                && !self.drag_cancelled
-                && let Some(pointer) = ui.ctx().input(|input| input.pointer.interact_pos())
-            {
-                self.dock = nearest_dock(pointer, ui.ctx().screen_rect());
-            }
-            self.dragging = false;
-            self.drag_cancelled = false;
-            self.drag_preview = None;
+            let dock = ui
+                .ctx()
+                .input(|input| input.pointer.interact_pos())
+                .map(|pointer| nearest_dock(pointer, ui.ctx().screen_rect()));
+            self.update(Intent::EndDrag(dock));
         }
     }
 
@@ -681,7 +547,7 @@ impl ToolRail {
             .hover_text("Keep the drawing tool active after drawing")
             .show(ui);
         if response.clicked() {
-            self.repeat = !self.repeat;
+            self.update(Intent::SetRepeat(!self.repeat));
         }
     }
 
@@ -690,22 +556,22 @@ impl ToolRail {
     /// it reads off the rail without a menu.
     fn draw_magnet_button(&mut self, ui: &mut egui::Ui) {
         let response = IconButton::new(icons::MAGNET, TOOLRAIL_ICON)
-            .active(self.magnet.on)
+            .active(self.magnet)
             .active_marker(marker_edge(self.dock))
             .hover_text("Snap anchors to the bar's open / high / low / close")
             .show(ui);
         #[cfg(test)]
         {
-            self.magnet_rect = Some(response.rect);
+            self.view.magnet_rect = Some(response.rect);
         }
         if response.clicked() {
-            self.magnet.asked = Some(!self.magnet.on);
+            self.update(Intent::RequestMagnet);
         }
     }
 
     /// The More flyout of a collapsed rail: everything that lost its slot
     /// stays reachable by name with its shortcut, in registry order.
-    fn draw_more_menu(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings, stage: RailStage) {
+    fn draw_more_menu(&mut self, ui: &mut egui::Ui, stage: RailStage) {
         let response = ui.menu_button(icons::DOTS_THREE, |ui| {
             for tool in self.swallowed_tools(stage) {
                 let mut button = egui::Button::new(tool.name());
@@ -723,37 +589,37 @@ impl ToolRail {
                     .add(egui::Button::new("Keep tool active after drawing").selected(self.repeat))
                     .clicked()
                 {
-                    self.repeat = !self.repeat;
+                    self.update(Intent::SetRepeat(!self.repeat));
                     ui.close_menu();
                 }
                 if ui
-                    .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet.on))
+                    .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet))
                     .clicked()
                 {
-                    self.magnet.asked = Some(!self.magnet.on);
+                    self.update(Intent::RequestMagnet);
                     ui.close_menu();
                 }
-                let all_hidden = drawings.all_hidden();
+                let all_hidden = self.facts.all_hidden;
                 if ui
                     .button(if all_hidden { "Show all" } else { "Hide all" })
                     .clicked()
                 {
-                    drawings.set_all_hidden(!all_hidden);
+                    self.update(Intent::SetAllHidden(!all_hidden));
                     ui.close_menu();
                 }
-                let all_locked = drawings.all_locked();
+                let all_locked = self.facts.all_locked;
                 if ui
                     .button(if all_locked { "Unlock all" } else { "Lock all" })
                     .clicked()
                 {
-                    drawings.set_all_locked(!all_locked);
+                    self.update(Intent::SetAllLocked(!all_locked));
                     ui.close_menu();
                 }
             }
         });
         #[cfg(test)]
         {
-            self.more_rect = Some(response.response.rect);
+            self.view.more_rect = Some(response.response.rect);
         }
         response.response.on_hover_text("More tools");
     }
@@ -777,28 +643,23 @@ impl ToolRail {
 
     /// The entry to the drawn-objects manager. A toggle, not a tool: it never
     /// changes which tool is armed. Carries the object count as a badge.
-    fn draw_objects_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        drawings: &Drawings,
-        manager_open: &mut bool,
-    ) {
+    fn draw_objects_button(&mut self, ui: &mut egui::Ui) {
         let palette = theme::get(ui.ctx());
         let response = IconButton::new(icons::LIST, TOOLRAIL_ICON)
-            .active(*manager_open)
+            .active(self.facts.manager_open)
             .active_marker(marker_edge(self.dock))
             .hover_text("Drawn objects")
             .show(ui);
-        let count = drawings.items().len();
+        let count = self.facts.count;
         if count > 0 {
             paint_badge(ui, response.rect, &count.to_string(), palette.text_muted());
         }
         #[cfg(test)]
         {
-            self.objects_rect = Some(response.rect);
+            self.view.objects_rect = Some(response.rect);
         }
         if response.clicked() {
-            *manager_open = !*manager_open;
+            self.update(Intent::SetManagerOpen(!self.facts.manager_open));
         }
     }
 
@@ -806,8 +667,8 @@ impl ToolRail {
     /// drawing's own eye; lock-all mutates every lock at once. Neither is a
     /// delete, and both are one undo entry. Drawn lock-first because the
     /// trailing layout lays from the rail's far end backwards.
-    fn draw_global_buttons(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
-        let all_locked = drawings.all_locked();
+    fn draw_global_buttons(&mut self, ui: &mut egui::Ui) {
+        let all_locked = self.facts.all_locked;
         let lock_icon = if all_locked {
             icons::LOCK_SIMPLE
         } else {
@@ -825,13 +686,13 @@ impl ToolRail {
             .show(ui);
         #[cfg(test)]
         {
-            self.lock_all_rect = Some(lock.rect);
+            self.view.lock_all_rect = Some(lock.rect);
         }
         if lock.clicked() {
-            drawings.set_all_locked(!all_locked);
+            self.update(Intent::SetAllLocked(!all_locked));
         }
 
-        let all_hidden = drawings.all_hidden();
+        let all_hidden = self.facts.all_hidden;
         let eye_icon = if all_hidden {
             icons::EYE_SLASH
         } else {
@@ -849,23 +710,28 @@ impl ToolRail {
             .show(ui);
         #[cfg(test)]
         {
-            self.hide_all_rect = Some(eye.rect);
+            self.view.hide_all_rect = Some(eye.rect);
         }
         if eye.clicked() {
-            drawings.set_all_hidden(!all_hidden);
+            self.update(Intent::SetAllHidden(!all_hidden));
         }
     }
 
-    fn draw_button(&mut self, ui: &mut egui::Ui, tool: Tool, drawings: &Drawings) {
+    fn draw_button(&mut self, ui: &mut egui::Ui, tool: Tool) {
         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
             .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
             .active(self.tool == tool)
             .active_marker(marker_edge(self.dock))
             .hover_text(tool.hover_text())
             .show(ui);
-        self.paint_draft_badge(ui, &response, tool, drawings);
+        self.paint_draft_badge(ui, &response, tool);
         #[cfg(test)]
-        if let Some(slot) = self.button_rects.iter_mut().find(|slot| slot.is_none()) {
+        if let Some(slot) = self
+            .view
+            .button_rects
+            .iter_mut()
+            .find(|slot| slot.is_none())
+        {
             *slot = Some((tool, response.rect));
         }
         if response.clicked() {
@@ -876,23 +742,17 @@ impl ToolRail {
     /// Draft progress on the armed tool while a multi-point object is being
     /// placed — answers "how many more clicks?" in place. Returns whether a
     /// badge occupies the button's corner this frame.
-    fn paint_draft_badge(
-        &self,
-        ui: &egui::Ui,
-        response: &egui::Response,
-        tool: Tool,
-        drawings: &Drawings,
-    ) -> bool {
+    fn paint_draft_badge(&self, ui: &egui::Ui, response: &egui::Response, tool: Tool) -> bool {
         let palette = theme::get(ui.ctx());
         let Some(drawing_tool) = tool.drawing_tool() else {
             return false;
         };
-        if self.tool != tool || drawings.draft().is_none() || drawing_tool.required_points() < 2 {
+        if self.tool != tool || !self.facts.draft || drawing_tool.required_points() < 2 {
             return false;
         }
         let text = format!(
             "{}/{}",
-            drawings.draft_len(),
+            self.facts.draft_len,
             drawing_tool.required_points()
         );
         paint_badge(ui, response.rect, &text, palette.accent());
@@ -979,7 +839,7 @@ fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(any(feature = "drawing-harness", test))]
 crate::hooks::declare_hooks![
@@ -990,3 +850,73 @@ crate::hooks::declare_hooks![
     "QUANTICK_TOOLBAR_SCROLL",
     "QUANTICK_TOOLBOX_FLYOUT",
 ];
+
+pub(crate) type ToolRail = crate::surfaces::Adapter<quantick_ui_model::tool_rail::Model, View>;
+use quantick_ui_model::UpdateSession;
+use quantick_ui_model::tool_rail::{Intent, Model, State};
+
+struct RailPaint<'a, 'b> {
+    view: &'a mut View,
+    session: &'a mut UpdateSession<'b, Model>,
+}
+impl std::ops::Deref for RailPaint<'_, '_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        self.session.state()
+    }
+}
+impl RailPaint<'_, '_> {
+    fn update(&mut self, intent: Intent) {
+        self.session.update(intent);
+    }
+    fn arm(&mut self, tool: Tool) {
+        self.update(Intent::Arm(tool));
+    }
+    fn toggle_favorite(&mut self, tool: DrawingTool) {
+        self.update(Intent::ToggleFavorite(tool));
+    }
+    fn is_favorite(&self, tool: DrawingTool) -> bool {
+        self.favorites.contains(&tool)
+    }
+}
+pub(crate) fn effects(
+    effects: Vec<quantick_ui_model::tool_rail::Effect>,
+) -> crate::surfaces::SurfaceResponse {
+    crate::surfaces::SurfaceResponse {
+        model_effects: if effects.is_empty() {
+            Vec::new()
+        } else {
+            vec![quantick_ui_model::HostEffect::ToolRail(effects)]
+        },
+        ..Default::default()
+    }
+}
+impl crate::surfaces::View<Model> for View {
+    fn id(&self) -> &'static str {
+        "drawing_toolrail"
+    }
+    fn paint(
+        &mut self,
+        _: &State,
+        _: &mut crate::surfaces::ViewContext<'_>,
+        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        None
+    }
+    fn paint_updated(
+        &mut self,
+        session: &mut UpdateSession<'_, Model>,
+        target: &mut crate::surfaces::ViewContext<'_>,
+        _: Option<&crate::surfaces::SurfaceEnv<'_>>,
+    ) {
+        if let Some(offset) = session.state().requested_scroll {
+            self.band_target = Some(offset);
+            session.update(Intent::AcknowledgeScroll);
+        }
+        RailPaint {
+            view: self,
+            session,
+        }
+        .draw(target.context());
+    }
+}

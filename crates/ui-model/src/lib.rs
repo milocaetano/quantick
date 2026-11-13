@@ -185,6 +185,7 @@ pub enum Slot {
     StatusLine,
     PinnedInspector,
     DrawingChrome,
+    EdgePanels,
 }
 
 macro_rules! models {

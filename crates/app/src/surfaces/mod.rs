@@ -2,6 +2,11 @@
 //! emit intents through the typed adapter.
 //! See quantick-ui-model/src/catalog.rs for the single registration seam.
 
+#[cfg(test)]
+#[macro_use]
+#[path = "chrome/tests/probe_view.rs"]
+mod chrome_probe_view;
+
 use std::time::Instant;
 
 use eframe::egui;
@@ -332,6 +337,16 @@ macro_rules! register_surfaces {
                 response
             }
 
+            /// Visit unscoped catalog entries without an overlay environment.
+            pub fn draw_slot_unscoped(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
+                let mut response = SurfaceResponse::default();
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) && (slot != quantick_ui_model::Slot::Overlay || !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay)) {
+                    self.$field.with_updates(|effect| response.merge(effect), |view, session| {
+                        view.paint_updated(session, target, None);
+                    }); })*
+                response
+            }
+
             /// Modal input follows the catalog before host hotkeys.
             pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
                 $($(#[$view_attr])* if self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) { #[cfg(test)] self.trace_phase("capture", stringify!($field)); self.$field.capture_keyboard(ctx); })*
@@ -404,6 +419,124 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
+
+    #[test]
+    fn edge_panels_dock_in_catalog_order_before_canvas() {
+        use quantick_ui_model::{Slot, chrome_edge_first, chrome_edge_second};
+        let mut registry = Surfaces::default();
+        registry.update(HostIntent::ChromeEdgeFirst(Box::new(
+            chrome_edge_first::Intent::Show(true),
+        )));
+        registry.update(HostIntent::ChromeEdgeSecond(Box::new(
+            chrome_edge_second::Intent::Show(true),
+        )));
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut canvas = egui::Rect::NOTHING;
+        let mut response = SurfaceResponse::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                response = registry
+                    .draw_slot_unscoped(Slot::EdgePanels, &mut ViewContext { ctx, ui: None });
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none())
+                    .show(ctx, |ui| {
+                        canvas = ui.max_rect();
+                    });
+            },
+        );
+        let first = registry
+            .chrome_edge_first
+            .view
+            .painted
+            .expect("first panel painted");
+        let second = registry
+            .chrome_edge_second
+            .view
+            .painted
+            .expect("second panel painted");
+        assert_eq!(first.width(), 37.0);
+        assert_eq!(second.height(), 29.0);
+        assert_eq!(first.top(), screen.top());
+        assert_eq!(first.bottom(), screen.bottom());
+        assert_eq!(
+            second.left(),
+            first.right(),
+            "the second row reserves after the first"
+        );
+        assert_eq!(canvas.left(), first.right());
+        assert_eq!(
+            canvas.top(),
+            second.bottom(),
+            "both reservations precede canvas"
+        );
+        let probe_effects: Vec<_> = response
+            .model_effects
+            .iter()
+            .filter(|effect| {
+                matches!(
+                    effect,
+                    HostEffect::ChromeEdgeFirst(_) | HostEffect::ChromeEdgeSecond(_)
+                )
+            })
+            .collect();
+        assert_eq!(
+            probe_effects,
+            vec![
+                &HostEffect::ChromeEdgeFirst(chrome_edge_first::Effects(Some(1))),
+                &HostEffect::ChromeEdgeSecond(chrome_edge_second::Effects(Some(1))),
+            ]
+        );
+        registry
+            .chrome_edge_first
+            .update(chrome_edge_first::Intent::Show(false));
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                response = registry
+                    .draw_slot_unscoped(Slot::EdgePanels, &mut ViewContext { ctx, ui: None });
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none())
+                    .show(ctx, |ui| {
+                        canvas = ui.max_rect();
+                    });
+            },
+        );
+        assert!(registry.chrome_edge_first.view.painted.is_none());
+        let second = registry
+            .chrome_edge_second
+            .view
+            .painted
+            .expect("visible panel remains");
+        assert_eq!(
+            second.left(),
+            first.left(),
+            "hidden panels release their reservation"
+        );
+        assert_eq!(canvas.top(), second.bottom());
+        assert_eq!(registry.chrome_edge_first.model_state.value, 1);
+        assert_eq!(registry.chrome_edge_second.model_state.value, 2);
+        assert!(
+            response
+                .model_effects
+                .contains(&HostEffect::ChromeEdgeSecond(chrome_edge_second::Effects(
+                    Some(2)
+                )))
+        );
+        assert!(
+            !response
+                .model_effects
+                .iter()
+                .any(|effect| matches!(effect, HostEffect::ChromeEdgeFirst(_)))
+        );
+    }
 
     #[test]
     fn catalog_passes_share_state_and_fold_each_effect_once() {

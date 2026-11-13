@@ -21,6 +21,7 @@ struct DrawingKeys {
     nudge_px: f32,
 }
 
+use crate::toolrail::ToolRailExt as _;
 impl DrawingKeys {
     fn read(ctx: &egui::Context) -> Self {
         ctx.input(|input| {

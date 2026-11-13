@@ -10,6 +10,7 @@ use super::arrangement_adapter::StripAsk;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
 use crate::surfaces::toast;
+use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
@@ -365,8 +366,8 @@ impl QuantickApp {
                     .account_mut()
                     .cancel_all_orders();
             }
-            MenuCommand::SetToolboxDock(dock) => self.toolrail.set_dock(dock),
-            MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
+            MenuCommand::SetToolboxDock(dock) => self.surfaces.toolrail.set_dock(dock),
+            MenuCommand::ToggleToolbox => self.surfaces.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
             MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,

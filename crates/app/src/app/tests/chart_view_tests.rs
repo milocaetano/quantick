@@ -589,7 +589,7 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
         "horizontal-line",
         &[egui::pos2(700.0, 460.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
     let parked = egui::pos2(320.0, 240.0);
@@ -653,7 +653,8 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -697,7 +698,8 @@ fn arrow_nudges_follow_the_screen_when_the_chart_is_inverted() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let start = app.active_tab().flow_pane.drawings.items()[0].points[0];

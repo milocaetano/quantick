@@ -12,6 +12,7 @@
 //! own scale and unit. A drag never crosses into the next band.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 
 use crate::bands::{self, Band};

@@ -11,7 +11,9 @@ fn rectangle_with_open_palette() -> (QuantickApp, egui::Context) {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail.arm(Tool::Drawing(drawing_tool("rectangle")));
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("rectangle")));
     click_chart(&mut app, &ctx, egui::pos2(500.0, 250.0));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 350.0));
     run_frame(&mut app, &ctx);

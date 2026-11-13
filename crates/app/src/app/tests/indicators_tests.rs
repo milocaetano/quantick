@@ -13,7 +13,7 @@ fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
     run_frame(&mut app, &ctx);
     let anchor = pane_body(&app, 0).center();
     let index = place_drawing(&mut app, &ctx, "horizontal-line", &[anchor]);
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -131,7 +131,8 @@ fn a_click_in_an_indicator_pane_draws_on_that_band() {
     let ctx = egui::Context::default();
     add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let inside = pane_body(&app, 0).center();

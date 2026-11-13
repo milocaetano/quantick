@@ -11,7 +11,7 @@ fn drawing_toolbar_avoids_manager() {
         "trend-line",
         &[egui::pos2(400.0, 300.0), egui::pos2(600.0, 400.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     for parked in [false, true] {
         if parked {
@@ -63,7 +63,9 @@ fn layout_readability_combined() {
                 let ctx = egui::Context::default();
                 let (mut app, _commands) = app_with_history(100);
                 app.runtime.appearance.apply_builtin(theme, false).unwrap();
-                app.toolrail.set_dock(crate::toolrail::ToolboxDock::Top);
+                app.surfaces
+                    .toolrail
+                    .set_dock(crate::toolrail::ToolboxDock::Top);
                 app.dock.open_tab(crate::dock::DockTab::Trading);
                 let paper = &mut app.active_tab_mut().paper;
                 paper.seed(&trade(0));
@@ -229,8 +231,12 @@ fn top_rail_has_no_unpainted_gutter_after_restore() {
                     egui::Modifiers::NONE,
                 );
             }
-            assert_eq!(app.toolrail.dock(), crate::toolrail::ToolboxDock::Top);
+            assert_eq!(
+                app.surfaces.toolrail.dock(),
+                crate::toolrail::ToolboxDock::Top
+            );
             let objects = app
+                .surfaces
                 .toolrail
                 .objects_button_rect()
                 .expect("restored rail actions are reachable");
@@ -274,7 +280,7 @@ fn drawing_text_and_forms_remain_readable_inspector() {
                 let anchors = [egui::pos2(400.0, 300.0), egui::pos2(600.0, 400.0)];
                 let count = if id == "anchored-vwap" { 1 } else { 2 };
                 let index = place_drawing(&mut app, &ctx, id, &anchors[..count]);
-                app.toolrail.arm(Tool::Pointer);
+                app.surfaces.toolrail.arm(Tool::Pointer);
                 app.drawing_pane_mut().drawings.select(Some(index));
                 let locked = id == "trend-line";
                 app.drawing_pane_mut().drawings.set_locked_at(index, locked);
@@ -354,7 +360,7 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
             }
             let index = place_drawing(&mut app, &ctx, "text", &[egui::pos2(400.0, 300.0)]);
             app.surfaces.drawing_chrome.end_inline_text_edit();
-            app.toolrail.arm(Tool::Pointer);
+            app.surfaces.toolrail.arm(Tool::Pointer);
             for color in [
                 egui::Color32::from_rgb(181, 131, 43),
                 egui::Color32::from_rgb(250, 250, 250),

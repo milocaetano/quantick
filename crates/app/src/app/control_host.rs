@@ -23,6 +23,7 @@
 //! fields cannot be.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
@@ -946,7 +947,7 @@ impl ChromePort for QuantickApp {
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.replay_view.day_before(),
         };
-        let (rail, chrome) = (&self.toolrail, &self.surfaces.drawing_chrome);
+        let (rail, chrome) = (&self.surfaces.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
@@ -1107,7 +1108,7 @@ impl RecordingPort for QuantickApp {
 
 impl ToolRailPort for QuantickApp {
     fn set_drawing_magnet(&mut self, enabled: bool) -> bool {
-        self.toolrail.set_magnet(enabled)
+        self.surfaces.toolrail.set_magnet(enabled)
     }
 }
 

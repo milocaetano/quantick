@@ -10,6 +10,7 @@
 //! The pane-chrome classifier is shared with placement and the gesture owner.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 
 use crate::bands::{self, Bands};

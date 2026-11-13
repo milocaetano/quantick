@@ -98,7 +98,7 @@ mod theme;
 mod time_header;
 mod timezone;
 mod toolbar;
-mod toolrail;
+use surfaces::toolrail;
 mod trade_paint;
 mod ui_state;
 mod widget_surfaces;

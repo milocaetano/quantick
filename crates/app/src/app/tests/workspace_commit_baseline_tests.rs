@@ -130,7 +130,7 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
         } else {
             vec![]
         };
-        app.toolrail.set_favorites(&favorites);
+        app.surfaces.toolrail.set_favorites(&favorites);
         assert!(app.runtime.workspace.session().bookmarks().is_empty());
         assert!(app.runtime.workspace.session().recent().is_empty());
         assert!(app.replay_view.stored_pick().is_none());
@@ -150,7 +150,7 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
 #[test]
 fn commit_baseline_day_before_alone_does_not_keep_a_reset_file() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&[]);
+    app.surfaces.toolrail.set_favorites(&[]);
     app.workspace_save_adapter().write_replay_day_before(true);
     assert!(app.runtime.workspace.session().saved());
     assert_eq!(
@@ -165,7 +165,7 @@ fn commit_baseline_day_before_alone_does_not_keep_a_reset_file() {
 #[test]
 fn commit_baseline_saved_flag_depends_on_write_purpose_and_failure_is_or() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace_save_adapter().write_favorites();
     assert!(app.runtime.workspace.ui_state_path().is_file());
     assert!(!app.runtime.workspace.session().saved());

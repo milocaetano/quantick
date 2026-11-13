@@ -38,6 +38,8 @@ use crate::indicator_worker::IndicatorSource;
 use crate::indicators::state_file::SavedKind;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::tab::CanvasLayout;
+#[cfg(any(feature = "drawing-harness", test))]
+use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
@@ -63,7 +65,12 @@ pub(super) fn apply_launch_phase(
     #[cfg(any(feature = "control-harness", test))]
     app.control.apply_launch(control_launch);
     #[cfg(any(feature = "drawing-harness", test))]
-    if app.toolrail.apply_launch(rail_launch).favorites_staged {
+    if app
+        .surfaces
+        .toolrail
+        .apply_launch(rail_launch)
+        .favorites_staged
+    {
         app.runtime.workspace.session_mut().stage_favorites();
     }
     #[cfg(any(feature = "scenario-harness", test))]

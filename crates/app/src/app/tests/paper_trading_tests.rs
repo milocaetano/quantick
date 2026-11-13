@@ -15,7 +15,8 @@ fn an_armed_tool_leaves_the_chart_navigable() {
     let ctx = egui::Context::default();
     let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     // The wheel over the pane's own axis still zooms that axis.
@@ -77,7 +78,9 @@ fn an_armed_two_point_tool_completes_on_a_single_drag() {
         let (mut app, _cmd_rx) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        app.toolrail.arm(Tool::Drawing(drawing_tool(tool_id)));
+        app.surfaces
+            .toolrail
+            .arm(Tool::Drawing(drawing_tool(tool_id)));
         run_frame(&mut app, &ctx);
 
         let chart = app
@@ -115,7 +118,8 @@ fn the_pane_chevron_still_wins_its_pixels_with_a_tool_armed() {
     let ctx = egui::Context::default();
     let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let body = pane_body(&app, 0);
@@ -1390,7 +1394,8 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
         });
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let chart = app
@@ -1496,7 +1501,8 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for price_y in [250.0, 400.0] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, price_y));
     }
@@ -1617,7 +1623,8 @@ fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
     // A chart under INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, which is what a
     // split canvas gives the pane a drawing lives on.
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1659,7 +1666,8 @@ fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
         .place_inspector_by_hand(egui::pos2(300.0, 200.0));
     app.surfaces.drawing_chrome.restore_inspector_position(None);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     app.surfaces.drawing_chrome.set_inspector_open(true);
@@ -1697,7 +1705,8 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
     // pin; this test is about the floating window, so say they have.
     app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1750,7 +1759,8 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
         .set_ui_state_path(scratch_ui_state("popup-ratchet"));
     app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1804,11 +1814,13 @@ fn the_object_manager_toggles_eye_lock_and_z_order_per_row() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for price_y in [250.0, 350.0] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, price_y));
     }
     let objects = app
+        .surfaces
         .toolrail
         .objects_button_rect()
         .expect("the toolbox shows the Objects entry");
@@ -1959,7 +1971,7 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(
-        !app.toolrail.magnet(),
+        !app.surfaces.toolrail.magnet(),
         "this proof starts with the magnet off"
     );
 
@@ -1990,7 +2002,7 @@ fn a_buy_mark_lands_free_and_its_magnet_grabs_the_bars_low() {
     );
 
     // Clear of the two free marks, so these clicks place rather than select.
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     let anchor = place(&mut app, 380.0);
     let candle = app
         .active_tab()
@@ -2017,7 +2029,7 @@ fn a_magnetic_sell_mark_grabs_the_bars_high() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-down");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
@@ -2039,7 +2051,8 @@ fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -2049,7 +2062,8 @@ fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
     );
 
     app.surfaces.drawing_chrome.forget_context_bar_rect();
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame(&mut app, &ctx);
     assert!(
@@ -2063,7 +2077,8 @@ fn one_drag_creates_one_undo_entry() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     assert_eq!(
@@ -2134,7 +2149,9 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail.arm(Tool::Drawing(drawing_tool("rectangle")));
+    app.surfaces
+        .toolrail
+        .arm(Tool::Drawing(drawing_tool("rectangle")));
     click_chart(&mut app, &ctx, egui::pos2(600.0, 260.0));
     click_chart(&mut app, &ctx, egui::pos2(760.0, 340.0));
     let source = app.active_tab().flow_pane.drawings.items()[0].id;
@@ -2215,18 +2232,24 @@ fn the_repeat_pin_keeps_the_drawing_tool_armed() {
     run_frame(&mut app, &ctx);
 
     // Default: one-shot back to Pointer.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(650.0, 280.0));
-    assert_eq!(app.toolrail.tool(), Tool::Pointer);
+    assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
 
     // Pinned: the tool stays armed for the next object.
-    app.toolrail.set_repeat(true);
-    app.toolrail
+    app.surfaces.toolrail.set_repeat(true);
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 320.0));
     assert_eq!(
-        app.toolrail.tool().drawing_tool().map(|tool| tool.id()),
+        app.surfaces
+            .toolrail
+            .tool()
+            .drawing_tool()
+            .map(|tool| tool.id()),
         Some("horizontal-line"),
         "the repeat pin keeps the tool armed"
     );
@@ -2306,7 +2329,7 @@ fn a_reset_that_failed_leaves_the_entry_live() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("reset-fails").join("nope.toml"));
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     app.runtime.workspace.session_mut().set_saved(true);
 
     app.workspace_save_adapter().forget_workspace();
@@ -2939,7 +2962,7 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
                         &mut crate::app::drawing_controller::DrawingAccess::new(
                             &mut app.runtime.tabs,
                         ),
-                        &mut app.toolrail,
+                        &mut app.surfaces.toolrail,
                         &mut *app.audio.alerts,
                         ctx,
                         Instant::now(),

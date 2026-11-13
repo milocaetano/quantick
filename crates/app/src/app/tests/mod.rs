@@ -23,6 +23,8 @@
 // work around a problem that was really the shadowing. There is no such rule.
 // The suffix fixes it; the second glob was redundant and is gone.
 
+use crate::toolrail::ToolRailExt as _;
+use crate::toolrail::tests::ToolRailTestExt as _;
 // `DrawingsDemo` reached these files through `app.rs`'s own imports until the
 // demo appliers moved to `app::demo_hooks`. Bound here, beside the other
 // test-only binding, so the one `use super::*` per file still carries it.
@@ -140,7 +142,7 @@ impl QuantickApp {
         arrangement_adapter::ArrangementRead {
             tabs: &self.runtime.tabs,
             config: &self.config,
-            toolrail: &self.toolrail,
+            toolrail: &self.surfaces.toolrail,
             tz: &self.runtime.tz,
             dock: &self.dock,
             show_perf: self.health.show_perf,
@@ -626,7 +628,6 @@ fn with_flow_pane<R>(
                 footprint_config,
                 ..
             },
-        toolrail,
         drawings,
         surfaces,
         ..
@@ -636,7 +637,7 @@ fn with_flow_pane<R>(
     let mut chrome = pane::PaneChrome {
         tab: tab_id,
         side: pane::PaneSide::Flow,
-        toolrail,
+        toolrail: &mut surfaces.toolrail,
         presets: &drawings.presets,
         drawing_chrome: &mut surfaces.drawing_chrome,
         begin_text_edit: &mut begin_text_edit,
@@ -986,7 +987,7 @@ fn arm_drawing_from_toolbox(
 ) -> drawings::DrawingTool {
     let drawing = drawing_tool(id);
     let tool = Tool::Drawing(drawing);
-    if let Some(button) = app.toolrail.button_rect(tool) {
+    if let Some(button) = app.surfaces.toolrail.button_rect(tool) {
         click_chart(app, ctx, button.center());
     } else {
         // A folded family member has no direct slot: open the family
@@ -1002,18 +1003,19 @@ fn arm_drawing_from_toolbox(
                     .family()
                     .is_some_and(|candidate_family| candidate_family.id == family.id)
             })
-            .find_map(|candidate| app.toolrail.button_rect(Tool::Drawing(candidate)))
+            .find_map(|candidate| app.surfaces.toolrail.button_rect(Tool::Drawing(candidate)))
             .expect("the family slot was rendered");
         click_chart(app, ctx, slot.max - egui::vec2(4.0, 4.0));
         run_frame(app, ctx);
         let row = app
+            .surfaces
             .toolrail
             .flyout_row_rect(drawing)
             .expect("the flyout lists the folded member");
         click_chart(app, ctx, row.center());
     }
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         tool,
         "arming {id} through the rail must land"
     );
@@ -1231,7 +1233,8 @@ fn chrome_with_popup_at(position: Option<[f32; 2]>) -> ui_state::SavedChrome {
 /// Put a horizontal line on the chart at that height and leave it there.
 /// Two of them is the setup every "the next drawing too" claim needs.
 fn draw_horizontal_line(app: &mut QuantickApp, ctx: &egui::Context, price_y: f32) {
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(app, ctx, egui::pos2(700.0, price_y));
     run_frame(app, ctx);
@@ -1282,7 +1285,7 @@ fn place_drawing(
     id: &str,
     anchors: &[egui::Pos2],
 ) -> usize {
-    app.toolrail.arm(Tool::Drawing(drawing_tool(id)));
+    app.surfaces.toolrail.arm(Tool::Drawing(drawing_tool(id)));
     for anchor in anchors {
         click_chart(app, ctx, *anchor);
     }
