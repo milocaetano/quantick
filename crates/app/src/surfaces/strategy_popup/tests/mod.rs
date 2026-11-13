@@ -46,6 +46,70 @@ fn an_untouched_dialog_survives_the_frame() {
     assert_eq!(surface.model_state.popup().unwrap().form.quantity, "3");
 }
 
+#[test]
+fn painted_alarm_section_consumes_only_the_deferred_picker_it_reaches() {
+    use crate::surfaces::View as _;
+    let ctx = egui::Context::default();
+    let mut surface = surface();
+    surface.update(Intent::StageSoundPicker);
+    assert_eq!(
+        frame(&mut surface, &ctx, vec![]).1,
+        SurfaceResponse::default()
+    );
+    assert!(
+        surface.model_state.sound_picker_pending(),
+        "closed paint retains staging"
+    );
+    open(&mut surface);
+    let _ = ctx.run(Default::default(), |ctx| {
+        surface.with_updates(
+            |response| assert_eq!(response, SurfaceResponse::default()),
+            |view, session| view.paint_updated(session, &mut ViewContext { ctx, ui: None }, None),
+        );
+    });
+    assert!(
+        surface.model_state.sound_picker_pending(),
+        "omitted environment retains staging"
+    );
+    let _ = ctx.run(Default::default(), |ctx| {
+        assert_eq!(
+            surface.draw(ctx, &SurfaceEnv::quiet(Instant::now())),
+            SurfaceResponse::default()
+        );
+    });
+    assert!(
+        !surface.model_state.is_open(),
+        "foreign owner closes before painting"
+    );
+    assert!(surface.model_state.sound_picker_pending());
+    open(&mut surface);
+    surface.update(Intent::Edit(Field::Alarm(false)));
+    for _ in 0..2 {
+        assert_eq!(
+            frame(&mut surface, &ctx, vec![]).1,
+            SurfaceResponse::default()
+        );
+    }
+    assert!(
+        !surface.model_state.sound_picker_pending(),
+        "alarm-off section consumes before its early return"
+    );
+    assert!(!ctx.memory(|memory| memory.any_popup_open()));
+    surface.update(Intent::Cancel);
+    open(&mut surface);
+    surface.update(Intent::Edit(Field::Alarm(true)));
+    for _ in 0..2 {
+        assert_eq!(
+            frame(&mut surface, &ctx, vec![]).1,
+            SurfaceResponse::default()
+        );
+    }
+    assert!(
+        !ctx.memory(|memory| memory.any_popup_open()),
+        "later opening does not inherit the consumed picker"
+    );
+}
+
 fn frame(
     surface: &mut StrategyPopupSurface,
     ctx: &egui::Context,

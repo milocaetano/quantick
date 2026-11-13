@@ -47,8 +47,17 @@ fn leading_overlay_preserves_hooks_capture_and_actual_legacy_interleaving() {
     );
     let mut response = SurfaceResponse::default();
     let _ = ctx.run(Default::default(), |ctx| {
+        response = registry.draw_slot(Slot::Toolbar, &mut ViewContext { ctx, ui: None }, &env);
+    });
+    assert_eq!(response, SurfaceResponse::default());
+    assert!(order(&registry, "hook").is_empty());
+    assert!(registry.hooks_pending());
+    assert_eq!(registry.first.model_state, 0);
+    assert_eq!(registry.first.view.hook_intent, Some((3, 10)));
+    let _ = ctx.run(Default::default(), |ctx| {
         response = registry.draw_all(ctx, &env)
     });
+    assert!(!registry.hooks_pending());
     assert_eq!(
         order(&registry, "hook"),
         vec!["first", "toast", "script_editor", "second"]
