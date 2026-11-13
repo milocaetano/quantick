@@ -28,7 +28,6 @@
 //! Reordering them changes what a launch opens with, and no compiler catches
 //! it.
 
-#[cfg(any(feature = "scenario-harness", test))]
 use crate::dock::DockTab;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::hooks::ScenarioInputs;
@@ -36,6 +35,9 @@ use crate::hooks::ScenarioInputs;
 use crate::indicator_worker::IndicatorSource;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::indicators::state_file::SavedKind;
+#[cfg(any(feature = "scenario-harness", test))]
+#[cfg(any(feature = "scenario-harness", test))]
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::tab::CanvasLayout;
 #[cfg(any(feature = "drawing-harness", test))]
@@ -540,7 +542,7 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
         };
         match staged {
             Some(enabled) => {
-                app.replay_view.stage_day_before(enabled);
+                app.surfaces.replay_browser.stage_day_before(enabled);
                 tracing::info!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -590,7 +592,10 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             .var("QUANTICK_REPLAY_SESSION")
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let started = app.replay_view.autostart(speed, day.as_deref(), play);
+        let started = app
+            .surfaces
+            .replay_browser
+            .autostart(speed, day.as_deref(), play);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -599,10 +604,10 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             // once a stored pick can supply it, reading the hook back
             // would report an empty folder for a run that scanned a full
             // one — a log that lies about the input it acted on.
-            folder = app.replay_view.folder_in_use(),
+            folder = app.surfaces.replay_browser.folder_in_use(),
             speed,
             day = day.as_deref().unwrap_or("(first)"),
-            day_before = app.replay_view.day_before(),
+            day_before = app.surfaces.replay_browser.day_before(),
             play,
             started,
             action = if started { "load_first_session" } else { "open_browser" },
@@ -618,12 +623,12 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_REPLAY_BROWSER")
         .is_some_and(|value| value == "1")
     {
-        app.replay_view.open_browser();
+        app.surfaces.replay_browser.open_browser();
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "REPLAY_BROWSER_AUTOSTART",
-            folder = app.replay_view.folder_in_use(),
+            folder = app.surfaces.replay_browser.folder_in_use(),
             "opened the session browser"
         );
     }
@@ -639,7 +644,7 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             "1" | "" => Some(app.active_tab().symbol.clone()),
             symbol => Some(symbol.to_string()),
         };
-        app.replay_view.open_get_data(symbol.as_deref());
+        app.surfaces.replay_browser.open_get_data(symbol.as_deref());
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,

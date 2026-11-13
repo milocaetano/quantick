@@ -16,6 +16,7 @@
 use super::drawing_controller::{DrawingAccess, DrawingReadAccess, QUICK_RANGE_REFUSED};
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
 use crate::toolrail::ToolRailExt as _;
 use quantick_chart_interaction::frame_plan::StageScope;
@@ -416,7 +417,7 @@ impl QuantickApp {
             FrameStage::LayoutSwitches => apply_layout_switches(self),
             FrameStage::FeedSwitch => apply_feed_switch(self),
             FrameStage::MirrorLoadingWaits => {
-                panels::mirror_loading_waits(&self.replay_view, &mut self.runtime.tabs);
+                panels::mirror_loading_waits(&self.surfaces.replay_browser, &mut self.runtime.tabs);
             }
             FrameStage::HomeCanvas => draw_home_canvas_stage(self, ctx, scratch),
             FrameStage::Canvas => self.draw_canvas_stage(ctx, scratch),
@@ -592,12 +593,8 @@ impl QuantickApp {
     }
 
     fn draw_replay_browser_stage(&mut self, ctx: &egui::Context) {
-        let action = panels::draw_replay_browser(
-            ctx,
-            &mut self.replay_view,
-            &self.runtime.tabs,
-            &self.config,
-        );
+        let action =
+            panels::draw_replay_browser(ctx, &mut self.surfaces, &self.runtime.tabs, &self.config);
         if let Some(action) = action {
             let (tab, config) = self.active_with_config();
             super::replay_and_history::apply_replay_action(tab, config, action);
@@ -605,14 +602,14 @@ impl QuantickApp {
         // A folder the trader just pointed the browser at is written down on
         // the frame they pointed it, not at exit: "it forgot my folder again"
         // must not be one crash away.
-        if let Some(pick) = self.replay_view.take_folder_change() {
+        if let Some(pick) = self.surfaces.replay_browser.take_folder_change() {
             self.workspace_save_adapter()
                 .write_replay_folder(pick.as_deref());
         }
         // The same, for the tick that decides whether yesterday is on the
         // chart. Either row can have been the one clicked; the browser owns
         // the setting, so there is one place to pick the change up.
-        if let Some(enabled) = self.replay_view.take_day_before_change() {
+        if let Some(enabled) = self.surfaces.replay_browser.take_day_before_change() {
             self.workspace_save_adapter()
                 .write_replay_day_before(enabled);
         }
@@ -623,7 +620,7 @@ impl QuantickApp {
             ctx,
             &mut self.dock,
             &mut self.runtime.tabs,
-            &mut self.replay_view,
+            &mut self.surfaces.replay_browser,
             self.runtime.tz,
         );
         // The strategy editor is a window of the active tab's ticket, drawn

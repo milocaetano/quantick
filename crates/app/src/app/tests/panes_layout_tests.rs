@@ -3986,3 +3986,65 @@ fn layout_delete_prompt_preserves_keyboard_choice_precedence() {
     );
     assert!(!ctx.input(|input| input.key_pressed(egui::Key::Enter)));
 }
+
+/// The registered loader result reaches the active host tab, then the frame
+/// clears the mirrored wait without publishing that payload a second time.
+#[test]
+fn replay_loaded_payload_opens_active_tab_and_clears_host_wait() {
+    use quantick_ui_model::replay_browser::Intent;
+    let root = crate::scratch::ScratchDir::new("replay-browser-host");
+    let instrument = root.join("WINJ26");
+    std::fs::create_dir_all(&instrument).unwrap();
+    std::fs::write(instrument.join("20260316.csv"),
+        "# quantick-replay 1\n# symbol=WINJ26\n# timezone=+00:00\nDate,Time,Price,Volume,Side\n2026-03-16,10:00:00.000,100,1,B\n").unwrap();
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    app.surfaces
+        .replay_browser
+        .dispatch(Intent::SetFolderDraft(root.display().to_string()));
+    app.surfaces
+        .replay_browser
+        .dispatch(Intent::StageDayBefore(false));
+    app.surfaces.replay_browser.open_browser();
+    app.surfaces.replay_browser.dispatch(Intent::LoadSelected);
+    assert!(app.surfaces.replay_browser.is_loading());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.active_tab().link.replay.is_none() {
+        run_frame(&mut app, &ctx);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "host receives real CSV completion"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let session = app
+        .active_tab()
+        .link
+        .replay
+        .as_ref()
+        .unwrap()
+        .session
+        .clone();
+    assert_eq!(session.symbol, "WINJ26");
+    assert!(
+        app.runtime.tabs[0].link.replay.is_none(),
+        "background tab receives no Open"
+    );
+    assert!(
+        !app.active_tab()
+            .loading
+            .is_active(LoadingTask::ReplaySession)
+    );
+    assert!(!app.surfaces.replay_browser.is_loading());
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &session,
+                &app.active_tab().link.replay.as_ref().unwrap().session
+            ),
+            "completed payload is not reopened"
+        );
+    }
+}

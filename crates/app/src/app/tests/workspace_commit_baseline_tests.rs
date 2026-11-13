@@ -133,7 +133,7 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
         app.surfaces.toolrail.set_favorites(&favorites);
         assert!(app.runtime.workspace.session().bookmarks().is_empty());
         assert!(app.runtime.workspace.session().recent().is_empty());
-        assert!(app.replay_view.stored_pick().is_none());
+        assert!(app.surfaces.replay_browser.stored_pick().is_none());
         std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
         app.workspace_save_adapter().forget_workspace();
         assert_eq!(app.runtime.workspace.ui_state_path().exists(), keep_star);

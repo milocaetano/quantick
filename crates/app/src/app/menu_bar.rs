@@ -9,6 +9,7 @@
 use super::arrangement_adapter::StripAsk;
 use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::orderflow_panel as panel;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::surfaces::toast;
 use crate::toolrail::ToolRailExt as _;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
@@ -299,7 +300,7 @@ impl QuantickApp {
             return;
         }
         match command {
-            MenuCommand::OpenReplayBrowser => self.replay_view.open_browser(),
+            MenuCommand::OpenReplayBrowser => self.surfaces.replay_browser.open_browser(),
             MenuCommand::CloseReplay => {
                 let (tab, config) = self.active_with_config();
                 tab.close_replay(config);
@@ -380,7 +381,7 @@ impl QuantickApp {
                     access.open_panel();
                 }
             }
-            MenuCommand::OpenReplayFormatHelp => self.replay_view.open_format_help(),
+            MenuCommand::OpenReplayFormatHelp => self.surfaces.replay_browser.open_format_help(),
             // Carried out by `apply_menu_command_on`, which knows the window.
             MenuCommand::ToggleWindowMenu
             | MenuCommand::OpenSettings(_)

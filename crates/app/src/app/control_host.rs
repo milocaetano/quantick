@@ -23,6 +23,7 @@
 //! fields cannot be.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
@@ -945,7 +946,7 @@ impl ChromePort for QuantickApp {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
             feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
-            replay_day_before: self.replay_view.day_before(),
+            replay_day_before: self.surfaces.replay_browser.day_before(),
         };
         let (rail, chrome) = (&self.surfaces.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
