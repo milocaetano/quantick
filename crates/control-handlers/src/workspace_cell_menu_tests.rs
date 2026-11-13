@@ -51,8 +51,9 @@ fn the_rows_keep_the_designed_order_and_name_their_calls() {
             Some(calls::WORKSPACE_LIST_CAPABILITY_ID)
         ]
     );
-    assert_eq!(scene_id(""), SCENE_ID);
-    assert_eq!(scene_id("save"), "toolbar.workspace_menu.save");
+    assert_eq!(CellRow::menu().scene_id(), SCENE_ID);
+    assert_eq!(menu.head[3].scene_id(), "workspace_menu.save");
+    assert_eq!(CellRow::menu().capability, Some(MENU_CAPABILITY_ID));
 }
 
 #[test]
@@ -97,4 +98,15 @@ fn every_workspace_is_a_row_the_tab_s_own_lit() {
         default.capability,
         Some(calls::TAB_WORKSPACE_SET_CAPABILITY_ID)
     );
+}
+
+#[test]
+fn the_window_menu_s_action_rows_are_the_cell_menu_s() {
+    let book = book(false);
+    let menu = cell_menu(&book, 1, "");
+    let new = action_row(&book, 1, RowId::WorkspaceNew).expect("a workspace row");
+    assert_eq!(Some(&new), menu.foot.get(1));
+    let autosave = action_row(&book, 1, RowId::WorkspaceAutosave).expect("a workspace row");
+    assert_eq!(autosave.command, Some(WorkspaceCommand::SetAutosave(true)));
+    assert_eq!(action_row(&book, 1, RowId::SaveToWorkspace), None);
 }

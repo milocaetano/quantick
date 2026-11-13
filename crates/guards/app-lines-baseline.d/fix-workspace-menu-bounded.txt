@@ -1,9 +1,0 @@
-# fix/workspace-menu-bounded: the workspace cell menu's egui half. A fresh
-# area per opening (egui lays an area out inside its last size, so a kept one
-# never narrows), a scroll area round the workspace list, names cut to the
-# room beside their summary with the full name on hover, the unsaved dot
-# inside its row, and the menu and its rows published to the scene with the
-# call each one does. The size budget is headless:
-# session::workspace_menu::chip_menu_budget. Measured.
-crates/app +163
-!budget +163

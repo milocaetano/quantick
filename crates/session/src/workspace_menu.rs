@@ -2,6 +2,8 @@
 //! menu, the Manage workspaces dialog whose delete asks twice, the dialog that
 //! asks for a name and the close that asks per tab holding edits.
 
+use std::collections::BTreeMap;
+
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 
 /// What a workspace row or the dialog asked the window to do.
@@ -93,9 +95,8 @@ pub struct WorkspaceMenuState {
     /// and acts in the window presenting that tab, so a torn-off window's
     /// cell never reaches another window's tab.
     pub chip_menu: Option<u64>,
-    /// Counts the menu's openings: each one is laid out afresh, so it is as
-    /// wide as what it shows now and not the widest it ever showed.
-    pub chip_menu_opened: u64,
+    /// How the open menu is measured, afresh on every opening.
+    pub chip_sizing: ChipSizing,
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
@@ -106,9 +107,11 @@ impl WorkspaceMenuState {
     /// on that tab, or close it when it was already open there.
     pub fn toggle_chip_menu(&mut self, tab: u64) {
         self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
-        if self.chip_menu.is_some() {
-            self.chip_menu_opened = self.chip_menu_opened.wrapping_add(1);
-        }
+        self.chip_sizing = if self.chip_menu.is_some() {
+            ChipSizing::opened()
+        } else {
+            ChipSizing::default()
+        };
     }
 
     pub fn close_chip_menu(&mut self) {
@@ -230,6 +233,9 @@ pub const CHIP_MENU_MAX_WIDTH_PT: f32 = 360.0;
 pub const CHIP_MENU_MIN_WIDTH_PT: f32 = 200.0;
 /// How far below the capsule the menu hangs, in points.
 pub const CHIP_MENU_DROP_PT: f32 = 4.0;
+/// The unsaved dot's centre in from the Save row's left edge, in points:
+/// inside the row, in the padding before its text.
+pub const CHIP_MENU_DOT_INSET_PT: f32 = 5.0;
 /// What the menu keeps clear of the window's edges, in points: room for the
 /// small differences between the measured rows and the drawn ones.
 pub const CHIP_MENU_EDGE_PT: f32 = 8.0;
@@ -241,6 +247,54 @@ pub const CHIP_MENU_MIN_LIST_ROWS: usize = 3;
 pub const CHIP_MENU_FIXED_ROWS: usize = 8;
 /// The separators between the menu's groups.
 pub const CHIP_MENU_SEPARATORS: usize = 3;
+/// The height egui gives a horizontal separator, before the gap after it.
+pub const CHIP_MENU_SEPARATOR_PT: f32 = 6.0;
+
+/// How the open cell menu is measured. A UI sizes the menu from its last
+/// frame, so the frame after an opening lays every row out whole and unseen,
+/// no wider than the floor but for what a row asks, so a rule spanning the
+/// menu cannot carry an old width;
+/// the frames after it draw, and a row whose whole width does not fit its
+/// room has its name cut short.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChipSizing {
+    /// The menu opened and has not had a frame yet.
+    opened: bool,
+    measuring: bool,
+    /// Each row's whole width, in points rounded up, by scene key.
+    whole: BTreeMap<String, u32>,
+}
+
+impl ChipSizing {
+    /// Sizing for a menu that just opened: its next frame measures.
+    #[must_use]
+    pub fn opened() -> Self {
+        Self {
+            opened: true,
+            ..Self::default()
+        }
+    }
+
+    /// A frame of the menu begins: answers whether it is the one that
+    /// measures, the first after an opening.
+    pub fn begin_frame(&mut self) -> bool {
+        self.measuring = std::mem::take(&mut self.opened);
+        self.measuring
+    }
+
+    /// A row under `key` that asked `desired_pt`: on the measuring frame its
+    /// whole width, kept, answering false; after it, whether that whole
+    /// width is more than `room_pt`, so its name is cut short.
+    pub fn cut(&mut self, key: &str, desired_pt: f32, room_pt: f32) -> bool {
+        if self.measuring {
+            self.whole.insert(key.to_owned(), desired_pt.ceil() as u32);
+            return false;
+        }
+        self.whole
+            .get(key)
+            .is_some_and(|&whole| whole as f32 > room_pt.ceil())
+    }
+}
 
 /// A rectangle in points.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -249,6 +303,18 @@ pub struct MenuBounds {
     pub top: f32,
     pub right: f32,
     pub bottom: f32,
+}
+
+impl MenuBounds {
+    #[must_use]
+    pub const fn new(left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
 }
 
 /// The heights the menu's style draws, in points, separators and the frame
@@ -263,6 +329,18 @@ pub struct MenuMetrics {
     pub frame_pt: f32,
 }
 
+impl MenuMetrics {
+    /// From a button's height, the gap between rows and the frame's margins.
+    #[must_use]
+    pub const fn of(button_pt: f32, gap_pt: f32, margins_pt: f32) -> Self {
+        Self {
+            row_pt: button_pt + gap_pt,
+            separator_pt: CHIP_MENU_SEPARATOR_PT + gap_pt,
+            frame_pt: margins_pt,
+        }
+    }
+}
+
 /// The size the cell's menu may take this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChipMenuBudget {
@@ -274,6 +352,20 @@ pub struct ChipMenuBudget {
     /// The whole menu's height: over the room below the capsule only when
     /// the window cannot hold [`CHIP_MENU_MIN_LIST_ROWS`] rows.
     pub max_height: f32,
+}
+
+impl ChipMenuBudget {
+    /// The width the menu's frame may take: the floor on the frame that
+    /// measures it, so a rule spanning the menu cannot carry an old width,
+    /// and the cap on the frames that draw.
+    #[must_use]
+    pub const fn width(&self, measuring: bool) -> f32 {
+        if measuring {
+            self.min_width
+        } else {
+            self.max_width
+        }
+    }
 }
 
 /// What the cell's menu may take on `screen`, hanging below `anchor` with
@@ -542,22 +634,35 @@ mod tests {
     #[test]
     fn every_opening_measures_once_and_a_close_does_not() {
         let mut state = WorkspaceMenuState::default();
-        assert!(!state.take_chip_measure(), "nothing open");
+        assert!(!state.chip_sizing.begin_frame(), "nothing open");
         state.toggle_chip_menu(7);
-        assert!(state.take_chip_measure(), "the opening frame measures");
-        assert!(!state.take_chip_measure(), "once");
+        assert!(
+            state.chip_sizing.begin_frame(),
+            "the opening frame measures"
+        );
+        assert!(!state.chip_sizing.begin_frame(), "once");
         state.toggle_chip_menu(7);
-        assert!(!state.take_chip_measure(), "closing measures nothing");
+        assert!(!state.chip_sizing.begin_frame(), "closing measures nothing");
         state.toggle_chip_menu(7);
+        state.chip_sizing.begin_frame();
         state.toggle_chip_menu(8);
-        assert!(state.take_chip_measure(), "another tab's opening too");
+        assert!(state.chip_sizing.begin_frame(), "another tab's opening too");
     }
 
     #[test]
-    fn a_name_is_cut_when_its_row_asks_the_whole_room() {
-        assert!(name_cut(300.0, 300.0));
-        assert!(name_cut(299.6, 300.0), "within the rounding");
-        assert!(!name_cut(240.0, 300.0));
+    fn a_name_is_cut_only_when_its_whole_row_does_not_fit() {
+        let sizing = &mut ChipSizing::opened();
+        assert!(sizing.begin_frame());
+        assert!(
+            !sizing.cut("wide", 420.2, 200.0),
+            "the measuring frame cuts nothing"
+        );
+        assert!(!sizing.cut("narrow", 180.0, 200.0));
+        assert!(!sizing.begin_frame());
+        assert!(sizing.cut("wide", 344.0, 344.0), "asks the whole room, cut");
+        assert!(!sizing.cut("narrow", 180.0, 344.0));
+        assert!(!sizing.cut("wide", 421.0, 421.0), "fits exactly, whole");
+        assert!(!sizing.cut("unmeasured", 344.0, 344.0));
     }
 
     #[test]
@@ -570,5 +675,12 @@ mod tests {
             MenuBounds::new(1.0, 2.0, 3.0, 4.0),
             rect(1.0, 2.0, 3.0, 4.0)
         );
+    }
+
+    #[test]
+    fn the_measuring_frame_keeps_to_the_floor_and_the_others_to_the_cap() {
+        let budget = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 9, METRICS);
+        assert_eq!(budget.width(true), CHIP_MENU_MIN_WIDTH_PT);
+        assert_eq!(budget.width(false), CHIP_MENU_MAX_WIDTH_PT);
     }
 }

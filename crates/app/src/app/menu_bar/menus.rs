@@ -324,7 +324,7 @@ impl WindowMenu<'_> {
             take_focus(state, level, &response);
             return;
         }
-        if self.workspace.action_row(ui, id, commands).is_some() {
+        if self.workspace.action_row(ui, id, commands) {
             return;
         }
         let row = row_of(id);
@@ -456,9 +456,7 @@ impl WindowMenu<'_> {
             LiveRows::Legend => self.legend_entry(ui, commands),
             LiveRows::ChartMoves => self.chart_moves(ui, commands),
             LiveRows::RecentFiles => self.recent_files(ui, commands),
-            LiveRows::WorkspaceList => {
-                self.workspace.list(ui, commands, false);
-            }
+            LiveRows::WorkspaceList => self.workspace.list(ui, commands),
         }
         if wants_focus && !self.focus_live_row.get() {
             state.focus_pane = None;

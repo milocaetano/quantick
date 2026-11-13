@@ -12,6 +12,7 @@ use crate::orderflow_panel as panel;
 use crate::{chart_layers::shortcuts, tabstrip::TabAction, timezone::TzOffset};
 use crate::{surfaces::ChartSettingsTab::Candles, surfaces::MarketPaletteSurface};
 use eframe::egui;
+use quantick_control_handlers::workspace_cell_menu::CellRow;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
@@ -422,14 +423,13 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
 
 /// The capsule's workspace name: a click, or Ctrl+Shift+O from anywhere in
 /// the window, opens its menu below the name on this window's tab. A torn-off
-/// window's capsule reaches its own tab and no other. Answers the open menu
-/// and its rows in view, for the scene.
+/// window's capsule reaches its own tab and no other. Answers the rows in view.
 pub(super) fn workspace_cell(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     cell: Option<egui::Rect>,
     clicked: bool,
-) -> Vec<crate::toolbar::DrawnControl> {
+) -> Vec<(CellRow, egui::Rect)> {
     let (tab, window) = (
         app.runtime.tabs.active_id(),
         app.runtime.tabs.presented_window_ids(),
@@ -437,17 +437,17 @@ pub(super) fn workspace_cell(
     let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     let open = menu.follow_cell(tab, cell.is_some(), &window, clicked || pressed);
-    let (mut commands, mut drawn) = (Vec::new(), Vec::new());
-    if let Some(cell) = cell.filter(|_| open) {
+    let mut commands = Vec::new();
+    let drawn = cell.filter(|_| open).map(|cell| {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
         let rows = workspace_rows::WorkspaceRows::of(app);
-        drawn = rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
-    }
+        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands)
+    });
     app.chrome.window_menu.tab_workspace = menu;
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }
-    drawn
+    drawn.unwrap_or_default()
 }
 
 /// The commands that need to know which window asked, then all the others.
