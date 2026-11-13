@@ -7,6 +7,14 @@
 #[path = "chrome/tests/probe_view.rs"]
 mod chrome_probe_view;
 
+#[cfg(test)]
+mod borrowed;
+#[cfg(test)]
+pub(crate) use borrowed::BorrowedSurfaceEnv;
+// #985 replaces this None-only staging alias with the concrete production facets.
+#[cfg(not(test))]
+pub(crate) type BorrowedSurfaceEnv<'a> = std::convert::Infallible;
+
 use std::time::Instant;
 
 use eframe::egui;
@@ -238,6 +246,17 @@ pub(crate) trait View<M: quantick_ui_model::Model> {
             session.update(intent);
         }
     }
+    /// Borrow domain owners only for this row's paint transaction.
+    fn paint_borrowed(
+        &mut self,
+        session: &mut quantick_ui_model::UpdateSession<'_, M>,
+        target: &mut ViewContext<'_>,
+        _slot: quantick_ui_model::Slot,
+        _env: Option<&mut BorrowedSurfaceEnv<'_>>,
+    ) -> SurfaceResponse {
+        self.paint_updated(session, target, None);
+        SurfaceResponse::default()
+    }
     fn paint(
         &mut self,
         state: &M::State,
@@ -251,10 +270,6 @@ pub(crate) type Adapter<M, V> = quantick_ui_model::Adapter<M, V, SurfaceResponse
 impl<M: quantick_ui_model::Model, V: View<M>> Surface for Adapter<M, V> {
     fn capture_keyboard(&mut self, ctx: &egui::Context) {
         self.view.capture_keyboard(&self.model_state, ctx);
-    }
-    #[cfg(test)]
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        self.draw_in(&mut ViewContext { ctx, ui: None }, env)
     }
     fn draw_in(&mut self, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         let mut response = SurfaceResponse::default();
@@ -337,13 +352,19 @@ macro_rules! register_surfaces {
                 response
             }
 
-            /// Visit unscoped catalog entries without an overlay environment.
+            /// Preserve ordinary callers through the same borrowed-domain traversal.
             pub fn draw_slot_unscoped(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
+                self.draw_slot_unscoped_with_env(slot, target, None)
+            }
+
+            /// Reborrow domain authority for each catalog row, never retain it.
+            pub fn draw_slot_unscoped_with_env(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>, mut env: Option<&mut BorrowedSurfaceEnv<'_>>) -> SurfaceResponse {
                 let mut response = SurfaceResponse::default();
                 $($(#[$view_attr])* if self.$field.supports_pass(slot) && (slot != quantick_ui_model::Slot::Overlay || !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay)) {
-                    self.$field.with_updates(|effect| response.merge(effect), |view, session| {
-                        view.paint_updated(session, target, None);
-                    }); })*
+                    let returned = self.$field.with_updates(|effect| response.merge(effect), |view, session| {
+                        view.paint_borrowed(session, target, slot, env.as_deref_mut())
+                    });
+                    response.merge(returned); })*
                 response
             }
 
@@ -419,6 +440,199 @@ impl Surfaces {
 mod tests {
     use super::*;
     use quantick_workspace::market_list::PaletteIntent;
+
+    #[test]
+    fn borrowed_domain_rows_reborrow_in_catalog_order() {
+        use quantick_ui_model::{Slot, borrowed_first, borrowed_second};
+        fn pass(
+            registry: &mut Surfaces,
+            ctx: &egui::Context,
+            slot: Slot,
+            mut env: Option<&mut BorrowedSurfaceEnv<'_>>,
+        ) -> (SurfaceResponse, egui::Rect) {
+            let mut response = SurfaceResponse::default();
+            let mut canvas = egui::Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    response = registry.draw_slot_unscoped_with_env(
+                        slot,
+                        &mut ViewContext { ctx, ui: None },
+                        env.as_deref_mut(),
+                    );
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::none())
+                        .show(ctx, |ui| {
+                            canvas = ui.max_rect();
+                        });
+                },
+            );
+            (response, canvas)
+        }
+        let mut registry = Surfaces::default();
+        registry
+            .borrowed_first
+            .update(borrowed_first::Intent::Enable);
+        registry
+            .borrowed_second
+            .update(borrowed_second::Intent::Enable);
+        let mut paper = crate::paper_trading::PaperTrading::new();
+        let ctx = egui::Context::default();
+        for initial in [false, true] {
+            let mut settings = paper.cmd_trading();
+            settings.enabled = initial;
+            paper.set_cmd_trading(settings);
+            let mut env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+                paper: &mut paper,
+                replay: None,
+                timezone: Default::default(),
+            });
+            let (response, canvas) =
+                pass(&mut registry, &ctx, Slot::LateEdgePanels, Some(&mut env));
+            assert_eq!(
+                paper.cmd_trading().enabled,
+                initial,
+                "both owner mutations occurred"
+            );
+            assert_eq!(registry.borrowed_first.model_state.observed, Some(initial));
+            assert_eq!(
+                registry.borrowed_second.model_state.observed,
+                Some(!initial)
+            );
+            assert_eq!(registry.borrowed_first.view.immediate, Some(initial));
+            assert_eq!(registry.borrowed_second.view.immediate, Some(!initial));
+            assert_eq!(
+                response.model_effects,
+                vec![
+                    HostEffect::BorrowedFirst(borrowed_first::Effects(Some((initial, "session")))),
+                    HostEffect::BorrowedFirst(borrowed_first::Effects(Some((initial, "returned")))),
+                    HostEffect::BorrowedSecond(borrowed_second::Effects(Some((
+                        !initial, "session"
+                    )))),
+                    HostEffect::BorrowedSecond(borrowed_second::Effects(Some((
+                        !initial, "returned"
+                    )))),
+                ],
+                "session then returned response, once per row; host applies after pass"
+            );
+            let first = registry.borrowed_first.view.painted.unwrap();
+            let second = registry.borrowed_second.view.painted.unwrap();
+            assert_eq!(
+                first,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(37.0, 600.0))
+            );
+            assert_eq!(
+                second,
+                egui::Rect::from_min_max(egui::pos2(37.0, 0.0), egui::pos2(800.0, 29.0))
+            );
+            assert_eq!(
+                canvas,
+                egui::Rect::from_min_max(egui::pos2(37.0, 29.0), egui::pos2(800.0, 600.0))
+            );
+        }
+        let presets = crate::drawings::presets::PresetStore::load_from(std::path::Path::new(
+            "missing-borrowed-probe-presets.toml",
+        ));
+        let drawings = DrawingEnv {
+            pane_id: 42,
+            selected: None,
+            chart_area: None,
+            automatic_bar_area: None,
+            focused_chart_area: None,
+            candles_right: None,
+            legends: None,
+            auto_range: None,
+            selected_bbox: None,
+            selected_band: None,
+            tab: 0,
+            side: crate::pane::PaneSide::Flow,
+            drawing_tool_armed: false,
+            toolbox_dock: Default::default(),
+            authored_objects: 0,
+            manager_rows: &[],
+            presets: &presets,
+        };
+        let mut wrong = BorrowedSurfaceEnv::Drawings(&drawings);
+        for env in [None, Some(&mut wrong)] {
+            // Seed stale observations independently before each absent/wrong facet.
+            let mut paper_env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+                paper: &mut paper,
+                replay: None,
+                timezone: Default::default(),
+            });
+            pass(
+                &mut registry,
+                &ctx,
+                Slot::LateEdgePanels,
+                Some(&mut paper_env),
+            );
+            assert!(registry.borrowed_first.model_state.observed.is_some());
+            assert!(registry.borrowed_second.model_state.observed.is_some());
+            let (response, canvas) = pass(&mut registry, &ctx, Slot::LateEdgePanels, env);
+            assert_eq!(response, SurfaceResponse::default());
+            assert_eq!(
+                canvas,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))
+            );
+            assert!(registry.borrowed_first.model_state.observed.is_none());
+            assert!(registry.borrowed_second.model_state.observed.is_none());
+            assert!(registry.borrowed_first.view.immediate.is_none());
+            assert!(registry.borrowed_second.view.immediate.is_none());
+            assert!(registry.borrowed_first.view.painted.is_none());
+            assert!(registry.borrowed_second.view.painted.is_none());
+        }
+        let BorrowedSurfaceEnv::Drawings(env) = &wrong else {
+            unreachable!()
+        };
+        assert_eq!(env.pane_id, 42);
+        // Borrowed-only rows do not intercept ordinary/default views, even when
+        // the pass carries a facet they do not support.
+        for has_env in [false, true] {
+            registry.first.view.staged = Some([(3, 10), (2, 20)]);
+            let before = registry.first.model_state;
+            let (response, _) = pass(
+                &mut registry,
+                &ctx,
+                Slot::Overlay,
+                has_env.then_some(&mut wrong),
+            );
+            assert_eq!(registry.first.view.painted, Some(before + 3));
+            assert_eq!(registry.first.model_state, before + 5);
+            let first_effects: Vec<_> = response
+                .model_effects
+                .into_iter()
+                .filter(|effect| matches!(effect, HostEffect::First(_)))
+                .collect();
+            assert_eq!(
+                first_effects,
+                vec![
+                    HostEffect::First((before + 3, 10)),
+                    HostEffect::First((before + 5, 20))
+                ]
+            );
+        }
+        let before = paper.cmd_trading();
+        let mut env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+            paper: &mut paper,
+            replay: None,
+            timezone: Default::default(),
+        });
+        let (response, canvas) = pass(&mut registry, &ctx, Slot::StatusLine, Some(&mut env));
+        assert_eq!(response, SurfaceResponse::default());
+        assert_eq!(paper.cmd_trading(), before);
+        assert!(registry.borrowed_first.view.painted.is_none());
+        assert!(registry.borrowed_second.view.painted.is_none());
+        assert_eq!(
+            canvas,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))
+        );
+    }
 
     #[test]
     fn edge_panels_dock_in_catalog_order_before_canvas() {

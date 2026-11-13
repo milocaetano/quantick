@@ -187,6 +187,7 @@ pub enum Slot {
     DrawingChrome,
     EarlyEdgePanels,
     EdgePanels,
+    LateEdgePanels,
 }
 
 macro_rules! models {
