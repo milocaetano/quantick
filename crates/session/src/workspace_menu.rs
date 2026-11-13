@@ -351,4 +351,116 @@ mod tests {
             }
         );
     }
+
+    /// Row, separator and frame heights close to what the menu's style draws.
+    const METRICS: MenuMetrics = MenuMetrics {
+        row_pt: 24.0,
+        separator_pt: 9.0,
+        frame_pt: 14.0,
+    };
+
+    fn rect(left: f32, top: f32, right: f32, bottom: f32) -> MenuBounds {
+        MenuBounds {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    /// The capsule's name on a 1920x1000 window's toolbar.
+    fn capsule() -> MenuBounds {
+        rect(900.0, 40.0, 1000.0, 66.0)
+    }
+
+    fn fixed_pt() -> f32 {
+        CHIP_MENU_FIXED_ROWS as f32 * METRICS.row_pt
+            + CHIP_MENU_SEPARATORS as f32 * METRICS.separator_pt
+            + METRICS.frame_pt
+    }
+
+    #[test]
+    fn nine_workspaces_on_a_full_hd_window_show_whole_below_the_capsule() {
+        let screen = rect(0.0, 0.0, 1920.0, 1000.0);
+        let budget = chip_menu_budget(screen, capsule(), 9, METRICS);
+        assert_eq!(budget.max_width, CHIP_MENU_MAX_WIDTH_PT);
+        assert_eq!(budget.min_width, CHIP_MENU_MIN_WIDTH_PT);
+        assert_eq!(budget.list_height, 9.0 * METRICS.row_pt, "nothing scrolls");
+        assert_eq!(budget.max_height, fixed_pt() + budget.list_height);
+        let top = capsule().bottom + CHIP_MENU_DROP_PT;
+        assert!(top + budget.max_height <= screen.bottom - CHIP_MENU_EDGE_PT);
+    }
+
+    #[test]
+    fn forty_workspaces_scroll_and_the_menu_ends_above_the_window_edge() {
+        let screen = rect(0.0, 0.0, 1920.0, 1000.0);
+        let budget = chip_menu_budget(screen, capsule(), 40, METRICS);
+        let top = capsule().bottom + CHIP_MENU_DROP_PT;
+        let room = screen.bottom - CHIP_MENU_EDGE_PT - top;
+        assert!(
+            budget.list_height < 40.0 * METRICS.row_pt,
+            "the list scrolls"
+        );
+        assert_eq!(budget.max_height, room, "the menu takes the room below");
+        assert_eq!(budget.list_height, room - fixed_pt());
+    }
+
+    #[test]
+    fn a_short_window_keeps_three_workspace_rows_and_says_it_overruns() {
+        let screen = rect(0.0, 0.0, 640.0, 360.0);
+        let budget = chip_menu_budget(screen, capsule(), 40, METRICS);
+        let rows = CHIP_MENU_MIN_LIST_ROWS as f32 * METRICS.row_pt;
+        assert_eq!(budget.list_height, rows);
+        let room = screen.bottom - CHIP_MENU_EDGE_PT - capsule().bottom - CHIP_MENU_DROP_PT;
+        assert!(budget.max_height > room, "the window pushes the menu up");
+        assert_eq!(
+            budget.max_width, CHIP_MENU_MAX_WIDTH_PT,
+            "640 is wide enough"
+        );
+    }
+
+    #[test]
+    fn a_list_shorter_than_the_floor_is_never_padded() {
+        let screen = rect(0.0, 0.0, 640.0, 300.0);
+        let budget = chip_menu_budget(screen, capsule(), 2, METRICS);
+        assert_eq!(budget.list_height, 2.0 * METRICS.row_pt);
+        let budget = chip_menu_budget(screen, capsule(), 0, METRICS);
+        assert_eq!(budget.list_height, 0.0);
+    }
+
+    #[test]
+    fn a_narrow_window_narrows_the_menu_and_its_floor() {
+        let budget = chip_menu_budget(rect(0.0, 0.0, 300.0, 1000.0), capsule(), 9, METRICS);
+        assert_eq!(budget.max_width, 300.0 - 2.0 * CHIP_MENU_EDGE_PT);
+        assert_eq!(budget.min_width, CHIP_MENU_MIN_WIDTH_PT);
+        let budget = chip_menu_budget(rect(0.0, 0.0, 150.0, 1000.0), capsule(), 9, METRICS);
+        assert_eq!(budget.max_width, 150.0 - 2.0 * CHIP_MENU_EDGE_PT);
+        assert_eq!(
+            budget.min_width, budget.max_width,
+            "the floor never passes the cap"
+        );
+    }
+
+    #[test]
+    fn a_window_offset_on_the_desktop_measures_from_its_own_edges() {
+        let screen = rect(100.0, 200.0, 2020.0, 1200.0);
+        let anchor = rect(1000.0, 240.0, 1100.0, 266.0);
+        let shifted = chip_menu_budget(screen, anchor, 40, METRICS);
+        let home = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 40, METRICS);
+        assert_eq!(shifted, home);
+    }
+
+    #[test]
+    fn every_opening_is_a_new_one_and_a_close_is_not() {
+        let mut state = WorkspaceMenuState::default();
+        state.toggle_chip_menu(7);
+        let first = state.chip_menu_opened;
+        state.toggle_chip_menu(7);
+        assert_eq!(state.chip_menu_opened, first, "closing counts nothing");
+        state.toggle_chip_menu(7);
+        assert_ne!(state.chip_menu_opened, first, "a reopening is fresh");
+        let second = state.chip_menu_opened;
+        state.toggle_chip_menu(8);
+        assert_ne!(state.chip_menu_opened, second, "another tab's opening too");
+    }
 }

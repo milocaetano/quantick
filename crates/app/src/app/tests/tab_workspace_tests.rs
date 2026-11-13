@@ -1055,3 +1055,101 @@ fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
         "the edit stays held"
     );
 }
+
+/// The window size the trader's desk runs at.
+const FULL_HD: egui::Vec2 = egui::vec2(1920.0, 1000.0);
+
+/// The cell's menu as the scene publishes it, after `count` frames open at
+/// full HD: the menu's rect, the capsule's name rect and every row id.
+fn open_cell_menu(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    count: usize,
+) -> (egui::Rect, egui::Rect, Vec<String>) {
+    let tab = app.runtime.tabs.active_id();
+    app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+    for _ in 0..count {
+        run_frame_at(app, ctx, FULL_HD);
+    }
+    assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(tab));
+    let controls = &app.chrome.toolbar_controls;
+    let find = |id: &str| controls.iter().find(|control| control.id == id);
+    let menu = find("toolbar.workspace_menu").expect("the open menu is in the scene");
+    assert!(menu.selected);
+    let name = find("toolbar.capsule.workspace").expect("the capsule's name");
+    let rows = (controls.iter())
+        .filter(|control| control.id.starts_with("toolbar.workspace_menu."))
+        .map(|control| control.id.clone())
+        .collect();
+    (menu.rect, name.rect, rows)
+}
+
+/// The trader's complaint: the menu off the workspace name stays inside the
+/// window, scrolls its list alone, and is as wide as what it shows this time,
+/// not the widest thing it ever showed.
+#[test]
+fn the_cell_menu_stays_inside_the_window_and_narrows_when_its_rows_do() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_WIDTH_PT;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-bounded", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let long = "W".repeat(quantick_workspace::workspace_book::MAX_WORKSPACE_NAME);
+    let names: Vec<String> = (1..40).map(|n| format!("Desk {n:02}")).collect();
+    let book = app.runtime.workspace.book.book_mut();
+    for name in names.iter().chain([&long]) {
+        book.create(first, name).expect("a fresh name");
+    }
+    let ctx = egui::Context::default();
+    let (menu, name, rows) = open_cell_menu(&mut app, &ctx, 3);
+    assert!(
+        menu.width() <= CHIP_MENU_MAX_WIDTH_PT,
+        "{} wide",
+        menu.width()
+    );
+    assert!(menu.bottom() <= FULL_HD.y, "bottom {}", menu.bottom());
+    assert!(menu.top() >= name.bottom(), "hangs below the capsule");
+    for fixed in ["autosave", "save", "save_as", "rename", "new", "manage"] {
+        let id = format!("toolbar.workspace_menu.{fixed}");
+        assert!(rows.contains(&id), "{id} never scrolls away: {rows:?}");
+    }
+    let listed = rows.iter().filter(|id| id.contains(".workspace.")).count();
+    assert!((1..41).contains(&listed), "{listed} rows in view of 41");
+    let wide = menu.width();
+
+    app.chrome.window_menu.tab_workspace.close_chip_menu();
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let book = app.runtime.workspace.book.book_mut();
+    for name in names.iter().skip(1).chain([&long]) {
+        book.delete(name).expect("a stored workspace");
+    }
+    let (menu, _, rows) = open_cell_menu(&mut app, &ctx, 3);
+    assert!(menu.width() < wide, "{} after {wide}", menu.width());
+    let listed = rows.iter().filter(|id| id.contains(".workspace.")).count();
+    assert_eq!(listed, 2, "Default and Desk 01: {rows:?}");
+}
+
+/// The trader's nine workspaces fit whole below the capsule, and the capsule
+/// names the call that reads what the menu lists.
+#[test]
+fn nine_workspaces_fit_below_the_capsule_and_the_name_names_its_call() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_WIDTH_PT;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-nine", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1..9 {
+        book.create(first, &format!("Scalp {n}"))
+            .expect("a fresh name");
+    }
+    let ctx = egui::Context::default();
+    let (menu, name, rows) = open_cell_menu(&mut app, &ctx, 3);
+    assert!(menu.width() <= CHIP_MENU_MAX_WIDTH_PT);
+    assert!(menu.height() <= FULL_HD.y - name.bottom());
+    let listed = rows.iter().filter(|id| id.contains(".workspace.")).count();
+    assert_eq!(listed, 9, "{rows:?}");
+    let capsule = (app.chrome.toolbar_controls.iter())
+        .find(|control| control.id == "toolbar.capsule.workspace")
+        .expect("the capsule's name");
+    let list = quantick_control_schema::workspace_book::WORKSPACE_LIST_CAPABILITY_ID;
+    assert_eq!(capsule.capability, Some(list));
+}
