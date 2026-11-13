@@ -20,6 +20,7 @@ use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
 use crate::market_settings::DrawingKey;
+use crate::workspace_colour::{self, ColourOutcome, Colours, Swatch, WorkspaceColour};
 use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -201,6 +202,8 @@ pub struct DeleteOutcome {
 pub struct WorkspaceListing {
     pub name: String,
     pub tabs: Vec<u64>,
+    /// `None` only for a ninth workspace while all eight colours are held.
+    pub colour: Option<WorkspaceColour>,
 }
 
 /// What making a new, empty workspace did. It always changes the book: a
@@ -234,6 +237,14 @@ pub struct WorkspaceBook {
     /// a desk read after a rename still finds its workspace.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     renamed: BTreeMap<String, String>,
+    /// Each workspace's colour ([`workspace_colour`]): unique, kept by
+    /// [`Self::settle_colours`] after every change to the set of names.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "lenient_colours"
+    )]
+    colours: Colours,
     /// Kept in the desk, on [`SavedTab`], not in this file.
     #[serde(skip)]
     tabs: BTreeMap<u64, TabWorkspace>,
@@ -302,6 +313,7 @@ impl Default for WorkspaceBook {
             version: FORMAT_VERSION,
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
             renamed: BTreeMap::new(),
+            colours: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceColour::ALL[0])]),
             tabs: BTreeMap::new(),
             autosave: autosave_default(),
             drawings: BTreeMap::new(),
@@ -309,6 +321,20 @@ impl Default for WorkspaceBook {
             active: None,
         }
     }
+}
+
+/// Read the `colours` table word by word: a colour this build does not know
+/// (a typo, a later build's slot) is dropped and `settle_colours` re-assigns it,
+/// so one stray word never costs the whole file.
+fn lenient_colours<'de, D>(deserializer: D) -> Result<Colours, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(name, word)| WorkspaceColour::from_key(&word).map(|colour| (name, colour)))
+        .collect())
 }
 
 /// Parse a workspaces file. A file without `Default` gets the factory one back.
@@ -330,6 +356,9 @@ pub fn parse_book(text: &str) -> Result<WorkspaceBook, BookParseError> {
             *recipe = recipe.without_bars();
         }
     }
+    // A book from before colours gets them here, in the book's order:
+    // `Default` first, then by name, whatever order the file lists them in.
+    book.settle_colours();
     Ok(book)
 }
 
@@ -395,18 +424,77 @@ impl WorkspaceBook {
     /// Every workspace with the tabs using it, `Default` first, then by name.
     #[must_use]
     pub fn list(&self) -> Vec<WorkspaceListing> {
-        let row = |name: &str| WorkspaceListing {
-            name: name.to_owned(),
-            tabs: self.tabs_on(name),
-        };
-        std::iter::once(row(DEFAULT_WORKSPACE))
-            .chain(
-                self.recipes
-                    .keys()
-                    .filter(|name| *name != DEFAULT_WORKSPACE)
-                    .map(|name| row(name)),
-            )
+        self.names()
+            .into_iter()
+            .map(|name| WorkspaceListing {
+                name: name.to_owned(),
+                tabs: self.tabs_on(name),
+                colour: self.colour(name),
+            })
             .collect()
+    }
+
+    /// Every workspace name in the list's order: `Default`, then by name.
+    fn names(&self) -> Vec<&str> {
+        let others = self
+            .recipes
+            .keys()
+            .filter(|name| *name != DEFAULT_WORKSPACE);
+        std::iter::once(DEFAULT_WORKSPACE)
+            .chain(others.map(String::as_str))
+            .collect()
+    }
+
+    fn settle_colours(&mut self) {
+        let names: Vec<String> = self.names().into_iter().map(str::to_owned).collect();
+        let order: Vec<&str> = names.iter().map(String::as_str).collect();
+        workspace_colour::settle(&mut self.colours, &order);
+    }
+
+    /// The workspace tab `tab` uses: `Default` for a tab the book has not
+    /// adopted yet.
+    #[must_use]
+    pub fn tab_workspace(&self, tab: u64) -> &str {
+        self.tabs
+            .get(&tab)
+            .map_or(DEFAULT_WORKSPACE, |state| state.workspace.as_str())
+    }
+
+    /// The colour `name` holds; `None` for an unknown name, or a ninth
+    /// workspace while all eight are held.
+    #[must_use]
+    pub fn colour(&self, name: &str) -> Option<WorkspaceColour> {
+        self.colours.get(name).copied()
+    }
+
+    /// The colour of the workspace tab `tab` uses ([`Self::tab_workspace`]):
+    /// `Default`'s for a tab the book has not adopted yet. The one answer the
+    /// strip, the capsule and the snapshot all read.
+    #[must_use]
+    pub fn tab_colour(&self, tab: u64) -> Option<WorkspaceColour> {
+        self.colour(self.tab_workspace(tab))
+    }
+
+    /// The picker's eight swatches for `name`, in palette order.
+    #[must_use]
+    pub fn swatches(&self, name: &str) -> Vec<Swatch> {
+        workspace_colour::swatches(&self.colours, name)
+    }
+
+    /// Give a workspace a colour; the workspace holding it takes the picker's
+    /// old one, so no two ever share. Naming the colour it holds is no change.
+    ///
+    /// # Errors
+    /// No workspace has the name.
+    pub fn set_colour(
+        &mut self,
+        name: &str,
+        colour: WorkspaceColour,
+    ) -> Result<ColourOutcome, WorkspaceRefusal> {
+        if !self.recipes.contains_key(name) {
+            return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
+        }
+        Ok(workspace_colour::pick(&mut self.colours, name, colour))
     }
 
     /// What a workspace holds, in the one line the menu and `workspace.list`
@@ -818,6 +906,7 @@ impl WorkspaceBook {
             self.tabs.insert(tab, TabWorkspace::on(&name, live));
             seeded.push((tab, name));
         }
+        self.settle_colours();
         seeded
     }
 
@@ -972,6 +1061,7 @@ impl WorkspaceBook {
             state.workspace.clone_from(&cleaned);
         }
         self.unsynced.remove(&tab);
+        self.settle_colours();
         Ok(SaveOutcome {
             workspace: cleaned,
             changed: true,
@@ -996,6 +1086,7 @@ impl WorkspaceBook {
         self.recipes.insert(cleaned.clone(), recipe.clone());
         self.tabs.insert(tab, TabWorkspace::on(&cleaned, recipe));
         self.unsynced.remove(&tab);
+        self.settle_colours();
         Ok(CreateOutcome {
             workspace: cleaned,
             dropped_edits,
@@ -1028,6 +1119,9 @@ impl WorkspaceBook {
         }
         if let Some(recipe) = self.recipes.remove(name) {
             self.recipes.insert(cleaned.clone(), recipe);
+        }
+        if let Some(colour) = self.colours.remove(name) {
+            self.colours.insert(cleaned.clone(), colour);
         }
         for state in self.tabs.values_mut() {
             if state.workspace == name {
@@ -1085,6 +1179,8 @@ impl WorkspaceBook {
                 self.unsynced.insert(*tab, Unsynced::Outvoted);
             }
         }
+        // Its colour frees; a workspace without one (a ninth) takes it.
+        self.settle_colours();
         Ok(outcome)
     }
 
@@ -1154,3 +1250,7 @@ pub fn capture_recipe(
 #[cfg(test)]
 #[path = "workspace_book_tests.rs"]
 mod workspace_book_tests;
+
+#[cfg(test)]
+#[path = "workspace_book_colour_tests.rs"]
+mod workspace_book_colour_tests;

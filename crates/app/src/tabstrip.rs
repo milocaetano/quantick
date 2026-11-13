@@ -9,18 +9,16 @@ use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
     FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
 };
-use quantick_session::tab_chip::{
-    ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
-};
+use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, FaceSource};
 use quantick_workspace::arrangement::strip::{
-    StripSurface, TabFeed, chip_parts, home_label_fits, market_slots, visible_tabs,
+    StripRoom, StripSurface, TabFeed, chip_parts, fit_tabs, tab_hover,
 };
+use quantick_workspace::workspace_colour::WorkspaceColour;
+use std::{borrow::Cow, sync::Arc};
 
 use crate::theme::{self, Palette};
 
 const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
-const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
-const CHIP_MAX_WIDTH_PX: f32 = 220.0;
 const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 /// A window so narrow the strip is in its compact form: the × and a sliver.
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
@@ -28,16 +26,9 @@ pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
 const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
-const SYMBOL_TEXT_PX: f32 = 13.0;
-const SUFFIX_TEXT_PX: f32 = 12.0;
 const CLOSE_GLYPH_PX: f32 = 14.0;
 const ADD_GLYPH_PX: f32 = 17.0;
 const ADD_WIDTH_PX: f32 = 30.0;
-const CHIP_PADDING_LEFT_PX: f32 = 10.0;
-const CHIP_DOT_RADIUS_PX: f32 = 3.0;
-const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The gap between the chip's trailing words.
-const NAME_MARK_GAP_PT: f32 = 3.0;
 /// How far a second strike of the symbol sits from the first. The bundled face
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
@@ -58,8 +49,12 @@ pub struct TabChip<'a> {
     pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
-    /// The feed's mark.
+    /// The feed's mark: none while healthy and live.
     pub feed: TabFeed,
+    /// The workspace, its colour on the active tab's symbol, the venue's code (`BIN`).
+    pub workspace: &'a str,
+    pub colour: Option<WorkspaceColour>,
+    pub venue_code: Cow<'a, str>,
 }
 
 /// What the strip asked the window to do.
@@ -90,6 +85,8 @@ pub(crate) struct StripDrawn {
     pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
+    /// Each tab's face, measured once while its words hold.
+    pub(crate) faces: face_layout::FaceCache,
 }
 
 pub(crate) fn draw(
@@ -116,21 +113,30 @@ pub(crate) fn draw(
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
-    let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
-    let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
-    let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
-    let fits = home_label_fits(chips.len(), slots, room, labelled, CHIP_PREFERRED_WIDTH_PX);
-    let shown = fits.then_some((label, labelled));
+    let (gap, scale) = (ui.spacing().item_spacing.x, ui.ctx().pixels_per_point());
+    let width = |text: &str, pt: f32| laid(ui, text, pt).size().x;
+    let face = |chip: &TabChip<'_>| drawn.faces.layout(chip.id, &source(chip, scale), width);
+    let faces: Vec<FaceLayout> = chips.iter().map(face).collect();
+    drawn.faces.keep(chips.iter().map(|chip| chip.id));
+    let natural: Vec<f32> = faces.iter().map(|f| f.width + close_reserve).collect();
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
+    let room = ui.available_width() - controls_width - gap;
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
+    let home = (labelled, bare);
+    let strip = StripRoom {
+        room,
+        home,
+        gap,
+        floor,
+    };
+    let fit = fit_tabs(&natural, strip, drawn.reveal.unwrap_or(active));
+    let shown = fit.home_labelled.then_some((label, labelled));
     let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
         .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
     let active_chip = surface.active_chip(active);
-    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
-    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
-        .clamp(floor, CHIP_MAX_WIDTH_PX);
-    for index in visible.clone() {
+    for (index, chip_width) in fit.visible.clone().zip(fit.widths) {
         let chip = &chips[index];
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
@@ -148,8 +154,9 @@ pub(crate) fn draw(
                     chip.label,
                 )
             });
-            let tag = (chip.feed == TabFeed::Replay).then_some(" (replay)");
-            let response = response.on_hover_text(format!("{}{}", chip.label, tag.unwrap_or("")));
+            let (symbol, venue) = chip_parts(chip.label);
+            let hover = tab_hover(chip.workspace, symbol, venue, chip.feed);
+            let response = response.on_hover_text(hover);
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
@@ -167,7 +174,7 @@ pub(crate) fn draw(
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
-                let slot = close_slot(selected, response.hovered() || close_hot);
+                let slot = face_layout::close_slot(selected, response.hovered() || close_hot);
                 let hot = close_hot && closable && slot == CloseSlot::Close;
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
@@ -201,15 +208,20 @@ pub(crate) fn draw(
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
-                // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, root, chip, body, lit);
+                // The face reads lit whenever its sheet is: body, × or focus;
+                // only the open tab wears its workspace's colour, on the symbol.
+                let own = chip
+                    .colour
+                    .filter(|_| selected)
+                    .and_then(|c| root.workspace(c.index()));
+                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, own));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
             }
         });
     }
-    if visible.len() < chips.len() {
+    if fit.visible.len() < chips.len() {
         let overflow = ui.push_id("market_overflow", |ui| {
             let dots = egui::Button::new(egui::RichText::new("...").size(17.0)).frame(false);
             egui::menu::menu_custom_button(ui, dots, |ui| {
@@ -255,68 +267,72 @@ pub(crate) fn draw(
     action
 }
 
-/// The feed's mark, the symbol in its heavier strike, "Replay" on a recording
-/// and the broker in muted ink: `• WINZ26 MetaTrader 5`. No workspace and no
-/// mark: the status bar's cell shows both.
+/// What a tab's face is measured from.
+fn source<'a>(chip: &'a TabChip<'_>, scale: f32) -> FaceSource<'a> {
+    let (symbol, code) = (chip_parts(chip.label).0, chip.venue_code.as_ref());
+    let (marked, word) = (chip.feed.marked(), chip.feed.word());
+    FaceSource {
+        symbol,
+        code,
+        marked,
+        word,
+        scale,
+    }
+}
+
+/// One line of text at `pt` points.
+fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
+    let font = egui::FontId::proportional(pt);
+    ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER))
+}
+
+/// The symbol in its heavier strike, the venue's code in its outlined tag,
+/// clipped there, then a feed that is not healthy and live: its mark, and
+/// "Replay" on a recording; the symbol in `own`, the open tab's workspace
+/// colour, when given. The workspace and the venue's name are the hover's.
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
-    chip: &TabChip<'_>,
+    (chip, face): (&TabChip<'_>, &FaceLayout),
     body: egui::Rect,
-    lit: bool,
+    (lit, own): (bool, Option<egui::Color32>),
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
-    let center_y = body.center().y;
-    let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
+    let (left, y) = (body.left(), body.center().y);
+    let put = |painter: &egui::Painter, galley: Arc<egui::Galley>, x: f32, ink| {
+        let at = egui::pos2(left + x, y - galley.size().y / 2.0);
+        painter.galley(at, galley, ink);
+    };
+    let ink = *palette.get(tab_ink(lit));
+    let symbol = laid(ui, chip_parts(chip.label).0, face_layout::SYMBOL_TEXT_PT);
+    put(&painter, symbol.clone(), face.symbol, own.unwrap_or(ink));
+    put(
+        &painter,
+        symbol,
+        face.symbol + SEMIBOLD_STRIKE_PX,
+        own.unwrap_or(ink),
+    );
+    let tag = egui::Rect::from_x_y_ranges(
+        left + face.tag..=left + face.tag + face.tag_width,
+        egui::Rangef::point(y).expand(face_layout::TAG_HEIGHT_PT / 2.0),
+    );
+    let muted = palette.text_muted();
+    painter.rect_stroke(tag.shrink(0.5), 3.0, (1.0, muted));
+    let code = laid(ui, &chip.venue_code, face_layout::TAG_TEXT_PT);
+    let x = face.tag + face_layout::TAG_PADDING_PT;
+    put(&painter.with_clip_rect(tag), code, x, muted);
     let mark = feed_mark(chip.feed);
     let feed_ink = *palette.get(feed_token(mark));
-    paint_feed_mark(&painter, egui::pos2(dot_x, center_y), mark, feed_ink);
-    let (symbol, venue) = chip_parts(chip.label);
-    let broker = broker_name(venue);
-    let ink = *palette.get(tab_ink(lit));
-    let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
-    let laid = |text: String, px: f32, color: egui::Color32| {
-        ui.fonts(|fonts| fonts.layout_no_wrap(text, egui::FontId::proportional(px), color))
-    };
-    let galley = laid(symbol.to_owned(), SYMBOL_TEXT_PX, ink);
-    let glyphs = galley.size().x;
-    let at = egui::pos2(text_x, center_y - galley.size().y / 2.0);
-    painter.galley(at, galley.clone(), ink);
-    painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
-
-    let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
-        galley
-            .as_ref()
-            .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
-    };
-    // The word stays with the symbol, so the name gives way before it does.
-    let word = (chip.feed.word()).map(|word| laid(word.to_owned(), SUFFIX_TEXT_PX, feed_ink));
-    let symbol_width = glyphs + gapped(&word);
-    let name_ink = palette.text_muted();
-    let name_width = |letters: usize| {
-        let cut = shortened_name(broker, letters);
-        laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
-    };
-    let fit = fit_chip(&ChipMeasure {
-        available: body.width(),
-        symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
-        close: 0.0,
-        name_letters: broker.chars().count(),
-        name_width: &name_width,
-    });
-    let mut x = text_x + glyphs + CHIP_DOT_GAP_PX;
-    let name = (fit.name_letters > 0).then(|| {
-        laid(
-            shortened_name(broker, fit.name_letters),
-            SUFFIX_TEXT_PX,
-            name_ink,
-        )
-    });
-    let trail = [word, name];
-    for galley in trail.into_iter().flatten() {
-        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
-        x += galley.size().x + NAME_MARK_GAP_PT;
-        painter.galley(at, galley, palette.text_muted());
+    if let Some(x) = face.mark {
+        paint_feed_mark(&painter, egui::pos2(left + x, y), mark, feed_ink);
+    }
+    if let (Some(word), Some(x)) = (chip.feed.word(), face.word) {
+        put(
+            &painter,
+            laid(ui, word, face_layout::WORD_TEXT_PT),
+            x,
+            feed_ink,
+        );
     }
 }
 
@@ -333,7 +349,7 @@ pub(crate) const fn feed_mark(feed: TabFeed) -> FeedMark {
 
 /// A dot, a diamond, a play triangle or a hollow ring: the state survives without colour.
 fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, mark: FeedMark, ink: egui::Color32) {
-    let r = CHIP_DOT_RADIUS_PX;
+    let r = face_layout::MARK_RADIUS_PT;
     // Corners in radii; the diamond's 1.25 gives it about the dot's area.
     let fill = |unit: &[(f32, f32)]| {
         let points = unit.iter().map(|&(x, y)| at + r * egui::vec2(x, y));
@@ -452,8 +468,8 @@ fn paint_tab_surface(
             .map_or(at, |height| at.with_max_y(at.top() + height));
         egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
     };
-    let shapes = tab_layers(selected).into_iter().map(layer);
-    ui.painter().set(slot, egui::Shape::Vec(shapes.collect()));
+    let shapes: Vec<egui::Shape> = tab_layers(selected).into_iter().map(layer).collect();
+    ui.painter().set(slot, egui::Shape::Vec(shapes));
     if focused {
         let ring = (2.0_f32, palette.accent());
         ui.painter()

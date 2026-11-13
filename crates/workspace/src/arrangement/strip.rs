@@ -1,38 +1,79 @@
 //! Width-bounded presentation of the existing market arrangement.
 use std::ops::Range;
 
-/// Keep the selected market visible, with the overflow menu reaching the rest.
-#[must_use]
-pub fn visible_tabs(count: usize, active: usize, slots: usize) -> Range<usize> {
-    let slots = slots.min(count);
-    let end = active.saturating_add(1).max(slots).min(count);
-    end.saturating_sub(slots)..end
+/// The room the strip gives its market tabs, in points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StripRoom {
+    /// Everything left of the strip's controls, Home included.
+    pub room: f32,
+    /// Home with its label, and without: the Q alone.
+    pub home: (f32, f32),
+    /// The space after each tab.
+    pub gap: f32,
+    /// The narrowest a lone tab wider than the whole strip is drawn.
+    pub floor: f32,
 }
 
-/// How many market chips the strip holds, never fewer than the one on screen.
+/// What the strip shows of its market tabs this frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabFit {
+    /// The tabs drawn, in order; the overflow menu reaches the rest.
+    pub visible: Range<usize>,
+    /// Each shown tab's width: its natural one, never squeezed, save a lone
+    /// tab wider than the whole strip, which takes the room the bare Home
+    /// leaves it.
+    pub widths: Vec<f32>,
+    /// Home keeps its label: every tab fits beside it whole. A lone market
+    /// wider than the room costs it the label too; with no market at all
+    /// nothing competes for the room.
+    pub home_labelled: bool,
+}
+
+/// Fit the market tabs, `natural` points wide each and a gap after each,
+/// beside Home. A shown tab is never squeezed below its natural width: the
+/// longest run that fits whole from the first tab is shown, or, when `active`
+/// is past it, the longest that fits ending at `active`; the rest go to the
+/// overflow menu. One tab always shows.
 ///
-/// Asked of the labelled width whatever the tab drew last frame, so dropping the
-/// label can never free the room that would bring it back on the next one.
+/// Asked of Home's labelled width whatever it drew last frame, so dropping the
+/// label can never free the room that would bring it back on the next one;
+/// and the label and the overflow come from one count, so they never show
+/// together.
 #[must_use]
-pub fn market_slots(room: f32, labelled_width: f32, chip_width: f32) -> usize {
-    (((room - labelled_width).max(0.0) / chip_width).floor() as usize).max(1)
+pub fn fit_tabs(natural: &[f32], strip: StripRoom, active: usize) -> TabFit {
+    let room = strip.room - strip.home.0;
+    let span = |run: Range<usize>| natural[run].iter().map(|w| w + strip.gap).sum::<f32>();
+    let fits = |run: Range<usize>| span(run) <= room;
+    let count = natural.len();
+    let whole = (1..=count).take_while(|end| fits(0..*end)).last();
+    let whole = whole.unwrap_or(0);
+    let active = active.min(count.saturating_sub(1));
+    let visible = if count == 0 || active < whole.max(1) {
+        0..whole.max(1).min(count)
+    } else {
+        let before = (0..active).rev().take_while(|from| fits(*from..active + 1));
+        before.last().unwrap_or(active)..active + 1
+    };
+    let lone = visible.len() == 1 && !fits(visible.clone());
+    let widest = (strip.room - strip.home.1 - strip.gap).max(strip.floor);
+    let width = |natural: &f32| if lone { natural.min(widest) } else { *natural };
+    TabFit {
+        widths: natural[visible.clone()].iter().map(width).collect(),
+        home_labelled: whole == count,
+        visible,
+    }
 }
 
-/// Whether Home keeps its label beside `markets` chips: while the strip's
-/// `slots` (from [`market_slots`]) hold every one of them, so the label and the
-/// overflow menu come from one count. A lone market is never hidden, but it
-/// would be crushed to its close target, so it too costs Home its label; with
-/// no market at all nothing competes for the room.
+/// A market tab's hover: `Scalp · WINZ26 · MetaTrader 5 — B3`, plus
+/// ` (replay)` on a recording.
 #[must_use]
-pub fn home_label_fits(
-    markets: usize,
-    slots: usize,
-    room: f32,
-    labelled_width: f32,
-    chip_width: f32,
-) -> bool {
-    let lone_fits = chip_width <= room - labelled_width;
-    markets <= slots && (markets != 1 || lone_fits)
+pub fn tab_hover(workspace: &str, symbol: &str, venue: &str, feed: TabFeed) -> String {
+    let replay = if feed == TabFeed::Replay {
+        " (replay)"
+    } else {
+        ""
+    };
+    format!("{workspace} \u{b7} {symbol} \u{b7} {venue}{replay}")
 }
 
 /// What a market tab's feed is doing, as the mark beside its symbol says.
@@ -63,6 +104,13 @@ impl TabFeed {
             (false, false, true) => Self::Disconnected,
             (false, false, false) => Self::Stopped,
         }
+    }
+
+    /// Whether the tab wears a mark at all: a healthy live feed shows nothing,
+    /// so only a recording, a lost or stopped feed, or a venue notice does.
+    #[must_use]
+    pub const fn marked(self) -> bool {
+        !matches!(self, Self::Live)
     }
 
     /// The word printed after the symbol: a recording is never passed off as live.
@@ -195,13 +243,51 @@ mod tests {
         }
     }
 
+    /// `markets` tabs `chip` wide with no gap, beside a Home `labelled` wide.
+    fn uniform(markets: usize, (room, labelled): (f32, f32), chip: f32, active: usize) -> TabFit {
+        let strip = StripRoom {
+            room,
+            home: (labelled, 30.0),
+            gap: 0.0,
+            floor: 40.0,
+        };
+        fit_tabs(&vec![chip; markets], strip, active)
+    }
+
     #[test]
     fn selected_overflow_market_is_visible_without_changing_identity() {
-        assert_eq!(visible_tabs(10, 9, 2), 8..10);
-        assert_eq!(visible_tabs(10, 0, 2), 0..2);
-        assert_eq!(visible_tabs(1, 0, 5), 0..1);
-        assert_eq!(visible_tabs(0, 0, 0), 0..0);
-        assert_eq!(visible_tabs(10, 9, 0), 10..10);
+        assert_eq!(uniform(10, (200.0, 0.0), 100.0, 9).visible, 8..10);
+        assert_eq!(uniform(10, (200.0, 0.0), 100.0, 0).visible, 0..2);
+        assert_eq!(uniform(1, (500.0, 0.0), 100.0, 0).visible, 0..1);
+        assert_eq!(uniform(0, (0.0, 0.0), 100.0, 0).visible, 0..0);
+        assert_eq!(uniform(10, (0.0, 0.0), 100.0, 9).visible, 9..10);
+    }
+
+    /// A shown tab keeps its natural width, the gaps counted: what does not
+    /// fit whole goes to the overflow menu, never clipped.
+    #[test]
+    fn a_shown_tab_keeps_its_natural_width_and_the_rest_overflow() {
+        let strip = StripRoom {
+            room: 500.0,
+            home: (0.0, 0.0),
+            gap: 4.0,
+            floor: 40.0,
+        };
+        let fit = fit_tabs(&[100.0; 5], strip, 0);
+        assert_eq!((fit.visible, fit.widths), (0..4, vec![100.0; 4]));
+        assert!(!fit.home_labelled);
+        let mixed = [100.0, 100.0, 320.0, 100.0];
+        let fit = fit_tabs(&mixed, strip, 0);
+        assert_eq!((fit.visible, fit.widths), (0..2, vec![100.0, 100.0]));
+        let fit = fit_tabs(&mixed, strip, 2);
+        assert_eq!((fit.visible, fit.widths), (1..3, vec![100.0, 320.0]));
+        let fit = fit_tabs(&[100.0, 60.0], strip, 1);
+        assert_eq!((fit.visible, fit.widths), (0..2, vec![100.0, 60.0]));
+        assert!(fit.home_labelled);
+        // A lone tab wider than the whole strip takes the strip.
+        let fit = fit_tabs(&[600.0], strip, 0);
+        assert_eq!((fit.visible, fit.widths), (0..1, vec![496.0]));
+        assert!(!fit.home_labelled);
     }
 
     #[test]
@@ -269,15 +355,9 @@ mod tests {
         assert!(!surface.is_home(), "and the cycle does not also move a tab");
     }
 
-    /// The strip's own call: the slot count it also hands to the overflow.
+    /// The strip's own call: the fit it also hands to the overflow.
     fn fits(markets: usize, room: f32, labelled: f32, chip: f32) -> bool {
-        home_label_fits(
-            markets,
-            market_slots(room, labelled, chip),
-            room,
-            labelled,
-            chip,
-        )
+        uniform(markets, (room, labelled), chip, 0).home_labelled
     }
 
     /// With every market closed (`allow_close_last`), nothing competes for the
@@ -318,13 +398,12 @@ mod tests {
         assert!(fits(1, 270.0, 70.0, 200.0));
         assert!(!fits(2, 10.0, 70.0, 200.0));
         for room in [0.0, 10.0, 269.0, 270.0, 469.0, 470.0, 1130.0] {
-            let slots = market_slots(room, 70.0, 200.0);
             for markets in 1..=9 {
                 for active in 0..markets {
-                    let shown = visible_tabs(markets, active, slots).len();
+                    let fit = uniform(markets, (room, 70.0), 200.0, active);
                     assert_eq!(
-                        fits(markets, room, 70.0, 200.0),
-                        shown == markets && room >= 270.0,
+                        fit.home_labelled,
+                        fit.visible.len() == markets && room >= 270.0,
                         "{markets} markets in {room} px"
                     );
                 }
@@ -332,29 +411,22 @@ mod tests {
         }
     }
 
-    /// Where `n * chip` and `floor(room / chip)` round apart in f32, the label
-    /// still follows the slot count, so it and the overflow never show together.
+    /// Where `n * chip` and the running sum round apart in f32, the label
+    /// still follows what is shown, so it and the overflow never show together.
     #[test]
-    fn the_label_follows_the_slot_count_where_f32_rounding_splits_them() {
+    fn the_label_follows_the_shown_tabs_where_f32_rounding_could_split_them() {
         for (chip, markets, room) in [
             (84.451_7_f32, 7, 591.161_87_f32),
             (141.264_6, 3, 423.793_8),
             (136.460_54, 5, 682.302_7),
         ] {
-            let all_shown = market_slots(room, 0.0, chip) >= markets;
+            let fit = uniform(markets, (room, 0.0), chip, 0);
             assert_eq!(
-                fits(markets, room, 0.0, chip),
-                all_shown,
+                fit.home_labelled,
+                fit.visible.len() == markets,
                 "{chip} x {markets}"
             );
         }
-        let split = |(chip, markets, room): (f32, usize, f32)| {
-            (markets as f32 * chip <= room) != (market_slots(room, 0.0, chip) >= markets)
-        };
-        assert!(
-            split((84.451_7, 7, 591.161_87)),
-            "the case still splits the two rules"
-        );
     }
 
     #[test]
@@ -379,6 +451,31 @@ mod tests {
         ];
         let named: Vec<_> = all.iter().filter_map(|feed| feed.word()).collect();
         assert_eq!(named, ["Replay"]);
+    }
+
+    #[test]
+    fn only_a_healthy_live_feed_wears_no_mark() {
+        assert!(!TabFeed::Live.marked());
+        for feed in [
+            TabFeed::Attention,
+            TabFeed::Replay,
+            TabFeed::Disconnected,
+            TabFeed::Stopped,
+        ] {
+            assert!(feed.marked(), "{feed:?}");
+        }
+    }
+
+    #[test]
+    fn the_hover_names_workspace_symbol_and_venue() {
+        assert_eq!(
+            tab_hover("Scalp", "WINZ26", "MetaTrader 5 — B3", TabFeed::Live),
+            "Scalp · WINZ26 · MetaTrader 5 — B3"
+        );
+        assert_eq!(
+            tab_hover("Default", "BTCUSDT", "Binance", TabFeed::Replay),
+            "Default · BTCUSDT · Binance (replay)"
+        );
     }
 
     #[test]

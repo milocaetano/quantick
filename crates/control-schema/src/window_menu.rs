@@ -6,6 +6,7 @@
 //! written and a menu cannot quietly become mouse-only.
 
 use crate::orderflow_settings::{AssetFolds, OrderFlowPanel, PanelSection};
+use quantick_stores::workspaces::Swatch;
 
 /// One command row of the window menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -491,6 +492,40 @@ pub fn save_to_hover(followers: &[String]) -> String {
     }
 }
 
+/// The line under the capsule menu's autosave row: what saves an edit.
+#[must_use]
+pub fn autosave_line(auto: bool, keys: &str) -> String {
+    if auto {
+        "Every change is saved".to_owned()
+    } else {
+        format!("Save with {keys}")
+    }
+}
+
+/// The caption over the workspace menu's colour swatches.
+#[must_use]
+pub fn colour_caption(workspace: &str) -> String {
+    format!("COLOUR OF {}", workspace.to_uppercase())
+}
+
+/// The line under the swatches.
+pub const COLOUR_SWAP_HINT: &str =
+    "A colour in use swaps with its owner; with none to give back, the owner goes without";
+
+/// A swatch's hover: its colour, who holds it when another workspace does,
+/// and what a click leaves that owner: the picker's colour, or none.
+#[must_use]
+pub fn swatch_hover(swatch: &Swatch) -> String {
+    let colour = swatch.colour.key();
+    match &swatch.owner {
+        Some(owner) if swatch.owner_goes_without => {
+            format!("{colour}: {owner}'s; click to take it, {owner} goes without")
+        }
+        Some(owner) => format!("{colour}: {owner}'s; click to swap"),
+        None => colour.to_owned(),
+    }
+}
+
 /// The Manage workspaces dialog's title.
 pub const MANAGE_DIALOG_TITLE: &str = "Manage workspaces";
 /// A dialog row's buttons.
@@ -663,7 +698,28 @@ pub const AGENT_PILL_LABEL: &str = "Agent on";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_stores::workspaces::WorkspaceColour;
     use std::collections::BTreeSet;
+
+    /// A held swatch says what a click leaves its owner: the picker's old
+    /// colour, or nothing when the picker holds none.
+    #[test]
+    fn a_swatch_hover_says_whether_its_owner_goes_without() {
+        let mut swatch = Swatch {
+            colour: WorkspaceColour::Azure,
+            current: false,
+            owner: Some("D".to_owned()),
+            owner_goes_without: true,
+            initials: "D".to_owned(),
+        };
+        let hover = swatch_hover(&swatch);
+        assert_eq!(hover, "azure: D's; click to take it, D goes without");
+        swatch.owner_goes_without = false;
+        assert_eq!(swatch_hover(&swatch), "azure: D's; click to swap");
+        swatch.owner = None;
+        assert_eq!(swatch_hover(&swatch), "azure");
+        assert!(COLOUR_SWAP_HINT.contains("goes without"));
+    }
 
     fn walk(items: &[Item], depth: usize, rows: &mut Vec<RowId>, deepest: &mut usize) {
         *deepest = (*deepest).max(depth);

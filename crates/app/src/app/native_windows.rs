@@ -181,7 +181,7 @@ pub(super) fn close_answer(
     focused: WindowId,
     queue: &CloseQueue,
     ctx: &egui::Context,
-) -> Option<WorkspaceCommand> {
+) -> Option<WorkspaceCommand<quantick_stores::workspaces::WorkspaceColour>> {
     let asked = quantick_control_handlers::workspace_book::close_prompt(queue);
     let asked = asked.filter(|_| viewport(focused) == ctx.viewport_id());
     let at = asked.and_then(|prompt| crate::widgets::ask(ctx, &prompt))?;

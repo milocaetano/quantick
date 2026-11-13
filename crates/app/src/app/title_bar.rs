@@ -2,7 +2,9 @@
 use crate::theme;
 use eframe::egui;
 
-use quantick_control_schema::native_window::WindowState;
+use super::workspace_runtime::WorkspaceRuntime;
+use crate::config::AppConfig;
+use quantick_control_schema::native_window::{WindowState, maximize_button};
 use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, AGENT_PILL_LABEL, KEBAB_CONTROL};
 mod resize;
 
@@ -81,20 +83,28 @@ const AGENT_OUTLINE_PX: f32 = 1.0;
 const AGENT_OUTLINE_INSET: egui::Vec2 = egui::vec2(3.0, 5.0);
 const AGENT_TEXT_PX: f32 = 11.0;
 
-/// One chip per tab of this strip: dot, symbol and broker, read off the tab.
-/// The workspace and its mark are the status bar cell's alone.
+/// The tabs and their workspace book, and the config the venues' codes come from.
+pub(super) type Market<'a> = (&'a WorkspaceRuntime, &'a AppConfig);
+
+/// One chip per tab of this strip: workspace bar, symbol, venue code and the
+/// feed's mark when it is not healthy and live, read off the tab.
 pub(super) fn chips_of<'a>(
-    tabs: &'a super::arrangement_host::ArrangementHost,
+    (runtime, config): Market<'a>,
     indices: &[usize],
 ) -> Vec<crate::tabstrip::TabChip<'a>> {
+    let (tabs, book) = (&runtime.tabs, runtime.workspace.book.book());
     indices
         .iter()
         .map(|index| {
             let tab = &tabs[*index];
             let id = tabs.id_at(*index);
+            let workspace = book.tab_workspace(id);
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label(),
+                workspace,
+                colour: book.tab_colour(id),
+                venue_code: config.feed_code(&tab.feed_id),
                 feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.link.replay.is_some(),
                     tab.link.feed_connection == quantick_feed::FeedConnectionState::Connected,
@@ -105,11 +115,12 @@ pub(super) fn chips_of<'a>(
         .collect()
 }
 
-pub(crate) fn draw(
+pub(super) fn draw(
     ctx: &egui::Context,
-    tabs: &super::arrangement_host::ArrangementHost,
+    market: Market<'_>,
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
+    let tabs = &market.0.tabs;
     resize::draw(ctx);
     // The strip's own palette (Light: slate, Dark's inks) until this returns;
     // the active tab's face keeps the theme's own, `root`.
@@ -119,7 +130,7 @@ pub(crate) fn draw(
     let active = tabs.presented_index();
     title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
     let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
-    let chips = chips_of(tabs, &indices);
+    let chips = chips_of(market, &indices);
     if let Some(state) = title.requests.take() {
         send_state(ctx, state);
     }
@@ -149,16 +160,8 @@ pub(crate) fn draw(
             // fill it from the top edge, as the Windows Terminal's do.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                let pill_width = if title.agent_on {
-                    AGENT_PILL_WIDTH
-                } else {
-                    0.0
-                };
-                let reserve_drag = if ui.available_width() >= 600.0 {
-                    DRAG_WIDTH
-                } else {
-                    0.0
-                };
+                let pill_width = [0.0, AGENT_PILL_WIDTH][usize::from(title.agent_on)];
+                let reserve_drag = [0.0, DRAG_WIDTH][usize::from(ui.available_width() >= 600.0)];
                 let tab_width = (ui.available_width()
                     - 3.0 * WINDOW_BUTTON_WIDTH
                     - KEBAB_WIDTH
@@ -202,21 +205,10 @@ pub(crate) fn draw(
                 if kebab(ui, title) {
                     title.kebab_clicked = true;
                 }
+                let (maximize_hint, maximize) = maximize_button(maximized);
                 for (id, hint, state) in [
                     ("minimize", "Minimize window", Some(WindowState::Minimized)),
-                    (
-                        "maximize",
-                        if maximized {
-                            "Restore window"
-                        } else {
-                            "Maximize window"
-                        },
-                        Some(if maximized {
-                            WindowState::Normal
-                        } else {
-                            WindowState::Maximized
-                        }),
-                    ),
+                    ("maximize", maximize_hint, Some(maximize)),
                     ("close", "Close window", None),
                 ] {
                     let button = window_button(ui, id, hint, maximized).on_hover_text(hint);
@@ -314,11 +306,7 @@ fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> eg
         ui.painter().rect_filled(
             response.rect,
             0.0,
-            if id == "close" {
-                palette.warn()
-            } else {
-                palette.bare_hover()
-            },
+            [palette.bare_hover(), palette.warn()][usize::from(id == "close")],
         );
     }
     let ink = if id == "close" && (response.hovered() || response.has_focus()) {

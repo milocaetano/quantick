@@ -1,6 +1,6 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
-use crate::Token;
+use crate::{PremultipliedRgba, Token, contrast::contrast_ratio};
 
 /// The mark beside a tab's symbol. Which one a tab wears is the caller's
 /// rule (`quantick_workspace`'s tab feed state); this is only how it looks.
@@ -190,10 +190,98 @@ pub const fn tab_ink(lit: bool) -> Token {
     }
 }
 
+/// The workspace colours in `quantick_workspace`'s palette order: slot `i`
+/// paints in `WORKSPACE_TOKENS[i]`.
+pub const WORKSPACE_TOKENS: [Token; 8] = [
+    Token::WorkspaceSteel,
+    Token::WorkspaceViolet,
+    Token::WorkspaceCyan,
+    Token::WorkspaceMagenta,
+    Token::WorkspaceAzure,
+    Token::WorkspaceIndigo,
+    Token::WorkspaceChalk,
+    Token::WorkspaceCobalt,
+];
+
+/// The least a bar or ring must contrast with what it sits on, in the
+/// graphics floor of WCAG 1.4.11.
+pub const WORKSPACE_EDGE_CONTRAST: f32 = 3.0;
+
+/// The ink of the current swatch's ring: `TextPrimary` unless that falls short
+/// of [`WORKSPACE_EDGE_CONTRAST`] on the swatch, then the theme's tab-strip
+/// ground, the other primary ink.
+#[must_use]
+pub fn swatch_ring_token(swatch: [u8; 4], text_primary: [u8; 4]) -> Token {
+    let [swatch, ink] = [swatch, text_primary].map(PremultipliedRgba::from_premultiplied);
+    if contrast_ratio(swatch, ink) < WORKSPACE_EDGE_CONTRAST {
+        Token::TabStrip
+    } else {
+        Token::TextPrimary
+    }
+}
+
+/// How much of the workspace's colour tints the toolbar capsule's fill; its
+/// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
+pub const WORKSPACE_TINT: f32 = 0.12;
+/// The bar in the workspace's colour at the capsule's left edge, cut by its
+/// corner as the tab's bar is (the trader's ask of 2026-11-12).
+pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
+
+/// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
+/// straight sRGB, the base's alpha kept.
+#[must_use]
+pub fn workspace_tint(base: [u8; 4], colour: [u8; 4]) -> [u8; 4] {
+    let mix = |b: u8, c: u8| {
+        let (b, c) = (f32::from(b), f32::from(c));
+        (b + (c - b) * WORKSPACE_TINT).round().clamp(0.0, 255.0) as u8
+    };
+    [
+        mix(base[0], colour[0]),
+        mix(base[1], colour[1]),
+        mix(base[2], colour[2]),
+        base[3],
+    ]
+}
+
+/// The bar at a workspace menu row's left edge and the indent its name takes
+/// past it, in points.
+pub const WORKSPACE_ROW_BAR_PT: f32 = 7.0;
+pub const WORKSPACE_ROW_INDENT_PT: f32 = 8.0;
+/// The workspace menu's colour swatches: 22 pt squares 8 pt apart, one held
+/// by another workspace dimmed to this alpha under its owner's initials.
+pub const WORKSPACE_SWATCH_PT: f32 = 22.0;
+pub const WORKSPACE_SWATCH_GAP_PT: f32 = 8.0;
+pub const WORKSPACE_SWATCH_USED_ALPHA: f32 = 0.38;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
+    use crate::{LIGHT, ResolvedTheme};
+
+    /// The tint moves the capsule's fill a fixed share toward the colour and
+    /// keeps the name readable on every palette colour in both themes.
+    #[test]
+    fn a_tinted_capsule_keeps_its_name_readable() {
+        assert_eq!(
+            workspace_tint([255, 255, 255, 255], [255, 255, 255, 255]),
+            [255; 4]
+        );
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0, 255]),
+            [12, 24, 0, 200]
+        );
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let base = theme.color(Token::Control).to_array();
+            let ink = theme.color(Token::TextPrimary);
+            for token in WORKSPACE_TOKENS {
+                let fill = workspace_tint(base, theme.color(token).to_array());
+                let ratio = contrast_ratio(ink, PremultipliedRgba::from_premultiplied(fill));
+                assert!(ratio >= 4.5, "{} {}: {ratio}", theme.name, token.key());
+            }
+        }
+    }
 
     #[test]
     fn each_feed_state_has_its_own_shape_or_colour() {
@@ -274,6 +362,78 @@ mod tests {
             let ratio = contrast_ratio(strip.color(Token::TextMuted), strip.color(Token::TabStrip));
             assert!(ratio >= 4.5, "{} strip: {ratio}", theme.name);
         }
+    }
+
+    /// Each workspace colour reads on the active tab's sheet, where it inks the
+    /// heavy 13 pt symbol, at 4:1 or better in both themes (Light Cyan, the
+    /// lowest, is about 4.3:1), and the eight are distinct.
+    #[test]
+    fn every_workspace_colour_reads_as_the_active_tabs_symbol_in_both_themes() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let mut seen = Vec::new();
+            for token in WORKSPACE_TOKENS {
+                let colour = theme.color(token);
+                assert!(!seen.contains(&colour), "{} {}", theme.name, token.key());
+                seen.push(colour);
+                let ratio = contrast_ratio(colour, theme.color(tab_fill(true)));
+                assert!(ratio >= 4.0, "{} {}: {ratio}", theme.name, token.key());
+            }
+        }
+    }
+
+    /// No green, red, gold or orange: those already mean buy, sell, the POC
+    /// and unsaved edits. A tinted colour's hue stays between cyan and
+    /// magenta; a near-grey one (steel, chalk) has no hue to speak of.
+    #[test]
+    fn no_workspace_colour_is_green_red_gold_or_orange() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            for token in WORKSPACE_TOKENS {
+                let [r, g, b, _] = theme.color(token).to_array().map(f32::from);
+                let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+                if (max - min) / max.max(1.0) < 0.2 {
+                    continue;
+                }
+                let hue = if max == r {
+                    60.0 * ((g - b) / (max - min))
+                } else if max == g {
+                    60.0 * ((b - r) / (max - min) + 2.0)
+                } else {
+                    60.0 * ((r - g) / (max - min) + 4.0)
+                };
+                let hue = hue.rem_euclid(360.0);
+                assert!((180.0..=330.0).contains(&hue), "{}: {hue}", token.key());
+            }
+        }
+    }
+
+    /// The current swatch's ring reads on every colour in both themes.
+    #[test]
+    fn the_current_swatch_ring_reads_on_every_colour_in_both_themes() {
+        let dark = ResolvedTheme::default();
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        for theme in [&dark, &light] {
+            let ink = theme.color(Token::TextPrimary);
+            for token in WORKSPACE_TOKENS {
+                let swatch = theme.color(token);
+                let ring = theme.color(swatch_ring_token(swatch.to_array(), ink.to_array()));
+                let ratio = contrast_ratio(ring, swatch);
+                assert!(
+                    ratio >= WORKSPACE_EDGE_CONTRAST,
+                    "{} {}: {ratio}",
+                    theme.name,
+                    token.key()
+                );
+            }
+        }
+        let chalk = dark.color(Token::WorkspaceChalk);
+        assert_eq!(
+            swatch_ring_token(chalk.to_array(), dark.color(Token::TextPrimary).to_array()),
+            Token::TabStrip
+        );
     }
 
     #[test]

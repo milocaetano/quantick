@@ -6,6 +6,7 @@ use quantick_control::wire::{CanonicalDecimal, WireU64};
 
 use schemars::JsonSchema;
 
+use quantick_stores::workspaces::WorkspaceColour;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "workspace.summary";
@@ -101,6 +102,63 @@ pub struct WorkspaceSnapshot {
     /// The layout strip: every layout, and which is active. Additive.
     #[serde(default)]
     pub layouts: Vec<crate::layout::LayoutTabSnapshot>,
+    /// Every workspace and its colour, `Default` first, then by name.
+    /// Additive; empty from a build that predates workspace colours.
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceColourRow>,
+}
+
+/// A workspace's colour: one slot of a fixed palette of eight, never held by
+/// two workspaces (`workspace.colour.set`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceColourDto {
+    Steel,
+    Violet,
+    Cyan,
+    Magenta,
+    Azure,
+    Indigo,
+    Chalk,
+    Cobalt,
+}
+
+/// Slot for slot, by name: a slot added to either side stops the build here.
+impl From<WorkspaceColour> for WorkspaceColourDto {
+    fn from(colour: WorkspaceColour) -> Self {
+        match colour {
+            WorkspaceColour::Steel => Self::Steel,
+            WorkspaceColour::Violet => Self::Violet,
+            WorkspaceColour::Cyan => Self::Cyan,
+            WorkspaceColour::Magenta => Self::Magenta,
+            WorkspaceColour::Azure => Self::Azure,
+            WorkspaceColour::Indigo => Self::Indigo,
+            WorkspaceColour::Chalk => Self::Chalk,
+            WorkspaceColour::Cobalt => Self::Cobalt,
+        }
+    }
+}
+
+impl From<WorkspaceColourDto> for WorkspaceColour {
+    fn from(colour: WorkspaceColourDto) -> Self {
+        match colour {
+            WorkspaceColourDto::Steel => Self::Steel,
+            WorkspaceColourDto::Violet => Self::Violet,
+            WorkspaceColourDto::Cyan => Self::Cyan,
+            WorkspaceColourDto::Magenta => Self::Magenta,
+            WorkspaceColourDto::Azure => Self::Azure,
+            WorkspaceColourDto::Indigo => Self::Indigo,
+            WorkspaceColourDto::Chalk => Self::Chalk,
+            WorkspaceColourDto::Cobalt => Self::Cobalt,
+        }
+    }
+}
+
+/// One workspace's colour; `None` for a ninth while all eight are held.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceColourRow {
+    pub name: String,
+    pub colour: Option<WorkspaceColourDto>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -142,6 +200,9 @@ pub struct WorkspaceTab {
     /// Whether the tab holds edits it has not saved to that workspace.
     #[serde(default)]
     pub modified: bool,
+    /// That workspace's colour, the bar on the tab's left edge. Additive.
+    #[serde(default)]
+    pub workspace_colour: Option<WorkspaceColourDto>,
     /// The canvas model: the preset the docked panes match and every pane's
     /// mode. Additive; absent from a build that predates it.
     #[serde(default)]

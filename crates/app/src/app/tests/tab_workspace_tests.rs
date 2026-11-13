@@ -247,6 +247,30 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
     }
 }
 
+fn market(app: &QuantickApp) -> crate::app::title_bar::Market<'_> {
+    (&app.runtime, &app.config)
+}
+
+/// Two tabs on two workspaces are told apart by the bar, whatever market they
+/// show: each chip carries its own workspace's colour, and the venue's code
+/// from config.
+#[test]
+fn two_workspaces_on_one_market_wear_two_colours() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-two-colours", "layouts.toml");
+    let (mut app, first, _second) = two_tabs(&layouts);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(first, "Scalp").unwrap();
+    let chips = crate::app::title_bar::chips_of(market(&app), &[0, 1]);
+    assert_eq!(chips[0].workspace, "Scalp");
+    assert_ne!(chips[1].workspace, "Scalp");
+    assert!(chips[0].colour.is_some() && chips[1].colour.is_some());
+    assert_ne!(chips[0].colour, chips[1].colour);
+    assert_eq!(
+        chips[0].venue_code,
+        app.config.feed_code(&app.runtime.tabs[0].feed_id)
+    );
+}
+
 /// The chip names the market the status bar names, and no workspace or mark:
 /// the cell's mark is the snapshot's, with autosave off and an edit held.
 #[test]
@@ -255,7 +279,7 @@ fn chip_and_snapshot_read_one_state() {
     let (mut app, first, second) = two_tabs(&layouts);
     app.runtime.workspace.book.book_mut().set_autosave(false);
     edit_split(&mut app, first, 0.31);
-    let labels: Vec<String> = crate::app::title_bar::chips_of(&app.runtime.tabs, &[0, 1])
+    let labels: Vec<String> = crate::app::title_bar::chips_of(market(&app), &[0, 1])
         .iter()
         .map(|chip| chip.label.to_owned())
         .collect();

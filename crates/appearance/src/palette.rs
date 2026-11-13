@@ -297,9 +297,20 @@ pub enum Token {
     /// A gain on the panels' grey plates, the footer and a lit session row,
     /// where Light's buy ink falls short of 4.5:1.
     PanelGainInk,
+    /// The eight workspace colours, in `quantick_workspace`'s palette order
+    /// ([`crate::tab_strip::WORKSPACE_TOKENS`]): a tab's edge bar, the
+    /// capsule's underline and the workspace menu's swatches.
+    WorkspaceSteel,
+    WorkspaceViolet,
+    WorkspaceCyan,
+    WorkspaceMagenta,
+    WorkspaceAzure,
+    WorkspaceIndigo,
+    WorkspaceChalk,
+    WorkspaceCobalt,
 }
 impl Token {
-    pub const ALL: [Self; 154] = [
+    pub const ALL: [Self; 162] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -454,6 +465,14 @@ impl Token {
         Self::PanelLiveRow,
         Self::PanelStripeLoss,
         Self::PanelGainInk,
+        Self::WorkspaceSteel,
+        Self::WorkspaceViolet,
+        Self::WorkspaceCyan,
+        Self::WorkspaceMagenta,
+        Self::WorkspaceAzure,
+        Self::WorkspaceIndigo,
+        Self::WorkspaceChalk,
+        Self::WorkspaceCobalt,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -518,6 +537,14 @@ impl Token {
             Self::PanelLiveRow => "panel_live_row",
             Self::PanelStripeLoss => "panel_stripe_loss",
             Self::PanelGainInk => "panel_gain_ink",
+            Self::WorkspaceSteel => "workspace_steel",
+            Self::WorkspaceViolet => "workspace_violet",
+            Self::WorkspaceCyan => "workspace_cyan",
+            Self::WorkspaceMagenta => "workspace_magenta",
+            Self::WorkspaceAzure => "workspace_azure",
+            Self::WorkspaceIndigo => "workspace_indigo",
+            Self::WorkspaceChalk => "workspace_chalk",
+            Self::WorkspaceCobalt => "workspace_cobalt",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

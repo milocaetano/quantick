@@ -949,36 +949,12 @@ impl Tab {
         self.link.tape_age_at(self.tape().last_event_ms(), now_ms)
     }
 
-    /// Data-honesty label for how each print is known, or `None` when the venue
-    /// reports true trades and true sides (§8 — the status bar's middle
-    /// section). The label shares its row with the machinery readouts, so it
-    /// stays short and the full story lives in the hover.
-    ///
-    /// A venue that prints nothing at all takes precedence over how sides were
-    /// decided: on a quote-driven feed *every* print is derived, and saying so
-    /// is the more important disclosure. Without it a chart of one-unit prints
-    /// reads as a market where every trade happened to be the same size.
+    /// Data-honesty label for how each print is known, and its hover, on the
+    /// running feed rather than the still-uncommitted selection
+    /// ([`AppConfig::print_note`]).
     pub fn side_note(&self, config: &AppConfig) -> Option<(String, Option<String>)> {
-        if let Some(note) = self.link.replay_side_note() {
-            Some((note, None))
-        } else if config.provider_of(&self.active.0).is_some()
-            && !self.capabilities(config).traded_volume
-        {
-            Some((
-                "prints: quote-derived".to_owned(),
-                Some(
-                    "this venue quotes prices but prints no trades: every candle is built \
-                     from one synthetic print per tick, at the mid of bid and ask, carrying \
-                     one unit — never a traded size"
-                        .to_owned(),
-                ),
-            ))
-        } else {
-            // The running feed, not the still-uncommitted selection.
-            config
-                .side_note(&self.active.0)
-                .map(|note| (note.to_owned(), None))
-        }
+        let traded = self.capabilities(config).traded_volume;
+        config.print_note(&self.active.0, self.link.replay_side_note(), traded)
     }
 
     /// Make a recorded session the chart's source, replacing whatever feed is

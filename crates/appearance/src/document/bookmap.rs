@@ -115,6 +115,8 @@ mod tests {
                 | Token::ReadoutEdge => light.color(token).to_array(),
                 // So are the settings panels' blocks and plates.
                 _ if token.key().starts_with("panel_") => light.color(token).to_array(),
+                // And the workspace colours, which mark tabs and menus.
+                _ if token.key().starts_with("workspace_") => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

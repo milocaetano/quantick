@@ -9,6 +9,7 @@ pub use quantick_workspace::workspace_book::{
     RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
+pub use quantick_workspace::workspace_colour::{ColourOutcome, Swatch, WorkspaceColour};
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
@@ -234,6 +235,18 @@ mod tests {
         book.open_tab(1);
         book.save_as(1, "Scalp").unwrap();
         book
+    }
+
+    /// The theme paints slot `i` in `WORKSPACE_TOKENS[i]`: the token list
+    /// keeps the palette's order and names, so a slot never paints another's.
+    #[test]
+    fn the_theme_tokens_follow_the_palette_slot_by_slot() {
+        use quantick_appearance::tab_strip::WORKSPACE_TOKENS;
+        assert_eq!(WORKSPACE_TOKENS.len(), WorkspaceColour::ALL.len());
+        for colour in WorkspaceColour::ALL {
+            let token = WORKSPACE_TOKENS[colour.index()];
+            assert_eq!(token.key(), format!("workspace_{}", colour.key()));
+        }
     }
 
     #[test]

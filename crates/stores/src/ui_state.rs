@@ -996,6 +996,7 @@ mod tests {
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
+                short_name: None,
             }],
             metatrader: crate::config::MetaTraderSettings::default(),
             paper: crate::config::PaperSettings::default(),

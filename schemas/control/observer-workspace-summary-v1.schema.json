@@ -318,6 +318,42 @@
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
     },
+    "WorkspaceColourDto": {
+      "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+      "enum": [
+        "steel",
+        "violet",
+        "cyan",
+        "magenta",
+        "azure",
+        "indigo",
+        "chalk",
+        "cobalt"
+      ],
+      "type": "string"
+    },
+    "WorkspaceColourRow": {
+      "description": "One workspace's colour; `None` for a ninth while all eight are held.",
+      "properties": {
+        "colour": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceColourDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "WorkspacePane": {
       "properties": {
         "collapsed": {
@@ -453,6 +489,18 @@
           "default": "",
           "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
           "type": "string"
+        },
+        "workspace_colour": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceColourDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "That workspace's colour, the bar on the tab's left edge. Additive."
         }
       },
       "required": [
@@ -560,6 +608,14 @@
       "description": "Native presentation order, independent of the retained runtime storage indices below.",
       "items": {
         "$ref": "#/$defs/MarketWindowSnapshot"
+      },
+      "type": "array"
+    },
+    "workspaces": {
+      "default": [],
+      "description": "Every workspace and its colour, `Default` first, then by name.\nAdditive; empty from a build that predates workspace colours.",
+      "items": {
+        "$ref": "#/$defs/WorkspaceColourRow"
       },
       "type": "array"
     }

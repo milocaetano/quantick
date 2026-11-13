@@ -4,9 +4,35 @@
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
     },
+    "WorkspaceColourDto": {
+      "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
+      "enum": [
+        "steel",
+        "violet",
+        "cyan",
+        "magenta",
+        "azure",
+        "indigo",
+        "chalk",
+        "cobalt"
+      ],
+      "type": "string"
+    },
     "WorkspaceEntry": {
       "description": "One workspace and the tabs using it.",
       "properties": {
+        "colour": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceColourDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its colour; `None` for a ninth while all eight are held. Additive."
+        },
         "name": {
           "type": "string"
         },

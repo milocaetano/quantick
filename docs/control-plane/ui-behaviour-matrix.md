@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 129 |
+| Reachable by capability | 130 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **183** |
+| **Total** | **184** |
 
-100 of the 183 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 83 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+100 of the 184 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 84 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -229,6 +229,7 @@ The three exclusion classes are closed:
 | `workspace.autosave.set` | Turn auto save layout changes on or off | the capsule's workspace menu, Auto save | `workspace.autosave.set` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename, or a row's Rename in Manage workspaces | `workspace.rename` | — |
 | `workspace.manage` | List every workspace with its tabs, to rename or delete one (its tabs move to Default), Delete confirmed in the row | window menu, Workspace, Manage workspaces…, or the capsule's workspace menu | `workspace.list`, `workspace.rename`, `workspace.delete` | — |
+| `workspace.colour.set` | Give a workspace a colour, swapping with the workspace holding it | the capsule's workspace menu, the swatches under the workspaces | `workspace.colour.set` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
@@ -259,7 +260,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 85 |
+| `authored` | 86 |
 
 ## Appendix: rows no registry stands behind
 
@@ -354,6 +355,7 @@ declares nothing here is a guard failure.
 | `drawing.scope.toggle` | the context bar's sharing button and the inspector checkbox are widgets, not registry entries |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
+| `workspace.colour.set` | the swatch row under the capsule's workspace menu is neither a menu-bar entry nor a toolbar action |
 
 ## Appendix: registry entries that are not behaviours
 

@@ -47,7 +47,7 @@ pub(in crate::app) enum MenuCommand {
     /// Save the workspace; the reason is what the save event records.
     SaveWorkspace(&'static str),
     /// A row of the workspace menus.
-    Workspace(WorkspaceCommand),
+    Workspace(WorkspaceCommand<quantick_stores::workspaces::WorkspaceColour>),
     ForgetWorkspace,
     ExportDesk,
     ImportDesk,

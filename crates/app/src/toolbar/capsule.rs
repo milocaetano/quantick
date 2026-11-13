@@ -12,6 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
+use quantick_appearance::tab_strip::{WORKSPACE_CAPSULE_BAR_PT as BAR, WORKSPACE_TINT};
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -32,8 +33,9 @@ const PANE_STROKE_PX: f32 = 1.0;
 pub struct CapsuleModel<'a> {
     /// The docked panes the canvas draws, as the model's tree.
     pub tree: &'a PaneTree,
-    /// The tab's workspace name.
+    /// The tab's workspace name, and its colour on the capsule's underline.
     pub workspace: &'a str,
+    pub colour: Option<quantick_workspace::workspace_colour::WorkspaceColour>,
     /// Auto save is off and the workspace differs from its save.
     pub unsaved: bool,
     /// What differs is the layout: the miniature wears the dot too.
@@ -129,18 +131,25 @@ pub fn draw(
     );
     let stroke = ui.visuals().widgets.inactive.bg_stroke;
     let painter = ui.painter();
-    painter.rect(
-        whole,
-        ROUNDING_PX,
-        ui.visuals().widgets.inactive.weak_bg_fill,
-        stroke,
-    );
+    // A workspace's colour tints the fill (as `workspace_tint`) and takes the border.
+    let (fill, edge) = match model.colour.and_then(|c| palette.workspace(c.index())) {
+        Some(ink) => (
+            palette.control().lerp_to_gamma(ink, WORKSPACE_TINT),
+            (stroke.width, ink).into(),
+        ),
+        None => (palette.control(), stroke),
+    };
+    painter.rect(whole, ROUNDING_PX, fill, edge);
+    if model.colour.is_some() {
+        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
+        bar.rect_filled(whole, ROUNDING_PX, edge.color);
+    }
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),
     ] {
         if lit || response.hovered() {
-            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, palette.control());
+            painter.rect_filled(part.shrink(1.0), ROUNDING_PX, fill);
         }
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
@@ -246,6 +255,7 @@ pub(crate) mod tests {
         CapsuleModel {
             tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree,
             workspace: "Default",
+            colour: None,
             unsaved: false,
             layout_unsaved: false,
             menu_open: false,
