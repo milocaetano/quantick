@@ -8,9 +8,7 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::canvas::{self, CanvasAct, CanvasHost};
 use quantick_control_schema::canvas::CanvasResult;
 use quantick_stores::workspaces::WorkspaceRecipe;
-use quantick_workspace::canvas::{
-    CanvasRect, CanvasState, WidgetSpec, add_menu, remove_prompt, slot_seat,
-};
+use quantick_workspace::canvas::{CanvasRect, CanvasState, WidgetSpec, add_menu, slot_seat};
 
 use crate::tab::CanvasLayout;
 
@@ -101,10 +99,16 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     if let Some(side) = app.active_tab_mut().take_indicator_picker_request() {
         app.indicator_wiring().open_indicator_picker_on(side);
     }
+    use quantick_ui_model::remove_chart::Effects;
+    let runtime = app.runtime.bound(&app.presentation.binding);
+    let scope = runtime.tabs.active_id();
+    let surface = &mut app.surfaces.remove_chart;
+    surface.retain_scopes(|id| runtime.tabs.position(id).is_some());
+    let pending = surface.scoped(scope).0.pending();
     // Esc restores a maximized chart only when nothing else wants the key.
     let canvas = &app.active_tab().canvas;
     let escape = canvas.state.maximized().is_some()
-        && canvas.menus.removing.is_none()
+        && pending.is_none()
         && !ctx.wants_keyboard_input()
         && !ctx.memory(|memory| memory.any_popup_open())
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -130,7 +134,7 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     #[cfg(any(feature = "scenario-harness", test))]
     hold_from_hook(app);
     let canvas = &app.active_tab().canvas;
-    if canvas.menus.picked.is_none() && canvas.menus.removing.is_none() && !escape {
+    if canvas.menus.picked.is_none() && pending.is_none() && !escape {
         return;
     }
     let saved = saved_recipe(app).map(recipe_state);
@@ -139,28 +143,47 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
         book.tab_row(app.runtime.tabs.active_id()).0,
         book.autosave(),
     );
-    let canvas = &mut app.active_tab_mut().canvas;
-    let (picked, menus) = (canvas.menus.picked.take(), &mut canvas.menus);
-    let mut act = canvas::menu_step(
-        picked,
-        escape,
-        &mut menus.removing,
-        &canvas.state,
-        saved.as_ref(),
-    );
-    if let (Some(slot), Some(saved)) = (canvas.menus.removing, &saved) {
-        let prompt = remove_prompt(&name, saved, &canvas.state, slot, autosave);
-        let side = match slot_seat(&canvas.state, &mut canvas.seats, slot) {
-            Some(Some(seat)) => crate::pane::PaneSide::Time(seat),
-            _ => crate::pane::PaneSide::Flow,
-        };
-        let doomed = canvas.drawn_bands.iter().find(|(drawn, _)| *drawn == side);
-        let doomed = doomed.map_or(egui::Rect::NOTHING, |(_, rect)| *rect);
-        let menus = &mut canvas.menus;
-        if let Some(answer) = crate::surfaces::remove_chart::draw(ctx, &prompt, doomed, menus) {
-            menus.removing = None;
-            act = canvas::confirmed(answer, slot);
-        }
+    let surface = &mut app.surfaces.remove_chart;
+    let runtime = app.runtime.bound_mut(&app.presentation.binding);
+    let canvas = &mut runtime.active_tab_mut().canvas;
+    let picked = canvas.menus.picked.take();
+    let mut act = None;
+    if surface.supports_pass(quantick_ui_model::Slot::Overlay) {
+        surface.with_scoped_updates(
+            scope,
+            |response| {
+                for effect in response.model_effects {
+                    if let crate::surfaces::HostEffect::RemoveChart(Effects::Act(value)) = effect {
+                        act = value;
+                    }
+                }
+            },
+            |_, session| {
+                if let Some(intent) = session.state().observe(
+                    picked,
+                    escape,
+                    &canvas.state,
+                    saved.as_ref(),
+                    (&name, autosave),
+                ) {
+                    session.update(intent);
+                }
+                let Some((slot, prompt)) = session.state().open() else {
+                    return;
+                };
+                let side = match slot_seat(&canvas.state, &mut canvas.seats, slot) {
+                    Some(Some(seat)) => crate::pane::PaneSide::Time(seat),
+                    _ => crate::pane::PaneSide::Flow,
+                };
+                let doomed = canvas.drawn_bands.iter().find(|(drawn, _)| *drawn == side);
+                let doomed = doomed.map_or(egui::Rect::NOTHING, |(_, rect)| *rect);
+                if let Some(intent) =
+                    crate::surfaces::remove_chart::draw(ctx, prompt, doomed, &mut canvas.menus)
+                {
+                    session.update(intent);
+                }
+            },
+        );
     }
     if let Some(error) = act.and_then(|act| answer(app, act).err()) {
         tracing::warn!(error = %error.message, "the chart menu's act was refused");

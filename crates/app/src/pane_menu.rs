@@ -19,13 +19,12 @@ const RULE_PX: f32 = 9.0;
 /// How far below its restore a folded chart's name starts.
 const NAME_GAP_PX: f32 = 40.0;
 
-/// One tab's chart menus: the one open, a press this frame, the dialog up,
+/// One tab's chart menus: the one open, a press this frame,
 /// and every ⋯, row, restore and dialog button as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct PaneMenus {
     pub(crate) open: Option<PaneSlot>,
     pub(crate) picked: Option<(PaneSlot, Item)>,
-    pub(crate) removing: Option<PaneSlot>,
     pub(crate) drawn: Vec<DrawnControl>,
 }
 
