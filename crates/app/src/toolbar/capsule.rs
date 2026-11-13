@@ -12,7 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
-use quantick_appearance::tab_strip::WORKSPACE_TINT;
+use quantick_appearance::tab_strip::{WORKSPACE_CAPSULE_BAR_PT as BAR, WORKSPACE_TINT};
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -140,6 +140,10 @@ pub fn draw(
         None => (palette.control(), stroke),
     };
     painter.rect(whole, ROUNDING_PX, fill, edge);
+    if model.colour.is_some() {
+        let bar = painter.with_clip_rect(whole.with_max_x(whole.left() + BAR));
+        bar.rect_filled(whole, ROUNDING_PX, edge.color);
+    }
     for (part, response, lit) in [
         (miniature, &layout, model.popover_open),
         (name_rect, &menu, model.menu_open),

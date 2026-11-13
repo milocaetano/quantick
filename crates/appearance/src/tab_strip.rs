@@ -207,20 +207,6 @@ pub const WORKSPACE_TOKENS: [Token; 8] = [
 /// graphics floor of WCAG 1.4.11.
 pub const WORKSPACE_EDGE_CONTRAST: f32 = 3.0;
 
-/// Below this contrast with the strip a bar reads as no bar at all, as
-/// Light's Chalk (about 1.04:1) does. The picked palette keeps every other
-/// bar unoutlined (Light's next lowest, Indigo, is about 1.76:1).
-pub const WORKSPACE_BAR_LOST_CONTRAST: f32 = 1.5;
-
-/// Whether a workspace's bar needs a 1 px outline along its strip-facing
-/// edges: it falls below [`WORKSPACE_BAR_LOST_CONTRAST`] against the strip,
-/// as Light's Chalk does. The outline is the strip's `TextPrimary`.
-#[must_use]
-pub fn bar_needs_outline(bar: [u8; 4], strip: [u8; 4]) -> bool {
-    let [bar, strip] = [bar, strip].map(PremultipliedRgba::from_premultiplied);
-    contrast_ratio(bar, strip) < WORKSPACE_BAR_LOST_CONTRAST
-}
-
 /// The ink of the current swatch's ring: `TextPrimary` unless that falls short
 /// of [`WORKSPACE_EDGE_CONTRAST`] on the swatch, then the theme's tab-strip
 /// ground, the other primary ink.
@@ -234,42 +220,12 @@ pub fn swatch_ring_token(swatch: [u8; 4], text_primary: [u8; 4]) -> Token {
     }
 }
 
-/// The bar's strip-facing edges as a polyline, in points: up the left side of
-/// a tab whose box is `left`, `top` to `bottom`, then round its top-left curve
-/// of `radius`, inset half a point so a 1 px stroke stays inside the tab.
-#[must_use]
-pub fn bar_edge_points(left: f32, top: f32, bottom: f32, right: f32, radius: f32) -> Vec<[f32; 2]> {
-    let (left, top) = (left + 0.5, top + 0.5);
-    let arc = (0..=6).map(|step| {
-        let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 6.0;
-        [
-            left + radius - radius * angle.cos(),
-            top + radius - radius * angle.sin(),
-        ]
-    });
-    // A bar wider than the corner keeps a straight top edge on the strip.
-    let rest = (right > left + radius).then_some([right, top]);
-    std::iter::once([left, bottom])
-        .chain(arc)
-        .chain(rest)
-        .collect()
-}
-
-/// The polyline of a bar's outline when it needs one against the strip (see
-/// [`bar_needs_outline`]): `[left, top, bottom, right]` is the bar's box, its
-/// corner the tab's [`TAB_CORNER_PT`].
-#[must_use]
-pub fn bar_outline(
-    bar: [u8; 4],
-    strip: [u8; 4],
-    [left, top, bottom, right]: [f32; 4],
-) -> Option<Vec<[f32; 2]>> {
-    bar_needs_outline(bar, strip).then(|| bar_edge_points(left, top, bottom, right, TAB_CORNER_PT))
-}
-
 /// How much of the workspace's colour tints the toolbar capsule's fill; its
 /// border takes the colour whole (the trader's pick of 2026-11-12, option 7).
 pub const WORKSPACE_TINT: f32 = 0.12;
+/// The bar in the workspace's colour at the capsule's left edge, cut by its
+/// corner as the tab's bar is (the trader's ask of 2026-11-12).
+pub const WORKSPACE_CAPSULE_BAR_PT: f32 = 4.0;
 
 /// The capsule's fill, `base`, tinted toward the workspace's `colour`; both
 /// straight sRGB, the base's alpha kept.
@@ -408,10 +364,11 @@ mod tests {
         }
     }
 
-    /// Each workspace colour is a graphic (3:1) on the idle tab's block and on
-    /// the active tab's sheet, in both themes, and the eight are distinct.
+    /// Each workspace colour reads on the active tab's sheet, where it inks the
+    /// heavy 13 pt symbol, at 4:1 or better in both themes (Light Cyan, the
+    /// lowest, is about 4.3:1), and the eight are distinct.
     #[test]
-    fn every_workspace_colour_reads_on_both_tab_faces_in_both_themes() {
+    fn every_workspace_colour_reads_as_the_active_tabs_symbol_in_both_themes() {
         let dark = ResolvedTheme::default();
         let light = ResolvedTheme::parse(LIGHT).unwrap();
         for theme in [&dark, &light] {
@@ -420,11 +377,8 @@ mod tests {
                 let colour = theme.color(token);
                 assert!(!seen.contains(&colour), "{} {}", theme.name, token.key());
                 seen.push(colour);
-                for face in [tab_fill(false), tab_fill(true)] {
-                    let ratio = contrast_ratio(colour, theme.color(face));
-                    let at = (theme.name.as_str(), token.key(), face.key());
-                    assert!(ratio >= 3.0, "{at:?}: {ratio}");
-                }
+                let ratio = contrast_ratio(colour, theme.color(tab_fill(true)));
+                assert!(ratio >= 4.0, "{} {}: {ratio}", theme.name, token.key());
             }
         }
     }
@@ -454,59 +408,6 @@ mod tests {
                 assert!((180.0..=330.0).contains(&hue), "{}: {hue}", token.key());
             }
         }
-    }
-
-    /// Only a bar lost on the strip is outlined, in an ink that reads there:
-    /// of both themes' palettes that is Light's Chalk (1.04:1) alone.
-    #[test]
-    fn a_bar_lost_on_the_strip_is_outlined_in_an_ink_that_reads_there() {
-        let dark = ResolvedTheme::default();
-        let light = ResolvedTheme::parse(LIGHT).unwrap();
-        for theme in [&dark, &light] {
-            let strip = theme.title_strip();
-            let ground = strip.color(Token::TabStrip);
-            for token in WORKSPACE_TOKENS {
-                let bar = theme.color(token);
-                let lost = bar_needs_outline(bar.to_array(), ground.to_array());
-                let ratio = contrast_ratio(strip.color(Token::TextPrimary), ground);
-                assert!(
-                    !lost || ratio >= WORKSPACE_EDGE_CONTRAST,
-                    "{} {}: {ratio}",
-                    theme.name,
-                    token.key()
-                );
-            }
-        }
-        let chalk = light.color(Token::WorkspaceChalk);
-        assert!(bar_needs_outline(
-            chalk.to_array(),
-            light.title_strip().color(Token::TabStrip).to_array()
-        ));
-        let mut outlined = Vec::new();
-        for theme in [&dark, &light] {
-            let ground = theme.title_strip().color(Token::TabStrip).to_array();
-            for token in WORKSPACE_TOKENS {
-                if bar_needs_outline(theme.color(token).to_array(), ground) {
-                    outlined.push((theme.name.clone(), token.key()));
-                }
-            }
-        }
-        assert_eq!(outlined.len(), 1, "{outlined:?}");
-        assert_eq!(outlined[0].1, Token::WorkspaceChalk.key());
-    }
-
-    /// The outline climbs the bar's left edge, rounds its corner and runs on
-    /// along the top to the bar's right edge when the bar is wider than the
-    /// corner.
-    #[test]
-    fn a_bar_outline_follows_the_corner_and_the_whole_top_edge() {
-        let points = bar_edge_points(10.0, 0.0, 30.0, 19.0, 6.0);
-        assert_eq!(points.first(), Some(&[10.5, 30.0]));
-        assert_eq!(points[1], [10.5, 6.5]);
-        assert!(points[1..8].iter().all(|[x, y]| *x <= 16.5 && *y <= 6.5));
-        assert_eq!(points.last(), Some(&[19.0, 0.5]));
-        let narrow = bar_edge_points(10.0, 0.0, 30.0, 14.0, 6.0);
-        assert_eq!(narrow.len(), 8, "a bar inside the corner ends on the arc");
     }
 
     /// The current swatch's ring reads on every colour in both themes.

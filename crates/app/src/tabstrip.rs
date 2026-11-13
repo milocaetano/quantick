@@ -7,8 +7,7 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
-    FeedMark, MarkShape, bar_outline, feed_shape, feed_token, glow_mesh, home_glow_strength,
-    tab_ink, tab_layers,
+    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
 };
 use quantick_session::tab_chip::{self as face_layout, CloseSlot, FaceLayout, FaceSource};
 use quantick_workspace::arrangement::strip::{
@@ -52,7 +51,7 @@ pub struct TabChip<'a> {
     pub label: &'a str,
     /// The feed's mark: none while healthy and live.
     pub feed: TabFeed,
-    /// The workspace, its colour on the left edge's bar, the venue's code (`BIN`).
+    /// The workspace, its colour on the active tab's symbol, the venue's code (`BIN`).
     pub workspace: &'a str,
     pub colour: Option<WorkspaceColour>,
     pub venue_code: Cow<'a, str>,
@@ -208,10 +207,14 @@ pub(crate) fn draw(
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
-                let painted = (selected, chip.colour);
-                let lit = paint_tab_surface(ui, root, surface, sheet, painted, pointer);
-                // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, root, (chip, &faces[index]), body, lit);
+                let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
+                // The face reads lit whenever its sheet is: body, × or focus;
+                // only the open tab wears its workspace's colour, on the symbol.
+                let own = chip
+                    .colour
+                    .filter(|_| selected)
+                    .and_then(|c| root.workspace(c.index()));
+                paint_chip_face(ui, root, (chip, &faces[index]), body, (lit, own));
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -285,14 +288,14 @@ fn laid(ui: &egui::Ui, text: &str, pt: f32) -> Arc<egui::Galley> {
 
 /// The symbol in its heavier strike, the venue's code in its outlined tag,
 /// clipped there, then a feed that is not healthy and live: its mark, and
-/// "Replay" on a recording. The workspace's bar is the sheet's
-/// ([`paint_tab_surface`]); the workspace and the venue's name are the hover's.
+/// "Replay" on a recording; the symbol in `own`, the open tab's workspace
+/// colour, when given. The workspace and the venue's name are the hover's.
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
     (chip, face): (&TabChip<'_>, &FaceLayout),
     body: egui::Rect,
-    lit: bool,
+    (lit, own): (bool, Option<egui::Color32>),
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let (left, y) = (body.left(), body.center().y);
@@ -302,8 +305,13 @@ fn paint_chip_face(
     };
     let ink = *palette.get(tab_ink(lit));
     let symbol = laid(ui, chip_parts(chip.label).0, face_layout::SYMBOL_TEXT_PT);
-    put(&painter, symbol.clone(), face.symbol, ink);
-    put(&painter, symbol, face.symbol + SEMIBOLD_STRIKE_PX, ink);
+    put(&painter, symbol.clone(), face.symbol, own.unwrap_or(ink));
+    put(
+        &painter,
+        symbol,
+        face.symbol + SEMIBOLD_STRIKE_PX,
+        own.unwrap_or(ink),
+    );
     let tag = egui::Rect::from_x_y_ranges(
         left + face.tag..=left + face.tag + face.tag_width,
         egui::Rangef::point(y).expand(face_layout::TAG_HEIGHT_PT / 2.0),
@@ -432,15 +440,13 @@ fn draw_home_tab(
 }
 
 /// A market tab's [`tab_layers`], its base past the strip's floor, where the
-/// clip opens it onto the toolbar, and the workspace's bar glued to its left
-/// edge, full height, its top-left corner the tab's own curve; hollow for a
-/// workspace without a colour. Returns whether the tab is lit.
+/// clip opens it onto the toolbar. Returns whether the tab is lit.
 fn paint_tab_surface(
     ui: &egui::Ui,
     palette: &Palette,
     slot: egui::layers::ShapeIdx,
     bounds: egui::Rect,
-    (selected, colour): (bool, Option<WorkspaceColour>),
+    selected: bool,
     (hovered, focused): (bool, bool),
 ) -> bool {
     let rect = bounds.with_max_y(ui.max_rect().bottom());
@@ -462,20 +468,7 @@ fn paint_tab_surface(
             .map_or(at, |height| at.with_max_y(at.top() + height));
         egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
     };
-    let mut shapes: Vec<egui::Shape> = tab_layers(selected).into_iter().map(layer).collect();
-    let bar = rect.with_max_x(rect.left() + face_layout::BAR_PT);
-    let mut corner = egui::Rounding::ZERO;
-    corner.nw = CHIP_ROUNDING_PX;
-    let fill = colour.and_then(|colour| palette.workspace(colour.index()));
-    shapes.push(match fill {
-        Some(fill) => egui::Shape::rect_filled(bar, corner, fill),
-        None => egui::Shape::rect_stroke(bar.shrink(0.5), corner, (1.0, palette.text_faint())),
-    });
-    let inks = theme::get(ui.ctx()); // the strip's (Light: slate), not the face's
-    let edge = [bar.left(), bar.top(), bar.bottom(), bar.right()];
-    let outline = fill.and_then(|c| bar_outline(c.to_array(), inks.tab_strip().to_array(), edge));
-    let ink = (1.0, inks.text_primary());
-    shapes.extend(outline.map(|p| egui::Shape::line(p.into_iter().map(Into::into).collect(), ink)));
+    let shapes: Vec<egui::Shape> = tab_layers(selected).into_iter().map(layer).collect();
     ui.painter().set(slot, egui::Shape::Vec(shapes));
     if focused {
         let ring = (2.0_f32, palette.accent());

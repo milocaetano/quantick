@@ -2,15 +2,13 @@
 //! and what its × slot shows. The strip paints; nothing here knows a pixel it
 //! did not get.
 //!
-//! A tab reads `▌WINZ26 [MT5] ×`: the bar in its workspace's colour glued to
-//! the left edge, the symbol, the venue's short code in an outlined tag and,
+//! A tab reads `WINZ26 [MT5] ×`: the symbol, in its workspace's colour on the
+//! active tab only, the venue's short code in an outlined tag and,
 //! only when the feed is not healthy and live, its mark and "Replay" on a
 //! recording. The tab hugs that content: no fixed width, no stretch gap.
 
-/// The bar in the workspace's colour along the tab's left edge.
-pub const BAR_PT: f32 = 9.0;
-/// Where the symbol starts: past the bar and its 7 pt of air.
-pub const TEXT_LEFT_PT: f32 = BAR_PT + 7.0;
+/// Where the symbol starts: the tab's left air.
+pub const TEXT_LEFT_PT: f32 = 10.0;
 /// Between the symbol, the tag and the feed's mark.
 pub const PART_GAP_PT: f32 = 7.0;
 /// Between the mark and "Replay".
@@ -197,7 +195,7 @@ mod tests {
     };
 
     #[test]
-    fn a_healthy_tab_hugs_bar_symbol_and_tag() {
+    fn a_healthy_tab_hugs_symbol_and_tag() {
         let face = lay_face(HEALTHY);
         assert_eq!(face.symbol, TEXT_LEFT_PT);
         assert_eq!(face.tag, TEXT_LEFT_PT + 50.0 + PART_GAP_PT);
