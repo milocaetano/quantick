@@ -2,6 +2,7 @@
 //! siblings (`draw_chart`, `frame`, `gestures`), so this file is state and accessors, not drawing.
 
 use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 
 use quantick_chart::flow_band::{flow_sides, gutter_strip_px, side_headers, side_parts};

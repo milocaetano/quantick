@@ -51,7 +51,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.added_symbols.add("binance", "WINQ26");
     symbols_file::save(app.runtime.workspace.symbols_path(), &app.added_symbols)
         .expect("symbols written");
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace_save_adapter().save_workspace("test");
 
     let file = crate::scratch::ScratchFile::new("app-bundle", "workspace.qws.toml");
@@ -67,7 +67,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.added_symbols.remove("binance", "WINQ26");
     symbols_file::save(app.runtime.workspace.symbols_path(), &app.added_symbols)
         .expect("symbols written");
-    app.toolrail.set_favorites(&[]);
+    app.surfaces.toolrail.set_favorites(&[]);
     app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
 
@@ -218,7 +218,7 @@ fn saved_workspace_restores_both_right_and_vertical_rails() {
 #[test]
 fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     let before = app.workspace_state().starred_tool_ids();
 
     let file = crate::scratch::ScratchFile::new("app-bad-bundle", "workspace.qws.toml");
@@ -720,8 +720,8 @@ fn a_restored_workspace_puts_the_window_back() {
         "a dock the trader hid stays hidden, tab remembered underneath"
     );
     assert_eq!(app.dock.tab(), Some(DockTab::Trades));
-    assert!(!app.toolrail.visible());
-    assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
+    assert!(!app.surfaces.toolrail.visible());
+    assert_eq!(app.surfaces.toolrail.dock(), ToolboxDock::Bottom);
     assert!(!app.health.show_perf);
     assert!(
         !app.runtime.history.progressive_history,
@@ -982,7 +982,7 @@ fn a_workspace_this_build_cannot_read_survives_a_star() {
     let from_tomorrow = "version = 99\nsaved = []\nkeep_me = true\n";
     std::fs::write(app.runtime.workspace.ui_state_path(), from_tomorrow).unwrap();
 
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert_eq!(

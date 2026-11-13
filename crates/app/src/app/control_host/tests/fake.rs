@@ -17,7 +17,7 @@ use crate::dock::Dock;
 use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use crate::toolrail::{ToolRail, ToolRailExt as _};
 
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
@@ -109,7 +109,7 @@ impl FakeWindow {
                 scratch.join("drawing-presets.toml"),
             ),
             style: ChartStyle::default(),
-            tool_rail: ToolRail::default(),
+            tool_rail: ToolRail::new_rail(),
             dock: Dock::new(),
             drawing_chrome: crate::surfaces::drawing_chrome::new_owner(),
             health: super::super::super::health::HealthCounters::new(),

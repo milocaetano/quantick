@@ -96,7 +96,6 @@ use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
 #[cfg(test)]
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
 use quantick_feed::FeedHandle;
@@ -210,7 +209,6 @@ pub struct QuantickApp {
     control: control_host::ControlState,
     replay_view: ReplayView,
     dock: Dock,
-    toolrail: ToolRail,
     surfaces: crate::surfaces::Surfaces,
     drawings: drawing_controller::DrawingController,
     audio: replay_and_history::AlertState,
@@ -253,7 +251,7 @@ macro_rules! arrangement_adapter {
             indicators: &mut $app.runtime.indicators,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &$app.chrome.harness,
-            toolrail: &mut $app.toolrail,
+            toolrail: &mut $app.surfaces.toolrail,
             tz: &mut $app.runtime.tz,
             dock: &mut $app.dock,
             show_perf: &mut $app.health.show_perf,
@@ -516,7 +514,6 @@ impl QuantickApp {
                 workspace.replay_day_before,
             ),
             dock: Dock::new(),
-            toolrail: ToolRail::new(),
             surfaces: crate::surfaces::Surfaces::default(),
             drawings: drawing_controller::DrawingController::new(),
             audio: replay_and_history::AlertState {

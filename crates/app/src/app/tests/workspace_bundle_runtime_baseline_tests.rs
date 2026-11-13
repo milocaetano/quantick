@@ -110,7 +110,7 @@ fn bundle_runtime_baseline_chosen_refusal_preserves_runtime_and_recent() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let input = crate::scratch::ScratchFile::new("bundle-picker-refused", "future.qws.toml");
     std::fs::write(&input, "version = 99\n").unwrap();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.runtime
         .workspace

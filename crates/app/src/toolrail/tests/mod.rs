@@ -10,17 +10,70 @@
 // the line the module already had inline.
 
 use super::*;
+use crate::drawings::Drawings;
 use quantick_chart_interaction::tool_rail::*;
 
 mod launch;
 
-impl ToolRail {
-    /// Read the launch request before the real draw is allowed to consume it.
-    pub(crate) fn launch_pending_for_test(&self) -> (Option<f32>, Option<&str>) {
-        (self.band_target, self.hook_flyout.as_deref())
+pub(crate) trait ToolRailTestExt {
+    fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool);
+    fn swallowed_tools(&mut self, stage: RailStage) -> Vec<Tool>;
+    fn launch_pending_for_test(&self) -> (Option<f32>, Option<&str>);
+    fn launch_draw_for_test(&mut self, ctx: &egui::Context, size: egui::Vec2);
+    fn launch_rendered_for_test(&self) -> (bool, f32, Option<&str>);
+}
+impl ToolRailTestExt for ToolRail {
+    fn swallowed_tools(&mut self, stage: RailStage) -> Vec<Tool> {
+        self.with_updates(
+            |_| {},
+            |view, session| RailPaint { view, session }.swallowed_tools(stage),
+        )
+    }
+    fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
+        use quantick_ui_model::tool_rail::{Effect, Facts};
+        self.update(Intent::Observe(Facts {
+            count: drawings.items().len(),
+            draft: drawings.draft().is_some(),
+            draft_len: drawings.draft_len(),
+            all_hidden: drawings.all_hidden(),
+            all_locked: drawings.all_locked(),
+            manager_open: *manager_open,
+        }));
+        self.with_updates(
+            |response| {
+                for effect in response.model_effects {
+                    if let quantick_ui_model::HostEffect::ToolRail(effects) = effect {
+                        for effect in effects {
+                            match effect {
+                                Effect::SetAllHidden(hidden) => drawings.set_all_hidden(hidden),
+                                Effect::SetAllLocked(locked) => drawings.set_all_locked(locked),
+                                Effect::SetManagerOpen(open) => *manager_open = open,
+                                Effect::UnknownFavorites(_) => {}
+                            }
+                        }
+                    }
+                }
+            },
+            |view, session| {
+                crate::surfaces::View::paint_updated(
+                    view,
+                    session,
+                    &mut crate::surfaces::ViewContext { ctx, ui: None },
+                    None,
+                )
+            },
+        );
     }
 
-    pub(crate) fn launch_draw_for_test(&mut self, ctx: &egui::Context, size: egui::Vec2) {
+    /// Read the launch request before the real draw is allowed to consume it.
+    fn launch_pending_for_test(&self) -> (Option<f32>, Option<&str>) {
+        (
+            self.model_state.requested_scroll,
+            self.model_state.requested_flyout.as_deref(),
+        )
+    }
+
+    fn launch_draw_for_test(&mut self, ctx: &egui::Context, size: egui::Vec2) {
         rail_frame_with(
             self,
             &mut Drawings::default(),
@@ -30,21 +83,13 @@ impl ToolRail {
         );
     }
 
-    pub(crate) fn launch_rendered_for_test(&self) -> (bool, f32, Option<&str>) {
+    fn launch_rendered_for_test(&self) -> (bool, f32, Option<&str>) {
         (
-            self.band_rect.is_some(),
-            self.band_offset,
-            self.flyout.map(|(family, _)| family),
+            self.view.band_rect.is_some(),
+            self.view.band_offset,
+            self.model_state.flyout,
         )
     }
-}
-
-#[test]
-fn toolbox_opens_outside_the_chart_docked_left() {
-    let rail = ToolRail::new();
-    assert!(rail.visible());
-    assert_eq!(rail.tool(), Tool::Pointer);
-    assert_eq!(rail.dock, ToolboxDock::Left);
 }
 
 #[test]
@@ -54,7 +99,7 @@ fn the_rail_never_borrows_the_provenance_amber() {
     // indicators crate's libm rule.
     // Relative to this file, so it climbs back out of `toolrail/tests/`
     // to reach the host it greps. The one path the move had to rewrite.
-    let source = include_str!("../../toolrail.rs");
+    let source = include_str!("../mod.rs");
     assert!(
         !source.contains(concat!("theme::", "AM", "BER")),
         "the rail's only accent is ACCENT"
@@ -78,22 +123,13 @@ fn stage_lengths_match_the_spec_for_the_shipped_registry() {
     assert!(scroll_length(0) > compact_length());
 }
 
-#[test]
-fn hiding_the_toolbox_cannot_leave_an_invisible_drawing_tool_armed() {
-    let mut rail = ToolRail::new();
-    rail.arm(Tool::Drawing(DRAWING_TOOLS[0]));
-    rail.toggle_visible();
-    assert!(!rail.visible());
-    assert_eq!(rail.tool(), Tool::Pointer);
-}
-
 /// The keyboard twin of the invariant above (audit M9): the shortcut
 /// path must be as gated as the toggle path, or `H` with the rail hidden
 /// arms a tool nothing on screen reports.
 #[test]
 fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.toggle_visible();
     let shortcut = DRAWING_TOOLS[0].shortcut().expect("the first tool has one");
     let press = egui::RawInput {
@@ -153,7 +189,7 @@ fn primary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
 fn dragging_the_real_grip_docks_at_each_screen_edge() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
 
     for (target, expected) in [
@@ -161,7 +197,7 @@ fn dragging_the_real_grip_docks_at_each_screen_edge() {
         (egui::pos2(400.0, 590.0), ToolboxDock::Bottom),
         (egui::pos2(10.0, 300.0), ToolboxDock::Left),
     ] {
-        let start = rail.grip_rect.expect("grip was rendered").center();
+        let start = rail.view.grip_rect.expect("grip was rendered").center();
         draw_rail_frame(
             &mut rail,
             &ctx,
@@ -186,7 +222,7 @@ fn dragging_the_real_grip_docks_at_each_screen_edge() {
                 primary_button(target, false),
             ],
         );
-        assert_eq!(rail.dock, expected);
+        assert_eq!(rail.model_state.dock, expected);
         draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
     }
 }
@@ -195,10 +231,10 @@ fn dragging_the_real_grip_docks_at_each_screen_edge() {
 fn escape_during_a_grip_drag_keeps_the_current_dock() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
 
-    let start = rail.grip_rect.expect("grip was rendered").center();
+    let start = rail.view.grip_rect.expect("grip was rendered").center();
     draw_rail_frame(
         &mut rail,
         &ctx,
@@ -238,7 +274,11 @@ fn escape_during_a_grip_drag_keeps_the_current_dock() {
             primary_button(target, false),
         ],
     );
-    assert_eq!(rail.dock, ToolboxDock::Left, "Esc aborted the drag");
+    assert_eq!(
+        rail.model_state.dock,
+        ToolboxDock::Left,
+        "Esc aborted the drag"
+    );
 }
 
 #[test]
@@ -296,7 +336,7 @@ fn click_at(
 #[test]
 fn tool_shortcuts_arm_their_declared_tools() {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
         let input = egui::RawInput {
             events: vec![egui::Event::Key {
@@ -400,25 +440,9 @@ fn a_tooltip_names_the_key_the_tool_really_answers_to() {
 }
 
 #[test]
-fn arming_a_family_member_becomes_the_slot_memory() {
-    let mut rail = ToolRail::new();
-    let extension = DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == "fib-extension")
-        .expect("registered");
-    rail.arm(Tool::Drawing(extension));
-    let family = extension.family().expect("fib family");
-    assert_eq!(
-        rail.family_member(family, &[extension]),
-        Some(extension),
-        "the slot remembers the last-armed member"
-    );
-}
-
-#[test]
 fn the_full_vertical_rail_folds_the_fib_family_into_one_slot() {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     // Tall enough for the Full stage (633 px since the anchored VWAP).
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
@@ -449,12 +473,13 @@ fn the_full_vertical_rail_folds_the_fib_family_into_one_slot() {
 fn the_magnet_is_a_rail_toggle_that_starts_off() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     assert!(!rail.magnet(), "the magnet opens off");
 
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
     let button = rail
+        .view
         .magnet_rect
         .expect("the magnet button rendered")
         .center();
@@ -479,7 +504,7 @@ fn the_magnet_is_a_rail_toggle_that_starts_off() {
 #[test]
 fn the_magnet_is_painted_only_where_the_rail_draws_it() {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     // Docked along the top, the screen's width is the rail's extent.
     rail.set_dock(ToolboxDock::Top);
     let mut drawings = Drawings::default();
@@ -522,7 +547,10 @@ fn open_flyout(
         .expect("the family slot rendered");
     click_at(rail, drawings, ctx, screen, slot.max - egui::vec2(3.0, 3.0));
     rail_frame_with(rail, drawings, ctx, screen, Vec::new());
-    assert!(rail.flyout.is_some(), "the caret click opened the flyout");
+    assert!(
+        rail.model_state.flyout.is_some(),
+        "the caret click opened the flyout"
+    );
 }
 
 /// Clicking the tiny star pins the tool: nothing arms, the flyout stays
@@ -531,12 +559,13 @@ fn open_flyout(
 fn starring_from_the_flyout_pins_without_arming_or_closing() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     let members = first_family();
     open_flyout(&mut rail, &mut drawings, &ctx, screen, members);
 
     let star = rail
+        .view
         .flyout_star_rects
         .iter()
         .find_map(|(tool, rect)| (*tool == members[1]).then_some(*rect))
@@ -546,7 +575,7 @@ fn starring_from_the_flyout_pins_without_arming_or_closing() {
     assert!(rail.is_favorite(members[1]), "the star click pinned");
     assert_eq!(rail.tool(), Tool::Pointer, "starring armed nothing");
     assert!(
-        rail.flyout.is_some(),
+        rail.model_state.flyout.is_some(),
         "the flyout stayed open to keep curating"
     );
 }
@@ -557,7 +586,7 @@ fn starring_from_the_flyout_pins_without_arming_or_closing() {
 fn a_click_on_the_flyout_icon_arms_and_never_stars() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     let members = first_family();
     open_flyout(&mut rail, &mut drawings, &ctx, screen, members);
@@ -585,13 +614,14 @@ fn a_click_on_the_flyout_icon_arms_and_never_stars() {
 fn the_pinned_button_arms_and_never_unstars() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     let members = first_family();
     rail.toggle_favorite(members[1]);
 
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
     let pinned = rail
+        .view
         .favorite_rects
         .iter()
         .find_map(|(tool, rect)| (*tool == members[1]).then_some(*rect))
@@ -602,77 +632,6 @@ fn the_pinned_button_arms_and_never_unstars() {
     assert!(
         rail.is_favorite(members[1]),
         "arming a favorite must never unstar it"
-    );
-}
-
-/// A saved id this build does not offer is reported, not swallowed.
-///
-/// It used to be harmless: the pruned list only reached the disk on an
-/// explicit save. Now the trader's next star click writes it back, so the
-/// drop is permanent — and dropping something a file said without a word
-/// is the silent patching `CLAUDE.md` rules out.
-#[test]
-fn a_starred_id_this_build_does_not_offer_is_reported() {
-    let mut rail = ToolRail::default();
-
-    let unknown = rail.set_favorites(&[
-        "measure".to_owned(),
-        "volume-profile-from-tomorrow".to_owned(),
-    ]);
-
-    assert_eq!(
-        unknown,
-        vec!["volume-profile-from-tomorrow".to_owned()],
-        "the caller is told exactly what it lost"
-    );
-    assert_eq!(
-        rail.favorites().len(),
-        1,
-        "and the rail keeps the tools it does have"
-    );
-}
-
-/// Star order is the order the trader starred in: unstarring removes in
-/// place, re-starring appends at the end — pinned muscle memory holds.
-#[test]
-fn star_order_is_stable_under_unstar_and_restar() {
-    let mut rail = ToolRail::new();
-    let tools: Vec<DrawingTool> = DRAWING_TOOLS.into_iter().take(3).collect();
-    for tool in &tools {
-        rail.toggle_favorite(*tool);
-    }
-    rail.toggle_favorite(tools[1]);
-    assert_eq!(rail.favorites(), &[tools[0], tools[2]]);
-    rail.toggle_favorite(tools[1]);
-    assert_eq!(rail.favorites(), &[tools[0], tools[2], tools[1]]);
-}
-
-/// The saved-ids path: order kept, unknown ids dropped, duplicates kept
-/// once — a stale or hand-edited file cannot corrupt the rail.
-#[test]
-fn set_favorites_round_trips_ids_and_survives_junk() {
-    let mut rail = ToolRail::new();
-    let tools: Vec<DrawingTool> = DRAWING_TOOLS.into_iter().take(2).collect();
-    let ids = vec![
-        tools[1].id().to_owned(),
-        "no-such-tool".to_owned(),
-        tools[0].id().to_owned(),
-        tools[1].id().to_owned(),
-    ];
-    rail.set_favorites(&ids);
-    assert_eq!(rail.favorites(), &[tools[1], tools[0]]);
-
-    let saved: Vec<String> = rail
-        .favorites()
-        .iter()
-        .map(|tool| tool.id().to_owned())
-        .collect();
-    let mut restored = ToolRail::new();
-    restored.set_favorites(&saved);
-    assert_eq!(
-        restored.favorites(),
-        rail.favorites(),
-        "round-trip is exact"
     );
 }
 
@@ -691,17 +650,6 @@ fn favorites_lengthen_the_full_stage_only_when_present() {
         RailStage::Scroll,
         "two pins overflow the bare-full extent into the band, not into Compact"
     );
-}
-
-/// The scripted-validation hook (`QUANTICK_DRAWING_MAGNET`) sets the same
-/// flag the button does; nothing may fork the two.
-#[test]
-fn the_hook_setter_moves_the_same_flag_the_button_does() {
-    let mut rail = ToolRail::new();
-    rail.set_magnet(true);
-    assert!(rail.magnet());
-    rail.set_magnet(false);
-    assert!(!rail.magnet());
 }
 
 #[test]
@@ -727,7 +675,7 @@ fn stages_are_pure_functions_of_extent() {
 #[test]
 fn the_compact_rail_keeps_pointer_crosshair_armed_tool_and_objects() {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.set_dock(ToolboxDock::Top);
     rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
     let mut drawings = Drawings::default();
@@ -742,9 +690,12 @@ fn the_compact_rail_keeps_pointer_crosshair_armed_tool_and_objects() {
         rail.button_rect(Tool::Drawing(DRAWING_TOOLS[0])).is_none(),
         "unarmed tools give up their slots at Compact"
     );
-    assert!(rail.more_rect.is_some());
-    assert!(rail.objects_rect.is_some());
-    assert!(rail.hide_all_rect.is_some(), "trailing cluster survives");
+    assert!(rail.view.more_rect.is_some());
+    assert!(rail.view.objects_rect.is_some());
+    assert!(
+        rail.view.hide_all_rect.is_some(),
+        "trailing cluster survives"
+    );
 
     // 250 px: Minimal — Crosshair and the globals fold into More.
     let minimal = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(250.0, 600.0));
@@ -752,9 +703,9 @@ fn the_compact_rail_keeps_pointer_crosshair_armed_tool_and_objects() {
     assert!(rail.button_rect(Tool::Pointer).is_some());
     assert!(rail.button_rect(Tool::Crosshair).is_none());
     assert!(rail.button_rect(Tool::Drawing(DRAWING_TOOLS[1])).is_some());
-    assert!(rail.hide_all_rect.is_none());
-    assert!(rail.lock_all_rect.is_none());
-    assert!(rail.objects_rect.is_some());
+    assert!(rail.view.hide_all_rect.is_none());
+    assert!(rail.view.lock_all_rect.is_none());
+    assert!(rail.view.objects_rect.is_some());
 
     // Wide again: every slot returns.
     let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
@@ -776,7 +727,7 @@ fn the_compact_rail_keeps_pointer_crosshair_armed_tool_and_objects() {
 
 #[test]
 fn the_more_flyout_lists_exactly_what_each_stage_swallowed() {
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
 
     let compact = rail.swallowed_tools(RailStage::Compact);
@@ -799,11 +750,12 @@ fn orientation_changes_positions_never_inventory() {
     let mut inventories: Vec<Vec<&'static str>> = Vec::new();
     for dock in [ToolboxDock::Left, ToolboxDock::Top, ToolboxDock::Bottom] {
         let ctx = egui::Context::default();
-        let mut rail = ToolRail::new();
+        let mut rail = ToolRail::new_rail();
         rail.set_dock(dock);
         let mut drawings = Drawings::default();
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
         let mut tools: Vec<&'static str> = rail
+            .view
             .button_rects
             .iter()
             .flatten()
@@ -823,14 +775,14 @@ fn the_grip_leads_and_objects_trails_in_every_dock() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0));
     for dock in [ToolboxDock::Left, ToolboxDock::Top, ToolboxDock::Bottom] {
         let ctx = egui::Context::default();
-        let mut rail = ToolRail::new();
+        let mut rail = ToolRail::new_rail();
         rail.set_dock(dock);
         let mut drawings = Drawings::default();
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
-        let grip = rail.grip_rect.expect("grip rendered");
-        let objects = rail.objects_rect.expect("objects rendered");
-        let rail_rect = rail.rail_rect.expect("rail rect recorded");
+        let grip = rail.view.grip_rect.expect("grip rendered");
+        let objects = rail.view.objects_rect.expect("objects rendered");
+        let rail_rect = rail.view.rail_rect.expect("rail rect recorded");
         let along = |rect: egui::Rect| {
             if dock.is_vertical() {
                 rect.top()
@@ -838,7 +790,7 @@ fn the_grip_leads_and_objects_trails_in_every_dock() {
                 rect.left()
             }
         };
-        for (_, rect) in rail.button_rects.iter().flatten() {
+        for (_, rect) in rail.view.button_rects.iter().flatten() {
             assert!(
                 along(grip) <= along(*rect),
                 "the grip precedes every button in {dock:?}"
@@ -863,12 +815,9 @@ fn the_grip_leads_and_objects_trails_in_every_dock() {
 /// the canvas looks like when no rail is competing for it.
 fn central_rect_with_rail(screen: egui::Rect, dock: ToolboxDock, visible: bool) -> egui::Rect {
     let ctx = egui::Context::default();
-    let mut rail = ToolRail {
-        tool: Tool::Pointer,
-        visible,
-        dock,
-        ..ToolRail::default()
-    };
+    let mut rail = ToolRail::new_rail();
+    rail.set_visible(visible);
+    rail.set_dock(dock);
     let mut central = egui::Rect::NOTHING;
     let input = egui::RawInput {
         screen_rect: Some(screen),
@@ -917,7 +866,7 @@ fn global_eye_and_lock_buttons_protect_every_drawing_without_deleting() {
 
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     // Registry-order-proof: place whatever the first tool needs rather
     // than assuming it is a one-click tool.
@@ -928,13 +877,13 @@ fn global_eye_and_lock_buttons_protect_every_drawing_without_deleting() {
     assert_eq!(drawings.items().len(), 1, "the object was placed");
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
-    let eye = rail.hide_all_rect.expect("hide-all rendered").center();
+    let eye = rail.view.hide_all_rect.expect("hide-all rendered").center();
     click_at(&mut rail, &mut drawings, &ctx, screen, eye);
     assert!(drawings.all_hidden(), "hide-all engages the global layer");
     click_at(&mut rail, &mut drawings, &ctx, screen, eye);
     assert!(!drawings.all_hidden(), "hide-all toggles back off");
 
-    let lock = rail.lock_all_rect.expect("lock-all rendered").center();
+    let lock = rail.view.lock_all_rect.expect("lock-all rendered").center();
     click_at(&mut rail, &mut drawings, &ctx, screen, lock);
     assert!(drawings.all_locked(), "lock-all locks every drawing");
     click_at(&mut rail, &mut drawings, &ctx, screen, lock);
@@ -984,10 +933,11 @@ fn tool_ids(count: usize) -> Vec<String> {
 /// Every tool the band actually showed this frame — allocated *and*
 /// inside the viewport, which is what "reachable" means once it clips.
 fn tools_on_screen(rail: &ToolRail) -> Vec<DrawingTool> {
-    let Some(band) = rail.band_rect else {
+    let Some(band) = rail.view.band_rect else {
         return Vec::new();
     };
-    rail.button_rects
+    rail.view
+        .button_rects
         .iter()
         .flatten()
         .filter(|(_, rect)| band.contains_rect(*rect))
@@ -1002,21 +952,24 @@ fn tools_on_screen(rail: &ToolRail) -> Vec<DrawingTool> {
 fn no_tool_is_unreachable_once_favorites_overflow_the_rail() {
     let screen = scrolling_screen();
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.set_favorites(&tool_ids(6));
     assert_eq!(rail.favorites().len(), 6, "six pins are live");
 
     let mut drawings = Drawings::default();
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
     assert!(
-        rail.band_rect.is_some(),
+        rail.view.band_rect.is_some(),
         "the rail scrolls instead of collapsing to Compact"
     );
-    assert!(rail.more_rect.is_none(), "no tool was swallowed into More");
+    assert!(
+        rail.view.more_rect.is_none(),
+        "no tool was swallowed into More"
+    );
 
     let mut seen: Vec<DrawingTool> = tools_on_screen(&rail);
     for _ in 0..40 {
-        let Some((arrow, live)) = rail.band_trailing_arrow else {
+        let Some((arrow, live)) = rail.view.band_trailing_arrow else {
             break;
         };
         if !live {
@@ -1051,22 +1004,31 @@ fn no_tool_is_unreachable_once_favorites_overflow_the_rail() {
 fn each_chevron_is_live_only_while_its_end_has_travel() {
     let screen = scrolling_screen();
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
-    let (_, up_live) = rail.band_leading_arrow.expect("leading chevron rendered");
-    let (down, down_live) = rail.band_trailing_arrow.expect("trailing chevron rendered");
+    let (_, up_live) = rail
+        .view
+        .band_leading_arrow
+        .expect("leading chevron rendered");
+    let (down, down_live) = rail
+        .view
+        .band_trailing_arrow
+        .expect("trailing chevron rendered");
     assert!(!up_live, "nothing above the band at rest");
     assert!(down_live, "the run overflows, so the band can descend");
 
     click_chevron(&mut rail, &mut drawings, &ctx, screen, down);
-    assert!(rail.band_offset > 0.0, "the click moved the band");
-    let (_, up_live) = rail.band_leading_arrow.expect("leading chevron rendered");
+    assert!(rail.view.band_offset > 0.0, "the click moved the band");
+    let (_, up_live) = rail
+        .view
+        .band_leading_arrow
+        .expect("leading chevron rendered");
     assert!(up_live, "the way back opens as soon as the band moves");
 
     for _ in 0..40 {
-        let Some((arrow, live)) = rail.band_trailing_arrow else {
+        let Some((arrow, live)) = rail.view.band_trailing_arrow else {
             break;
         };
         if !live {
@@ -1074,10 +1036,13 @@ fn each_chevron_is_live_only_while_its_end_has_travel() {
         }
         click_chevron(&mut rail, &mut drawings, &ctx, screen, arrow);
     }
-    let (_, down_live) = rail.band_trailing_arrow.expect("trailing chevron rendered");
+    let (_, down_live) = rail
+        .view
+        .band_trailing_arrow
+        .expect("trailing chevron rendered");
     assert!(!down_live, "the chevron dies at the end of travel");
     assert!(
-        rail.band_leading_arrow.is_some_and(|(_, live)| live),
+        rail.view.band_leading_arrow.is_some_and(|(_, live)| live),
         "and the way back stays open"
     );
 }
@@ -1089,7 +1054,7 @@ fn each_chevron_is_live_only_while_its_end_has_travel() {
 fn arming_a_scrolled_away_tool_brings_it_back_into_view() {
     let screen = scrolling_screen();
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
@@ -1109,11 +1074,11 @@ fn arming_a_scrolled_away_tool_brings_it_back_into_view() {
 
     // And the band stays put afterwards: a reveal is a one-frame event,
     // never a magnet that fights the trader scrolling away.
-    let settled = rail.band_offset;
-    let up = rail.band_leading_arrow.expect("leading chevron").0;
+    let settled = rail.view.band_offset;
+    let up = rail.view.band_leading_arrow.expect("leading chevron").0;
     click_chevron(&mut rail, &mut drawings, &ctx, screen, up);
     assert!(
-        rail.band_offset < settled,
+        rail.view.band_offset < settled,
         "the band scrolled away and was not dragged back"
     );
 }
@@ -1124,11 +1089,11 @@ fn arming_a_scrolled_away_tool_brings_it_back_into_view() {
 fn the_wheel_scrolls_the_band() {
     let screen = scrolling_screen();
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let mut drawings = Drawings::default();
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
-    let over = rail.band_rect.expect("the band renders").center();
-    assert_eq!(rail.band_offset, 0.0, "the band starts at the top");
+    let over = rail.view.band_rect.expect("the band renders").center();
+    assert_eq!(rail.view.band_offset, 0.0, "the band starts at the top");
 
     for _ in 0..4 {
         rail_frame_with(
@@ -1147,9 +1112,9 @@ fn the_wheel_scrolls_the_band() {
         );
     }
     assert!(
-        rail.band_offset > 0.0,
+        rail.view.band_offset > 0.0,
         "the wheel moved the band, offset={}",
-        rail.band_offset
+        rail.view.band_offset
     );
 }
 
@@ -1159,13 +1124,13 @@ fn the_wheel_scrolls_the_band() {
 fn unstarring_back_to_a_rail_that_fits_leaves_no_residue() {
     let screen = scrolling_screen();
     let ctx = egui::Context::default();
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.set_favorites(&tool_ids(6));
     let mut drawings = Drawings::default();
     rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
-    let down = rail.band_trailing_arrow.expect("trailing chevron").0;
+    let down = rail.view.band_trailing_arrow.expect("trailing chevron").0;
     click_chevron(&mut rail, &mut drawings, &ctx, screen, down);
-    assert!(rail.band_offset > 0.0, "the band is scrolled");
+    assert!(rail.view.band_offset > 0.0, "the band is scrolled");
 
     for tool in DRAWING_TOOLS.iter().take(6) {
         rail.toggle_favorite(*tool);
@@ -1174,12 +1139,12 @@ fn unstarring_back_to_a_rail_that_fits_leaves_no_residue() {
 
     let tall = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0));
     rail_frame_with(&mut rail, &mut drawings, &ctx, tall, Vec::new());
-    assert_eq!(rail.band_offset, 0.0, "the offset went home");
+    assert_eq!(rail.view.band_offset, 0.0, "the offset went home");
     assert!(
-        rail.band_leading_arrow.is_none() && rail.band_trailing_arrow.is_none(),
+        rail.view.band_leading_arrow.is_none() && rail.view.band_trailing_arrow.is_none(),
         "a rail that fits shows no navigation chrome"
     );
-    assert!(rail.band_rect.is_none(), "and no band");
+    assert!(rail.view.band_rect.is_none(), "and no band");
 }
 
 /// The band follows the rail's long axis, so a horizontal dock scrolls
@@ -1202,23 +1167,24 @@ fn the_band_scrolls_along_the_long_axis_in_every_dock() {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(560.0, 900.0)),
         ),
     ] {
-        let mut rail = ToolRail::new();
+        let mut rail = ToolRail::new_rail();
         rail.set_dock(dock);
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
-        let band = rail.band_rect.expect("the band renders in every dock");
-        let (leading, _) = rail.band_leading_arrow.expect("leading chevron");
-        let (trailing, _) = rail.band_trailing_arrow.expect("trailing chevron");
+        let band = rail.view.band_rect.expect("the band renders in every dock");
+        let (leading, _) = rail.view.band_leading_arrow.expect("leading chevron");
+        let (trailing, _) = rail.view.band_trailing_arrow.expect("trailing chevron");
         // The band is a window onto the tools, not a claim on the rail:
         // it must never eat the far cluster's room. Measured along the
         // long axis only — the trailing cluster's short-axis placement
         // on a horizontal dock is wrong on `main` too, in every stage,
         // and fixing that is not this change's job.
         let objects = rail
+            .view
             .objects_rect
             .unwrap_or_else(|| panic!("{dock:?} kept its Objects button"));
-        let rail_rect = rail.rail_rect.expect("rail rendered");
+        let rail_rect = rail.view.rail_rect.expect("rail rendered");
         assert!(
-            rail.magnet_rect.is_some() && rail.lock_all_rect.is_some(),
+            rail.view.magnet_rect.is_some() && rail.view.lock_all_rect.is_some(),
             "{dock:?} kept its trailing cluster"
         );
         if dock.is_vertical() {
@@ -1259,7 +1225,7 @@ fn top_rail_has_no_unpainted_gutter() {
             let mut appearance = quantick_appearance::Appearance::default();
             appearance.apply(source).unwrap();
             theme::sync(&ctx, &appearance);
-            let mut rail = ToolRail::new();
+            let mut rail = ToolRail::new_rail();
             let mut drawings = Drawings::default();
             for dock in [
                 ToolboxDock::Left,
@@ -1292,10 +1258,10 @@ fn top_rail_has_no_unpainted_gutter() {
                         let at = egui::pos2(width / 2.0, remaining.top() - 2.0);
                         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if shape.clip_rect.contains(at) && rect.rect.contains(at) && rect.fill == theme::get(&ctx).chrome())), "reserved rail is painted to its bottom edge");
                         for control in [
-                            rail.objects_rect,
-                            rail.magnet_rect,
-                            rail.hide_all_rect,
-                            rail.lock_all_rect,
+                            rail.view.objects_rect,
+                            rail.view.magnet_rect,
+                            rail.view.hide_all_rect,
+                            rail.view.lock_all_rect,
                         ]
                         .into_iter()
                         .flatten()

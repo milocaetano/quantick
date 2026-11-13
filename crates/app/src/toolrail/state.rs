@@ -1,70 +1,97 @@
-//! The rail's own state: the armed tool, the dock, the starred tools,
-//! the scroll band's offset, the hit rectangles a script reads, and the
-//! keyboard shortcuts that arm a tool.
-
+//! Thin host reads and intents over the catalog-owned tool rail.
 use super::{
-    RailControl, RailControlKind, RailSlot, RailStage, Tool, ToolRail, ToolboxDock, tool_slots,
+    Intent, RailControl, RailControlKind, RailSlot, RailStage, Tool, ToolRail, ToolboxDock,
+    tool_slots,
 };
 use crate::drawings::{DRAWING_TOOLS, DrawingTool};
 use eframe::egui;
-
-impl ToolRail {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+pub(crate) trait ToolRailExt {
+    #[cfg(test)]
+    fn new_rail() -> Self;
+    fn tool(&self) -> Tool;
+    fn visible(&self) -> bool;
+    fn dock(&self) -> ToolboxDock;
+    fn set_dock(&mut self, dock: ToolboxDock);
+    fn set_visible(&mut self, visible: bool);
+    fn painted_controls(&self) -> Vec<RailControl>;
+    fn favorite_control(&self, tool: DrawingTool) -> RailControl;
+    fn drag_active(&self) -> bool;
+    fn toggle_visible(&mut self);
+    fn arm(&mut self, tool: Tool);
+    fn favorites(&self) -> &[DrawingTool];
+    #[cfg(test)]
+    fn is_favorite(&self, tool: DrawingTool) -> bool;
+    #[cfg(test)]
+    fn toggle_favorite(&mut self, tool: DrawingTool);
+    fn take_favorites_change(&mut self) -> bool;
+    fn set_favorites(&mut self, ids: &[String]) -> Vec<String>;
+    #[cfg(any(feature = "drawing-harness", test))]
+    fn set_band_offset(&mut self, offset: f32);
+    fn repeat(&self) -> bool;
+    fn magnet(&self) -> bool;
+    fn set_magnet(&mut self, magnet: bool) -> bool;
+    fn take_magnet_request(&mut self) -> Option<bool>;
+    fn magnet_painted(&self) -> bool;
+    #[cfg(any(feature = "drawing-harness", test))]
+    fn request_flyout(&mut self, family_id: String);
+    fn handle_keys(&mut self, ctx: &egui::Context);
+    #[cfg(test)]
+    fn set_repeat(&mut self, repeat: bool);
+    #[cfg(test)]
+    fn magnet_button_rect(&self) -> Option<egui::Rect>;
+    #[cfg(test)]
+    fn button_rect(&self, tool: Tool) -> Option<egui::Rect>;
+    #[cfg(test)]
+    fn objects_button_rect(&self) -> Option<egui::Rect>;
+    #[cfg(test)]
+    fn flyout_row_rect(&self, tool: DrawingTool) -> Option<egui::Rect>;
+    #[cfg(any(feature = "drawing-harness", test))]
+    fn apply_launch(&mut self, launch: ToolRailLaunch) -> ToolRailLaunchOutcome;
+    #[cfg(test)]
+    fn family_member(
+        &self,
+        family: crate::drawings::ToolFamily,
+        members: &[DrawingTool],
+    ) -> Option<DrawingTool>;
+}
+impl ToolRailExt for ToolRail {
+    #[cfg(test)]
+    fn new_rail() -> Self {
+        Self::new(super::View::default(), super::effects)
+            .in_slots(&[quantick_ui_model::Slot::EdgePanels])
     }
-
-    #[must_use]
-    pub fn tool(&self) -> Tool {
-        self.tool
+    fn tool(&self) -> Tool {
+        self.model_state.tool
     }
-
-    #[must_use]
-    pub fn visible(&self) -> bool {
-        self.visible
+    fn visible(&self) -> bool {
+        self.model_state.visible
     }
-
-    #[must_use]
-    pub fn dock(&self) -> ToolboxDock {
-        self.dock
+    fn dock(&self) -> ToolboxDock {
+        self.model_state.dock
     }
-
-    /// Dock the rail against `dock` — the menu path beside dragging.
-    pub fn set_dock(&mut self, dock: ToolboxDock) {
-        self.dock = dock;
+    fn set_dock(&mut self, dock: ToolboxDock) {
+        self.update(Intent::SetDock(dock));
     }
-
-    /// Show or hide the rail outright, for a saved workspace restoring the
-    /// state it recorded rather than toggling from whatever this launch
-    /// happens to be in.
-    pub fn set_visible(&mut self, visible: bool) {
-        if self.visible != visible {
-            self.toggle_visible();
+    fn set_visible(&mut self, visible: bool) {
+        self.update(Intent::SetVisible(visible));
+        if !visible {
+            self.view.last_stage = None;
+            self.view.last_band = None;
         }
     }
-
-    /// The controls the rail painted last frame, in rail order.
-    ///
-    /// Folded through the very `tool_slots()` the draw folds through, and cut
-    /// by the stage and the band window the draw recorded, so this can never
-    /// name a button that is behind a flyout, off the scrolled run, or inside
-    /// the More menu. A rail nobody can see, and one that has not been drawn
-    /// yet, both report nothing: the guarantee is made here rather than left
-    /// to whichever caller remembers to ask [`Self::visible`] first.
-    #[must_use]
-    pub(crate) fn painted_controls(&self) -> Vec<RailControl> {
-        if !self.visible {
+    fn painted_controls(&self) -> Vec<RailControl> {
+        if !self.model_state.visible {
             return Vec::new();
         }
-        let Some(stage) = self.last_stage else {
+        let Some(stage) = self.view.last_stage else {
             return Vec::new();
         };
-        let armed_drawing = self.tool.drawing_tool();
+        let armed_drawing = self.model_state.tool.drawing_tool();
         let mut controls = vec![RailControl {
             kind: RailControlKind::Tool,
             id: Tool::Pointer.id(),
             label: Tool::Pointer.name(),
-            armed: self.tool == Tool::Pointer,
+            armed: self.model_state.tool == Tool::Pointer,
         }];
         // Minimal drops the crosshair; every wider stage keeps it.
         if stage != RailStage::Minimal {
@@ -72,40 +99,40 @@ impl ToolRail {
                 kind: RailControlKind::Tool,
                 id: Tool::Crosshair.id(),
                 label: Tool::Crosshair.name(),
-                armed: self.tool == Tool::Crosshair,
+                armed: self.model_state.tool == Tool::Crosshair,
             });
         }
         match stage {
             // The whole run has a button, and so does every star: nothing is
             // clipped and nothing is folded away at this width.
             RailStage::Full => {
-                for tool in &self.favorites {
+                for tool in &self.model_state.favorites {
                     controls.push(self.favorite_control(*tool));
                 }
                 for slot in tool_slots() {
-                    controls.push(Self::slot_control(slot, armed_drawing));
+                    controls.push(slot_control(slot, armed_drawing));
                 }
             }
             // The band clips. Only the anchored stars stay outside it; the
             // rest of the stars and the whole tool run scroll behind two
             // chevrons, and only the window the draw recorded is on screen.
             RailStage::Scroll => {
-                let Some(band) = self.last_band else {
+                let Some(band) = self.view.last_band else {
                     return controls;
                 };
-                let anchored = band.anchored.min(self.favorites.len());
-                for tool in &self.favorites[..anchored] {
+                let anchored = band.anchored.min(self.model_state.favorites.len());
+                for tool in &self.model_state.favorites[..anchored] {
                     controls.push(self.favorite_control(*tool));
                 }
                 let slots = tool_slots();
-                let spilled = self.favorites.len() - anchored;
+                let spilled = self.model_state.favorites.len() - anchored;
                 let content = spilled + slots.len();
                 let first = band.first.min(content);
                 let last = first.saturating_add(band.visible).min(content);
                 for index in first..last {
                     controls.push(match index.checked_sub(spilled) {
-                        Some(slot) => Self::slot_control(&slots[slot], armed_drawing),
-                        None => self.favorite_control(self.favorites[anchored + index]),
+                        Some(slot) => slot_control(&slots[slot], armed_drawing),
+                        None => self.favorite_control(self.model_state.favorites[anchored + index]),
                     });
                 }
             }
@@ -126,190 +153,93 @@ impl ToolRail {
         controls
     }
 
-    /// One entry of the folded tool run, as the draw paints it.
-    fn slot_control(slot: &RailSlot, armed_drawing: Option<DrawingTool>) -> RailControl {
-        match slot {
-            RailSlot::Single(tool) => RailControl {
-                kind: RailControlKind::Tool,
-                id: tool.id(),
-                label: tool.name(),
-                armed: armed_drawing == Some(*tool),
-            },
-            RailSlot::Family { family, members } => RailControl {
-                kind: RailControlKind::Family,
-                id: family.id,
-                label: family.title,
-                armed: armed_drawing.is_some_and(|tool| members.contains(&tool)),
-            },
-        }
-    }
-
-    /// One pinned button. A star is a second button for a tool that also has
-    /// a slot in the run, so it is named in its own namespace rather than
-    /// answering to the slot's name.
     fn favorite_control(&self, tool: DrawingTool) -> RailControl {
         RailControl {
             kind: RailControlKind::Favorite,
             id: tool.id(),
             label: tool.name(),
-            armed: self.tool == Tool::Drawing(tool),
+            armed: self.model_state.tool == Tool::Drawing(tool),
         }
     }
-
-    /// Whether a grip drag is live this frame — the app's escape stack must
-    /// yield Esc to the drag while it is.
-    #[must_use]
-    pub fn drag_active(&self) -> bool {
-        self.dragging
+    fn drag_active(&self) -> bool {
+        self.model_state.dragging
     }
-
-    pub fn toggle_visible(&mut self) {
-        self.visible = !self.visible;
-        if !self.visible {
-            self.tool = Tool::Pointer;
-            // Nothing is painted while the rail is away, so what the last
-            // draw settled on stops describing the screen. Forgotten rather
-            // than kept: control captures are served before the rail draws,
-            // so a stale stage would answer the first capture after a hide
-            // with the buttons of a rail nobody can see.
-            self.last_stage = None;
-            self.last_band = None;
-        }
+    fn toggle_visible(&mut self) {
+        self.set_visible(!self.visible());
     }
-
-    pub fn arm(&mut self, tool: Tool) {
-        if let Tool::Drawing(drawing_tool) = tool
-            && let Some(family) = drawing_tool.family()
-        {
-            self.last_family_member.insert(family.id, drawing_tool);
-        }
-        if self.tool != tool {
-            self.reveal_armed = true;
-        }
-        self.tool = tool;
+    fn arm(&mut self, tool: Tool) {
+        self.update(Intent::Arm(tool));
     }
-
-    /// The starred tools, in the order they were starred.
-    #[must_use]
-    pub fn favorites(&self) -> &[DrawingTool] {
-        &self.favorites
+    fn favorites(&self) -> &[DrawingTool] {
+        &self.model_state.favorites
     }
-
-    #[must_use]
-    pub fn is_favorite(&self, tool: DrawingTool) -> bool {
-        self.favorites.contains(&tool)
+    #[cfg(test)]
+    fn is_favorite(&self, tool: DrawingTool) -> bool {
+        self.model_state.favorites.contains(&tool)
     }
-
-    /// Star or unstar a tool. Starring appends — the pinned section grows at
-    /// its far end, and the tools already pinned never move.
-    pub fn toggle_favorite(&mut self, tool: DrawingTool) {
-        if let Some(index) = self.favorites.iter().position(|entry| *entry == tool) {
-            self.favorites.remove(index);
-        } else {
-            self.favorites.push(tool);
-        }
-        self.favorites_changed = true;
+    #[cfg(test)]
+    fn toggle_favorite(&mut self, tool: DrawingTool) {
+        self.update(Intent::ToggleFavorite(tool));
     }
-
-    /// Whether the trader starred or unstarred something since this was last
-    /// asked, clearing the flag.
-    ///
-    /// The rail curates the list; it does not know where lists are kept. The
-    /// app reads this on the frame the star was clicked and writes the choice
-    /// down — the same hand-off the replay browser's folder pick uses, and for
-    /// the same reason: "it forgot my tools again" must not be one crash away.
-    pub fn take_favorites_change(&mut self) -> bool {
-        std::mem::take(&mut self.favorites_changed)
+    fn take_favorites_change(&mut self) -> bool {
+        let changed = self.model_state.favorites_changed;
+        self.update(Intent::AcknowledgeFavorites);
+        changed
     }
-
-    /// Restore the starred list from saved tool ids — the workspace file
-    /// path. An id no registered tool carries is dropped, a duplicate keeps
-    /// its first position, and saved order is kept: it is the order the
-    /// trader starred in.
-    ///
-    /// Returns the ids it did not recognise, so the caller can say so. The
-    /// prune used to be private and harmless — it only reached the disk on an
-    /// explicit save. Now the trader's next star click writes this list back,
-    /// which makes the loss permanent, and losing a saved id without a word is
-    /// exactly the silent patching `CLAUDE.md` rules out. The sibling restore
-    /// logs `UI_STATE_TAB_DROPPED` for a tab it cannot open, for the same
-    /// reason.
-    pub fn set_favorites(&mut self, ids: &[String]) -> Vec<String> {
-        self.favorites.clear();
-        let mut unknown = Vec::new();
-        for id in ids {
-            match DrawingTool::by_id(id) {
-                Some(tool) if !self.favorites.contains(&tool) => self.favorites.push(tool),
-                // A duplicate is not a loss: the first position stands.
-                Some(_) => {}
-                None => unknown.push(id.clone()),
-            }
-        }
-        unknown
+    fn set_favorites(&mut self, ids: &[String]) -> Vec<String> {
+        let response = self.update(Intent::RestoreFavorites(ids.to_vec()));
+        response
+            .model_effects
+            .into_iter()
+            .find_map(|effect| {
+                if let quantick_ui_model::HostEffect::ToolRail(effects) = effect {
+                    effects.into_iter().find_map(|effect| match effect {
+                        quantick_ui_model::tool_rail::Effect::UnknownFavorites(ids) => Some(ids),
+                        _ => None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     }
-
-    /// Park the scrolling tool band at `offset` px along the rail — the
-    /// validation hook for a state that otherwise takes a chevron click.
-    /// The band clamps it on the next frame, so `f32::INFINITY` means "the
-    /// far end" and a rail that does not scroll ignores it entirely.
     #[cfg(any(feature = "drawing-harness", test))]
-    pub fn set_band_offset(&mut self, offset: f32) {
-        self.band_target = Some(offset.max(0.0));
+    fn set_band_offset(&mut self, offset: f32) {
+        self.update(Intent::RequestScroll(offset));
     }
-
-    /// Whether the repeat pin keeps the tool armed after an object completes.
-    #[must_use]
-    pub fn repeat(&self) -> bool {
-        self.repeat
+    fn repeat(&self) -> bool {
+        self.model_state.repeat
     }
-
-    /// Whether placed anchors snap to the bar's open / high / low / close.
-    #[must_use]
-    pub fn magnet(&self) -> bool {
-        self.magnet.on
+    fn magnet(&self) -> bool {
+        self.model_state.magnet
     }
-
-    /// Set the magnet — `annotate.magnet.set` (which the rail button and
-    /// its More menu entry go through) and the `QUANTICK_DRAWING_MAGNET` hook
-    /// all come through here, so none can drift from the others. Answers
-    /// whether it moved.
-    pub(crate) fn set_magnet(&mut self, magnet: bool) -> bool {
-        std::mem::replace(&mut self.magnet.on, magnet) != magnet
+    fn set_magnet(&mut self, magnet: bool) -> bool {
+        let changed = self.model_state.magnet != magnet;
+        self.update(Intent::ConfirmMagnet(magnet));
+        changed
     }
-
-    /// The flip a hand asked for this frame, once.
-    pub fn take_magnet_request(&mut self) -> Option<bool> {
-        self.magnet.asked.take()
+    fn take_magnet_request(&mut self) -> Option<bool> {
+        let request = self.model_state.magnet_request;
+        self.update(Intent::AcknowledgeMagnet);
+        request
     }
-
-    /// Whether the magnet's own button is on screen: the trailing cluster of
-    /// every stage but Minimal, which folds it into the closed More menu.
-    #[must_use]
-    pub(crate) fn magnet_painted(&self) -> bool {
-        self.visible
+    fn magnet_painted(&self) -> bool {
+        self.model_state.visible
             && self
+                .view
                 .last_stage
                 .is_some_and(|stage| stage != RailStage::Minimal)
     }
-
-    /// Ask for a family flyout without a click — the
-    /// `QUANTICK_TOOLBOX_FLYOUT` hook. The slot honours it on its next draw,
-    /// when the anchor rect exists; an unknown family id is simply never
-    /// matched and stays pending, which draws nothing.
     #[cfg(any(feature = "drawing-harness", test))]
-    pub(crate) fn request_flyout(&mut self, family_id: String) {
-        self.hook_flyout = Some(family_id);
+    fn request_flyout(&mut self, family_id: String) {
+        self.update(Intent::RequestFlyout(family_id));
     }
-
-    /// Tool-arming keys. Escape lives in the app's escape stack (rail drag →
-    /// input → draft → selection → Pointer), not here. Each drawing tool
-    /// declares its own shortcut through the registry.
-    pub fn handle_keys(&mut self, ctx: &egui::Context) {
+    fn handle_keys(&mut self, ctx: &egui::Context) {
         // A hidden rail arms nothing (audit M9): with no rail on screen an
         // armed tool has no indication anywhere, and the next chart click
         // would draw instead of pan — the keyboard twin of the invariant
         // `hiding_the_toolbox_cannot_leave_an_invisible_drawing_tool_armed`.
-        if !self.visible {
+        if !self.model_state.visible {
             return;
         }
         if ctx.memory(|memory| memory.focused().is_some()) {
@@ -343,37 +273,65 @@ impl ToolRail {
             self.arm(tool);
         }
     }
-}
-
-#[cfg(test)]
-impl ToolRail {
-    pub(crate) fn set_repeat(&mut self, repeat: bool) {
-        self.repeat = repeat;
+    #[cfg(test)]
+    fn set_repeat(&mut self, repeat: bool) {
+        self.update(Intent::SetRepeat(repeat));
     }
-
-    /// Where the magnet button was drawn, for tests that click it.
-    pub(crate) fn magnet_button_rect(&self) -> Option<egui::Rect> {
-        self.magnet_rect
+    #[cfg(test)]
+    fn magnet_button_rect(&self) -> Option<egui::Rect> {
+        self.view.magnet_rect
     }
-
-    pub(crate) fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
-        self.button_rects
+    #[cfg(test)]
+    fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
+        self.view
+            .button_rects
             .iter()
             .flatten()
             .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
     }
-
-    pub(crate) fn objects_button_rect(&self) -> Option<egui::Rect> {
-        self.objects_rect
+    #[cfg(test)]
+    fn objects_button_rect(&self) -> Option<egui::Rect> {
+        self.view.objects_rect
     }
-
-    pub(crate) fn flyout_row_rect(&self, tool: DrawingTool) -> Option<egui::Rect> {
-        self.flyout_rects
+    #[cfg(test)]
+    fn flyout_row_rect(&self, tool: DrawingTool) -> Option<egui::Rect> {
+        self.view
+            .flyout_rects
             .iter()
             .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
     }
+    #[cfg(any(feature = "drawing-harness", test))]
+    fn apply_launch(&mut self, launch: ToolRailLaunch) -> ToolRailLaunchOutcome {
+        if let Some(tool) = launch.tool {
+            self.arm(Tool::Drawing(tool));
+        }
+        if launch.magnet {
+            self.set_magnet(true);
+        }
+        let favorites_staged = launch.favorites.is_some();
+        if let Some(ids) = launch.favorites {
+            self.set_favorites(&ids);
+        }
+        if let Some(dock) = launch.dock {
+            self.set_dock(dock);
+        }
+        if let Some(offset) = launch.scroll {
+            self.set_band_offset(offset);
+        }
+        if let Some(family) = launch.flyout {
+            self.request_flyout(family);
+        }
+        ToolRailLaunchOutcome { favorites_staged }
+    }
+    #[cfg(test)]
+    fn family_member(
+        &self,
+        family: crate::drawings::ToolFamily,
+        members: &[DrawingTool],
+    ) -> Option<DrawingTool> {
+        self.model_state.family_member(family, members)
+    }
 }
-
 /// Inputs captured once for the drawing rail's existing launch phase.
 #[cfg(any(feature = "drawing-harness", test))]
 #[derive(Default)]
@@ -430,28 +388,19 @@ pub(crate) struct ToolRailLaunchOutcome {
     pub favorites_staged: bool,
 }
 
-#[cfg(any(feature = "drawing-harness", test))]
-impl ToolRail {
-    pub(crate) fn apply_launch(&mut self, launch: ToolRailLaunch) -> ToolRailLaunchOutcome {
-        if let Some(tool) = launch.tool {
-            self.arm(Tool::Drawing(tool));
-        }
-        if launch.magnet {
-            self.set_magnet(true);
-        }
-        let favorites_staged = launch.favorites.is_some();
-        if let Some(ids) = launch.favorites {
-            self.set_favorites(&ids);
-        }
-        if let Some(dock) = launch.dock {
-            self.set_dock(dock);
-        }
-        if let Some(offset) = launch.scroll {
-            self.set_band_offset(offset);
-        }
-        if let Some(family) = launch.flyout {
-            self.request_flyout(family);
-        }
-        ToolRailLaunchOutcome { favorites_staged }
+fn slot_control(slot: &RailSlot, armed_drawing: Option<DrawingTool>) -> RailControl {
+    match slot {
+        RailSlot::Single(tool) => RailControl {
+            kind: RailControlKind::Tool,
+            id: tool.id(),
+            label: tool.name(),
+            armed: armed_drawing == Some(*tool),
+        },
+        RailSlot::Family { family, members } => RailControl {
+            kind: RailControlKind::Family,
+            id: family.id,
+            label: family.title,
+            armed: armed_drawing.is_some_and(|tool| members.contains(&tool)),
+        },
     }
 }

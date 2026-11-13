@@ -8,6 +8,7 @@ use quantick_workspace::workspace_commit::{
 };
 use std::{path::Path, time::Instant};
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct WorkspaceRead<'a> {
     pub(super) arrangement: ArrangementRead<'a>,
     pub(super) session: &'a WorkspaceCommitSession,

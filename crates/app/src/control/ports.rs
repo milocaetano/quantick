@@ -2,6 +2,7 @@
 //! `quantick_control_handlers`: each act is the one the window's own button
 //! makes, on the window as the gateway holds it.
 
+use crate::toolrail::ToolRailExt as _;
 use quantick_control_handlers::{
     JournalAccess, TabDirectory,
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},

@@ -11,6 +11,7 @@ pub(crate) use access::{DrawingAccess, DrawingReadAccess};
 #[cfg(test)]
 pub(super) use input::DUPLICATE_OFFSET_BARS;
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct DrawingController {
     pub(crate) presets: drawings::presets::PresetStore,
 }

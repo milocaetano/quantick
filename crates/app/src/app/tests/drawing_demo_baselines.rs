@@ -276,7 +276,7 @@ fn nine_hook_case(case: &str, env: Env) {
             } else {
                 "parallel-channel"
             };
-            app.toolrail.arm(Tool::Drawing(
+            app.surfaces.toolrail.arm(Tool::Drawing(
                 drawings::DRAWING_TOOLS
                     .into_iter()
                     .find(|tool| tool.id() == id)

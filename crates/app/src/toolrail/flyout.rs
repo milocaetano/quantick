@@ -5,30 +5,17 @@ use super::{
     CARET_INSET_PX, CARET_SIDE_PX, FLYOUT_CORNER_RADIUS_PX, FLYOUT_GLYPH_CENTER_X_PX,
     FLYOUT_GLYPH_PX, FLYOUT_HEADER_TEXT_PX, FLYOUT_ICON_BOX_PX, FLYOUT_NAME_TEXT_PX,
     FLYOUT_NAME_X_PX, FLYOUT_ROW_RADIUS_PX, FLYOUT_SHORTCUT_INSET_PX, FLYOUT_SHORTCUT_TEXT_PX,
-    FLYOUT_STAR_HIT_PX, FLYOUT_STAR_PX, FLYOUT_STAR_RIGHT_INSET_PX, FLYOUT_STAR_SLOT_PX, RailSlot,
-    TOOLBOX_CARET_ZONE_PX, TOOLBOX_FLYOUT_ROW_HEIGHT_PX, TOOLBOX_FLYOUT_WIDTH_PX,
-    TOOLBOX_ITEM_GAP_PX, TOOLBOX_MARGIN_PX, Tool, ToolRail, ToolboxDock, tool_slots,
+    FLYOUT_STAR_HIT_PX, FLYOUT_STAR_PX, FLYOUT_STAR_RIGHT_INSET_PX, FLYOUT_STAR_SLOT_PX, Intent,
+    RailPaint, RailSlot, TOOLBOX_CARET_ZONE_PX, TOOLBOX_FLYOUT_ROW_HEIGHT_PX,
+    TOOLBOX_FLYOUT_WIDTH_PX, TOOLBOX_ITEM_GAP_PX, TOOLBOX_MARGIN_PX, Tool, ToolboxDock, tool_slots,
 };
-use crate::drawings::{DrawingTool, Drawings, ToolFamily};
+use crate::drawings::{DrawingTool, ToolFamily};
 use crate::theme;
 use crate::widgets::{IconButton, TOOLRAIL_ICON, paint_vector_icon};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-impl ToolRail {
-    /// A family's shown member: the last-armed one, or `None` before any
-    /// member has been used.
-    pub(super) fn family_member(
-        &self,
-        family: ToolFamily,
-        members: &[DrawingTool],
-    ) -> Option<DrawingTool> {
-        self.last_family_member
-            .get(family.id)
-            .copied()
-            .filter(|member| members.contains(member))
-    }
-
+impl RailPaint<'_, '_> {
     /// The family split button: left-click arms the shown member; the caret
     /// zone or a right-click opens the member flyout.
     pub(super) fn draw_family_slot(
@@ -36,7 +23,6 @@ impl ToolRail {
         ui: &mut egui::Ui,
         family: ToolFamily,
         members: &[DrawingTool],
-        drawings: &Drawings,
     ) {
         let palette = theme::get(ui.ctx());
         let shown = self.family_member(family, members);
@@ -57,7 +43,7 @@ impl ToolRail {
             .show(ui);
         let badge_shown = shown
             .map(Tool::Drawing)
-            .is_some_and(|tool| self.paint_draft_badge(ui, &response, tool, drawings));
+            .is_some_and(|tool| self.paint_draft_badge(ui, &response, tool));
 
         // The caret marks the flyout; it yields the corner to a draft badge,
         // because a tool mid-draft is unambiguously armed already.
@@ -92,15 +78,20 @@ impl ToolRail {
         }
 
         #[cfg(test)]
-        if let Some(slot) = self.button_rects.iter_mut().find(|slot| slot.is_none()) {
+        if let Some(slot) = self
+            .view
+            .button_rects
+            .iter_mut()
+            .find(|slot| slot.is_none())
+        {
             let recorded = shown.unwrap_or(members[0]);
             *slot = Some((Tool::Drawing(recorded), response.rect));
         }
 
         #[cfg(any(feature = "drawing-harness", test))]
-        if self.hook_flyout.as_deref() == Some(family.id) {
-            self.hook_flyout = None;
-            self.flyout = Some((family.id, response.rect));
+        if self.requested_flyout.as_deref() == Some(family.id) {
+            self.view.flyout_anchor = Some(response.rect);
+            self.update(Intent::OpenFlyout(family.id));
         }
 
         let caret_clicked = response.clicked()
@@ -108,7 +99,8 @@ impl ToolRail {
                 .interact_pointer_pos()
                 .is_some_and(|position| caret_zone.contains(position));
         if response.secondary_clicked() || caret_clicked {
-            self.flyout = Some((family.id, response.rect));
+            self.view.flyout_anchor = Some(response.rect);
+            self.update(Intent::OpenFlyout(family.id));
         } else if response.clicked() {
             self.arm(Tool::Drawing(shown.unwrap_or(members[0])));
         }
@@ -118,7 +110,7 @@ impl ToolRail {
     /// aligned with the slot's leading edge.
     pub(super) fn draw_family_flyout(&mut self, ctx: &egui::Context) {
         let palette = theme::get(ctx);
-        let Some((family_id, anchor)) = self.flyout else {
+        let Some((family_id, anchor)) = self.flyout.zip(self.view.flyout_anchor) else {
             return;
         };
         let Some((family, members)) = tool_slots().iter().find_map(|slot| match slot {
@@ -127,12 +119,12 @@ impl ToolRail {
             }
             _ => None,
         }) else {
-            self.flyout = None;
+            self.update(Intent::CloseFlyout);
             return;
         };
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.flyout = None;
+            self.update(Intent::CloseFlyout);
             return;
         }
 
@@ -174,7 +166,7 @@ impl ToolRail {
                             match self.draw_flyout_row(ui, *member) {
                                 Some(FlyoutClick::Arm) => {
                                     self.arm(Tool::Drawing(*member));
-                                    self.flyout = None;
+                                    self.update(Intent::CloseFlyout);
                                 }
                                 // Starring neither arms nor closes: the
                                 // trader is curating the rail, not drawing.
@@ -196,7 +188,7 @@ impl ToolRail {
                     })
             });
             if pressed_outside {
-                self.flyout = None;
+                self.update(Intent::CloseFlyout);
             }
         }
     }
@@ -218,9 +210,9 @@ impl ToolRail {
             egui::Rect::from_center_size(star_center, egui::Vec2::splat(FLYOUT_STAR_HIT_PX));
         let favorite = self.is_favorite(member);
         #[cfg(test)]
-        self.flyout_rects.push((member, rect));
+        self.view.flyout_rects.push((member, rect));
         #[cfg(test)]
-        self.flyout_star_rects.push((member, star_zone));
+        self.view.flyout_star_rects.push((member, star_zone));
         if ui.is_rect_visible(rect) {
             let armed = self.tool == Tool::Drawing(member);
             if armed {

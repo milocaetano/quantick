@@ -53,7 +53,7 @@ fn arrangement_baseline_close_keeps_position_then_clamps_and_cycle_wraps() {
 #[test]
 fn arrangement_baseline_empty_restore_applies_autosave_but_silent_favorites_keep_stars() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     let before = app.runtime.tabs.id_at(0);
     let mut saved = app.workspace_state().capture_workspace();
     saved.tabs.clear();

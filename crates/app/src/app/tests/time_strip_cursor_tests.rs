@@ -9,7 +9,7 @@ fn strip_app() -> (QuantickApp, egui::Context, egui::Rect, egui::Rect) {
 
 fn strip_app_with(launch: AppLaunch) -> (QuantickApp, egui::Context, egui::Rect, egui::Rect) {
     let (mut app, _commands) = app_with_history_and_launch(50, launch);
-    app.toolrail.arm(crate::toolrail::Tool::Crosshair);
+    app.surfaces.toolrail.arm(crate::toolrail::Tool::Crosshair);
     let ctx = egui::Context::default();
     pin_frame_clock(&ctx);
     for _ in 0..3 {

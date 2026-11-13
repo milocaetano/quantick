@@ -25,7 +25,6 @@ use crate::pane::{
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
 
 pub(crate) mod tree;
 
@@ -33,7 +32,6 @@ pub(crate) mod tree;
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
 pub struct CanvasChrome<'a> {
     pub(crate) surfaces: &'a mut crate::surfaces::Surfaces,
-    pub toolrail: &'a mut ToolRail,
     pub presets: &'a crate::drawings::presets::PresetStore,
     /// See [`PaneChrome::begin_text_edit`].
     pub begin_text_edit: &'a mut bool,
@@ -723,7 +721,7 @@ impl Tab {
         let mut chrome = PaneChrome {
             tab: tab_id,
             side: PaneSide::Flow,
-            toolrail: chrome.toolrail,
+            toolrail: &mut chrome.surfaces.toolrail,
             presets: chrome.presets,
             drawing_chrome: &mut chrome.surfaces.drawing_chrome,
             begin_text_edit: chrome.begin_text_edit,
