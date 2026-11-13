@@ -101,6 +101,8 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
         )),
     );
     app.surfaces.chrome_toolbar.scoped(scope).1.recording_menu = deal_recording_menu;
+    app.surfaces.chrome_toolbar.scoped(scope).1.popovers =
+        Some(app.surfaces.canvas_popovers.model_state.projection());
     let response = app.surfaces.draw_slot_scoped(
         scope,
         quantick_ui_model::Slot::Toolbar,
@@ -115,9 +117,17 @@ pub(in crate::app) fn draw(app: &mut QuantickApp, ctx: &egui::Context) {
             for effect in effects.0 {
                 use quantick_ui_model::chrome_toolbar::Effect;
                 match effect {
+                    Effect::Action(ToolbarAction::ToggleLayoutPopover) => {
+                        app.surfaces
+                            .canvas_popovers
+                            .update(quantick_ui_model::canvas_popovers::Intent::ToggleLayout);
+                    }
+                    Effect::Action(ToolbarAction::ToggleAddMenu) => {
+                        app.surfaces
+                            .canvas_popovers
+                            .update(quantick_ui_model::canvas_popovers::Intent::ToggleAdd);
+                    }
                     Effect::Action(action) => actions.push(action),
-                    Effect::SetLayoutPopover(open) => app.chrome.layout_picker_open = open,
-                    Effect::SetAddMenu(open) => app.chrome.add_menu.open = open,
                 }
             }
         }

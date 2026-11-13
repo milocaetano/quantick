@@ -109,29 +109,6 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
     }
 }
 
-/// Whether the recovery popup is still up after a frame.
-///
-/// The status word is its only door, in both directions. Everything else here
-/// closes it: a click that landed somewhere else, a control that was pressed and
-/// is now under way, and a feed that recovered on its own while the trader was
-/// reading about it. With no door there is nothing to draw, in every combination.
-#[must_use]
-pub fn popup_still_open(
-    was_open: bool,
-    chip_clicked: bool,
-    offline: bool,
-    dismissed: bool,
-    action: NoticeAction,
-) -> bool {
-    if !offline {
-        return false;
-    }
-    if chip_clicked {
-        return !was_open;
-    }
-    was_open && !dismissed && action == NoticeAction::None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,50 +198,5 @@ mod tests {
         let report = from_stall(&stall);
         assert!(!report.needs_user);
         assert_eq!(report.primary, Recovery::Reload);
-    }
-    #[test]
-    fn every_way_the_popup_closes_and_the_one_way_it_opens() {
-        let shut = |chip, offline, dismissed, action| {
-            popup_still_open(false, chip, offline, dismissed, action)
-        };
-        let open = |chip, offline, dismissed, action| {
-            popup_still_open(true, chip, offline, dismissed, action)
-        };
-
-        assert!(
-            shut(true, true, false, NoticeAction::None),
-            "the chip opens it"
-        );
-        assert!(
-            !shut(false, true, false, NoticeAction::None),
-            "and nothing else does"
-        );
-        assert!(
-            !open(true, true, false, NoticeAction::None),
-            "the chip closes it again"
-        );
-        assert!(
-            open(false, true, false, NoticeAction::None),
-            "an untouched frame leaves it up"
-        );
-        assert!(
-            !open(false, true, true, NoticeAction::None),
-            "a click somewhere else puts it away"
-        );
-        assert!(
-            !open(false, false, false, NoticeAction::None),
-            "so does a feed that came back on its own"
-        );
-        for action in [NoticeAction::Reconnect, NoticeAction::Reload] {
-            assert!(
-                !open(false, true, false, action),
-                "a control that was pressed is under way, not still being read: {action:?}"
-            );
-        }
-        // No chip, no popup, whatever else is true on the frame. A click on a
-        // chip that was never drawn cannot reach this today; the rule holds it
-        // anyway rather than resting on that.
-        assert!(!shut(true, false, false, NoticeAction::None));
-        assert!(!open(true, false, false, NoticeAction::None));
     }
 }

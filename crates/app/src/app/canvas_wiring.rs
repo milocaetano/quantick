@@ -133,8 +133,7 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     }
     #[cfg(any(feature = "scenario-harness", test))]
     hold_from_hook(app);
-    let canvas = &app.active_tab().canvas;
-    if canvas.menus.picked.is_none() && pending.is_none() && !escape {
+    if !app.surfaces.remove_chart.scoped(scope).0.has_pick() && pending.is_none() && !escape {
         return;
     }
     let saved = saved_recipe(app).map(recipe_state);
@@ -146,7 +145,6 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
     let surface = &mut app.surfaces.remove_chart;
     let runtime = app.runtime.bound_mut(&app.presentation.binding);
     let canvas = &mut runtime.active_tab_mut().canvas;
-    let picked = canvas.menus.picked.take();
     let mut act = None;
     if surface.supports_pass(quantick_ui_model::Slot::Overlay) {
         surface.with_scoped_updates(
@@ -160,7 +158,6 @@ pub(super) fn settle_canvas(app: &mut QuantickApp, ctx: &egui::Context) {
             },
             |_, session| {
                 if let Some(intent) = session.state().observe(
-                    picked,
                     escape,
                     &canvas.state,
                     saved.as_ref(),
@@ -196,9 +193,19 @@ pub(super) fn add_from_menu(app: &mut QuantickApp, ctx: &egui::Context) {
     let capabilities = app.active_tab().capabilities(&app.config);
     let serves = |widget: &WidgetSpec| crate::widget_surfaces::serves(widget.id, &capabilities);
     let rows = add_menu(&app.active_tab().canvas.state, serves);
-    crate::add_widget::hang(ctx, &rows, &mut app.chrome.add_menu);
-    let picked = app.chrome.add_menu.picked.take();
-    if let Some(Err(error)) = picked.map(|widget| answer(app, canvas::add_act(widget).1)) {
+    let mut picked = None;
+    app.surfaces.canvas_popovers.with_pass(
+        quantick_ui_model::Slot::Toolbar,
+        |response| {
+            for effect in response.model_effects {
+                if let quantick_ui_model::HostEffect::CanvasPopovers(effect) = effect {
+                    picked = effect.0.or(picked.take());
+                }
+            }
+        },
+        |_, session| crate::add_widget::hang(ctx, &rows, &mut app.chrome.add_menu, session),
+    );
+    if let Some(Err(error)) = picked.map(|act| answer(app, act)) {
         tracing::warn!(error = %error.message, "the add menu's widget was refused");
     }
 }
@@ -212,7 +219,11 @@ fn canvas_hooks(app: &mut QuantickApp) -> Vec<CanvasAct> {
         return Vec::new();
     }
     let var = crate::hooks::captured::var;
-    app.chrome.add_menu.open |= var("QUANTICK_ADD_MENU").as_deref() == Some("1");
+    if var("QUANTICK_ADD_MENU").as_deref() == Some("1") {
+        app.surfaces
+            .canvas_popovers
+            .update(quantick_ui_model::canvas_popovers::Intent::SetAddOpen(true));
+    }
     canvas::hook_acts(&var("QUANTICK_CANVAS_ACTS").unwrap_or_default())
 }
 

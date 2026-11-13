@@ -15,10 +15,15 @@ pub struct Snapshot {
 #[derive(Default, Debug)]
 pub struct State {
     pending: Option<u32>,
+    menu_open: Option<u32>,
+    picked: Option<(u32, PaneMenuItem)>,
     snapshot: Option<Snapshot>,
     prompt: Option<RemovePrompt>,
 }
 impl State {
+    pub fn menu_open(&self) -> Option<u32> { self.menu_open }
+    pub fn has_pick(&self) -> bool { self.picked.is_some() }
+
     pub fn pending(&self) -> Option<u32> {
         self.pending
     }
@@ -31,7 +36,6 @@ impl State {
     /// Capture changed domain facts only when an input or projection needs updating.
     pub fn observe(
         &self,
-        picked: Option<(u32, PaneMenuItem)>,
         escape: bool,
         live: &CanvasState,
         saved: Option<&CanvasState>,
@@ -44,9 +48,8 @@ impl State {
                 && snapshot.name == name
                 && snapshot.autosave == autosave
         });
-        (picked.is_some() || escape || (self.pending.is_some() && !unchanged)).then(|| {
+        (self.picked.is_some() || escape || (self.pending.is_some() && !unchanged)).then(|| {
             Intent::MenuStep {
-                picked,
                 escape,
                 snapshot: Box::new(Snapshot {
                     live: live.clone(),
@@ -61,8 +64,11 @@ impl State {
 
 #[derive(Debug)]
 pub enum Intent {
+    ToggleMenu(u32),
+    SetMenuOpen(Option<u32>),
+    DismissMenu,
+    Pick(u32, PaneMenuItem),
     MenuStep {
-        picked: Option<(u32, PaneMenuItem)>,
         escape: bool,
         snapshot: Box<Snapshot>,
     },
@@ -86,15 +92,25 @@ impl crate::Model for Model {
     type Effects = Effects;
     fn update(state: &mut State, intent: Intent) -> Effects {
         match intent {
+            Intent::ToggleMenu(slot) => {
+                state.menu_open = (state.menu_open != Some(slot)).then_some(slot);
+                Effects::None
+            }
+            Intent::SetMenuOpen(slot) => { state.menu_open = slot; Effects::None }
+            Intent::DismissMenu => { state.menu_open = None; Effects::None }
+            Intent::Pick(slot, item) => {
+                state.menu_open = None;
+                state.picked = Some((slot, item));
+                Effects::None
+            }
             Intent::MenuStep {
-                picked,
                 escape,
                 snapshot,
             } => {
                 let before = state.pending;
                 let act = canvas::menu_step(
-                    picked,
-                    escape && before.is_none(),
+                    state.picked.take(),
+                        escape && before.is_none(),
                     &mut state.pending,
                     &snapshot.live,
                     snapshot.saved.as_ref(),

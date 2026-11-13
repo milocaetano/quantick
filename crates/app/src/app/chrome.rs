@@ -10,14 +10,6 @@ use eframe::egui;
 
 use crate::window_scale;
 
-/// The one in-place layout rename editor and the pane footer that owns it.
-pub(super) struct LayoutRename {
-    pub(super) tab: u64,
-    pub(super) pane: crate::pane::PaneSide,
-    pub(super) layout: crate::layouts::LayoutId,
-    pub(super) draft: String,
-}
-
 /// The window chrome's transient state: where a control was last drawn,
 /// which picker is open, and what the frame has not told the workspace yet.
 ///
@@ -47,17 +39,6 @@ pub(super) struct ChromeState {
     /// only way an operator reaches it.
     pub(super) feed_chip_rect: Option<egui::Rect>,
 
-    /// The tab whose status word opened the feed's recovery popup, if any.
-    ///
-    /// Opened by clicking the word and by nothing else. It is the *tab's* id
-    /// rather than a window-wide flag because one dead terminal stalls every MT5
-    /// tab at once, and a bare flag would draw itself on the next chart with
-    /// nobody having clicked anything. Leaving that chart closes it.
-    pub(super) feed_popup_tab: Option<u64>,
-
-    /// Whether the toolbar's layout popover is open.
-    pub(super) layout_picker_open: bool,
-
     /// The toolbar's + and its ADD TO CANVAS menu.
     pub(super) add_menu: crate::add_widget::AddMenu,
 
@@ -66,15 +47,6 @@ pub(super) struct ChromeState {
 
     /// The toolbar's controls as last drawn, for the observer scene.
     pub(crate) toolbar_controls: Vec<crate::toolbar::DrawnControl>,
-
-    /// The layout being renamed, its draft, and the pane-local strip that
-    /// opened the editor. The catalogue mutation remains workspace-wide; only
-    /// the transient text box belongs to one footer.
-    pub(super) layout_rename: Option<LayoutRename>,
-
-    /// The layout a delete is waiting on: deleting takes its drawings with
-    /// it, on disk too, so it is the one strip action behind a confirmation.
-    pub(super) layout_delete_confirm: Option<crate::layouts::LayoutId>,
 
     /// The `⋮` window menu and the windows it opens.
     pub(super) window_menu: super::menu_bar::WindowMenuState,

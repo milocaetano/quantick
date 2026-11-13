@@ -150,8 +150,7 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) store: &'a mut crate::workspace_store::LayoutStore,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
-    pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) delete_confirm: &'a mut Option<LayoutId>,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
 }
 
 /// The layouts and the market store this cockpit opens with, the drawings an

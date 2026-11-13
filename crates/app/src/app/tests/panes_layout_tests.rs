@@ -2629,7 +2629,12 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         PaneSide::Time(0),
         crate::layout_strip::StripAction::BeginRename(second),
     );
-    let rename = app.chrome.layout_rename.as_ref().expect("rename editor");
+    let rename = app
+        .surfaces
+        .layout_dialogs
+        .model_state
+        .rename()
+        .expect("rename editor");
     assert_eq!(
         (rename.tab, rename.pane, rename.layout),
         (tab, PaneSide::Time(0), second)
@@ -2685,7 +2690,26 @@ fn per_pane_layouts_are_recorded_and_restored() {
         .active_tab_mut()
         .pane_mut(PaneSide::Time(0))
         .request_opening_layout(Some(context));
+    let editing = again.layout_state().layouts().active_id();
+    again.layout_adapter().begin_layout_rename(editing);
+    again
+        .layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(editing));
+    assert!(again.surfaces.layout_dialogs.model_state.rename().is_some());
+    assert_eq!(
+        again.surfaces.layout_dialogs.model_state.pending_delete(),
+        Some(editing)
+    );
     again.layout_adapter().reload_layouts(&[]);
+    assert!(again.surfaces.layout_dialogs.model_state.rename().is_none());
+    assert!(
+        again
+            .surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
     settle_indicators(&mut again);
     assert_eq!(
         again
@@ -2900,8 +2924,15 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         2,
         "nothing is deleted yet"
     );
-    assert_eq!(app.chrome.layout_delete_confirm, Some(second));
-    app.chrome.layout_delete_confirm = None;
+    assert_eq!(
+        app.surfaces.layout_dialogs.model_state.pending_delete(),
+        Some(second)
+    );
+    app.surfaces
+        .layout_dialogs
+        .update(quantick_ui_model::layout_dialogs::Intent::AnswerDelete(
+            false,
+        ));
     assert_eq!(
         app.layout_state().layouts().layouts().len(),
         2,
@@ -2921,7 +2952,13 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         second,
         "and the neighbour is active"
     );
-    assert!(app.chrome.layout_delete_confirm.is_none());
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
 }
 
 /// A pane on its tab's copy of a layout shows that layout: the delete dialog
@@ -3816,4 +3853,133 @@ fn the_status_bar_follows_the_active_tab() {
 
     app.apply_tab_action(TabAction::Activate(0));
     assert_eq!(app.status_model().symbol, "TESTUSDT");
+}
+
+#[test]
+fn layout_rename_text_and_finish_keys_reach_the_same_owner() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let id = app.layout_state().layouts().active_id();
+    let original = app.layout_state().layouts().get(id).unwrap().name.clone();
+    let edited = format!("{original}Edited footer");
+    for cancel in [true, false] {
+        app.active_tab_mut().focus = PaneSide::Flow;
+        app.layout_adapter().begin_layout_rename(id);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![egui::Event::Text("Edited footer".into())],
+        );
+        assert_eq!(
+            app.surfaces
+                .layout_dialogs
+                .model_state
+                .rename()
+                .unwrap()
+                .draft,
+            edited
+        );
+        app.active_tab_mut().focus = PaneSide::Time(0);
+        let mut events = vec![key_press(egui::Key::Enter)];
+        if cancel {
+            events.push(key_press(egui::Key::Escape));
+        }
+        run_sized_frame(&mut app, &ctx, TEST_WINDOW, events);
+        assert!(app.surfaces.layout_dialogs.model_state.rename().is_none());
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Flow,
+            "finish restores the original footer address"
+        );
+        assert_eq!(
+            &app.layout_state().layouts().get(id).unwrap().name,
+            if cancel { &original } else { &edited }
+        );
+        assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+        if !cancel {
+            assert!(!ctx.input(|input| input.key_pressed(egui::Key::Enter)));
+        }
+    }
+}
+
+#[test]
+fn layout_delete_prompt_preserves_keyboard_choice_precedence() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let id = app
+        .layout_adapter()
+        .create_layout(Some("Prompt fixture"))
+        .unwrap();
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(id));
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, "Delete layout").is_some());
+    assert!(painted_text_center(&output, "Delete \"Prompt fixture\"?").is_some());
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![key_press(egui::Key::Enter), key_press(egui::Key::Escape)],
+    );
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
+    assert!(
+        app.layout_state().layouts().get(id).is_some(),
+        "Escape wins Enter"
+    );
+    assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(id));
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let cancel = painted_text_center(&output, "Cancel").expect("actual cancel button");
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(cancel),
+            egui::Event::PointerButton {
+                pos: cancel,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerButton {
+                pos: cancel,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            key_press(egui::Key::Enter),
+        ],
+    );
+    assert!(
+        app.layout_state().layouts().get(id).is_none(),
+        "Enter wins pointer Cancel"
+    );
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
+    assert!(!ctx.input(|input| input.key_pressed(egui::Key::Enter)));
 }

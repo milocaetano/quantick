@@ -177,8 +177,7 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
         .background
         .unwrap_or_else(|| pane::background_color(&app.runtime.style));
     let popup_tab = app.runtime.tabs.active_id();
-    scratch.canvas =
-        canvas::CanvasAnswers::seeded(popup_tab, app.chrome.feed_popup_tab, &scratch.status);
+    scratch.canvas = canvas::CanvasAnswers::seeded(popup_tab, &app.surfaces, &scratch.status);
     app.surfaces
         .drawing_chrome
         .sync_content_editing(&mut app.runtime.tabs);
@@ -581,7 +580,8 @@ impl QuantickApp {
         scratch.stall = self.active_tab().stall_at(&self.config, now_ms);
         let stall = scratch.stall.as_ref();
         panels::observe_connections(ctx, &mut self.runtime.tabs, &self.config, now_ms, stall);
-        let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
+        let open =
+            self.surfaces.feed_notice.model_state.open() == Some(self.runtime.tabs.active_id());
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
@@ -670,8 +670,7 @@ impl QuantickApp {
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
-        let mut answers =
-            canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
+        let mut answers = canvas::CanvasAnswers::seeded(popup_tab, &self.surfaces, &scratch.status);
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -718,8 +717,16 @@ impl QuantickApp {
                 // belong to the window or the market, not to the pane whose
                 // menu switched them.
                 self.layer_wiring().apply_actions();
-                let tab = self.active_tab();
-                canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);
+                let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+                canvas::overlays(
+                    &mut self.surfaces.feed_notice,
+                    ui,
+                    area,
+                    tab,
+                    &self.config,
+                    (stall, now_ms),
+                    &mut answers,
+                );
             });
         scratch.canvas = answers;
     }
@@ -761,7 +768,7 @@ impl QuantickApp {
             config: &self.config,
             toast: &mut self.surfaces.toast,
             chip_rect: &mut self.chrome.feed_chip_rect,
-            popup_tab: &mut self.chrome.feed_popup_tab,
+            popup: &mut self.surfaces.feed_notice,
         }
         .execute_watched(
             super::frame_tail::FrameTailInput {
@@ -770,7 +777,6 @@ impl QuantickApp {
                 tz: self.runtime.tz,
                 notice_action: answers.notice_action,
                 popup_tab: answers.popup_tab,
-                popup_open: answers.popup_open,
                 chip_clicked: answers.chip_clicked,
                 dismissed: answers.dismissed,
                 chip_rect: answers.chip_rect,

@@ -943,7 +943,7 @@ impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
-            feed_popup_tab: self.chrome.feed_popup_tab,
+            feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
             replay_day_before: self.replay_view.day_before(),
         };
         let (rail, chrome) = (&self.toolrail, &self.surfaces.drawing_chrome);

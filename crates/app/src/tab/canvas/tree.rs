@@ -28,6 +28,7 @@ impl Tab {
     /// as the column painter does for its own bands.
     pub(super) fn draw_tree(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
@@ -82,7 +83,20 @@ impl Tab {
         for &(side, rect, minimized, slot) in &bands {
             if minimized {
                 let name = self.strip_name(side);
-                crate::pane_menu::strip(ui, rect, &name, slot, &mut self.canvas.menus);
+                chrome.surfaces.remove_chart.with_scoped_updates(
+                    tab_id,
+                    |_| {},
+                    |_, session| {
+                        crate::pane_menu::strip(
+                            ui,
+                            rect,
+                            &name,
+                            slot,
+                            &mut self.canvas.menus,
+                            session,
+                        );
+                    },
+                );
                 continue;
             }
             let PaneSide::Time(slot) = side else {
@@ -107,7 +121,7 @@ impl Tab {
                 areas.header,
                 bar_inputs,
                 job_slot.take(),
-                chrome.surfaces,
+                (tab_id, chrome.surfaces),
             );
             rects.context_charts[slot] = Some((areas.chart, pane_areas.layout_strip));
         }
@@ -115,7 +129,7 @@ impl Tab {
             self.focus_from_pointer(ui, &focus_bands, flow_band.unwrap_or(egui::Rect::NOTHING));
         }
         if let Some(band) = flow_band {
-            self.draw_flow_band(ui, (band, 0.0), chrome, &mut rects);
+            self.draw_flow_band(tab_id, ui, (band, 0.0), chrome, &mut rects);
         }
         let frame = CanvasFrame {
             area,
@@ -180,6 +194,7 @@ impl Tab {
     /// points kept for a floating pane's grip) and its panel.
     fn draw_flow_band(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         (band, grip): (egui::Rect, f32),
         chrome: &mut CanvasChrome<'_>,
@@ -200,7 +215,7 @@ impl Tab {
             palette.flow_surface(),
         );
         let header = areas.band.with_min_x(areas.band.min.x + grip);
-        self.draw_flow_header(ui, header, chrome);
+        self.draw_flow_header(tab_id, ui, header, chrome);
         rects.flow_side_row = Some((areas.side_row, bar_inputs));
         self.flow_pane.frame.side_row = Some(areas.side_row);
         rects.flow_areas = Some(PaneAreas {
@@ -297,7 +312,14 @@ impl Tab {
                 let height = palette.layout(crate::time_header::HEIGHT_PX);
                 let areas = split_pane_header(content, height);
                 let header = areas.header.with_min_x(areas.header.min.x + grip);
-                self.draw_time_header(ui, seat, header, bar_inputs, None, chrome.surfaces);
+                self.draw_time_header(
+                    ui,
+                    seat,
+                    header,
+                    bar_inputs,
+                    None,
+                    (tab_id, chrome.surfaces),
+                );
                 rects.context_charts[seat] = Some((areas.chart, egui::Rect::NOTHING));
                 rects.pane_bands.push((side, content));
             }
@@ -306,7 +328,7 @@ impl Tab {
                 ui.painter().rect_filled(content, 0.0, palette.chrome());
                 return;
             }
-            PaneSide::Flow => self.draw_flow_band(ui, (content, grip), chrome, &mut rects),
+            PaneSide::Flow => self.draw_flow_band(tab_id, ui, (content, grip), chrome, &mut rects),
         }
         // A window's own coordinates mean nothing to the canvas's readers.
         let bands = rects.pane_bands.iter().filter(|_| !windowed);

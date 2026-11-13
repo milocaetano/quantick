@@ -85,6 +85,7 @@ use crate::config::AppConfig;
 use crate::dock::Dock;
 #[cfg(test)]
 use crate::drawings;
+#[cfg(test)]
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::Harness;
@@ -272,8 +273,7 @@ impl QuantickApp {
         workspace_bundle_adapter::WorkspaceBundleAdapter {
             arrangement: arrangement_adapter!(self),
             replay_view: &self.replay_view,
-            layout_rename: &mut self.chrome.layout_rename,
-            layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
+            dialogs: &mut self.surfaces.layout_dialogs,
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.runtime.footprint_config,
@@ -289,8 +289,7 @@ impl QuantickApp {
             picker: &mut self.surfaces.indicator_picker,
             drawing_chrome: &mut self.surfaces.drawing_chrome,
             toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
+            dialogs: &mut self.surfaces.layout_dialogs,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &mut self.chrome.harness,
         }
@@ -494,19 +493,15 @@ impl QuantickApp {
                 #[cfg(any(feature = "scenario-harness", test))]
                 window_startup: launch.window,
                 record_deals: None,
-                layout_picker_open: false,
                 add_menu: Default::default(),
                 capsule: Default::default(),
                 toolbar_controls: Vec::new(),
-                layout_rename: None,
-                layout_delete_confirm: None,
                 surface: None,
                 window_menu: Default::default(),
                 history_menu_rect: None,
                 feed_chip_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
                 // is the first tab there is.
-                feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
             },
             pane_ids,
             added_symbols,
@@ -530,6 +525,7 @@ impl QuantickApp {
             },
             health: health::HealthCounters::new(),
         };
+        crate::surfaces::feed_notice::initialize(&mut app.surfaces.feed_notice, FIRST_TAB_ID);
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
         let config = app.config.clone();

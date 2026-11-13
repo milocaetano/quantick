@@ -132,8 +132,19 @@ fn popover_lists_registry_rings_current_tags_saved() {
         app.active_tab().canvas.state.preset().map(|p| p.id),
         Some("charts-2")
     );
-    assert!(!app.chrome.layout_picker_open, "a pick closes the popover");
-    app.chrome.layout_picker_open = true;
+    assert!(
+        !app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .layout_open,
+        "a pick closes the popover"
+    );
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     let output = frames(&mut app, &ctx, 2);
     let lit = control(&app, "toolbar.layout_popover.charts-2").unwrap();
     assert!(lit.selected, "the ring follows the canvas");
@@ -191,5 +202,46 @@ fn toolbar_row_order_matches_the_mock() {
     assert!(
         capsule.name.right() < tray,
         "the capsule stands before the tray"
+    );
+}
+
+#[test]
+fn canvas_popover_projection_is_consumed_by_one_paint() {
+    use crate::surfaces::View as _;
+    use quantick_ui_model::canvas_popovers::Intent;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    app.surfaces
+        .canvas_popovers
+        .update(Intent::SetAddOpen(true));
+    frames(&mut app, &ctx, 2);
+    let scope = app.runtime.tabs.windows().presented().0;
+    let (state, view) = app.surfaces.chrome_toolbar.scoped(scope);
+    assert!(
+        view.popovers.is_none(),
+        "the registered paint consumed its borrowed projection"
+    );
+    let capsule = view.capsule;
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(
+            view.paint(
+                state,
+                &mut crate::surfaces::ViewContext { ctx, ui: None },
+                None
+            )
+            .is_none()
+        );
+    });
+    assert!(
+        output.shapes.is_empty(),
+        "a second paint without input is inert"
+    );
+    assert_eq!(view.capsule.miniature, capsule.miniature);
+    assert!(
+        app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .add_open
     );
 }

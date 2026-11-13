@@ -367,7 +367,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     for variant in enum_variants("ui-model", "ToolbarAction") {
         entries.push(Registered::new(Source::ToolbarAction, variant));
     }
-    for variant in enum_variants("app", "StripAction") {
+    for variant in enum_variants("ui-model", "StripAction") {
         entries.push(Registered::new(Source::StripAction, variant));
     }
     for variant in enum_variants("ui-model", "TabAction") {
