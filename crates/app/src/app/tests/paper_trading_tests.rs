@@ -1781,33 +1781,6 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     );
 }
 
-/// A hand-edited file — the harness doc tells agents to write one — can say
-/// `nan`, and NaN is the one value the repair cannot walk back: it survives
-/// `clamp`, puts the window where no pointer can reach its title bar, and
-/// would be written straight back at the next save.
-#[test]
-fn a_position_that_is_not_a_number_is_read_as_no_position_at_all() {
-    let (mut app, _commands) = app_with_history(50);
-
-    for pair in [[f32::NAN, 200.0], [200.0, f32::NAN], [f32::INFINITY, 200.0]] {
-        app.surfaces
-            .drawing_chrome
-            .place_inspector_by_hand(egui::pos2(10.0, 10.0));
-        app.surfaces
-            .drawing_chrome
-            .restore_inspector_position(Some(pair));
-        assert_eq!(
-            app.surfaces.drawing_chrome.inspector_pos(),
-            None,
-            "{pair:?} is not a position, and must not survive as one"
-        );
-        assert!(
-            !app.surfaces.drawing_chrome.inspector_moved(),
-            "{pair:?} hands the popup back to automatic placement"
-        );
-    }
-}
-
 #[test]
 fn the_object_manager_toggles_eye_lock_and_z_order_per_row() {
     let (mut app, _commands) = app_with_history(200);

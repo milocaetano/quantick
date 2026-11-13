@@ -1173,7 +1173,7 @@ impl ChartPane {
     /// One layer glyph: its lamp the *switch*, not what the source lets through
     /// it, with what blocks it beside it, read through the calls the pane's layer
     /// menu and `layers.visibility.set` read.
-    fn header_glyph(
+    pub(crate) fn header_glyph(
         &self,
         toggle: LayerToggle,
         style: &ChartStyle,

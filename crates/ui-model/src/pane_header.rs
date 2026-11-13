@@ -3,11 +3,15 @@
 use quantick_chart::connection_state::Dot;
 use quantick_chart::flow_band::{WindowOption, window_label, window_options};
 use quantick_chart::pane_header::{
-    BubbleSample, FlowHeaderState, HeaderIntent, LayerGlyph, PaneHeader, PaneIdentity,
-    SAMPLE_RESET_SCALE, SideSegment, dragged_scale,
+    BubbleSample, FlowHeaderState, HeaderControl, HeaderIntent, LayerGlyph, LayerToggle,
+    PaneHeader, PaneIdentity, SAMPLE_RESET_SCALE, SegmentInk, SideRefusal, SideSegment,
+    dragged_scale, side_description,
 };
+use quantick_control_schema::orderflow_settings::SceneRow;
+use quantick_control_schema::scene::SceneRoleDto;
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_orderflow::LaneSide;
+use quantick_workspace::orderflow_panel::PanelControl;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -178,6 +182,62 @@ impl State {
     pub fn side(&self, side: LaneSide) -> Option<SideSegment> {
         self.segments
             .and_then(|segments| segments.into_iter().find(|segment| segment.side == side))
+    }
+}
+
+/// One header control's scene row, read through what the header paints from: a
+/// side key from the flow state, a layer from the glyph its capsule wears. One
+/// condition, two audiences. A settings control is the panel's own row.
+pub fn scene_row(
+    control: HeaderControl,
+    flow: Option<&FlowHeaderState>,
+    glyph: impl FnOnce(LayerToggle) -> LayerGlyph,
+    settings: impl FnOnce(PanelControl) -> SceneRow,
+) -> SceneRow {
+    use quantick_control_schema::{bubble_scale, layers, tape_view, tape_view_set};
+    match control {
+        HeaderControl::Side(side) => {
+            let segment = flow.map(|state| SideSegment::of(side, state));
+            (
+                segment.map_or("", SideSegment::word),
+                SceneRoleDto::Toggle,
+                segment.is_some_and(|segment| segment.ink == SegmentInk::Lit),
+                segment
+                    .and_then(|segment| segment.refusal)
+                    .map(SideRefusal::code),
+                tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
+                // What a side shows, whatever its key reads, as its tooltip says.
+                Some(side_description(side)),
+            )
+        }
+        HeaderControl::Layer(toggle) => {
+            let glyph = glyph(toggle);
+            (
+                toggle.name(),
+                SceneRoleDto::Toggle,
+                glyph.on,
+                glyph.blocked.map(|block| block.code),
+                layers::SET_VISIBILITY_CAPABILITY_ID,
+                None,
+            )
+        }
+        HeaderControl::TapeWindow => (
+            quantick_chart::flow_band::WINDOW_SELECTOR_NAME,
+            SceneRoleDto::Action,
+            false,
+            None,
+            tape_view::TAPE_VIEW_CAPABILITY_ID,
+            None,
+        ),
+        HeaderControl::Sample(sample) => (
+            sample.name(),
+            SceneRoleDto::Action,
+            false,
+            None,
+            bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
+            None,
+        ),
+        HeaderControl::Settings(control) => settings(control),
     }
 }
 

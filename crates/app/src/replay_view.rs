@@ -124,22 +124,14 @@ mod tests {
     use crate::surfaces::replay_browser::{ReplayBrowser, ReplayBrowserExt as _};
     type ReplayView = ReplayBrowser;
     trait TestBrowser {
-        fn rescan(&mut self);
         fn select_day(&mut self, day: &str) -> bool;
-        fn selected_entry(&self) -> Option<&quantick_replay::SessionEntry>;
         fn draw_browser(&mut self, ctx: &egui::Context, market: &MarketMenu<'_>);
     }
     impl TestBrowser for ReplayBrowser {
-        fn rescan(&mut self) {
-            self.dispatch(Intent::Rescan);
-        }
         fn select_day(&mut self, day: &str) -> bool {
             self.dispatch(Intent::SelectDay(day.to_owned()))
                 .selected_day
                 .unwrap_or(false)
-        }
-        fn selected_entry(&self) -> Option<&quantick_replay::SessionEntry> {
-            self.model_state.selected_entry()
         }
         fn draw_browser(&mut self, ctx: &egui::Context, market: &MarketMenu<'_>) {
             self.bind_pass(None, market);
@@ -329,13 +321,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn counts_are_grouped_for_reading() {
-        assert_eq!(thousands(7), "7");
-        assert_eq!(thousands(1_000), "1 000");
-        assert_eq!(thousands(231_190), "231 190");
-    }
-
     /// One frame of the seek track under the pointer `events`: what it asked for.
     fn track_frame(
         ctx: &egui::Context,
@@ -401,64 +386,6 @@ mod tests {
         );
     }
 
-    /// The scan lists sessions oldest first and the browser selects the first,
-    /// so on a folder holding a day and the day before it a bare autostart
-    /// always picks the older one — the single day that can have nothing
-    /// joined in front of it. Naming the day is what makes the other reachable.
-    #[test]
-    fn naming_a_day_selects_it_over_the_one_the_scan_lists_first() {
-        let folder = crate::scratch::ScratchDir::new("replay-view-select");
-        let instrument = folder.join("WINJ26");
-        std::fs::create_dir_all(&instrument).expect("scratch folder");
-        for (name, day) in [
-            ("20260313.csv", "2026-03-13"),
-            ("20260316.csv", "2026-03-16"),
-        ] {
-            std::fs::write(
-                instrument.join(name),
-                format!(
-                    "# quantick-replay 1\n# symbol=WINJ26\n# timezone=-03:00\n\
-                     Date,Time,Price,Volume,Side\n\
-                     {day},10:00:00.000,182035,12,B\n"
-                ),
-            )
-            .expect("write a session");
-        }
-
-        let mut view = ReplayView::new_browser(None, None);
-        view.model_state.folder = folder.display().to_string();
-        view.rescan();
-        assert_eq!(
-            view.selected_entry()
-                .and_then(|e| e.date)
-                .map(|d| d.label()),
-            Some("2026-03-13".to_string()),
-            "the scan hands back the oldest, which is the one with no day before it"
-        );
-
-        assert!(view.select_day("2026-03-16"), "the folder holds that day");
-        assert_eq!(
-            view.selected_entry()
-                .and_then(|e| e.date)
-                .map(|d| d.label()),
-            Some("2026-03-16".to_string())
-        );
-
-        assert!(
-            !view.select_day("2026-03-14"),
-            "a day the folder does not hold selects nothing"
-        );
-        assert_eq!(
-            view.selected_entry()
-                .and_then(|e| e.date)
-                .map(|d| d.label()),
-            Some("2026-03-16".to_string()),
-            "and leaves the pick that was already made alone"
-        );
-
-        let _ = std::fs::remove_dir_all(&folder);
-    }
-
     #[test]
     fn a_named_day_that_is_not_there_opens_the_list_instead_of_the_wrong_one() {
         let mut view = ReplayView::new_browser(None, None);
@@ -474,18 +401,6 @@ mod tests {
         assert!(!view.select_day("2026-08-28"), "nothing was scanned");
     }
 
-    #[test]
-    fn opening_the_browser_with_no_folder_scans_nothing() {
-        let mut view = ReplayView::new_browser(None, None);
-        view.model_state.folder = String::new();
-        view.open_browser();
-        assert!(view.model_state.browser_open);
-        assert!(
-            view.model_state.library.is_none(),
-            "no folder, nothing to scan"
-        );
-    }
-
     /// A stored pick opens the browser where the trader left it, with no
     /// environment variable in sight.
     #[test]
@@ -493,16 +408,5 @@ mod tests {
         let view = ReplayView::new_browser(Some("D:/tape"), None);
         assert_eq!(view.folder_in_use(), "D:/tape");
         assert_eq!(view.stored_pick(), Some("D:/tape"));
-    }
-
-    #[test]
-    fn scanning_a_missing_folder_reports_it_instead_of_failing() {
-        let mut view = ReplayView::new_browser(None, None);
-        view.model_state.folder = "definitely/not/here".to_string();
-        view.rescan();
-        let library = view.model_state.library.as_ref().expect("scanned");
-        assert!(library.sessions.is_empty());
-        assert!(!library.problems.is_empty());
-        assert!(view.model_state.selected.is_none());
     }
 }

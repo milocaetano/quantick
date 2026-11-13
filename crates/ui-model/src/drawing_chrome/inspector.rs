@@ -138,13 +138,23 @@ mod tests {
     }
 
     /// A file with a nonsense position leaves automatic placement in charge
-    /// rather than parking the panel at an invented pixel.
+    /// rather than parking the panel at an invented pixel: NaN survives
+    /// `clamp`, so neither coordinate may slip through, and neither the point
+    /// nor the hand's claim may outlive the refusal.
     #[test]
     fn a_nonsense_remembered_position_is_refused() {
         let mut inspector = State::default();
-        inspector.place_by_hand([30.0, 40.0]);
-        inspector.restore_position(Some([f32::NAN, 0.0]));
-        assert_eq!(inspector.remembered_position(), None);
+        for pair in [
+            [f32::NAN, 40.0],
+            [30.0, f32::NAN],
+            [f32::INFINITY, 40.0],
+            [30.0, f32::INFINITY],
+        ] {
+            inspector.place_by_hand([30.0, 40.0]);
+            inspector.restore_position(Some(pair));
+            assert_eq!(inspector.pos, None, "{pair:?} is not a position");
+            assert!(!inspector.moved, "{pair:?} hands back automatic placement");
+        }
         inspector.restore_position(Some([12.0, 34.0]));
         assert_eq!(inspector.remembered_position(), Some([12.0, 34.0]));
     }

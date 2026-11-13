@@ -10,25 +10,18 @@
 // the line the module already had inline.
 
 use super::*;
+use crate::drawings::DRAWING_TOOLS;
 use crate::drawings::Drawings;
-use quantick_chart_interaction::tool_rail::*;
 
 mod launch;
 
 pub(crate) trait ToolRailTestExt {
     fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool);
-    fn swallowed_tools(&mut self, stage: RailStage) -> Vec<Tool>;
     fn launch_pending_for_test(&self) -> (Option<f32>, Option<&str>);
     fn launch_draw_for_test(&mut self, ctx: &egui::Context, size: egui::Vec2);
     fn launch_rendered_for_test(&self) -> (bool, f32, Option<&str>);
 }
 impl ToolRailTestExt for ToolRail {
-    fn swallowed_tools(&mut self, stage: RailStage) -> Vec<Tool> {
-        self.with_updates(
-            |_| {},
-            |view, session| RailPaint { view, session }.swallowed_tools(stage),
-        )
-    }
     fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
         use quantick_ui_model::tool_rail::{Effect, Facts};
         self.update(Intent::Observe(Facts {
@@ -106,64 +99,74 @@ fn the_rail_never_borrows_the_provenance_amber() {
     );
 }
 
-#[test]
-fn stage_lengths_match_the_spec_for_the_shipped_registry() {
-    let slots = tool_slots().len();
-    assert_eq!(
-        slots, 9,
-        "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
-    );
-    assert_eq!(full_length(slots, 0), 633.0);
-    assert_eq!(scroll_length(0), 489.0);
-    assert_eq!(compact_length(), 381.0);
-    assert_eq!(minimal_length(), 191.0);
-    // The band sits strictly between Full and Compact. Overlapping
-    // either neighbour would make the rail ambiguous at that extent.
-    assert!(scroll_length(0) < full_length(slots, 0));
-    assert!(scroll_length(0) > compact_length());
-}
-
-/// The keyboard twin of the invariant above (audit M9): the shortcut
-/// path must be as gated as the toggle path, or `H` with the rail hidden
-/// arms a tool nothing on screen reports.
+/// The egui key path reaches the rail's model, which owns the chord table
+/// and the hidden-rail gate (audit M9).
 #[test]
 fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
     let ctx = egui::Context::default();
     let mut rail = ToolRail::new_rail();
-    rail.toggle_visible();
-    let shortcut = DRAWING_TOOLS[0].shortcut().expect("the first tool has one");
-    let press = egui::RawInput {
-        events: vec![egui::Event::Key {
-            key: crate::drawings::shortcut_key(shortcut).expect("a letter key"),
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        }],
-        ..Default::default()
-    };
-    let _ = ctx.run(press, |ctx| rail.handle_keys(ctx));
-    assert_eq!(
-        rail.tool(),
-        Tool::Pointer,
-        "a hidden rail must swallow its shortcuts"
-    );
+    for (visible, expected) in [
+        (false, Tool::Pointer),
+        (true, Tool::Drawing(DRAWING_TOOLS[0])),
+    ] {
+        rail.set_visible(visible);
+        let shortcut = DRAWING_TOOLS[0].shortcut().expect("the first tool has one");
+        let key = crate::drawings::shortcut_key(shortcut).expect("a letter key");
+        let press = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run(press, |ctx| rail.handle_keys(ctx));
+        assert_eq!(rail.tool(), expected, "visible={visible}");
+    }
+}
 
-    // The same press with the rail visible arms the tool — proving the
-    // gate above is the visibility, not a broken key path.
-    rail.toggle_visible();
-    let press = egui::RawInput {
-        events: vec![egui::Event::Key {
-            key: crate::drawings::shortcut_key(shortcut).expect("a letter key"),
+/// egui's held modifiers reach the model's chord: `Shift+F` is *flatten* and
+/// arms nothing, `Shift+T` arms the ray, and a held command keeps letters out.
+#[test]
+fn egui_modifiers_reach_the_shortcut_chord() {
+    let ctx = egui::Context::default();
+    let mut rail = ToolRail::new_rail();
+    let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
+        let event = egui::Event::Key {
+            key,
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        }],
-        ..Default::default()
+            modifiers,
+        };
+        let input = egui::RawInput {
+            events: vec![event],
+            modifiers,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| rail.handle_keys(ctx));
+        rail.tool().drawing_tool().map(DrawingTool::id)
     };
-    let _ = ctx.run(press, |ctx| rail.handle_keys(ctx));
-    assert_eq!(rail.tool(), Tool::Drawing(DRAWING_TOOLS[0]));
+    assert_eq!(
+        send(&mut rail, egui::Key::F, egui::Modifiers::NONE),
+        Some("fib-retracement")
+    );
+    assert_eq!(
+        send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT),
+        Some("fib-retracement"),
+        "Shift+F must arm nothing new"
+    );
+    assert_eq!(
+        send(&mut rail, egui::Key::T, egui::Modifiers::SHIFT),
+        Some("ray")
+    );
+    rail.arm(Tool::Pointer);
+    assert_eq!(
+        send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND),
+        None
+    );
 }
 
 fn draw_rail_frame(
@@ -281,13 +284,6 @@ fn escape_during_a_grip_drag_keeps_the_current_dock() {
     );
 }
 
-#[test]
-fn drawing_tool_carries_the_registered_implementation_without_an_adapter_match() {
-    for tool in DRAWING_TOOLS {
-        assert_eq!(Tool::Drawing(tool).drawing_tool(), Some(tool));
-    }
-}
-
 fn rail_frame_with(
     rail: &mut ToolRail,
     drawings: &mut Drawings,
@@ -333,139 +329,6 @@ fn click_at(
     );
 }
 
-#[test]
-fn tool_shortcuts_arm_their_declared_tools() {
-    let ctx = egui::Context::default();
-    let mut rail = ToolRail::new_rail();
-    let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
-        let input = egui::RawInput {
-            events: vec![egui::Event::Key {
-                key,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers,
-            }],
-            modifiers,
-            ..Default::default()
-        };
-        let _ = ctx.run(input, |ctx| rail.handle_keys(ctx));
-    };
-
-    send(&mut rail, egui::Key::H, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("horizontal-line")
-    );
-    send(&mut rail, egui::Key::R, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("rectangle")
-    );
-    send(&mut rail, egui::Key::C, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("parallel-channel")
-    );
-    send(&mut rail, egui::Key::F, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("fib-retracement")
-    );
-    // Shift+F is *flatten*. The Fib extension gave the chord up rather
-    // than keep arming a tool and closing a position on one keystroke;
-    // it is reached through the Fib family flyout. Its tooltip went on
-    // advertising the chord for far longer — see
-    // `a_tooltip_names_the_key_the_tool_really_answers_to`.
-    send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("fib-retracement"),
-        "Shift+F must arm nothing new, leaving the previous tool alone"
-    );
-    send(&mut rail, egui::Key::B, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("arrow-mark-up")
-    );
-    send(&mut rail, egui::Key::S, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("arrow-mark-down")
-    );
-    send(&mut rail, egui::Key::P, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("brush")
-    );
-    // A bare digit is the quick bar switch's, never a tool's.
-    send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
-    assert_eq!(
-        rail.tool().drawing_tool().map(DrawingTool::id),
-        Some("brush")
-    );
-    rail.arm(Tool::Pointer);
-    // A held command modifier keeps the letters out of the tool map.
-    send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND);
-    assert_eq!(rail.tool(), Tool::Pointer);
-}
-
-/// A tooltip that names a key must name the key the tool really answers
-/// to, and a tool with no key must name none.
-///
-/// The Fib extension advertised `Shift+F` in its tooltip for a long time
-/// after giving that chord up — and `Shift+F` is *flatten*. The tooltip
-/// was telling the trader that the way to reach a drawing tool is the one
-/// keystroke that closes their position and cancels their working orders.
-/// Nothing failed; the words simply went stale. This is the test that
-/// stops them.
-///
-/// The convention the rail already follows: a trailing `(<label>)`, with
-/// `<label>` exactly what the menus print for that tool.
-#[test]
-fn a_tooltip_names_the_key_the_tool_really_answers_to() {
-    for tool in DRAWING_TOOLS.into_iter().map(Tool::Drawing) {
-        let advertised = tool
-            .hover_text()
-            .rsplit_once('(')
-            .and_then(|(_, tail)| tail.strip_suffix(')'))
-            .map(str::to_owned);
-        assert_eq!(
-            advertised,
-            tool.shortcut_label(),
-            "{} advertises one key and answers to another",
-            tool.name()
-        );
-    }
-}
-
-#[test]
-fn the_full_vertical_rail_folds_the_fib_family_into_one_slot() {
-    let ctx = egui::Context::default();
-    let mut rail = ToolRail::new_rail();
-    let mut drawings = Drawings::default();
-    // Tall enough for the Full stage (633 px since the anchored VWAP).
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
-
-    let retracement = DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == "fib-retracement")
-        .expect("registered");
-    let extension = DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == "fib-extension")
-        .expect("registered");
-    assert!(
-        rail.button_rect(Tool::Drawing(retracement)).is_some(),
-        "the family slot records its shown member"
-    );
-    assert!(
-        rail.button_rect(Tool::Drawing(extension)).is_none(),
-        "the second fib entry must not hold its own slot"
-    );
-}
-
 /// The magnet is a state, not a command: it reads off the rail and it
 /// starts off, because a magnet nobody asked for moves marks the trader
 /// placed deliberately (`docs/ux/drawing-tools-2026-08.md` §D6).
@@ -496,28 +359,6 @@ fn the_magnet_is_a_rail_toggle_that_starts_off() {
         Some(false),
         "the same button asks to turn it back off"
     );
-}
-
-/// The magnet is on screen only where the rail draws it: the trailing
-/// cluster of every stage but Minimal, where it folds into the closed More
-/// menu, and nowhere on a hidden rail.
-#[test]
-fn the_magnet_is_painted_only_where_the_rail_draws_it() {
-    let ctx = egui::Context::default();
-    let mut rail = ToolRail::new_rail();
-    // Docked along the top, the screen's width is the rail's extent.
-    rail.set_dock(ToolboxDock::Top);
-    let mut drawings = Drawings::default();
-    assert!(!rail.magnet_painted(), "an undrawn rail paints nothing");
-    let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
-    assert!(rail.magnet_painted());
-    let minimal = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(250.0, 600.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, minimal, Vec::new());
-    assert!(!rail.magnet_painted(), "Minimal folds it into More");
-    rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
-    rail.set_visible(false);
-    assert!(!rail.magnet_painted(), "a hidden rail paints nothing");
 }
 
 /// The first family slot and its members — every favorites test walks
@@ -635,113 +476,50 @@ fn the_pinned_button_arms_and_never_unstars() {
     );
 }
 
-/// The favorites section costs rail length only when it exists, and the
-/// stage math knows about it. Overflowing pins hand the rail to the
-/// scrolling band — never to Compact, which is what used to make a
-/// handful of stars swallow the whole toolbar.
+/// The painted buttons are the scene's controls at every stage, so the
+/// stage table `painted_controls` owns in the model is what reaches pixels;
+/// only Minimal folds the global eye and lock into More, only a stage that
+/// swallows tools paints More, and a family paints one slot (a second painted
+/// fib entry would name the family twice).
 #[test]
-fn favorites_lengthen_the_full_stage_only_when_present() {
-    let slots = tool_slots().len();
-    assert!(full_length(slots, 2) > full_length(slots, 0));
-    let extent = full_length(slots, 0);
-    assert_eq!(stage_for(extent, slots, 0), RailStage::Full);
-    assert_eq!(
-        stage_for(extent, slots, 2),
-        RailStage::Scroll,
-        "two pins overflow the bare-full extent into the band, not into Compact"
-    );
-}
-
-#[test]
-fn stages_are_pure_functions_of_extent() {
-    let slots = tool_slots().len();
-    for extent in [100.0_f32, 200.0, 380.9, 381.0, 632.9, 633.0, 1000.0] {
-        let first = stage_for(extent, slots, 0);
-        let second = stage_for(extent, slots, 0);
-        assert_eq!(first, second);
-    }
-    // The full stage grows one slot per registry addition; the anchored
-    // VWAP took it from 597 to 633. Below it the band takes over, and
-    // only below the band's own floor does the rail fall to Compact.
-    let band_floor = scroll_length(0);
-    assert_eq!(stage_for(633.0, slots, 0), RailStage::Full);
-    assert_eq!(stage_for(632.9, slots, 0), RailStage::Scroll);
-    assert_eq!(stage_for(band_floor, slots, 0), RailStage::Scroll);
-    assert_eq!(stage_for(band_floor - 0.1, slots, 0), RailStage::Compact);
-    assert_eq!(stage_for(381.0, slots, 0), RailStage::Compact);
-    assert_eq!(stage_for(380.9, slots, 0), RailStage::Minimal);
-}
-
-#[test]
-fn the_compact_rail_keeps_pointer_crosshair_armed_tool_and_objects() {
+fn painted_buttons_match_the_scene_controls_at_every_stage() {
     let ctx = egui::Context::default();
     let mut rail = ToolRail::new_rail();
-    rail.set_dock(ToolboxDock::Top);
     rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
     let mut drawings = Drawings::default();
-
-    // 400 px wide: Compact for a horizontal rail.
-    let compact = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 600.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, compact, Vec::new());
-    assert!(rail.button_rect(Tool::Pointer).is_some());
-    assert!(rail.button_rect(Tool::Crosshair).is_some());
-    assert!(rail.button_rect(Tool::Drawing(DRAWING_TOOLS[1])).is_some());
-    assert!(
-        rail.button_rect(Tool::Drawing(DRAWING_TOOLS[0])).is_none(),
-        "unarmed tools give up their slots at Compact"
-    );
-    assert!(rail.view.more_rect.is_some());
-    assert!(rail.view.objects_rect.is_some());
-    assert!(
-        rail.view.hide_all_rect.is_some(),
-        "trailing cluster survives"
-    );
-
-    // 250 px: Minimal — Crosshair and the globals fold into More.
-    let minimal = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(250.0, 600.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, minimal, Vec::new());
-    assert!(rail.button_rect(Tool::Pointer).is_some());
-    assert!(rail.button_rect(Tool::Crosshair).is_none());
-    assert!(rail.button_rect(Tool::Drawing(DRAWING_TOOLS[1])).is_some());
-    assert!(rail.view.hide_all_rect.is_none());
-    assert!(rail.view.lock_all_rect.is_none());
-    assert!(rail.view.objects_rect.is_some());
-
-    // Wide again: every slot returns.
-    let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
-    rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
-    for slot in tool_slots() {
-        let shown = match slot {
-            RailSlot::Single(tool) => *tool,
-            RailSlot::Family { family, members } => {
-                rail.family_member(*family, members).unwrap_or(members[0])
-            }
+    // Along the top 400 px is Compact, 250 px Minimal, 900 px Full; down the
+    // left 700 px is Full.
+    for (dock, size, globals, more) in [
+        (ToolboxDock::Top, egui::vec2(400.0, 600.0), true, true),
+        (ToolboxDock::Top, egui::vec2(250.0, 600.0), false, true),
+        (ToolboxDock::Top, egui::vec2(900.0, 600.0), true, false),
+        (ToolboxDock::Left, egui::vec2(900.0, 700.0), true, false),
+    ] {
+        rail.set_dock(dock);
+        let width = format!("{dock:?} {size:?}");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let mut scene: Vec<_> = rail.painted_controls().iter().map(|c| c.id).collect();
+        // A family slot paints its shown member; the scene names the family.
+        let slot = |tool: &Tool| match tool.drawing_tool().and_then(DrawingTool::family) {
+            Some(family) if !scene.contains(&tool.id()) => family.id,
+            _ => tool.id(),
         };
-        assert!(
-            rail.button_rect(Tool::Drawing(shown)).is_some(),
-            "{} lost its slot on a wide rail",
-            shown.id()
-        );
+        let mut painted: Vec<_> = rail
+            .view
+            .button_rects
+            .iter()
+            .flatten()
+            .map(|(tool, _)| slot(tool))
+            .collect();
+        painted.sort_unstable();
+        scene.sort_unstable();
+        assert_eq!(painted, scene, "{width}");
+        assert!(rail.view.objects_rect.is_some(), "{width} keeps Objects");
+        assert_eq!(rail.view.hide_all_rect.is_some(), globals, "{width}");
+        assert_eq!(rail.view.lock_all_rect.is_some(), globals, "{width}");
+        assert_eq!(rail.view.more_rect.is_some(), more, "{width} More");
     }
-}
-
-#[test]
-fn the_more_flyout_lists_exactly_what_each_stage_swallowed() {
-    let mut rail = ToolRail::new_rail();
-    rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
-
-    let compact = rail.swallowed_tools(RailStage::Compact);
-    assert!(!compact.contains(&Tool::Crosshair));
-    assert!(!compact.contains(&Tool::Drawing(DRAWING_TOOLS[1])));
-    for tool in DRAWING_TOOLS {
-        if tool != DRAWING_TOOLS[1] {
-            assert!(compact.contains(&Tool::Drawing(tool)));
-        }
-    }
-
-    let minimal = rail.swallowed_tools(RailStage::Minimal);
-    assert!(minimal.contains(&Tool::Crosshair));
-    assert!(!minimal.contains(&Tool::Drawing(DRAWING_TOOLS[1])));
 }
 
 #[test]

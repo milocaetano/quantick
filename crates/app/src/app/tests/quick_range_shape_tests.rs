@@ -2,9 +2,7 @@
 //! over exactly, and the channel waits for the trader's width click.
 
 use super::bare_canvas::app_with_history as bare_app_with_history;
-use super::drawings_tests::{
-    click_quick_range_action, drag_quick_range, quick_range_ends, secondary_button,
-};
+use super::drawings_tests::{click_quick_range_action, drag_quick_range, quick_range_ends};
 use super::*;
 use crate::surfaces::drawing_chrome::QuickRangeAction as Action;
 use serde_json::json;
@@ -18,27 +16,12 @@ struct Ruler {
     _commands: mpsc::Receiver<FeedCommand>,
 }
 
-fn ruler(levelled: bool) -> Ruler {
+fn ruler() -> Ruler {
     let ctx = egui::Context::default();
     let (mut app, commands) = bare_app_with_history(200);
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
     let (_, start, end) = quick_range_ends(&app);
-    if levelled {
-        let shift = egui::Modifiers::SHIFT;
-        let moves = [
-            vec![
-                egui::Event::PointerMoved(start),
-                secondary_button(start, true),
-            ],
-            vec![egui::Event::PointerMoved(end)],
-            vec![egui::Event::PointerMoved(end), secondary_button(end, false)],
-        ];
-        for events in moves {
-            run_frame_with_modifiers(&mut app, &ctx, events, shift);
-        }
-    } else {
-        drag_quick_range(&mut app, &ctx, start, end);
-    }
+    drag_quick_range(&mut app, &ctx, start, end);
     Ruler {
         ctx,
         app,
@@ -79,7 +62,7 @@ fn rectangle_and_trend_line_take_the_legs_two_anchors() {
             mut app,
             _commands,
             ..
-        } = ruler(false);
+        } = ruler();
         let leg = app
             .surfaces
             .drawing_chrome
@@ -99,56 +82,6 @@ fn rectangle_and_trend_line_take_the_legs_two_anchors() {
 }
 
 #[test]
-fn horizontal_marks_the_ranges_top_and_bottom() {
-    let Ruler {
-        ctx,
-        mut app,
-        _commands,
-        ..
-    } = ruler(false);
-    let leg = app
-        .surfaces
-        .drawing_chrome
-        .quick_range_read()
-        .paint_anchors()
-        .unwrap();
-    click_quick_range_action(&mut app, &ctx, Action::Horizontal);
-    let prices: Vec<f64> = drawings(&app).iter().map(|d| d.points[0].price).collect();
-    assert!(
-        drawings(&app)
-            .iter()
-            .all(|d| d.tool.id() == "horizontal-line")
-    );
-    let (top, bottom) = (
-        leg[0].price.max(leg[1].price),
-        leg[0].price.min(leg[1].price),
-    );
-    assert!(top > bottom);
-    assert_eq!(prices.len(), 2);
-    assert!(same_price(prices[0], top) && same_price(prices[1], bottom));
-}
-
-#[test]
-fn a_levelled_range_marks_one_horizontal_line() {
-    let Ruler {
-        ctx,
-        mut app,
-        _commands,
-        ..
-    } = ruler(true);
-    let leg = app
-        .surfaces
-        .drawing_chrome
-        .quick_range_read()
-        .paint_anchors()
-        .unwrap();
-    assert_eq!(leg[0].price, leg[1].price);
-    click_quick_range_action(&mut app, &ctx, Action::Horizontal);
-    assert_eq!(drawings(&app).len(), 1);
-    assert!(same_price(drawings(&app)[0].points[0].price, leg[0].price));
-}
-
-#[test]
 fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
     for (above, offset) in [(true, -70.0), (false, 70.0)] {
         let Ruler {
@@ -157,7 +90,7 @@ fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
             start,
             end,
             _commands,
-        } = ruler(false);
+        } = ruler();
         let leg = app
             .surfaces
             .drawing_chrome

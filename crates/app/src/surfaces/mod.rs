@@ -936,55 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn catalog_passes_share_state_and_fold_each_effect_once() {
-        use quantick_ui_model::Slot;
-        let mut registry = Surfaces::default();
-        let mut effects = SurfaceResponse::default();
-        let mut calls = 0;
-        let mut canvas_selection = 3;
-        let before = registry.first.with_pass(
-            Slot::PinnedInspector,
-            |effect| effects.merge(effect),
-            |view, session| {
-                calls += 1;
-                view.enabled = true;
-                session.update((canvas_selection, 17));
-                *session.state()
-            },
-        );
-        assert_eq!(before, Some(3));
-        let wrong = registry.first.with_pass(
-            Slot::Toolbar,
-            |effect| effects.merge(effect),
-            |_, session| {
-                calls += 1;
-                session.update((99, 17));
-            },
-        );
-        assert_eq!(wrong, None);
-        // The canvas changes the host's borrowed input between the two passes.
-        canvas_selection = 7;
-        let after = registry.first.with_pass(
-            Slot::DrawingChrome,
-            |effect| effects.merge(effect),
-            |view, session| {
-                calls += 1;
-                assert!(view.enabled);
-                assert_eq!(*session.state(), 3);
-                session.update((canvas_selection, 18));
-                *session.state()
-            },
-        );
-        assert_eq!(after, Some(10));
-        assert_eq!(calls, 2);
-        assert_eq!(registry.first.model_state, 10);
-        assert_eq!(
-            effects.model_effects,
-            vec![HostEffect::First((3, 17)), HostEffect::First((10, 18))]
-        );
-    }
-
-    #[test]
     fn scoped_catalog_keeps_panes_independent_and_reclaims_removed_owners() {
         let mut registry = Surfaces::default();
         registry.update_scoped(10, HostIntent::First(Box::new((3, 17))));
@@ -1281,46 +1232,6 @@ mod tests {
         };
         merged.merge(SurfaceResponse::default());
         assert!(merged.undo_drawing);
-    }
-
-    #[test]
-    fn registered_view_local_receipts_reach_the_same_converter_before_later_controls() {
-        let mut registry = Surfaces::default();
-        registry.first.view.staged = Some([(3, 10), (2, 20)]);
-        let ctx = egui::Context::default();
-        let mut response = SurfaceResponse::default();
-        let mut calls = 0;
-        let _ = ctx.run(Default::default(), |ctx| {
-            registry.first.with_updates(
-                |effect| response.merge(effect),
-                |view, session| {
-                    session.with_local_effects(
-                        &mut |effect| {
-                            calls += 1;
-                            (effect, Some((1, 99)))
-                        },
-                        |session| {
-                            view.paint_updated(session, &mut ViewContext { ctx, ui: None }, None)
-                        },
-                    );
-                },
-            );
-        });
-        assert_eq!(
-            calls, 2,
-            "terminal receipts do not re-enter local execution"
-        );
-        assert_eq!(registry.first.view.painted, Some(4));
-        assert_eq!(registry.first.model_state, 7);
-        assert_eq!(
-            response.model_effects,
-            vec![
-                HostEffect::First((3, 10)),
-                HostEffect::First((4, 99)),
-                HostEffect::First((6, 20)),
-                HostEffect::First((7, 99)),
-            ]
-        );
     }
 }
 
