@@ -15,7 +15,7 @@ fn the_capture_hook_reads_the_stated_input_not_the_environment() {
     ] {
         crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_TOAST", value)]));
         let mut registry = super::super::Surfaces::default();
-        let output = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(Default::default(), |ctx| {
             assert_eq!(
                 registry.draw_all(ctx, &env(now)),
                 SurfaceResponse::default()
@@ -24,6 +24,14 @@ fn the_capture_hook_reads_the_stated_input_not_the_environment() {
         assert_eq!(registry.toast.model_state.message(), Some(message));
         assert_eq!(registry.toast.model_state.offers_undo(), undo);
         assert_eq!(registry.toast.view.undo_rect().is_some(), undo);
+        // The first Area pass measures layout; its hook/state assertions above
+        // still precede the first visible paint. Keep time fixed for that paint.
+        let output = ctx.run(Default::default(), |ctx| {
+            assert_eq!(
+                registry.draw_all(ctx, &env(now)),
+                SurfaceResponse::default()
+            );
+        });
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == message)));
         let _ = ctx.run(Default::default(), |ctx| {
             registry.draw_all(ctx, &env(now + Duration::from_secs(8)));
