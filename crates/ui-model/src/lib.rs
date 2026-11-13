@@ -12,12 +12,17 @@ pub trait Model {
     fn update(state: &mut Self::State, intent: Self::Intent) -> Self::Effects;
 }
 
+/// A local host operation returns residual effects and at most one terminal receipt.
+pub type LocalEffects<'a, M> =
+    dyn FnMut(<M as Model>::Effects) -> (<M as Model>::Effects, Option<<M as Model>::Intent>) + 'a;
+
 /// A bounded input/paint transaction over the adapter's actual state.
 /// Views can emit an intent and borrow the updated projection before painting
 /// dependent widgets. Effects are delivered immediately and exactly once.
 pub struct UpdateSession<'a, M: Model> {
     state: &'a mut M::State,
     sink: &'a mut dyn FnMut(M::Effects),
+    local: Option<&'a mut LocalEffects<'a, M>>,
 }
 impl<M: Model> UpdateSession<'_, M> {
     /// Reborrow a bounded transaction for a view helper without exposing mutable state.
@@ -25,13 +30,46 @@ impl<M: Model> UpdateSession<'_, M> {
         UpdateSession {
             state: self.state,
             sink: self.sink,
+            local: self
+                .local
+                .as_mut()
+                .map(|handler| &mut **handler as &mut LocalEffects<'_, M>),
         }
     }
     pub fn state(&self) -> &M::State {
         self.state
     }
     pub fn update(&mut self, intent: M::Intent) {
-        (self.sink)(M::update(self.state, intent));
+        let effects = M::update(self.state, intent);
+        let (effects, receipt) = match self.local.as_mut() {
+            Some(handler) => handler(effects),
+            None => (effects, None),
+        };
+        (self.sink)(effects);
+        // A receipt updates the projection synchronously, but does not re-enter
+        // local execution. It must be terminal rather than another IO request.
+        if let Some(receipt) = receipt {
+            (self.sink)(M::update(self.state, receipt));
+        }
+    }
+    /// Install a local host handler for this paint transaction only. Nested
+    /// installation is unsupported; ordinary reborrow preserves the handler.
+    /// A returned receipt is terminal: its effects use the original sink and
+    /// never re-enter this handler. The receipt settles before update returns.
+    pub fn with_local_effects<R>(
+        &mut self,
+        handler: &mut LocalEffects<'_, M>,
+        paint: impl FnOnce(&mut UpdateSession<'_, M>) -> R,
+    ) -> R {
+        assert!(
+            self.local.is_none(),
+            "local effect handlers cannot be nested"
+        );
+        paint(&mut UpdateSession {
+            state: self.state,
+            sink: self.sink,
+            local: Some(handler),
+        })
     }
 }
 
@@ -91,6 +129,7 @@ impl<M: Model, V, E> Adapter<M, V, E> {
             &mut UpdateSession {
                 state: &mut self.model_state,
                 sink: &mut forward,
+                local: None,
             },
         )
     }
@@ -120,6 +159,7 @@ where
             &mut UpdateSession {
                 state,
                 sink: &mut forward,
+                local: None,
             },
         )
     }
@@ -144,6 +184,8 @@ impl<E> Model for Legacy<E> {
 /// Existing frame locations available to catalog entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
+    /// Leading subpass of the existing overlay stage; takes precedence over Overlay.
+    LeadingOverlay,
     Overlay,
     HomeCanvas,
     PaneHeader,
@@ -200,3 +242,6 @@ mod tests {
 
 #[cfg(test)]
 pub mod chrome;
+
+#[cfg(test)]
+mod local_effects_tests;

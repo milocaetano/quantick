@@ -119,7 +119,7 @@ pub(crate) struct SurfaceResponse {
     /// The market palette asked for something only the application can do.
     pub market: Option<quantick_workspace::market_list::PaletteIntent>,
     /// The arming dialog's **Arm** was pressed. The host answers through
-    /// `StrategyPopupSurface::settle_arm`, because the answer decides whether
+    /// `quantick_ui_model::strategy_popup::Intent::SettleArm`, because the answer decides whether
     /// the dialog closes or shows a refusal.
     pub arm_strategy: Option<ArmRequest>,
     /// A sound was auditioned. The host owns the one speaker every armed
@@ -128,23 +128,7 @@ pub(crate) struct SurfaceResponse {
     pub bar_switch: Option<BarSwitchRequest>,
 }
 
-/// Ask the host to arm a strategy instance.
-///
-/// Carries the form by value rather than leaving the host to read it back off
-/// the dialog: the dialog stays open across the answer, and a trader typing
-/// into it must not be able to change what was submitted.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ArmRequest {
-    pub side: crate::pane::PaneSide,
-    pub drawing: crate::drawings::DrawingId,
-    /// Boxed for the same reason the footprint configuration is: it is the
-    /// largest thing a response carries, and every surface pays for the size
-    /// of a response returned by value on every frame.
-    pub form: Box<crate::strategy_presets::StoredPreset>,
-    /// What the badge will call this instance — the preset it came from, the
-    /// name in the save field, or "custom".
-    pub label: String,
-}
+pub(crate) use quantick_ui_model::strategy_popup::ArmRequest;
 
 /// What the footprint window asked the host to do with the focused chart's
 /// setup.
@@ -375,6 +359,8 @@ macro_rules! register_surfaces {
             pub widgets: crate::widget_surfaces::WidgetSurfaces,
             #[cfg(any(feature = "scenario-harness", test))]
             hooks_applied: bool,
+            #[cfg(test)]
+            phase_trace: Option<Vec<(&'static str, &'static str)>>,
         }
         impl Default for Surfaces {
             fn default() -> Self {
@@ -384,6 +370,8 @@ macro_rules! register_surfaces {
                     widgets: Default::default(),
                     #[cfg(any(feature = "scenario-harness", test))]
                     hooks_applied: false,
+                    #[cfg(test)]
+                    phase_trace: None,
                 }
             }
         }
@@ -394,7 +382,7 @@ macro_rules! register_surfaces {
 
             pub fn draw_slot_scoped(&mut self, scope: u64, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>) -> SurfaceResponse {
                 let mut response = SurfaceResponse::default();
-                $($(#[$view_attr])* if self.$field.supports_pass(slot) {
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) && (slot != quantick_ui_model::Slot::Overlay || !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay)) {
                     self.$field.with_scoped_updates(scope, |effect| response.merge(effect), |view, session| {
                         view.paint_updated(session, target, None);
                     }); })*
@@ -403,22 +391,32 @@ macro_rules! register_surfaces {
 
             /// Modal input follows the catalog before host hotkeys.
             pub fn capture_keyboard(&mut self, ctx: &egui::Context) {
-                $(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).capture_keyboard(ctx);)*
-                $($(#[$view_attr])* self.$field.capture_keyboard(ctx);)*
+                $($(#[$view_attr])* if self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) { #[cfg(test)] self.trace_phase("capture", stringify!($field)); self.$field.capture_keyboard(ctx); })*
+                $(#[cfg(test)] self.trace_phase("capture", stringify!($legacy)); Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).capture_keyboard(ctx);)*
+                $($(#[$view_attr])* if !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) { #[cfg(test)] self.trace_phase("capture", stringify!($field)); self.$field.capture_keyboard(ctx); })*
             }
             /// Route only entries belonging to this existing frame location.
             pub fn draw_slot(&mut self, slot: quantick_ui_model::Slot, target: &mut ViewContext<'_>, env: &SurfaceEnv<'_>) -> SurfaceResponse {
                 let mut response = SurfaceResponse::default();
-                if slot == quantick_ui_model::Slot::Overlay {
+                if matches!(slot, quantick_ui_model::Slot::LeadingOverlay | quantick_ui_model::Slot::Overlay) {
                     #[cfg(any(feature = "scenario-harness", test))]
                     if !self.hooks_applied {
                         self.hooks_applied = true;
-                        $(self.$legacy.apply_env_hook(env);)*
-                        $($(#[$view_attr])* if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); })*
+                        $($(#[$view_attr])* if self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) {
+                            #[cfg(test)] self.trace_phase("hook", stringify!($field));
+                            if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); }
+                        })*
+                        $(#[cfg(test)] self.trace_phase("hook", stringify!($legacy)); self.$legacy.apply_env_hook(env);)*
+                        $($(#[$view_attr])* if !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay) {
+                            #[cfg(test)] self.trace_phase("hook", stringify!($field));
+                            if let Some(intent) = self.$field.view.apply_env_hook(env) { response.merge(self.$field.update(intent)); }
+                        })*
                     }
-                    $(response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
                 }
-                $($(#[$view_attr])* if self.$field.supports_pass(slot) { response.merge(self.$field.draw_in(target, env)); })*
+                if slot == quantick_ui_model::Slot::Overlay {
+                    $(#[cfg(test)] self.trace_phase("paint", stringify!($legacy)); response.merge(Adapter::<quantick_ui_model::Legacy<SurfaceResponse>, _>::new(LegacyView { surface: &mut self.$legacy, draw: $draw, keyboard: $keyboard }, |response| response).draw_in(target, env));)*
+                }
+                $($(#[$view_attr])* if self.$field.supports_pass(slot) && (slot != quantick_ui_model::Slot::Overlay || !self.$field.supports_pass(quantick_ui_model::Slot::LeadingOverlay)) { #[cfg(test)] self.trace_phase("paint", stringify!($field)); response.merge(self.$field.draw_in(target, env)); })*
                 response
             }
         }
@@ -427,6 +425,12 @@ macro_rules! register_surfaces {
 quantick_ui_model::surface_catalog!(register_surfaces);
 
 impl Surfaces {
+    #[cfg(test)]
+    fn trace_phase(&mut self, phase: &'static str, entry: &'static str) {
+        if let Some(trace) = self.phase_trace.as_mut() {
+            trace.push((phase, entry));
+        }
+    }
     /// Whether the capture hooks have still to run.
     ///
     /// The host reads this when it decides whether to build the environment
@@ -450,11 +454,11 @@ impl Surfaces {
 
     /// Draw overlay entries, preserving their catalog order and effect fold.
     pub fn draw_all(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        self.draw_slot(
-            quantick_ui_model::Slot::Overlay,
-            &mut ViewContext { ctx, ui: None },
-            env,
-        )
+        let mut target = ViewContext { ctx, ui: None };
+        let mut response =
+            self.draw_slot(quantick_ui_model::Slot::LeadingOverlay, &mut target, env);
+        response.merge(self.draw_slot(quantick_ui_model::Slot::Overlay, &mut target, env));
+        response
     }
 }
 
@@ -860,4 +864,48 @@ mod tests {
         merged.merge(SurfaceResponse::default());
         assert!(merged.undo_drawing);
     }
+
+    #[test]
+    fn registered_view_local_receipts_reach_the_same_converter_before_later_controls() {
+        let mut registry = Surfaces::default();
+        registry.first.view.staged = Some([(3, 10), (2, 20)]);
+        let ctx = egui::Context::default();
+        let mut response = SurfaceResponse::default();
+        let mut calls = 0;
+        let _ = ctx.run(Default::default(), |ctx| {
+            registry.first.with_updates(
+                |effect| response.merge(effect),
+                |view, session| {
+                    session.with_local_effects(
+                        &mut |effect| {
+                            calls += 1;
+                            (effect, Some((1, 99)))
+                        },
+                        |session| {
+                            view.paint_updated(session, &mut ViewContext { ctx, ui: None }, None)
+                        },
+                    );
+                },
+            );
+        });
+        assert_eq!(
+            calls, 2,
+            "terminal receipts do not re-enter local execution"
+        );
+        assert_eq!(registry.first.view.painted, Some(4));
+        assert_eq!(registry.first.model_state, 7);
+        assert_eq!(
+            response.model_effects,
+            vec![
+                HostEffect::First((3, 10)),
+                HostEffect::First((4, 99)),
+                HostEffect::First((6, 20)),
+                HostEffect::First((7, 99)),
+            ]
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "tests/overlay_order.rs"]
+mod overlay_order_tests;

@@ -375,12 +375,19 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
         }
         StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmSounds => {
             if mode == StrategyDemoMode::AlarmSounds {
-                app.surfaces.strategy_popup.stage_sound_picker();
+                app.surfaces
+                    .strategy_popup
+                    .update(quantick_ui_model::strategy_popup::Intent::StageSoundPicker);
             }
             let tab = app.runtime.tabs.active_id();
             app.surfaces
                 .strategy_popup
-                .open(tab, pane::PaneSide::Flow, drawing_id, form);
+                .update(quantick_ui_model::strategy_popup::Intent::Open {
+                    tab,
+                    side: pane::PaneSide::Flow,
+                    drawing: drawing_id,
+                    form: Box::new(form),
+                });
         }
     }
     // This demo places its rectangle, which selects it, which closes a
