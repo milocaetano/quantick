@@ -273,9 +273,6 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
             host.apply_recipe_indicators(id, &recipe);
         }
         settle(host, id);
-        if !arrived {
-            host.recipe_book_mut().1.owe_indicators(id, &recipe);
-        }
     }
 }
 

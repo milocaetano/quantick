@@ -68,11 +68,11 @@ fn a_tab_that_clamped_its_recipe_is_not_an_edit() {
     assert_eq!(sync.observe(1, clamped, &copy), None);
 }
 
-/// A recipe whose panes on one strip layout named two sets lands one: what
-/// the tab shows then is an edit of its copy, once. One that landed as named
-/// owes nothing.
+/// A recipe whose panes on one strip layout named two sets lands one. That
+/// heal is no edit: the tab reads clean and nothing is due for autosave, so
+/// the stored recipe is rewritten only by a save or the trader's own edit.
 #[test]
-fn a_set_healed_on_landing_is_an_edit_once() {
+fn a_set_healed_on_landing_is_no_edit() {
     let mut sync = TabRecipeSync::default();
     let mut named = WorkspaceRecipe::default();
     named.context_panes.push(Default::default());
@@ -80,13 +80,9 @@ fn a_set_healed_on_landing_is_an_edit_once() {
     let mut shown = named.clone();
     shown.flow_indicators = vec![ema()];
     sync.settle(1, shown.clone());
-    sync.owe_indicators(1, &named);
-    assert_eq!(sync.observe(1, shown.clone(), &named), Some(shown.clone()));
-    assert_eq!(sync.observe(1, shown.clone(), &named), None);
-
-    sync.settle(2, named.clone());
-    sync.owe_indicators(2, &named);
-    assert_eq!(sync.observe(2, named.clone(), &named), None);
+    assert_eq!(sync.observe(1, shown, &named), None);
+    let later = Instant::now() + AUTOSAVE_QUIET;
+    assert!(sync.take_due(later).is_empty(), "nothing to write through");
 }
 
 #[test]
