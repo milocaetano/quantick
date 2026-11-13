@@ -125,8 +125,8 @@ pub struct LayoutSession {
     /// The tab each private copy belongs to. Not saved: a desk read back
     /// hands each copy to the tab whose pane holds it.
     owner: BTreeMap<LayoutId, u64>,
-    /// `(pane, strip layout)` to the copy of it the pane last left: a copy a
-    /// recipe parted for that pane, kept so a switch back finds its set.
+    /// `(pane, strip layout)` to the copy of it the pane last left, kept so a
+    /// switch back finds its tab's set.
     kept: BTreeMap<(u64, LayoutId), LayoutId>,
 }
 impl LayoutSession {
@@ -334,10 +334,11 @@ impl LayoutSession {
         Some(copy)
     }
     /// Put every seeded pane, given as `(tab, pane)` for every pane there is,
-    /// on its tab's copy of its strip layout: the panes of one tab on one strip
-    /// layout share that copy, so an edit mirrors across them, and no copy is
-    /// ever another tab's. A pane put back on a strip layout its tab holds a
-    /// copy of rejoins that copy. Slots and entries keep their positions.
+    /// in pane order, on its tab's copy of its strip layout: the panes of one
+    /// tab on one strip layout share that copy, so an edit mirrors across
+    /// them, and no copy is ever another tab's. A pane put back on a strip
+    /// layout its tab holds a copy of rejoins that copy; twin copies merge,
+    /// see [`Self::merge_twins`]. Slots and entries keep their positions.
     pub fn own_copies(&mut self, panes: impl IntoIterator<Item = (u64, u64)>) -> OwnedCopies {
         self.tab_of.clear();
         let mut seeded = Vec::new();
@@ -354,8 +355,11 @@ impl LayoutSession {
                 self.owner.entry(layout).or_insert(tab);
             }
         }
-        let mut owned = OwnedCopies::default();
-        for (tab, pane, layout) in seeded {
+        let mut owned = self.merge_twins(&seeded);
+        for (tab, pane, _) in seeded {
+            let Some(layout) = self.held(pane) else {
+                continue;
+            };
             if self.owner.get(&layout) == Some(&tab) {
                 continue;
             }
@@ -374,44 +378,83 @@ impl LayoutSession {
         }
         owned
     }
-    /// Before a recipe lands on one tab's panes, given as `(pane, set)`: the
-    /// panes it gives one set share a copy of their strip layout, and a pane
-    /// given another set than a pane it shares a copy with moves to a copy of
-    /// its own. Call after [`Self::own_copies`]. Answers whether any pane moved.
-    pub fn part_copies<'a>(
-        &mut self,
-        wanted: impl IntoIterator<Item = (u64, &'a [crate::indicator_document::SavedIndicator])>,
-    ) -> bool {
-        let mut given: Vec<(LayoutId, &[_])> = Vec::new();
-        let mut changed = false;
-        for (pane, set) in wanted {
-            let (Some(layout), Some(tab)) = (self.held(pane), self.tab_of.get(&pane).copied())
-            else {
-                continue;
-            };
-            let origin = self.book.origin_of(layout);
-            let shared = given
-                .iter()
-                .find(|(copy, given)| self.book.origin_of(*copy) == origin && *given == set);
-            let copy = match shared {
-                Some((copy, _)) => *copy,
-                None if self.book.is_private(layout)
-                    && !given.iter().any(|(copy, _)| *copy == layout) =>
-                {
-                    layout
-                }
-                None => match self.copy_for(tab, layout) {
-                    Some(copy) => copy,
-                    None => continue,
-                },
-            };
-            given.push((copy, set));
-            if copy != layout {
-                self.repoint(pane, copy);
-                changed = true;
+    /// Twin copies of one strip layout that one tab owns, as a stored file can
+    /// bring back, merge into the one its first pane in order holds, else the
+    /// first one a pane of it left: one set per strip layout per tab. Panes on
+    /// a twin move to the survivor and are told to show its set; a pane that
+    /// left a twin finds the survivor on its way back. The twins leave.
+    fn merge_twins(&mut self, seeded: &[(u64, u64, LayoutId)]) -> OwnedCopies {
+        let own = |tab: u64, copy: LayoutId| (self.owner.get(&copy) == Some(&tab)).then_some(copy);
+        let held = seeded
+            .iter()
+            .filter_map(|&(tab, _, layout)| Some((tab, own(tab, layout)?)));
+        let left = seeded.iter().flat_map(|&(tab, pane, _)| {
+            (self.kept.iter())
+                .filter(move |((by, _), _)| *by == pane)
+                .filter_map(move |(_, copy)| Some((tab, own(tab, *copy)?)))
+        });
+        let mut first: BTreeMap<(u64, LayoutId), LayoutId> = BTreeMap::new();
+        let mut merged: BTreeMap<LayoutId, LayoutId> = BTreeMap::new();
+        for (tab, copy) in held.chain(left) {
+            let survivor = *first
+                .entry((tab, self.book.origin_of(copy)))
+                .or_insert(copy);
+            if survivor != copy {
+                merged.insert(copy, survivor);
             }
         }
-        changed
+        let mut owned = OwnedCopies::default();
+        if merged.is_empty() {
+            return owned;
+        }
+        for copy in self.kept.values_mut() {
+            if let Some(survivor) = merged.get(copy) {
+                *copy = *survivor;
+            }
+        }
+        for &(tab, pane, layout) in seeded {
+            let Some(survivor) = merged.get(&layout).copied() else {
+                continue;
+            };
+            if self.owner.get(&layout) != Some(&tab) {
+                continue;
+            }
+            let set = |id| self.book.get(id).map(|layout| &layout.indicators);
+            if set(layout) != set(survivor) {
+                owned.reshow.push(pane);
+            }
+            self.repoint(pane, survivor);
+        }
+        for twin in merged.into_keys() {
+            self.drop_if_unheld(twin);
+        }
+        owned.changed = true;
+        owned
+    }
+    /// Before a recipe lands on one tab's panes, given as `(pane, set)` in
+    /// pane order: the set each pane shows. The panes on one copy show one
+    /// set, the one the first of them is given; a recipe never parts a copy.
+    /// Call after [`Self::own_copies`].
+    #[must_use]
+    pub fn shared_sets<'a>(
+        &self,
+        wanted: impl IntoIterator<Item = (u64, &'a [crate::indicator_document::SavedIndicator])>,
+    ) -> Vec<(u64, &'a [crate::indicator_document::SavedIndicator])> {
+        let mut decided: Vec<(LayoutId, &'a [_])> = Vec::new();
+        let mut shown = Vec::new();
+        for (pane, set) in wanted {
+            let first = self.held(pane).map(|layout| {
+                match decided.iter().find(|(copy, _)| *copy == layout) {
+                    Some((_, first)) => *first,
+                    None => {
+                        decided.push((layout, set));
+                        set
+                    }
+                }
+            });
+            shown.push((pane, first.unwrap_or(set)));
+        }
+        shown
     }
     pub fn replace_book(&mut self, book: LayoutBook) {
         let panes = std::mem::take(&mut self.panes);
