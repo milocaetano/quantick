@@ -356,13 +356,20 @@ mod lifecycle {
             day_before: Some(false),
         });
         source(browser);
+        let ctx = egui::Context::default();
+        // Let egui finish its first window-sizing pass before inspecting text.
+        // This opens the native window without scanning; OpenBrowser below
+        // still supplies the first Library immediately before dependent paint.
+        browser.dispatch(Intent::SetOpen(true));
+        frame(browser, &ctx, vec![], false);
+        frame(browser, &ctx, vec![], false);
+        assert!(browser.model_state.library.is_none());
         browser.open_browser();
         assert_eq!(
             browser.model_state.library.as_ref().unwrap().sessions.len(),
             1,
             "menu entry settles its scan before returning"
         );
-        let ctx = egui::Context::default();
         let mut response = SurfaceResponse::default();
         let output = ctx.run(Default::default(), |ctx| {
             response = registry
