@@ -211,3 +211,26 @@ fn a_gesture_alone_refuses_selection_and_delete() {
     );
     assert!(session.book().get(second).is_some());
 }
+
+/// A pane that left a twin of its tab's copy finds the survivor on its way
+/// back once the twins merge; the twin leaves the book.
+#[test]
+fn a_kept_twin_follows_the_copy_it_merged_into() {
+    let mut book = LayoutBook::starter(Vec::new());
+    let origin = book.active_id();
+    let shared = book.make_private_copy(origin).unwrap();
+    let twin = book.make_private_copy(origin).unwrap();
+    let mut session = LayoutSession::new(book);
+    let levels = session.create(Some("levels")).unwrap();
+    for (pane, layout) in [(1, shared), (2, levels)] {
+        session.register_in(10, pane, Some(layout));
+        session.seed(pane, None, None);
+    }
+    session.owner.insert(twin, 10);
+    session.kept.insert((2, origin), twin);
+    assert!(session.own_copies([(10, 1), (10, 2)]).changed);
+    assert_eq!(session.kept.get(&(2, origin)), Some(&shared));
+    assert!(session.book().get(twin).is_none(), "merged away");
+    let back = session.select(2, origin, PaneFacts::default()).unwrap();
+    assert_eq!(back.to(), shared);
+}

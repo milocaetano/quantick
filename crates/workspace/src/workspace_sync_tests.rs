@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout_document::{LayoutBook, LayoutId};
-use crate::session::{LayoutSession, PaneFacts};
+use crate::session::{LayoutSession, OwnedCopies, PaneFacts};
 
 fn with_layer(on: bool) -> WorkspaceRecipe {
     WorkspaceRecipe {
@@ -246,31 +246,122 @@ fn switch(session: &mut LayoutSession, pane: u64, to: LayoutId) {
     session.finish_selection(committed).unwrap();
 }
 
-/// Of two copies a recipe left one tab on one strip layout, the one a pane
-/// switched away from stays that pane's: back on the strip layout it finds its
-/// own set, never its twin's. It goes with the pane.
+/// A recipe that gives two panes of a tab two sets parts nothing: a pane
+/// switched away and back lands on the tab's one copy, with the set its first
+/// pane was given, and the copy stays while the other pane holds it.
 #[test]
-fn a_parted_copy_stays_its_panes_through_a_switch_away_and_back() {
+fn a_pane_back_from_a_switch_finds_its_tabs_one_copy() {
     let mut session = two_tabs_on_one_layout();
     let (shared, public) = (session.layout(1), session.book().active_id());
     let (none, one) = (Vec::new(), vec![ema()]);
-    session.part_copies([(1, none.as_slice()), (2, one.as_slice())]);
-    let parted = session.layout(2);
-    session.indicators_mut(parted).unwrap().push(ema());
+    let shown = session.shared_sets([(1, none.as_slice()), (2, one.as_slice())]);
+    assert_eq!(shown, [(1, none.as_slice()), (2, none.as_slice())]);
+    assert_eq!(session.layout(2), shared, "nothing parted");
+    session.indicators_mut(shared).unwrap().push(ema());
     let levels = session.create(Some("levels")).unwrap();
     switch(&mut session, 2, levels);
-    assert!(session.book().get(parted).is_some(), "kept for pane 2");
     switch(&mut session, 2, public);
-    assert_eq!(session.layout(2), parted, "its own set");
-    assert_eq!(session.book().get(parted).unwrap().indicators, one);
-    let again = session.select(1, public, PaneFacts::default()).unwrap();
-    assert!(!again.changed(), "pane 1 stays on its own copy");
-    assert_eq!(session.layout(1), shared);
+    assert_eq!(session.layout(2), shared, "the tab's one copy");
+    assert_eq!(session.book().get(shared).unwrap().indicators, one);
 
     switch(&mut session, 2, levels);
     session.remove_pane(2);
-    assert!(session.book().get(parted).is_none(), "gone with its pane");
-    assert!(session.book().get(shared).is_some());
+    assert!(
+        session.book().get(shared).is_some(),
+        "pane 1 still holds it"
+    );
+}
+
+fn script(name: &str) -> crate::indicator_document::SavedIndicator {
+    crate::indicator_document::SavedIndicator {
+        kind: crate::indicator_document::SavedKind::Script {
+            name: name.to_owned(),
+        },
+        ..ema()
+    }
+}
+
+fn native(id: &str) -> crate::indicator_document::SavedIndicator {
+    crate::indicator_document::SavedIndicator {
+        kind: crate::indicator_document::SavedKind::native(id),
+        ..ema()
+    }
+}
+
+/// The trader's stored file: flow pane 1 and context panes 2 and 3 of one tab
+/// on three copies of one strip layout, each holding another set.
+fn three_twins() -> (LayoutSession, [LayoutId; 3]) {
+    let mut book = LayoutBook::starter(Vec::new());
+    let origin = book.active_id();
+    let sets = [
+        vec![script("force_bar.pine"), native("native.cvd")],
+        vec![script("force_bar.pine")],
+        vec![script("force_bar.pine"), script("cvd.pine")],
+    ];
+    let copies = sets.map(|set| {
+        let copy = book.make_private_copy(origin).unwrap();
+        book.get_mut(copy).unwrap().indicators = set;
+        copy
+    });
+    let mut session = LayoutSession::new(book);
+    for (pane, copy) in [1, 2, 3].into_iter().zip(copies) {
+        session.register(pane, Some(copy));
+        session.seed(pane, None, None);
+    }
+    (session, copies)
+}
+
+/// Inside one tab, the panes on one strip layout show one set. A recipe giving
+/// them two sets leaves them on one copy showing the first pane's; twin copies
+/// a stored file brings back merge into the flow pane's, every pane on it, and
+/// the merge reads back from the file as it was left.
+#[test]
+fn panes_of_one_tab_on_one_strip_layout_always_share_a_set() {
+    let mut session = two_tabs_on_one_layout();
+    let (shared, other_tab) = (session.layout(1), session.layout(3));
+    let (none, one) = (Vec::new(), vec![ema()]);
+    let shown = session.shared_sets([(1, one.as_slice()), (2, none.as_slice())]);
+    assert_eq!(
+        shown,
+        [(1, one.as_slice()), (2, one.as_slice())],
+        "the first pane decides"
+    );
+    assert_eq!(
+        [session.layout(1), session.layout(2)],
+        [shared; 2],
+        "one copy"
+    );
+    assert_eq!(session.layout(3), other_tab, "tab 20 untouched");
+
+    let (mut session, [flow, twin, other]) = three_twins();
+    let owned = session.own_copies([(10, 1), (10, 2), (10, 3)]);
+    assert!(owned.changed);
+    assert_eq!(owned.reshow, [2, 3], "the context panes showed another set");
+    assert_eq!([1, 2, 3].map(|pane| session.layout(pane)), [flow; 3]);
+    let force = vec![script("force_bar.pine"), native("native.cvd")];
+    assert_eq!(session.book().get(flow).unwrap().indicators, force);
+    assert!(session.book().get(twin).is_none() && session.book().get(other).is_none());
+    // An edit reaches every pane on the copy it writes to.
+    let views = [1, 2, 3].map(|pane| session.register(pane, None));
+    assert!(views.iter().all(|view| session.shows(view, flow)));
+    let again = session.shared_sets([
+        (1, force.as_slice()),
+        (2, none.as_slice()),
+        (3, one.as_slice()),
+    ]);
+    assert!(again.iter().all(|(_, set)| *set == force.as_slice()));
+
+    let text = toml::to_string(session.book()).unwrap();
+    let mut reread = LayoutSession::new(crate::layout_document::parse(&text).unwrap());
+    for pane in [1, 2, 3] {
+        reread.register(pane, Some(flow));
+        reread.seed(pane, None, None);
+    }
+    assert!(!reread.prune_private([flow]), "the file holds one copy");
+    let owned = reread.own_copies([(10, 1), (10, 2), (10, 3)]);
+    assert_eq!(owned, OwnedCopies::default(), "nothing left to merge");
+    assert_eq!([1, 2, 3].map(|pane| reread.layout(pane)), [flow; 3]);
+    assert_eq!(reread.book().get(flow).unwrap().indicators, force);
 }
 
 /// The restored-desk fallback: tab 30's pane seeded from tab 10's edited copy
@@ -352,25 +443,22 @@ fn another_tabs_private_copy_is_refused_by_the_strip_and_the_switch() {
     );
 }
 
-/// A recipe that gives two panes of a tab two sets parts their copy; one that
-/// gives them one set keeps it shared.
+/// A recipe that gives two panes of a tab two sets parts nothing: both stay on
+/// the tab's copy and show what the first pane is given. One set stays one.
 #[test]
-fn a_recipe_parts_a_shared_copy_only_where_its_sets_differ() {
+fn a_recipe_never_parts_a_tabs_copy() {
     let mut session = two_tabs_on_one_layout();
     let (shared, other_tab) = (session.layout(1), session.layout(3));
     let (none, one) = (Vec::new(), vec![ema()]);
-    assert!(!session.part_copies([(1, none.as_slice()), (2, none.as_slice())]));
-    assert_eq!(session.layout(2), shared);
-    assert!(session.part_copies([(1, none.as_slice()), (2, one.as_slice())]));
-    assert_eq!(session.layout(1), shared);
-    let parted = session.layout(2);
-    assert_ne!(parted, shared);
-    assert!(session.book().is_private(parted));
+    let same = session.shared_sets([(1, none.as_slice()), (2, none.as_slice())]);
+    assert_eq!(same, [(1, none.as_slice()), (2, none.as_slice())]);
+    let two = session.shared_sets([(2, one.as_slice()), (1, none.as_slice())]);
     assert_eq!(
-        session.book().origin_of(parted),
-        session.book().origin_of(shared)
+        two,
+        [(2, one.as_slice()), (1, one.as_slice())],
+        "in the order given"
     );
-    assert!(!session.part_copies([(1, none.as_slice()), (2, one.as_slice())]));
+    assert_eq!([session.layout(1), session.layout(2)], [shared; 2]);
     assert_eq!(session.layout(3), other_tab, "tab 20 untouched");
 }
 

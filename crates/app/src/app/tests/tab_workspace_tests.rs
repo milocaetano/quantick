@@ -565,6 +565,129 @@ fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_
     assert!(!store.tab_row(b).1, "and no other");
 }
 
+const THREE_PANES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(1)];
+
+/// How many indicators each of the active tab's three panes shows.
+fn three_counts(app: &mut QuantickApp) -> [usize; 3] {
+    settle_indicators(app);
+    THREE_PANES.map(|side| app.active_tab().pane(side).indicators.all().len())
+}
+
+/// The copy every one of the active tab's three panes holds: one, or a panic.
+fn one_copy(app: &QuantickApp) -> quantick_workspace::layout_document::LayoutId {
+    let held = THREE_PANES.map(|side| app.active_tab().pane(side).layout_id().expect("seeded"));
+    assert!(held.iter().all(|id| *id == held[0]), "one copy: {held:?}");
+    held[0]
+}
+
+/// The trader's Force report: inside one tab, the panes on one strip layout
+/// show one set. A recipe giving three panes three sets lands the flow pane's
+/// on all of them, and an add or a removal on a context pane reaches the flow
+/// pane and the other context pane.
+#[test]
+fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-one-set-a-tab", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    let tab = app.runtime.tabs.by_id_mut(b).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let mut three = live_recipe(&app.runtime, b).expect("an open tab");
+    assert_eq!(three.context_panes.len(), 2);
+    three.flow_indicators = vec![ema()];
+    three.context_panes[0].indicators = Vec::new();
+    three.context_panes[1].indicators = vec![ema(), ema()];
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(b, &three).expect("held");
+    book.save_as(b, "Three").expect("a free name");
+
+    set_tab_workspace(&mut app, a, "Three").expect("a known workspace");
+    frames(&mut app, 5);
+    let copy = one_copy(&app);
+    assert_eq!(three_counts(&mut app), [1; 3], "the flow pane's set");
+    let set = &app
+        .layout_state()
+        .layouts()
+        .get(copy)
+        .expect("held")
+        .indicators;
+    assert_eq!(set, &[ema()]);
+
+    app.active_tab_mut().focus = PaneSide::Time(1);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [2; 3], "an add reaches every pane");
+    let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    app.apply_toolbar_action(ToolbarAction::RemoveIndicator(slot.0));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [1; 3], "and so does a removal");
+    assert_eq!(one_copy(&app), copy);
+}
+
+/// Bring `saved` back as the whole desk, as a launch reads it.
+fn restore_desk(app: &mut QuantickApp, saved: quantick_workspace::arrangement_document::SavedTab) {
+    let config = app.config.clone();
+    let desk = ui_state::Workspace::new(true, None, 0, vec![saved], None);
+    app.arrangement_adapter()
+        .restore_workspace(desk.restore(&config));
+    frames(app, 4);
+}
+
+/// The trader's stored file: the flow pane and two context panes of one tab on
+/// three copies of one strip layout, each with another set. Brought back, all
+/// three show the flow pane's set on one copy, and the file saved from that
+/// reads back the same.
+#[test]
+fn a_desk_on_twin_copies_comes_back_on_the_flow_panes_set() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-twin-copies", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let flow = app.active_tab().flow_pane.layout_id().expect("seeded");
+    let mut book = app.layout_state().layouts().clone();
+    let native = |id: &str| quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native(id),
+        ..ema()
+    };
+    let force = vec![ema(), native("native.cvd")];
+    let sets = [
+        force.clone(),
+        vec![ema()],
+        vec![ema(), native("native.rsi")],
+    ];
+    let copies = sets.map(|set| {
+        let copy = book.make_private_copy(flow).expect("a known layout");
+        book.get_mut(copy).expect("just made").indicators = set;
+        copy
+    });
+    let mut saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    saved.flow_layout = Some(copies[0].0);
+    saved.context_layouts = vec![copies[1].0, copies[2].0];
+    app.runtime.workspace.layouts_mut().set_book(book);
+
+    restore_desk(&mut app, saved);
+    assert_eq!(one_copy(&app), copies[0], "the flow pane's copy");
+    assert_eq!(three_counts(&mut app), [2; 3]);
+    let book = app.layout_state().layouts();
+    assert_eq!(book.get(copies[0]).expect("held").indicators, force);
+    assert!(book.get(copies[1]).is_none() && book.get(copies[2]).is_none());
+
+    let saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    assert_eq!(
+        saved.context_layouts, [copies[0].0; 2],
+        "the desk names one copy"
+    );
+    let text = toml::to_string(app.layout_state().layouts()).expect("a book writes");
+    let reread = quantick_workspace::layout_document::parse(&text).expect("and reads back");
+    app.runtime.workspace.layouts_mut().set_book(reread);
+    restore_desk(&mut app, saved);
+    assert_eq!(one_copy(&app), copies[0], "after a relaunch too");
+    assert_eq!(three_counts(&mut app), [2; 3]);
+}
+
 /// `layout.tab.switch` as a script calls it, answered as the wire answers.
 fn switch_by_script(app: &mut QuantickApp, input: serde_json::Value) -> serde_json::Value {
     let mut access = crate::control::ControlAccess::new();
