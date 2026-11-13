@@ -135,50 +135,28 @@ impl<'a> WorkspaceRows<'a> {
         let (workspace, _) = self.state();
         let on_default = workspace == DEFAULT_WORKSPACE;
         let row = row_of(id);
+        let (hover, mut on) = (row.hover.unwrap_or_default(), self.book.autosave());
         let response = match id {
-            RowId::WorkspaceSaveAsNew => {
-                let response = ui.button(row.label);
-                if response.clicked() {
-                    Self::push(commands, WorkspaceCommand::BeginSaveAs);
-                }
-                response
+            RowId::WorkspaceSaveAsNew => ui.button(row.label),
+            RowId::WorkspaceNew | RowId::ManageWorkspaces => {
+                ui.button(row.label).on_hover_text(hover)
             }
-            RowId::WorkspaceNew => {
-                let hover = row.hover.unwrap_or_default();
-                let response = ui.button(row.label).on_hover_text(hover);
-                if response.clicked() {
-                    Self::push(commands, WorkspaceCommand::BeginNew);
-                }
-                response
-            }
-            RowId::WorkspaceRename => {
-                let response = ui
-                    .add_enabled(!on_default, egui::Button::new(row.label))
-                    .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
-                if response.clicked() {
-                    let from = workspace.to_owned();
-                    Self::push(commands, WorkspaceCommand::BeginRename(from));
-                }
-                response
-            }
-            RowId::WorkspaceAutosave => {
-                let mut on = self.book.autosave();
-                let response = ui.checkbox(&mut on, row.label);
-                if response.changed() {
-                    Self::push(commands, WorkspaceCommand::SetAutosave(on));
-                }
-                response
-            }
-            RowId::ManageWorkspaces => {
-                let hover = row.hover.unwrap_or_default();
-                let response = ui.button(row.label).on_hover_text(hover);
-                if response.clicked() {
-                    Self::push(commands, WorkspaceCommand::BeginManage);
-                }
-                response
-            }
+            RowId::WorkspaceRename => ui
+                .add_enabled(!on_default, egui::Button::new(row.label))
+                .on_disabled_hover_text(row.disabled_hover.unwrap_or_default()),
+            RowId::WorkspaceAutosave => ui.checkbox(&mut on, row.label),
             _ => return None,
         };
+        let command = match id {
+            RowId::WorkspaceAutosave if response.changed() => WorkspaceCommand::SetAutosave(on),
+            _ if !response.clicked() => return Some(response),
+            RowId::WorkspaceSaveAsNew => WorkspaceCommand::BeginSaveAs,
+            RowId::WorkspaceNew => WorkspaceCommand::BeginNew,
+            RowId::WorkspaceRename => WorkspaceCommand::BeginRename(workspace.to_owned()),
+            RowId::ManageWorkspaces => WorkspaceCommand::BeginManage,
+            _ => return Some(response),
+        };
+        Self::push(commands, command);
         Some(response)
     }
 
@@ -223,12 +201,8 @@ impl<'a> WorkspaceRows<'a> {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(budget.min_width);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        let rows = ChipRows {
-                            id,
-                            list_height: budget.list_height,
-                            keys,
-                        };
-                        self.chip_rows(ui, rows, commands, &mut drawn);
+                        let height = budget.list_height;
+                        self.chip_rows(ui, id, height, keys, commands, &mut drawn);
                     });
                 });
             });
@@ -260,27 +234,25 @@ impl<'a> WorkspaceRows<'a> {
     fn chip_rows(
         self,
         ui: &mut egui::Ui,
-        rows: ChipRows,
+        id: (&'static str, u64, u64),
+        list_height: f32,
+        keys: String,
         commands: &mut Vec<MenuCommand>,
         drawn: &mut Vec<DrawnControl>,
     ) {
         let (workspace, modified) = self.state();
         let auto = self.book.autosave();
-        let autosave = calls::WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID;
-        let label = row_of(RowId::WorkspaceAutosave).label;
-        if let Some(it) = self.action_row(ui, RowId::WorkspaceAutosave, commands) {
-            drawn.push(chip_control("autosave", label, it.rect, auto, autosave));
-        }
+        self.chip_action(ui, RowId::WorkspaceAutosave, commands, drawn);
         let line = if auto {
             "Every change is saved".to_owned()
         } else {
-            format!("Save with {}", rows.keys)
+            format!("Save with {keys}")
         };
         ui.label(crate::theme::supporting_text(ui, line));
         ui.separator();
         let label = format!("Save \u{201c}{workspace}\u{201d}");
         let save = egui::Button::new(label.as_str())
-            .shortcut_text(crate::theme::supporting_text(ui, rows.keys));
+            .shortcut_text(crate::theme::supporting_text(ui, keys));
         let save = ui.add_enabled(modified && !auto, save);
         if modified && !auto {
             let inset = egui::vec2(UNSAVED_DOT_INSET_PT, 0.0);
@@ -293,16 +265,14 @@ impl<'a> WorkspaceRows<'a> {
         if save.clicked() {
             Self::push(commands, WorkspaceCommand::SaveTo);
         }
-        let save_as = calls::WORKSPACE_SAVE_AS_CAPABILITY_ID;
-        self.chip_action(ui, RowId::WorkspaceSaveAsNew, save_as, commands, drawn);
-        let rename = calls::WORKSPACE_RENAME_CAPABILITY_ID;
-        self.chip_action(ui, RowId::WorkspaceRename, rename, commands, drawn);
+        self.chip_action(ui, RowId::WorkspaceSaveAsNew, commands, drawn);
+        self.chip_action(ui, RowId::WorkspaceRename, commands, drawn);
         ui.separator();
         ui.label(crate::theme::supporting_text(ui, "WORKSPACES"));
         let shown = egui::ScrollArea::vertical()
-            .id_salt(rows.id)
-            .max_height(rows.list_height)
-            .min_scrolled_height(rows.list_height)
+            .id_salt(id)
+            .max_height(list_height)
+            .min_scrolled_height(list_height)
             .auto_shrink([false, true])
             .show(ui, |ui| self.list(ui, commands, true))
             .inner;
@@ -312,39 +282,30 @@ impl<'a> WorkspaceRows<'a> {
             drawn.push(chip_control(&key, &name, rect, name == workspace, set));
         }
         ui.separator();
-        let new = calls::WORKSPACE_NEW_CAPABILITY_ID;
-        self.chip_action(ui, RowId::WorkspaceNew, new, commands, drawn);
-        let list = calls::WORKSPACE_LIST_CAPABILITY_ID;
-        self.chip_action(ui, RowId::ManageWorkspaces, list, commands, drawn);
+        self.chip_action(ui, RowId::WorkspaceNew, commands, drawn);
+        self.chip_action(ui, RowId::ManageWorkspaces, commands, drawn);
     }
 
-    /// One action row of the cell menu, written to `drawn` under its key.
+    /// One action row of the cell menu, written to `drawn` with its call.
     fn chip_action(
         self,
         ui: &mut egui::Ui,
         id: RowId,
-        call: &'static str,
         commands: &mut Vec<MenuCommand>,
         drawn: &mut Vec<DrawnControl>,
     ) {
-        let key = match id {
-            RowId::WorkspaceSaveAsNew => "save_as",
-            RowId::WorkspaceRename => "rename",
-            RowId::WorkspaceNew => "new",
-            _ => "manage",
+        let (key, call) = match id {
+            RowId::WorkspaceAutosave => ("autosave", calls::WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID),
+            RowId::WorkspaceSaveAsNew => ("save_as", calls::WORKSPACE_SAVE_AS_CAPABILITY_ID),
+            RowId::WorkspaceRename => ("rename", calls::WORKSPACE_RENAME_CAPABILITY_ID),
+            RowId::WorkspaceNew => ("new", calls::WORKSPACE_NEW_CAPABILITY_ID),
+            _ => ("manage", calls::WORKSPACE_LIST_CAPABILITY_ID),
         };
+        let on = id == RowId::WorkspaceAutosave && self.book.autosave();
         if let Some(it) = self.action_row(ui, id, commands) {
-            drawn.push(chip_control(key, row_of(id).label, it.rect, false, call));
+            drawn.push(chip_control(key, row_of(id).label, it.rect, on, call));
         }
     }
-}
-
-/// What the cell menu's rows need besides the book.
-struct ChipRows {
-    /// The menu's area id, which its list's scroll state hangs off.
-    id: (&'static str, u64, u64),
-    list_height: f32,
-    keys: String,
 }
 
 /// One part of the cell menu as the scene reads it; an empty `key` is the
