@@ -298,9 +298,8 @@ fn dragging_a_time_time_flow_seam_to_the_edge_folds_the_flow_to_a_rail() {
         "the column painter's rail width: {:?}",
         rails[0].rect
     );
-    assert_eq!(
+    assert!(
         app.active_tab().reading().flow_collapsed,
-        true,
         "the layout call reads the fold"
     );
     let scene = crate::control::scene_snapshot(&app);

@@ -1,0 +1,8 @@
+# Tree seams fold to the column painter's rail: the egui half only. The tree
+# painter paints each rail (and a horizontal variant for a column fold),
+# widens a seam's grab over a rail, publishes the rail to the scene, and
+# holds the drag accumulator; TabCanvas's collapse calls and the layout
+# reading delegate in one line each. The fold, its geometry, the drag rule
+# and the collapse calls are `quantick_workspace::canvas::rail`, with tests.
+crates/app +65
+!budget +65
