@@ -834,8 +834,13 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
         .as_deref()
         .and_then(quantick_workspace::canvas::menu_hook)
     {
-        let menus = &mut app.active_tab_mut().canvas.menus;
-        (menus.open, menus.picked) = (row.is_none().then_some(slot), row.map(|row| (slot, row)));
+        use quantick_ui_model::remove_chart::Intent;
+        let intent = row.map_or(Intent::SetMenuOpen(Some(slot)), |row| {
+            Intent::Pick(slot, row)
+        });
+        app.surfaces
+            .remove_chart
+            .update_scoped(app.runtime.tabs.active_id(), intent);
     }
     // The three file entries, reachable with no click for the same reason
     // (`.claude/skills/ui-harness`). Each runs the menu entry's own code

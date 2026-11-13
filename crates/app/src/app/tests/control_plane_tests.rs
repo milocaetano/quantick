@@ -6546,7 +6546,11 @@ fn canvas_actions_drive_through_the_control_plane() {
         serde_json::json!({ "preset_id": "time+flow" }),
     );
     assert_eq!(picked["preset_id"], "time+flow");
-    app.chrome.layout_picker_open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     settle(&mut app);
     look(&app, &mut seen);
     let added = call(
@@ -6560,7 +6564,9 @@ fn canvas_actions_drive_through_the_control_plane() {
             .as_array()
             .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "floating"))
     );
-    app.chrome.add_menu.open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetAddOpen(true));
     settle(&mut app);
     look(&app, &mut seen);
     let pane = serde_json::json!({ "slot": slot });
@@ -6579,7 +6585,10 @@ fn canvas_actions_drive_through_the_control_plane() {
         serde_json::json!({ "slot": slot, "corner": "top_left" }),
     );
     assert!(parked["panes"].is_array());
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let out = call(&mut app, wire::POP_OUT_CAPABILITY_ID, pane.clone());
@@ -6588,18 +6597,27 @@ fn canvas_actions_drive_through_the_control_plane() {
             .as_array()
             .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "os_window"))
     );
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let back = call(&mut app, wire::RETURN_CAPABILITY_ID, pane.clone());
     assert_eq!(back["changed"], true);
     let time = app.active_tab().canvas.state.tree().panes()[0].0;
     let time_pane = serde_json::json!({ "slot": time });
-    app.active_tab_mut().canvas.menus.open = Some(time);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(time)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     call(&mut app, wire::MAXIMIZE_CAPABILITY_ID, time_pane.clone());
-    app.active_tab_mut().canvas.menus.open = Some(time);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(time)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane.clone());
@@ -6607,7 +6625,10 @@ fn canvas_actions_drive_through_the_control_plane() {
     assert_eq!(folded["changed"], true);
     look(&app, &mut seen);
     call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane);
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let removed = call(

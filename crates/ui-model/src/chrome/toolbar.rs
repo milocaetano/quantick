@@ -72,8 +72,6 @@ pub struct Capsule {
     pub unsaved: bool,
     pub marks: LayoutMarks,
     pub menu_open: bool,
-    pub popover_open: bool,
-    pub add_open: bool,
     pub door_open: bool,
     pub door_hover: String,
 }
@@ -122,8 +120,6 @@ pub enum Intent {
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     Action(Action),
-    SetLayoutPopover(bool),
-    SetAddMenu(bool),
 }
 #[derive(Debug, Default, PartialEq)]
 pub struct Effects(pub Vec<Effect>);
@@ -151,7 +147,7 @@ impl crate::Model for Model {
                             if !snapshot.available(action) {
                                 return None;
                             }
-                            Some(snapshot.capsule.transition(action))
+                            Some(Effect::Action(action))
                         })
                         .collect(),
                 )
@@ -179,28 +175,6 @@ impl Snapshot {
 }
 
 impl Capsule {
-    /// Resolve capsule toggles against the current cached state.
-    pub fn transition(&mut self, action: Action) -> Effect {
-        match action {
-            Action::ToggleLayoutPopover => {
-                self.popover_open ^= true;
-                Effect::SetLayoutPopover(self.popover_open)
-            }
-            Action::ToggleAddMenu => {
-                self.add_open ^= true;
-                Effect::SetAddMenu(self.add_open)
-            }
-            action => Effect::Action(action),
-        }
-    }
-
-    /// A selected layout or an outside press ends the layout picker session.
-    pub fn settle_popover(&mut self, outside: bool, actions: &[Action]) {
-        self.popover_open &= !outside
-            && !actions
-                .iter()
-                .any(|action| matches!(action, Action::SetLayout(_)));
-    }
     pub fn marks(&self) -> (&str, bool, bool) {
         (&self.workspace, self.unsaved, self.marks.layout_unsaved)
     }
@@ -237,44 +211,6 @@ impl HistoryButton {
 mod tests {
     use super::*;
 
-    #[test]
-    fn capsule_toggles_and_dismissal_use_cached_state() {
-        let preset = &quantick_workspace::canvas::LAYOUT_PRESETS[0];
-        let mut capsule = Capsule {
-            tree: preset.tree.clone(),
-            workspace: "Default".into(),
-            unsaved: false,
-            marks: LayoutMarks::default(),
-            menu_open: false,
-            popover_open: false,
-            add_open: false,
-            door_open: false,
-            door_hover: String::new(),
-        };
-        assert_eq!(
-            capsule.transition(Action::ToggleLayoutPopover),
-            Effect::SetLayoutPopover(true)
-        );
-        capsule.settle_popover(false, &[]);
-        assert!(capsule.popover_open);
-        capsule.settle_popover(true, &[]);
-        assert!(!capsule.popover_open);
-        capsule.transition(Action::ToggleLayoutPopover);
-        capsule.settle_popover(false, &[Action::SetLayout(preset)]);
-        assert!(!capsule.popover_open);
-        assert_eq!(
-            capsule.transition(Action::ToggleAddMenu),
-            Effect::SetAddMenu(true)
-        );
-        assert_eq!(
-            capsule.transition(Action::ToggleAddMenu),
-            Effect::SetAddMenu(false)
-        );
-        assert_eq!(
-            capsule.transition(Action::SaveWorkspace),
-            Effect::Action(Action::SaveWorkspace)
-        );
-    }
     #[test]
     fn the_history_button_names_its_target_and_cancels_a_run() {
         use quantick_sources::history_reach::ReachProgress;

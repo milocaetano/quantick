@@ -148,7 +148,11 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     }
     app.active_tab_mut().link.notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
-    app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
+    app.surfaces
+        .feed_notice
+        .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(
+            app.runtime.tabs.active_id(),
+        ));
     for _ in 0..3 {
         let _ = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     }
@@ -189,7 +193,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     ];
     let clicked = frame(&mut app, &ctx, click, &mut spawn, late);
     assert!(app.active_tab().paper.position_summary().is_none());
-    assert_eq!(app.chrome.feed_popup_tab, None);
+    assert_eq!(app.surfaces.feed_notice.model_state.open(), None);
     assert!(matches!(
         app.active_tab()
             .flow_pane
@@ -407,13 +411,15 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
     let run = |app: &mut QuantickApp| {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut chip = None;
-            let mut popup = None;
+            app.surfaces
+                .feed_notice
+                .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(7));
             super::super::frame_tail::FrameTailOwners {
                 tabs: &mut app.runtime.tabs,
                 config: &app.config,
                 toast: &mut app.surfaces.toast,
                 chip_rect: &mut chip,
-                popup_tab: &mut popup,
+                popup: &mut app.surfaces.feed_notice,
             }
             .execute(
                 super::super::frame_tail::FrameTailInput {
@@ -422,7 +428,6 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                     tz: app.runtime.tz,
                     notice_action: feed_notice::NoticeAction::None,
                     popup_tab: 7,
-                    popup_open: true,
                     chip_clicked: false,
                     dismissed: false,
                     chip_rect: Some(egui::Rect::from_min_size(
@@ -434,7 +439,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                 FrameTailPlan::stages(),
             );
             assert!(chip.is_some());
-            assert_eq!(popup, Some(7));
+            assert_eq!(app.surfaces.feed_notice.model_state.open(), Some(7));
         });
     };
     for (index, tab) in app.runtime.tabs.iter_mut().enumerate() {
@@ -463,4 +468,45 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
         app.surfaces.toast.model_state.message(),
         Some("BACKGROUND \u{00b7} first")
     );
+}
+
+#[test]
+fn feed_notice_settles_only_for_the_presented_view() {
+    use quantick_chart_interaction::frame_tail_plan::FrameTailStage;
+    use quantick_ui_model::feed_notice::Intent;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let tab = app.runtime.tabs.active_id();
+    app.surfaces.feed_notice.update(Intent::InitializeOpen(tab));
+    let chip = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 20.0));
+    app.chrome.feed_chip_rect = Some(chip);
+    for presented in [false, true] {
+        super::super::frame_tail::FrameTailOwners {
+            tabs: &mut app.runtime.tabs,
+            config: &app.config,
+            toast: &mut app.surfaces.toast,
+            chip_rect: &mut app.chrome.feed_chip_rect,
+            popup: &mut app.surfaces.feed_notice,
+        }
+        .execute(
+            super::super::frame_tail::FrameTailInput {
+                presentation: presented.then_some(&ctx),
+                now: Instant::now(),
+                tz: app.runtime.tz,
+                notice_action: feed_notice::NoticeAction::None,
+                popup_tab: tab,
+                chip_clicked: false,
+                dismissed: true,
+                chip_rect: None,
+            },
+            &mut |_, _, _, _| panic!("popup publication must not execute recovery"),
+            [FrameTailStage::PublishFeedPopup],
+        );
+        assert_eq!(
+            app.surfaces.feed_notice.model_state.open(),
+            (!presented).then_some(tab)
+        );
+        assert_eq!(app.chrome.feed_chip_rect, (!presented).then_some(chip));
+        assert_eq!(app.chrome_reads().feed_popup_open(), !presented);
+    }
 }

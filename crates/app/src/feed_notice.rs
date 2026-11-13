@@ -25,7 +25,7 @@
 use eframe::egui;
 
 use crate::theme;
-pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, popup_still_open, report};
+pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, report};
 use quantick_feed::stall::Recovery;
 
 /// The word when the chart is not being fed: one word for several faults, which

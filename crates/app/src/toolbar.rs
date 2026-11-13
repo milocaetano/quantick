@@ -639,8 +639,6 @@ mod tests {
             unsaved: false,
             marks: Default::default(),
             menu_open: false,
-            popover_open: false,
-            add_open: false,
             door_open: false,
             door_hover: String::new(),
         }

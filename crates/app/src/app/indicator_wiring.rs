@@ -15,8 +15,7 @@ pub(super) struct IndicatorWiring<'a> {
     pub(super) picker: &'a mut crate::surfaces::indicator_picker::IndicatorPickerSurface,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
-    pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) delete_confirm: &'a mut Option<crate::layouts::LayoutId>,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
     #[cfg(any(feature = "scenario-harness", test))]
     pub(super) harness: &'a mut crate::harness::Harness,
 }
@@ -32,8 +31,7 @@ impl<'a> IndicatorWiring<'a> {
             store: self.runtime.workspace.layouts_mut(),
             drawing_chrome: self.drawing_chrome,
             toast: self.toast,
-            rename: self.rename,
-            delete_confirm: self.delete_confirm,
+            dialogs: self.dialogs,
         }
     }
 }
@@ -45,8 +43,7 @@ impl IndicatorWiring<'_> {
             picker: self.picker,
             drawing_chrome: self.drawing_chrome,
             toast: self.toast,
-            rename: self.rename,
-            delete_confirm: self.delete_confirm,
+            dialogs: self.dialogs,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: self.harness,
         }

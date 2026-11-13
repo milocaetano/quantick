@@ -28,8 +28,6 @@ pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Capsul
         unsaved,
         marks: LayoutMarks::of(live, saved.as_ref(), unsaved),
         menu_open: app.chrome.window_menu.tab_workspace.chip_menu_on(tab),
-        popover_open: app.chrome.layout_picker_open,
-        add_open: app.chrome.add_menu.open,
         workspace,
         door_open: (app.chrome.window_menu).opened_from(ctx.viewport_id(), MenuDoor::Toolbar),
         door_hover: format!(
@@ -54,7 +52,9 @@ pub(in crate::app) fn settle(
     app.chrome.window_menu.toolbar_door = door;
     #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_layout_picker_autostart() {
-        app.chrome.layout_picker_open = true;
+        app.surfaces.canvas_popovers.update(
+            quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(true),
+        );
     }
     #[cfg(any(feature = "scenario-harness", test))]
     if app.chrome.harness.take_window_menu_toolbar() {
@@ -75,19 +75,19 @@ pub(in crate::app) fn settle(
             action => rest.push(action),
         }
     }
-    let mut cells = Vec::new();
-    if app.chrome.layout_picker_open {
-        let model = PopoverModel {
-            workspace: &state.workspace,
-            marks: state.marks,
-        };
-        let (drawn, outside) = layout_popover::draw(ctx, rects.miniature, &model, &mut rest);
-        let mut next = state.clone();
-        next.popover_open = app.chrome.layout_picker_open;
-        next.settle_popover(outside, &rest);
-        app.chrome.layout_picker_open = next.popover_open;
-        cells = drawn;
-    }
+    let model = PopoverModel {
+        workspace: &state.workspace,
+        marks: state.marks,
+    };
+    let cells = app
+        .surfaces
+        .canvas_popovers
+        .with_pass(
+            quantick_ui_model::Slot::Toolbar,
+            |_| {},
+            |view, session| view.layout(session, ctx, rects.miniature, &model, &mut rest),
+        )
+        .unwrap_or_default();
     crate::app::menu_bar::workspace_cell(app, ctx, Some(rects.name), workspace_clicked);
     app.chrome.add_menu.door = rects.add;
     crate::app::canvas_wiring::add_from_menu(app, ctx);
@@ -111,6 +111,7 @@ fn publish(
         selected,
         capability,
     };
+    let popovers = app.surfaces.canvas_popovers.model_state.projection();
     let tab = app.runtime.tabs.active_id();
     let menu = &app.chrome.window_menu;
     let mut controls = Vec::new();
@@ -133,7 +134,7 @@ fn publish(
         "capsule.layout",
         layout,
         rects.miniature,
-        app.chrome.layout_picker_open,
+        popovers.layout_open,
         None,
     ));
     let workspace_open = menu.tab_workspace.chip_menu_on(tab);
@@ -172,7 +173,7 @@ fn publish(
             "add_widget",
             "Add to canvas",
             door,
-            add.open,
+            popovers.add_open,
             capability,
         ));
     }

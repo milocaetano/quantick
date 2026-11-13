@@ -71,7 +71,24 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
 
+    let editing = app.layout_state().layouts().active_id();
+    app.layout_adapter().begin_layout_rename(editing);
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(editing));
+    assert!(app.surfaces.layout_dialogs.model_state.rename().is_some());
+    assert_eq!(
+        app.surfaces.layout_dialogs.model_state.pending_delete(),
+        Some(editing)
+    );
     app.workspace_bundle_adapter().import_workspace_from(&file);
+    assert!(app.surfaces.layout_dialogs.model_state.rename().is_none());
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
 
     assert!(
         app.added_symbols.contains("binance", "WINQ26"),

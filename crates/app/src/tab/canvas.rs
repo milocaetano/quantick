@@ -174,10 +174,10 @@ impl Tab {
         }
         let (frame, rects) = if self.canvas.column_painted() {
             let frame = self.canvas_frame(area);
-            let rects = self.draw_context_column(ui, &frame, chrome);
+            let rects = self.draw_context_column(tab_id, ui, &frame, chrome);
             (frame, rects)
         } else {
-            self.draw_tree(ui, area, chrome)
+            self.draw_tree(tab_id, ui, area, chrome)
         };
         self.canvas.drawn_bands = rects.pane_bands.clone();
 
@@ -243,6 +243,7 @@ impl Tab {
     /// chart rect below it.
     fn draw_context_column(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         frame: &CanvasFrame,
         chrome: &mut CanvasChrome<'_>,
@@ -306,7 +307,7 @@ impl Tab {
                     areas.header,
                     bar_inputs,
                     job_slot.take(),
-                    chrome.surfaces,
+                    (tab_id, chrome.surfaces),
                 );
                 rects
                     .context_charts
@@ -324,7 +325,7 @@ impl Tab {
                 egui::Rounding::ZERO,
                 palette.flow_surface(),
             );
-            self.draw_flow_header(ui, areas.band, chrome);
+            self.draw_flow_header(tab_id, ui, areas.band, chrome);
             rects.flow_side_row = Some((areas.side_row, bar_inputs));
             self.flow_pane.frame.side_row = Some(areas.side_row);
             PaneAreas {
@@ -450,6 +451,7 @@ impl Tab {
     /// changed here wherever focus sits.
     fn draw_flow_header(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         strip: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
@@ -492,7 +494,13 @@ impl Tab {
             .painted
             .clone();
         let intent = crate::pane_header::outcome(response);
-        self.menu_button(ui, strip, None, theme::get(ui.ctx()).flow_gear_ink());
+        self.menu_button(
+            ui,
+            strip,
+            None,
+            theme::get(ui.ctx()).flow_gear_ink(),
+            (tab_id, chrome.surfaces),
+        );
         self.apply_flow_intent(intent, chrome);
     }
 
@@ -556,7 +564,7 @@ impl Tab {
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
         job_slot: Option<(String, bool)>,
-        surfaces: &mut crate::surfaces::Surfaces,
+        (tab_id, surfaces): (u64, &mut crate::surfaces::Surfaces),
     ) {
         let rebuilding = self
             .loading
@@ -591,7 +599,13 @@ impl Tab {
                 - PANE_MENU_BUTTON_PX;
             crate::loading::draw_slot(ui, right, strip, job_slot, None);
         }
-        self.menu_button(ui, strip, Some(slot), theme::get(ui.ctx()).text_muted());
+        self.menu_button(
+            ui,
+            strip,
+            Some(slot),
+            theme::get(ui.ctx()).text_muted(),
+            (tab_id, surfaces),
+        );
         if indicators {
             self.time_panes[slot].request_indicator_picker();
         }
@@ -605,10 +619,24 @@ impl Tab {
         strip: egui::Rect,
         seat: Option<usize>,
         ink: egui::Color32,
+        (tab_id, surfaces): (u64, &mut crate::surfaces::Surfaces),
     ) {
         let canvas = &mut self.canvas;
         if let Some(slot) = seat_slot(&canvas.state, &mut canvas.seats, seat) {
-            crate::pane_menu::button(ui, strip, (slot, &canvas.state), &mut canvas.menus, ink);
+            surfaces.remove_chart.with_scoped_updates(
+                tab_id,
+                |_| {},
+                |_, session| {
+                    crate::pane_menu::button(
+                        ui,
+                        strip,
+                        (slot, &canvas.state),
+                        &mut canvas.menus,
+                        ink,
+                        session,
+                    );
+                },
+            );
         }
     }
 

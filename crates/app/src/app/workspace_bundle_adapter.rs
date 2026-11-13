@@ -20,8 +20,7 @@ pub(crate) struct WorkspaceBundleAdapter<'a> {
     /// The tab strip and chrome ports an import restores, borrowed once.
     pub(super) arrangement: super::arrangement_adapter::ArrangementAdapter<'a>,
     pub(super) replay_view: &'a crate::replay_view::ReplayView,
-    pub(super) layout_rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) layout_delete_confirm: &'a mut Option<crate::layouts::LayoutId>,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
     pub(super) added_symbols: &'a mut crate::symbols_file::AddedSymbols,
     pub(super) drawing_presets: &'a mut crate::drawings::presets::PresetStore,
     pub(super) footprint_config: &'a mut crate::footprint_config::FootprintConfig,
@@ -41,8 +40,7 @@ impl WorkspaceBundleAdapter<'_> {
             store: self.arrangement.workspace.layouts_mut(),
             drawing_chrome: self.arrangement.drawing_chrome,
             toast: self.arrangement.toast,
-            rename: self.layout_rename,
-            delete_confirm: self.layout_delete_confirm,
+            dialogs: self.dialogs,
         }
     }
     fn maintain_chart_layers(&mut self) {

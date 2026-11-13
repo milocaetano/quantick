@@ -12,7 +12,7 @@ pub(super) struct FrameTailOwners<'a> {
     pub config: &'a AppConfig,
     pub toast: &'a mut ToastSurface,
     pub chip_rect: &'a mut Option<egui::Rect>,
-    pub popup_tab: &'a mut Option<u64>,
+    pub popup: &'a mut crate::surfaces::feed_notice::FeedNoticeSurface,
 }
 pub(super) struct FrameTailInput<'a> {
     /// Available only for the workspace's currently bound native view.
@@ -21,7 +21,6 @@ pub(super) struct FrameTailInput<'a> {
     pub tz: TzOffset,
     pub notice_action: feed_notice::NoticeAction,
     pub popup_tab: u64,
-    pub popup_open: bool,
     pub chip_clicked: bool,
     pub dismissed: bool,
     pub chip_rect: Option<egui::Rect>,
@@ -75,14 +74,14 @@ impl FrameTailOwners<'_> {
                 }
                 FrameTailStage::PublishFeedPopup => {
                     *self.chip_rect = input.chip_rect;
-                    *self.popup_tab = feed_notice::popup_still_open(
-                        input.popup_open,
-                        input.chip_clicked,
-                        input.chip_rect.is_some(),
-                        input.dismissed,
-                        input.notice_action,
-                    )
-                    .then_some(input.popup_tab);
+                    self.popup
+                        .update(quantick_ui_model::feed_notice::Intent::Settle {
+                            tab: input.popup_tab,
+                            chip_clicked: input.chip_clicked,
+                            offline: input.chip_rect.is_some(),
+                            dismissed: input.dismissed,
+                            action_taken: input.notice_action != feed_notice::NoticeAction::None,
+                        });
                 }
             }
         }

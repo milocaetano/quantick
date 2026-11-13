@@ -37,7 +37,9 @@ pub(super) fn observe_market(tabs: &ArrangementHost, surface: &mut StripSurface)
 /// hides. The market itself can still change underneath, and settling that is
 /// what brings it back on screen.
 pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
-    app.chrome.layout_picker_open = false;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::ToolbarHidden);
     // Nothing of the toolbar is drawn on Home, so the scene lists none of it.
     app.chrome.toolbar_controls.clear();
     app.chrome.window_menu.toolbar_door = None;

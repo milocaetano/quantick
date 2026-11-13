@@ -353,3 +353,21 @@ fn refused_remove_still_consumes_the_pending_answer() {
     );
     assert!(drawn(&app, "remove_chart.remove").is_none());
 }
+
+#[test]
+fn pane_menu_row_settles_once_after_canvas() {
+    let (mut app, ctx) = saved_tab("time+flow");
+    let slot = slot_of(&app, PaneKind::Time);
+    press(&mut app, &ctx, &format!("pane_menu.{slot}"));
+    press(&mut app, &ctx, &format!("pane_menu.{slot}.minimize"));
+    let tab = app.runtime.tabs.active_id();
+    assert_eq!(mode(&app, slot), Some(PaneMode::Minimized));
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
+    let after = app.active_tab().canvas.state.clone();
+    super::super::canvas_wiring::settle_canvas(&mut app, &ctx);
+    assert_eq!(app.active_tab().canvas.state, after);
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
+    press(&mut app, &ctx, &format!("pane_menu.{slot}.strip"));
+    assert_eq!(mode(&app, slot), Some(PaneMode::Docked));
+    assert!(!app.surfaces.remove_chart.scoped(tab).0.has_pick());
+}

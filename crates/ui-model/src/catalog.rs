@@ -11,6 +11,10 @@ macro_rules! surface_catalog {
             modules {}
             models {
                 [] []
+                layout_dialogs: LayoutDialogs => layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs::effects, Overlay, Local;
+                [] []
+                feed_notice: FeedNotice => feed_notice = "feed_notice.rs", feed_notice = "feed_notice.rs", feed_notice::effects, Overlay, Local;
+                [] []
                 strategy_popup: StrategyPopup => strategy_popup = "strategy_popup.rs", strategy_popup = "strategy_popup.rs", strategy_popup::effects, LeadingOverlay, Local;
                 [] []
                 toast: Toast => toast = "toast.rs", toast = "toast.rs", toast::effects, Overlay, Local;
@@ -57,6 +61,8 @@ macro_rules! surface_catalog {
                 chrome_title_bar: ChromeTitleBar => chrome_title_bar = "chrome/title_bar.rs", chrome_title_bar = "chrome/title_bar.rs", chrome_title_bar::effects, TitleBar, Host;
                 [] []
                 chrome_tab_strip: ChromeTabStrip => chrome_tab_strip = "chrome/tab_strip.rs", chrome_tab_strip = "chrome/tab_strip.rs", chrome_tab_strip::effects, TabStrip, Host;
+                [] []
+                canvas_popovers: CanvasPopovers => canvas_popovers = "chrome/canvas_popovers.rs", canvas_popovers = "chrome/canvas_popovers.rs", canvas_popovers::effects, Toolbar, Local;
                 [] []
                 chrome_toolbar: ChromeToolbar => chrome_toolbar = "chrome/toolbar.rs", chrome_toolbar = "chrome/toolbar.rs", chrome_toolbar::effects, Toolbar, Host;
                 [] []

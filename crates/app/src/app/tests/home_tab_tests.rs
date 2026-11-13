@@ -927,13 +927,24 @@ fn home_draws_no_toolbar_and_the_canvas_returns_at_its_full_size() {
     let area = app.active_tab().flow_pane.frame.chart_area;
     assert!(area.is_some());
 
-    app.chrome.layout_picker_open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     app.show_home_tab().unwrap();
     for _ in 0..3 {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, &buy).is_none(), "on Home");
     }
-    assert!(!app.chrome.layout_picker_open, "the picker went with it");
+    assert!(
+        !app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .layout_open,
+        "the picker went with it"
+    );
     assert!(app.active_tab().paper.is_flat());
 
     app.chrome.title_bar.surface.show_market();

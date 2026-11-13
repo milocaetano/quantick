@@ -17,10 +17,10 @@ fn step(
     picked: Option<PaneMenuItem>,
     escape: bool,
 ) -> Effects {
+    if let Some(item) = picked { Model::update(state, Intent::Pick(0, item)); }
     Model::update(
         state,
         Intent::MenuStep {
-            picked: picked.map(|item| (0, item)),
             escape,
             snapshot: Box::new(snapshot),
         },
@@ -130,9 +130,8 @@ fn cancel_overrides_an_earlier_menu_act() {
 fn observation_captures_only_input_or_changed_open_context() {
     let mut state = State::default();
     let facts = snapshot();
-    let observe = |state: &State, picked, name| {
+    let observe = |state: &State, name| {
         state.observe(
-            picked,
             false,
             &facts.live,
             facts.saved.as_ref(),
@@ -140,18 +139,58 @@ fn observation_captures_only_input_or_changed_open_context() {
         )
     };
     assert!(
-        observe(&state, None, "Desk").is_none(),
+        observe(&state, "Desk").is_none(),
         "closed idle has no snapshot intent"
     );
-    let opening = observe(&state, Some((0, PaneMenuItem::Remove)), "Desk").unwrap();
+    Model::update(&mut state, Intent::Pick(0, PaneMenuItem::Remove));
+    let opening = observe(&state, "Desk").unwrap();
     Model::update(&mut state, opening);
     assert!(
-        observe(&state, None, "Desk").is_none(),
+        observe(&state, "Desk").is_none(),
         "unchanged pending reuses its projection"
     );
-    let renamed = observe(&state, None, "Renamed").unwrap();
+    let renamed = observe(&state, "Renamed").unwrap();
     Model::update(&mut state, renamed);
     assert!(state.prompt().unwrap().title.contains("Renamed"));
     answer(&mut state, Some(RemoveAnswer::Cancel), false);
-    assert!(observe(&state, None, "Another desk").is_none());
+    assert!(observe(&state, "Another desk").is_none());
+}
+
+
+#[test]
+fn pane_menu_pick_is_consumed_once_in_its_tab() {
+    let mut state = State::default();
+    Model::update(&mut state, Intent::ToggleMenu(0));
+    assert_eq!(state.menu_open(), Some(0));
+    Model::update(&mut state, Intent::ToggleMenu(0));
+    assert_eq!(state.menu_open(), None);
+    Model::update(&mut state, Intent::ToggleMenu(0));
+    Model::update(&mut state, Intent::ToggleMenu(1));
+    assert_eq!(state.menu_open(), Some(1), "only one slot owns the menu");
+    Model::update(&mut state, Intent::DismissMenu);
+    assert_eq!(state.menu_open(), None);
+    Model::update(&mut state, Intent::Pick(0, PaneMenuItem::Minimize));
+    assert!(state.has_pick());
+    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(Some(CanvasAct::Minimize { slot: 0 })));
+    assert!(!state.has_pick());
+    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(None));
+    Model::update(&mut state, Intent::Pick(0, PaneMenuItem::Remove));
+    assert_eq!(step(&mut state, snapshot(), None, false), Effects::Act(None));
+    assert_eq!(state.pending(), Some(0));
+    assert!(!state.has_pick());
+    assert_eq!(answer(&mut state, Some(RemoveAnswer::Cancel), false), Effects::Act(None));
+}
+#[test]
+fn pane_menu_scopes_preserve_live_tabs_and_prune_closed_tabs() {
+    let mut adapter = crate::Adapter::<Model, (), Effects>::new((), |effects| effects);
+    for (tab, slot) in [(7, 0), (8, 1)] {
+        adapter.update_scoped(tab, Intent::SetMenuOpen(Some(slot)));
+    }
+    adapter.update_scoped(7, Intent::Pick(0, PaneMenuItem::Minimize));
+    assert_eq!(adapter.scoped(8).0.menu_open(), Some(1));
+    adapter.retain_scopes(|tab| tab == 8);
+    assert_eq!(adapter.scoped(8).0.menu_open(), Some(1));
+    assert!(!adapter.scoped(8).0.has_pick());
+    assert_eq!(adapter.scoped(7).0.menu_open(), None);
+    assert!(!adapter.scoped(7).0.has_pick());
 }

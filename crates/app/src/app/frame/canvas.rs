@@ -59,12 +59,12 @@ impl CanvasAnswers {
     /// this is, and what the status bar was just asked.
     pub(in crate::app) fn seeded(
         popup_tab: u64,
-        open_popup: Option<u64>,
+        surfaces: &crate::surfaces::Surfaces,
         status: &crate::statusbar::StatusResponse,
     ) -> Self {
         Self {
             popup_tab,
-            popup_open: open_popup == Some(popup_tab),
+            popup_open: surfaces.feed_notice.model_state.open() == Some(popup_tab),
             chip_clicked: status.word_clicked,
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {
@@ -109,12 +109,12 @@ pub(super) fn settle_overlay_control(
 /// published their rects on the draw just before this, so these are this frame's
 /// geometry rather than the previous one's.
 pub(super) fn overlays(
+    surface: &mut crate::surfaces::feed_notice::FeedNoticeSurface,
     ui: &mut egui::Ui,
     area: egui::Rect,
     tab: &Tab,
     config: &crate::config::AppConfig,
-    stall: Option<&Stall>,
-    now: i64,
+    (stall, now): (Option<&Stall>, i64),
     answers: &mut CanvasAnswers,
 ) {
     let feed_name = source_name(tab, config);
@@ -134,14 +134,20 @@ pub(super) fn overlays(
     if let Some(chip) = answers.chip_rect
         && answers.popup_open
     {
-        draw_recovery_popup(ui, area, chip, tab, feed_name, stall, answers);
+        surface.with_pass(
+            quantick_ui_model::Slot::Overlay,
+            |_| {},
+            |view, _| {
+                draw_recovery_popup(view, ui, (area, chip), tab, feed_name, stall, answers);
+            },
+        );
     }
 }
 
 fn draw_recovery_popup(
+    view: &mut crate::surfaces::feed_notice::View,
     ui: &mut egui::Ui,
-    area: egui::Rect,
-    chip: egui::Rect,
+    (area, chip): (egui::Rect, egui::Rect),
     tab: &Tab,
     feed_name: &str,
     stall: Option<&Stall>,
@@ -165,19 +171,9 @@ fn draw_recovery_popup(
             }
         }
     };
-    // A click anywhere else puts it away, measured against the rectangles that
-    // were actually drawn — so a click on the edge of what the trader can see
-    // is never read as a click outside it, and the popup is laid out once
-    // rather than measured again to ask.
-    let (action, popup) = feed_notice::draw_popup(ui, area, chip, &report);
+    let (action, dismissed) = view.draw(ui, area, chip, &report);
     if action != feed_notice::NoticeAction::None {
         answers.notice_action = action;
     }
-    answers.dismissed = ui.input(|input| {
-        input.pointer.any_click()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|at| !popup.contains(at) && !chip.contains(at))
-    });
+    answers.dismissed = dismissed;
 }

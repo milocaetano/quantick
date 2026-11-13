@@ -8,6 +8,7 @@ pub(crate) struct View {
     pub door: Option<egui::Rect>,
     pub history: Option<egui::Rect>,
     pub recording_menu: bool,
+    pub popovers: Option<quantick_ui_model::canvas_popovers::Projection>,
 }
 impl crate::surfaces::View<Model> for View {
     fn id(&self) -> &'static str {
@@ -19,6 +20,7 @@ impl crate::surfaces::View<Model> for View {
         target: &mut crate::surfaces::ViewContext<'_>,
         _: Option<&crate::surfaces::SurfaceEnv<'_>>,
     ) -> Option<Intent> {
+        let popovers = self.popovers.take()?;
         let state = state.snapshot.as_ref()?;
         let capsule = &state.capsule;
         let mut model = toolbar::ToolbarModel {
@@ -33,8 +35,8 @@ impl crate::surfaces::View<Model> for View {
                 unsaved: capsule.unsaved,
                 layout_unsaved: capsule.marks.layout_unsaved,
                 menu_open: capsule.menu_open,
-                popover_open: capsule.popover_open,
-                add_open: capsule.add_open,
+                popover_open: popovers.layout_open,
+                add_open: popovers.add_open,
                 compact: false,
             },
             capsule_rects: &mut self.capsule,
