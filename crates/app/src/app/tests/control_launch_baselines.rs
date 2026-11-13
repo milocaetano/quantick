@@ -938,6 +938,8 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
         app.audio.alert_failure.as_deref(),
         Some("fixture speaker refused")
     );
+    // Let the anchored window settle after the new error row changes its height.
+    run_frame(&mut app, &ctx);
     let painted = run_frame(&mut app, &ctx);
     assert_eq!(
         app.surfaces
