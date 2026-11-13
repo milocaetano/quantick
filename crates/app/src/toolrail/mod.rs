@@ -8,7 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::drawings::{DRAWING_TOOLS, DrawingTool, IconDots, IconLetter, IconStrokes, ToolFamily};
+use crate::drawings::{DrawingTool, IconDots, IconLetter, IconStrokes};
 use crate::theme;
 use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
 use quantick_chart_interaction::scripted_hand::Area;
@@ -81,9 +81,10 @@ const BADGE_CORNER_INSET_PX: f32 = 2.0;
 /// Chevron glyph size, and the inset of the band's fade hint from its edge.
 const BAND_ARROW_GLYPH_PX: f32 = 12.0;
 #[cfg(test)]
-const TOOLBOX_BUTTON_COUNT: usize = DRAWING_TOOLS.len() + 4;
+const TOOLBOX_BUTTON_COUNT: usize = crate::drawings::DRAWING_TOOLS.len() + 4;
 
 pub use quantick_ui_model::tool_rail::Tool;
+use quantick_ui_model::tool_rail::{RailSlot, tool_slots};
 
 trait ToolIcon {
     fn icon(self) -> &'static str;
@@ -120,49 +121,6 @@ impl ToolIcon for Tool {
             Self::Drawing(tool) => tool.icon_letter(),
         }
     }
-}
-
-/// One leading-cluster slot after family folding: a lone tool, or a family
-/// of consecutive registry entries sharing the slot.
-enum RailSlot {
-    Single(DrawingTool),
-    Family {
-        family: ToolFamily,
-        members: Vec<DrawingTool>,
-    },
-}
-
-/// Fold the registry into rail slots. Consecutive entries with the same
-/// family id share one slot — consecutive, not sorted, so rail order stays
-/// registry order and adding a tool cannot silently reorder the rail.
-/// Folded once per process: the registry is `const`, so rebuilding this
-/// every frame would be per-frame allocation of stable data.
-fn tool_slots() -> &'static [RailSlot] {
-    static SLOTS: std::sync::OnceLock<Vec<RailSlot>> = std::sync::OnceLock::new();
-    SLOTS.get_or_init(|| {
-        let mut slots: Vec<RailSlot> = Vec::new();
-        for tool in DRAWING_TOOLS {
-            match tool.family() {
-                Some(family) => {
-                    if let Some(RailSlot::Family {
-                        family: previous,
-                        members,
-                    }) = slots.last_mut()
-                        && previous.id == family.id
-                    {
-                        members.push(tool);
-                    } else {
-                        slots.push(RailSlot::Family {
-                            family,
-                            members: vec![tool],
-                        });
-                    }
-                }
-                None => slots.push(RailSlot::Single(tool)),
-            }
-        }
-        slots
-    })
 }
 
 /// The button edge the active marker hugs: the one facing the window
@@ -622,23 +580,6 @@ impl RailPaint<'_, '_> {
             self.view.more_rect = Some(response.response.rect);
         }
         response.response.on_hover_text("More tools");
-    }
-
-    /// The tools the given stage swallowed into the More flyout — exactly
-    /// the ones without a rail slot, in registry order.
-    fn swallowed_tools(&self, stage: RailStage) -> Vec<Tool> {
-        let armed = self.tool.drawing_tool();
-        let mut swallowed = Vec::new();
-        if stage == RailStage::Minimal {
-            swallowed.push(Tool::Crosshair);
-        }
-        swallowed.extend(
-            DRAWING_TOOLS
-                .into_iter()
-                .filter(|tool| Some(*tool) != armed)
-                .map(Tool::Drawing),
-        );
-        swallowed
     }
 
     /// The entry to the drawn-objects manager. A toggle, not a tool: it never

@@ -319,3 +319,195 @@ fn cancelled_drag_cannot_commit_its_preview_and_the_next_drag_can_dock() {
     );
     assert!(!rail.dragging);
 }
+
+fn armed(id: &str) -> State {
+    let mut rail = State::default();
+    let tool = DrawingTool::by_id(id).expect("registered");
+    Model::update(&mut rail, Intent::Arm(Tool::Drawing(tool)));
+    rail
+}
+
+#[test]
+fn stages_fold_the_shipped_registry_by_extent() {
+    use quantick_chart_interaction::tool_rail::{
+        compact_length, full_length, minimal_length, scroll_length, stage_for,
+    };
+    let slots = tool_slots().len();
+    assert_eq!(
+        slots, 9,
+        "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
+    );
+    let lengths = (full_length(slots, 0), scroll_length(0), compact_length());
+    assert_eq!((lengths, minimal_length()), ((633.0, 489.0, 381.0), 191.0));
+    assert!(
+        full_length(slots, 2) > full_length(slots, 0),
+        "pins cost length"
+    );
+    // The band sits strictly between Full and Compact, and overflowing pins
+    // hand the rail to the band, never to Compact.
+    for (extent, pins, stage) in [
+        (633.0, 0, RailStage::Full),
+        (633.0, 2, RailStage::Scroll),
+        (632.9, 0, RailStage::Scroll),
+        (489.0, 0, RailStage::Scroll),
+        (488.9, 0, RailStage::Compact),
+        (381.0, 0, RailStage::Compact),
+        (380.9, 0, RailStage::Minimal),
+    ] {
+        assert_eq!(
+            stage_for(extent, slots, pins),
+            stage,
+            "{extent} px, {pins} pins"
+        );
+    }
+}
+
+/// A tooltip's trailing `(<label>)` names exactly the key the menus print.
+/// The Fib extension advertised Shift+F long after giving it up, and Shift+F
+/// is *flatten*: the words went stale and nothing failed.
+#[test]
+fn every_tool_names_itself_and_the_key_it_really_answers_to() {
+    for drawing in DRAWING_TOOLS {
+        let tool = Tool::Drawing(drawing);
+        assert_eq!(tool.drawing_tool(), Some(drawing));
+        let advertised = (tool.hover_text().rsplit_once('('))
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+            .map(str::to_owned);
+        assert_eq!(advertised, tool.shortcut_label(), "{}", tool.name());
+    }
+}
+
+#[test]
+fn key_chords_arm_only_their_declared_tools_on_a_visible_rail() {
+    const BARE: Chord = Chord {
+        shift: false,
+        ctrl: false,
+        command: false,
+        alt: false,
+    };
+    const SHIFT: Chord = Chord {
+        shift: true,
+        ..BARE
+    };
+    for (key, chord, visible, expected) in [
+        ('H', BARE, true, Some("horizontal-line")),
+        ('R', BARE, true, Some("rectangle")),
+        ('C', BARE, true, Some("parallel-channel")),
+        ('F', BARE, true, Some("fib-retracement")),
+        // Shift+F is flatten: the Fib extension gave the chord up.
+        ('F', SHIFT, true, None),
+        ('T', SHIFT, true, Some("ray")),
+        ('B', BARE, true, Some("arrow-mark-up")),
+        ('S', BARE, true, Some("arrow-mark-down")),
+        ('P', BARE, true, Some("brush")),
+        // A bare digit is the quick bar switch's, never a tool's.
+        ('1', BARE, true, None),
+        (
+            'R',
+            Chord {
+                command: true,
+                ..BARE
+            },
+            true,
+            None,
+        ),
+        ('M', Chord { ctrl: true, ..BARE }, true, None),
+        ('M', Chord { alt: true, ..BARE }, true, None),
+        // Audit M9: a hidden rail arms nothing nothing on screen reports.
+        ('H', BARE, false, None),
+    ] {
+        let rail = State {
+            visible,
+            ..State::default()
+        };
+        let tool = rail.keyed_tool(chord, |shortcut| shortcut.key == key);
+        assert_eq!(tool.map(Tool::id), expected, "{key} {chord:?} {visible}");
+    }
+}
+
+#[test]
+fn the_more_flyout_lists_exactly_what_each_stage_swallowed() {
+    let rail = armed("ray");
+    let unarmed: Vec<_> = (DRAWING_TOOLS.into_iter())
+        .filter(|tool| tool.id() != "ray")
+        .map(Tool::Drawing)
+        .collect();
+    assert_eq!(rail.swallowed_tools(RailStage::Compact), unarmed);
+    let minimal = rail.swallowed_tools(RailStage::Minimal);
+    assert_eq!((minimal[0], &minimal[1..]), (Tool::Crosshair, &unarmed[..]));
+}
+
+#[test]
+fn the_magnet_is_painted_only_where_the_rail_draws_it() {
+    let mut rail = State::default();
+    for (stage, painted) in [
+        (None, false),
+        (Some(RailStage::Full), true),
+        (Some(RailStage::Scroll), true),
+        (Some(RailStage::Compact), true),
+        (Some(RailStage::Minimal), false),
+    ] {
+        assert_eq!(rail.magnet_painted(stage), painted, "{stage:?}");
+    }
+    Model::update(&mut rail, Intent::SetVisible(false));
+    assert!(!rail.magnet_painted(Some(RailStage::Full)), "hidden");
+}
+
+/// One control per slot: a folded family is one button lit by its armed
+/// member, a star is pinned ahead of the run, and narrow stages keep only
+/// the pointer, the crosshair (not at Minimal) and the armed tool.
+#[test]
+fn painted_controls_name_one_button_per_slot_at_each_stage() {
+    use quantick_chart_interaction::tool_rail::{BandWindow, RailControlKind::*};
+    let mut rail = armed("ray");
+    let measure = DrawingTool::by_id("measure").expect("registered");
+    Model::update(&mut rail, Intent::ToggleFavorite(measure));
+    let named = |rail: &State, stage, band| -> Vec<_> {
+        (rail.painted_controls(stage, band).into_iter())
+            .map(|control| (control.kind, control.id, control.armed))
+            .collect()
+    };
+    let (pointer, crosshair) = ((Tool, "pointer", false), (Tool, "crosshair", false));
+    let (star, ray) = ((Favorite, "measure", false), (Tool, "ray", true));
+    let lines = (Family, "lines", true);
+    #[rustfmt::skip]
+    let run = [lines, (Tool, "parallel-channel", false), (Family, "marks", false),
+        (Family, "brush", false), (Family, "shapes", false), (Family, "fib", false),
+        (Family, "measure", false), (Tool, "anchored-vwap", false), (Tool, "text", false)];
+    let full = [vec![pointer, crosshair, star], run.to_vec()].concat();
+    let window = |anchored, first| {
+        Some(BandWindow {
+            anchored,
+            first,
+            visible: 2,
+        })
+    };
+    for (stage, band, expected) in [
+        (None, None, vec![]),
+        (Some(RailStage::Full), None, full),
+        (Some(RailStage::Scroll), None, vec![pointer, crosshair]),
+        (
+            Some(RailStage::Scroll),
+            window(0, 0),
+            vec![pointer, crosshair, star, lines],
+        ),
+        (
+            Some(RailStage::Scroll),
+            window(1, 1),
+            vec![pointer, crosshair, star, run[1], run[2]],
+        ),
+        (
+            Some(RailStage::Compact),
+            None,
+            vec![pointer, crosshair, ray],
+        ),
+        (Some(RailStage::Minimal), None, vec![pointer, ray]),
+    ] {
+        assert_eq!(named(&rail, stage, band), expected, "{stage:?} {band:?}");
+    }
+    Model::update(&mut rail, Intent::SetVisible(false));
+    assert!(
+        named(&rail, Some(RailStage::Full), None).is_empty(),
+        "hidden"
+    );
+}
