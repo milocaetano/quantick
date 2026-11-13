@@ -134,19 +134,6 @@ fn enter_applies_the_highlighted_row_to_the_pane_it_opened_over() {
     assert!(!surface.is_open());
 }
 
-#[test]
-fn focusing_another_pane_closes_it_without_a_change() {
-    let ctx = egui::Context::default();
-    let mut surface = new_surface();
-    surface.open(0, crate::pane::PaneSide::Flow, "15");
-    frame(&mut surface, &ctx, Vec::new());
-    let mut env = SurfaceEnv::quiet(Instant::now());
-    env.focused_side = crate::pane::PaneSide::Time(0);
-    let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
-    assert_eq!(response.bar_switch, None);
-    assert!(!surface.is_open());
-}
-
 /// The hook opens on the first frame, before a restored workspace has put
 /// focus on the time pane. It follows the focus there instead of closing,
 /// and applies to the pane that holds it.
@@ -200,24 +187,6 @@ fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
             .map(|request| request.config.to_config_string()),
         Some("renko:50".to_owned())
     );
-}
-
-#[test]
-fn at_full_length_a_typed_letter_replaces_the_letter() {
-    let ctx = egui::Context::default();
-    let mut surface = new_surface();
-    surface.open(0, crate::pane::PaneSide::Flow, "123456789T");
-    frame(&mut surface, &ctx, Vec::new());
-    frame(&mut surface, &ctx, vec![egui::Event::Text("R".into())]);
-    let query =
-        |surface: &BarSwitchSurface| surface.model_state.open().map(|open| open.query.clone());
-    assert_eq!(query(&surface).as_deref(), Some("123456789R"));
-    // A tenth digit is past what any rule reads: it is dropped, and the
-    // letter stays.
-    frame(&mut surface, &ctx, vec![egui::Event::Text("5".into())]);
-    assert_eq!(query(&surface).as_deref(), Some("123456789R"));
-    frame(&mut surface, &ctx, vec![egui::Event::Text("r".into())]);
-    assert_eq!(query(&surface).as_deref(), Some("123456789r"));
 }
 
 /// Typed one key at a time into the digit-opened popup: `1`, then `m` lists

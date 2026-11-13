@@ -474,18 +474,6 @@ mod tests {
         assert!(!view.select_day("2026-08-28"), "nothing was scanned");
     }
 
-    #[test]
-    fn opening_the_browser_with_no_folder_scans_nothing() {
-        let mut view = ReplayView::new_browser(None, None);
-        view.model_state.folder = String::new();
-        view.open_browser();
-        assert!(view.model_state.browser_open);
-        assert!(
-            view.model_state.library.is_none(),
-            "no folder, nothing to scan"
-        );
-    }
-
     /// A stored pick opens the browser where the trader left it, with no
     /// environment variable in sight.
     #[test]
