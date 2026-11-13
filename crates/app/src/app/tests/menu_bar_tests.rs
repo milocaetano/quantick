@@ -468,3 +468,28 @@ fn list_door_opens_window_menu_below_itself() {
     run_frame(&mut app, &ctx);
     assert!(app.chrome.title_bar.kebab_pressed, "F10 opens it at ⋮");
 }
+
+#[test]
+fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    app.control.control_access = None;
+    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
+    assert!(!app.surfaces.access_panel.model_state.open);
+    app.control.control_access = Some(crate::control::ControlAccess::new());
+    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
+    assert!(app.surfaces.access_panel.model_state.open);
+    run_frame(&mut app, &ctx);
+    assert!(ctx.memory(|memory| {
+        memory
+            .area_rect(egui::Id::new("control_access_panel"))
+            .is_some()
+    }));
+    assert!(
+        !app.control
+            .control_access
+            .as_ref()
+            .unwrap()
+            .needs_frame_service()
+    );
+}

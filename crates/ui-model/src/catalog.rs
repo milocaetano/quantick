@@ -11,6 +11,12 @@ macro_rules! surface_catalog {
             modules {}
             models {
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_menu_dialogs_first: ChromeMenuDialogsFirst => chrome_menu_dialogs_first = "chrome/probe_menu_dialogs_first.rs", chrome_menu_dialogs_first = "chrome/tests/menu_dialogs_first.rs", chrome_menu_dialogs_first::effects, MenuDialogs, Local;
+                [] []
+                access_panel: AccessPanel => access_panel = "access_panel.rs", access_panel = "access_panel.rs", access_panel::effects, MenuDialogs, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
+                chrome_menu_dialogs_second: ChromeMenuDialogsSecond => chrome_menu_dialogs_second = "chrome/probe_menu_dialogs_second.rs", chrome_menu_dialogs_second = "chrome/tests/menu_dialogs_second.rs", chrome_menu_dialogs_second::effects, MenuDialogs, Local;
+                [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 chrome_editor_first: ChromeEditorFirst => chrome_editor_first = "chrome/probe_editor_first.rs", chrome_editor_first = "chrome/tests/editor_first.rs", chrome_editor_first::effects, EditorDialogs, Local;
                 [cfg(any(test, feature = "test-support"))] [cfg(test)]
                 chrome_editor_second: ChromeEditorSecond => chrome_editor_second = "chrome/probe_editor_second.rs", chrome_editor_second = "chrome/tests/editor_second.rs", chrome_editor_second::effects, EditorDialogs, Local;

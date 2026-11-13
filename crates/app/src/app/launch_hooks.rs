@@ -65,7 +65,8 @@ pub(super) fn apply_launch_phase(
     #[cfg(any(feature = "scenario-harness", test))]
     book_and_strip(app, env);
     #[cfg(any(feature = "control-harness", test))]
-    app.control.apply_launch(control_launch);
+    app.control
+        .apply_launch(control_launch, &mut app.surfaces.access_panel);
     #[cfg(any(feature = "drawing-harness", test))]
     if app
         .surfaces
