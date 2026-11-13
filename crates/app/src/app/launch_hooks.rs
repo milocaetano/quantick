@@ -665,9 +665,9 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
         match name.trim() {
             "l2" => open_on(app.active_tab_mut(), PanelSection::L2),
             "bubbles" => open_on(app.active_tab_mut(), PanelSection::Bubbles),
-            "session" => app.dock.open_tab(DockTab::Session),
-            "trading" => app.dock.open_tab(DockTab::Trading),
-            "trades" => app.dock.open_tab(DockTab::Trades),
+            "session" => app.surfaces.dock.open_tab(DockTab::Session),
+            "trading" => app.surfaces.dock.open_tab(DockTab::Trading),
+            "trades" => app.surfaces.dock.open_tab(DockTab::Trades),
             _ => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,

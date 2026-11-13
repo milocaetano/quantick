@@ -13,7 +13,6 @@ use quantick_feed as feed;
 use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, FeedConfig, ProviderKind};
-use crate::dock::Dock;
 use crate::style::ChartStyle;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
@@ -38,7 +37,6 @@ pub(crate) struct FakeWindow {
     presets: crate::drawings::presets::PresetStore,
     style: ChartStyle,
     tool_rail: ToolRail,
-    dock: Dock,
     drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeSurface,
     health: super::super::super::health::HealthCounters,
     history: quantick_session::HistorySettings,
@@ -110,7 +108,6 @@ impl FakeWindow {
             ),
             style: ChartStyle::default(),
             tool_rail: ToolRail::new_rail(),
-            dock: Dock::new(),
             drawing_chrome: crate::surfaces::drawing_chrome::new_owner(),
             health: super::super::super::health::HealthCounters::new(),
             history: quantick_session::HistorySettings {
@@ -184,7 +181,7 @@ impl ChromePort for FakeWindow {
             &self.tabs,
             &self.style,
             &self.tool_rail,
-            &self.dock,
+            &self.surfaces.dock.model_state,
             TzOffset::default(),
             &self.drawing_chrome,
             ChromeDrawn::default(),

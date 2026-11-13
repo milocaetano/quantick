@@ -38,7 +38,6 @@ use quantick_workspace::market_list::{self as list, OpenChoice};
 use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
-use crate::dock::Dock;
 use crate::drawings;
 use crate::pane::ChartPane;
 use crate::style::ChartStyle;
@@ -46,6 +45,7 @@ use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use quantick_control_schema::widget::WidgetRead;
+use quantick_ui_model::dock::State as Dock;
 
 use quantick_feed::history_reach;
 
@@ -953,7 +953,7 @@ impl ChromePort for QuantickApp {
             &self.runtime.tabs,
             &self.runtime.style,
             rail,
-            &self.dock,
+            &self.surfaces.dock.model_state,
             self.runtime.tz,
             chrome,
             drawn,

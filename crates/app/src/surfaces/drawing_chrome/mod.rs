@@ -264,6 +264,23 @@ impl Chrome<'_> {
     }
 }
 impl super::View<quantick_ui_model::drawing_chrome::Model> for View {
+    fn paint_borrowed(
+        &mut self,
+        session: &mut quantick_ui_model::UpdateSession<
+            '_,
+            quantick_ui_model::drawing_chrome::Model,
+        >,
+        target: &mut super::ViewContext<'_>,
+        slot: quantick_ui_model::Slot,
+        env: Option<&mut super::BorrowedSurfaceEnv<'_>>,
+    ) -> super::SurfaceResponse {
+        if slot == quantick_ui_model::Slot::PinnedInspector
+            && let Some(super::BorrowedSurfaceEnv::Drawings(env)) = env
+        {
+            self.paint_pass(session.reborrow(), target.context(), env, None, false);
+        }
+        super::SurfaceResponse::default()
+    }
     fn id(&self) -> &'static str {
         "drawing_chrome"
     }
@@ -699,4 +716,4 @@ impl View {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

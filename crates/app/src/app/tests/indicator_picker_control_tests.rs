@@ -75,7 +75,7 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
     let ctx = egui::Context::default();
     let (mut app, _) = app_with_history(20);
     run_frame(&mut app, &ctx);
-    let dock = app.dock.visible();
+    let dock = app.surfaces.dock.visible();
     app.surfaces
         .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -90,7 +90,7 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
         )],
     );
     assert_eq!(
-        app.dock.visible(),
+        app.surfaces.dock.visible(),
         dock,
         "modal blocks the unguarded dock shortcut"
     );

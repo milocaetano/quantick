@@ -717,10 +717,10 @@ fn a_restored_workspace_puts_the_window_back() {
     );
     assert_eq!(app.runtime.tz.minutes(), 330);
     assert!(
-        !app.dock.visible(),
+        !app.surfaces.dock.visible(),
         "a dock the trader hid stays hidden, tab remembered underneath"
     );
-    assert_eq!(app.dock.tab(), Some(DockTab::Trades));
+    assert_eq!(app.surfaces.dock.tab(), Some(DockTab::Trades));
     assert!(!app.surfaces.toolrail.visible());
     assert_eq!(app.surfaces.toolrail.dock(), ToolboxDock::Bottom);
     assert!(!app.health.show_perf);

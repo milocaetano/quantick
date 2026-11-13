@@ -463,7 +463,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
                 config: self.config,
                 toolrail: self.toolrail,
                 tz: self.tz,
-                dock: self.dock,
+                dock: &self.dock.model_state,
                 show_perf: *self.show_perf,
                 record_deals: *self.record_deals,
                 history: self.history,

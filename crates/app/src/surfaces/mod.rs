@@ -7,13 +7,17 @@
 #[path = "chrome/tests/probe_view.rs"]
 mod chrome_probe_view;
 
-#[cfg(test)]
-mod borrowed;
-#[cfg(test)]
-pub(crate) use borrowed::BorrowedSurfaceEnv;
-// #985 replaces this None-only staging alias with the concrete production facets.
-#[cfg(not(test))]
-pub(crate) type BorrowedSurfaceEnv<'a> = std::convert::Infallible;
+/// The actual paper owner and frame facts needed by a paper panel.
+pub(crate) struct PaperPanelEnv<'a> {
+    pub paper: &'a mut crate::paper_trading::PaperTrading,
+    pub replay: Option<&'a quantick_feed::ReplayLink>,
+    pub timezone: crate::timezone::TzOffset,
+}
+/// A pass lends one domain facet; models and responses never retain it.
+pub(crate) enum BorrowedSurfaceEnv<'a> {
+    Paper(PaperPanelEnv<'a>),
+    Drawings(&'a DrawingEnv<'a>),
+}
 
 use std::time::Instant;
 
@@ -104,7 +108,7 @@ impl SurfaceEnv<'static> {
 
 /// What drawing the surfaces asked the application to do.
 ///
-/// A struct of defaults, like [`crate::dock::DockResponse`]: every field means
+/// A struct of defaults: every field means
 /// "this was not asked for" until a surface sets it, so adding a request never
 /// touches an existing surface.
 ///
@@ -113,6 +117,7 @@ impl SurfaceEnv<'static> {
 /// the tests compare with, and it is the honest one.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
+    pub paper_panel: Option<Box<PaperPanelEffects>>,
     /// Typed effects belonging to the host that drew a scoped catalog entry.
     pub model_effects: Vec<HostEffect>,
     pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
@@ -139,6 +144,31 @@ pub(crate) struct SurfaceResponse {
     /// instance shares, so it plays this and reports what happened.
     pub test_alert: Option<crate::audio::Cue>,
     pub bar_switch: Option<BarSwitchRequest>,
+}
+
+/// Host outputs of the complete borrowed paper-panel pass.
+#[derive(Default, Debug, PartialEq)]
+pub(crate) struct PaperPanelEffects {
+    pub close_replay: bool,
+    pub open_replay_browser: bool,
+    pub navigate_to_trade: Option<(i64, i64)>,
+    pub journal_edit: Option<quantick_paper::report::session_edit::JournalEdit>,
+    pub pick_trades_dir: bool,
+    pub cmd_trading_changed: bool,
+    pub order_strategies_changed: bool,
+    pub risk_settings_changed: bool,
+}
+impl PaperPanelEffects {
+    fn merge(&mut self, other: Self) {
+        self.close_replay |= other.close_replay;
+        self.open_replay_browser |= other.open_replay_browser;
+        self.navigate_to_trade = self.navigate_to_trade.or(other.navigate_to_trade);
+        self.journal_edit = self.journal_edit.take().or(other.journal_edit);
+        self.pick_trades_dir |= other.pick_trades_dir;
+        self.cmd_trading_changed |= other.cmd_trading_changed;
+        self.order_strategies_changed |= other.order_strategies_changed;
+        self.risk_settings_changed |= other.risk_settings_changed;
+    }
 }
 
 pub(crate) use quantick_ui_model::strategy_popup::ArmRequest;
@@ -188,6 +218,11 @@ impl SurfaceResponse {
     /// rule is pinned by a test so a second producer meets a documented answer
     /// rather than a surprise.
     fn merge(&mut self, other: Self) {
+        if let Some(paper) = other.paper_panel {
+            self.paper_panel
+                .get_or_insert_with(Default::default)
+                .merge(*paper);
+        }
         self.model_effects.extend(other.model_effects);
         self.indicator_actions.extend(other.indicator_actions);
         self.script_editor_actions
@@ -477,6 +512,9 @@ mod tests {
         }
         let mut registry = Surfaces::default();
         registry
+            .dock
+            .open_tab(quantick_workspace::dock::DockTab::Session);
+        registry
             .borrowed_first
             .update(borrowed_first::Intent::Enable);
         registry
@@ -488,7 +526,7 @@ mod tests {
             let mut settings = paper.cmd_trading();
             settings.enabled = initial;
             paper.set_cmd_trading(settings);
-            let mut env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+            let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
                 paper: &mut paper,
                 replay: None,
                 timezone: Default::default(),
@@ -521,6 +559,24 @@ mod tests {
                 ],
                 "session then returned response, once per row; host applies after pass"
             );
+            let paper_output = response.paper_panel.unwrap();
+            assert_eq!(paper_output.navigate_to_trade, Some((11, 12)));
+            assert_eq!(
+                paper_output.journal_edit,
+                Some(quantick_paper::report::session_edit::JournalEdit::Delete {
+                    session: quantick_paper::report::sessions::SessionKey::parse("PROBE/first.csv")
+                        .unwrap(),
+                })
+            );
+            assert!(paper_output.close_replay && paper_output.open_replay_browser);
+            assert!(paper_output.pick_trades_dir && paper_output.cmd_trading_changed);
+            assert!(paper_output.order_strategies_changed && paper_output.risk_settings_changed);
+            let dock_body = egui::containers::panel::PanelState::load(
+                &ctx,
+                egui::Id::new((ctx.viewport_id(), "dock_body", 0usize)),
+            )
+            .expect("real Dock row runs between the paper probes")
+            .rect;
             let first = registry.borrowed_first.view.painted.unwrap();
             let second = registry.borrowed_second.view.painted.unwrap();
             assert_eq!(
@@ -529,11 +585,14 @@ mod tests {
             );
             assert_eq!(
                 second,
-                egui::Rect::from_min_max(egui::pos2(37.0, 0.0), egui::pos2(800.0, 29.0))
+                egui::Rect::from_min_max(egui::pos2(37.0, 0.0), egui::pos2(dock_body.left(), 29.0))
             );
             assert_eq!(
                 canvas,
-                egui::Rect::from_min_max(egui::pos2(37.0, 29.0), egui::pos2(800.0, 600.0))
+                egui::Rect::from_min_max(
+                    egui::pos2(37.0, 29.0),
+                    egui::pos2(dock_body.left(), 600.0)
+                )
             );
         }
         let presets = crate::drawings::presets::PresetStore::load_from(std::path::Path::new(
@@ -561,7 +620,7 @@ mod tests {
         let mut wrong = BorrowedSurfaceEnv::Drawings(&drawings);
         for env in [None, Some(&mut wrong)] {
             // Seed stale observations independently before each absent/wrong facet.
-            let mut paper_env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+            let mut paper_env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
                 paper: &mut paper,
                 replay: None,
                 timezone: Default::default(),
@@ -618,7 +677,7 @@ mod tests {
             );
         }
         let before = paper.cmd_trading();
-        let mut env = BorrowedSurfaceEnv::Paper(borrowed::PaperPanelEnv {
+        let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
             paper: &mut paper,
             replay: None,
             timezone: Default::default(),
@@ -632,6 +691,14 @@ mod tests {
             canvas,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))
         );
+    }
+
+    #[test]
+    fn borrowed_panels_use_one_catalog_dispatcher_without_root_edits() {
+        borrowed_domain_rows_reborrow_in_catalog_order();
+        dock::tests::dock_borrowed_pass_preserves_strip_body_and_host_effect_order();
+        dock::tests::dock_registration_retains_viewport_hit_regions();
+        drawing_chrome::tests::pinned_inspector_borrowed_dispatch_shares_the_floating_owner();
     }
 
     #[test]
@@ -1096,6 +1163,7 @@ mod tests {
         let mut contested = crate::style::ChartStyle::default();
         contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
+            paper_panel: None,
             model_effects: Vec::new(),
             indicator_actions: Vec::new(),
             script_editor_actions: Vec::new(),
