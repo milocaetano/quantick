@@ -14,6 +14,7 @@ use crate::paper_report::LedgerAction;
 use crate::paper_trading::PaperTrading;
 use crate::scratch::ScratchDir;
 use crate::timezone::TzOffset;
+use quantick_ui_model::paper_report::{Intent, LedgerIntent};
 
 const UTC: TzOffset = TzOffset::new(0);
 /// 2026-03-16 13:00:00 UTC.
@@ -93,14 +94,18 @@ fn frame(ctx: &egui::Context, paper: &mut PaperTrading, events: Vec<egui::Event>
 /// frames it takes the inline row to hold the keyboard through Esc.
 fn start(ctx: &egui::Context, paper: &mut PaperTrading, press: SessionPress) {
     let report = paper.report_state_mut();
-    let history = report.history_cache.as_ref();
-    assert_eq!(report.sessions.state.apply(press, history), None);
+    assert_eq!(
+        report
+            .update(Intent::Ledger(LedgerIntent::Session(press)))
+            .ledger,
+        None
+    );
     frame(ctx, paper, Vec::new());
     frame(ctx, paper, Vec::new());
 }
 
 fn editing(paper: &mut PaperTrading) -> bool {
-    paper.report_state_mut().sessions.state.edit.is_some()
+    paper.report_state_mut().sessions().edit.is_some()
 }
 
 #[test]
@@ -201,20 +206,27 @@ fn selecting_a_trade_never_widens_the_dock() {
         .unwrap_or_default();
     assert!(before > 0.0);
     let trade = trade_at(DAY_START + 60_000, 2);
-    paper.report_state_mut().sessions.state.selected_saved = Some((
-        session(),
-        TradeRef {
-            opened_ms: trade.opened_ms,
-            closed_ms: trade.closed_ms,
-            nth: 0,
-        },
-    ));
+    paper
+        .report_state_mut()
+        .update(Intent::Ledger(LedgerIntent::Rows(Box::new(
+            quantick_ui_model::paper_report::RowInput {
+                select_saved: Some(Some((
+                    session(),
+                    TradeRef {
+                        opened_ms: trade.opened_ms,
+                        closed_ms: trade.closed_ms,
+                        nth: 0,
+                    },
+                ))),
+                ..Default::default()
+            },
+        ))));
     for _ in 0..30 {
         let shown = frame(&ctx, &mut paper, Vec::new());
         assert_eq!(shown.width, before, "the dock kept its width");
     }
     assert!(
-        paper.report_state_mut().sessions.state.tag_text.is_some(),
+        paper.report_state_mut().sessions().tag_text.is_some(),
         "the tag strip is showing"
     );
 }

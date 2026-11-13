@@ -1,7 +1,13 @@
 //! Execute the fixed end-of-frame plan against its actual feature owners.
 use super::arrangement_host::ArrangementHost;
 use crate::{
-    config::AppConfig, feed_notice, surfaces::ToastSurface, tab::LiveFeedSpawn, timezone::TzOffset,
+    config::AppConfig,
+    feed_notice,
+    surfaces::{
+        BorrowedSurfaceEnv, PaperPanelEnv, SurfaceResponse, Surfaces, ToastSurface, ViewContext,
+    },
+    tab::LiveFeedSpawn,
+    timezone::TzOffset,
 };
 use eframe::egui;
 use quantick_chart_interaction::frame_tail_plan::FrameTailStage;
@@ -10,9 +16,8 @@ use std::time::Instant;
 pub(super) struct FrameTailOwners<'a> {
     pub tabs: &'a mut super::arrangement_host::ArrangementHost,
     pub config: &'a AppConfig,
-    pub toast: &'a mut ToastSurface,
+    pub surfaces: &'a mut Surfaces,
     pub chip_rect: &'a mut Option<egui::Rect>,
-    pub popup: &'a mut crate::surfaces::feed_notice::FeedNoticeSurface,
 }
 pub(super) struct FrameTailInput<'a> {
     /// Available only for the workspace's currently bound native view.
@@ -26,78 +31,99 @@ pub(super) struct FrameTailInput<'a> {
     pub chip_rect: Option<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
-    /// One window's tail: only the account on screen settles here; the ones
-    /// no window shows settle once, after every window.
-    pub fn execute_watched(
+    /// A single stage lends the actual owners only until its response returns.
+    pub fn execute_stage(
         self,
-        input: FrameTailInput<'_>,
+        input: &FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
-        stages: impl IntoIterator<Item = FrameTailStage>,
-    ) {
-        self.execute_settling(input, spawn, stages, settle_active_paper_panel);
+        stage: FrameTailStage,
+    ) -> SurfaceResponse {
+        self.execute_settling(input, spawn, stage, settle_active_paper_panel)
     }
 
     fn execute_settling(
         self,
-        input: FrameTailInput<'_>,
+        input: &FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
-        stages: impl IntoIterator<Item = FrameTailStage>,
+        stage: FrameTailStage,
         settle: fn(&mut ArrangementHost, &mut ToastSurface, Instant),
-    ) {
-        for stage in stages {
-            if stage.needs_presentation() && input.presentation.is_none() {
-                continue;
-            }
-            match stage {
-                FrameTailStage::ApplyNoticeAction => {
-                    let active = self.tabs.active_index();
-                    let tab = self.tabs.runtime_mut(active);
-                    match input.notice_action {
-                        feed_notice::NoticeAction::None => {}
-                        feed_notice::NoticeAction::Reconnect => {
-                            let _ = tab.reconnect_feed_with_spawn(self.config, spawn);
-                        }
-                        feed_notice::NoticeAction::Reload => {
-                            let _ = tab.reload_feed_with_spawn(self.config, spawn);
-                        }
+    ) -> SurfaceResponse {
+        if stage.needs_presentation() && input.presentation.is_none() {
+            return SurfaceResponse::default();
+        }
+        match stage {
+            FrameTailStage::ApplyNoticeAction => {
+                let active = self.tabs.active_index();
+                let tab = self.tabs.runtime_mut(active);
+                match input.notice_action {
+                    feed_notice::NoticeAction::None => {}
+                    feed_notice::NoticeAction::Reconnect => {
+                        let _ = tab.reconnect_feed_with_spawn(self.config, spawn);
+                    }
+                    feed_notice::NoticeAction::Reload => {
+                        let _ = tab.reload_feed_with_spawn(self.config, spawn);
                     }
                 }
-                FrameTailStage::SettlePaperPanels => settle(self.tabs, self.toast, input.now),
-                FrameTailStage::DrawPaperReport => {
-                    let active = self.tabs.active_index();
-                    self.tabs.runtime_mut(active).paper.draw_report_window(
-                        input
-                            .presentation
-                            .expect("presentation-dependent tail stage"),
-                        input.tz,
-                    );
-                }
-                FrameTailStage::PublishFeedPopup => {
-                    *self.chip_rect = input.chip_rect;
-                    self.popup
-                        .update(quantick_ui_model::feed_notice::Intent::Settle {
-                            tab: input.popup_tab,
-                            chip_clicked: input.chip_clicked,
-                            offline: input.chip_rect.is_some(),
-                            dismissed: input.dismissed,
-                            action_taken: input.notice_action != feed_notice::NoticeAction::None,
-                        });
-                }
+            }
+            FrameTailStage::SettlePaperPanels => {
+                settle(self.tabs, &mut self.surfaces.toast, input.now)
+            }
+            FrameTailStage::DrawPaperReport => {
+                let Some(ctx) = input.presentation else {
+                    return SurfaceResponse::default();
+                };
+                let tab = self.tabs.runtime_mut(self.tabs.active_index());
+                let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                    replay: tab.link.replay.as_ref(),
+                    paper: &mut tab.paper,
+                    timezone: input.tz,
+                });
+                return self.surfaces.draw_slot_unscoped_with_env(
+                    quantick_ui_model::Slot::FrameTailPaperPanels,
+                    &mut ViewContext { ctx, ui: None },
+                    Some(&mut env),
+                );
+            }
+            FrameTailStage::PublishFeedPopup => {
+                *self.chip_rect = input.chip_rect;
+                self.surfaces
+                    .feed_notice
+                    .update(quantick_ui_model::feed_notice::Intent::Settle {
+                        tab: input.popup_tab,
+                        chip_clicked: input.chip_clicked,
+                        offline: input.chip_rect.is_some(),
+                        dismissed: input.dismissed,
+                        action_taken: input.notice_action != feed_notice::NoticeAction::None,
+                    });
             }
         }
+        SurfaceResponse::default()
     }
 }
 
 #[cfg(test)]
 impl FrameTailOwners<'_> {
-    /// The tail with every account settled at its paper stage.
+    /// Legacy owner-level tests settle all accounts; full app tests use run_frame_tail.
     pub fn execute(
         self,
         input: FrameTailInput<'_>,
         spawn: &mut LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
-    ) {
-        self.execute_settling(input, spawn, stages, settle_paper_panels);
+    ) -> Vec<SurfaceResponse> {
+        let mut responses = Vec::new();
+        for stage in stages {
+            let response = FrameTailOwners {
+                tabs: self.tabs,
+                config: self.config,
+                surfaces: self.surfaces,
+                chip_rect: self.chip_rect,
+            }
+            .execute_settling(&input, spawn, stage, settle_paper_panels);
+            if response != SurfaceResponse::default() {
+                responses.push(response);
+            }
+        }
+        responses
     }
 }
 

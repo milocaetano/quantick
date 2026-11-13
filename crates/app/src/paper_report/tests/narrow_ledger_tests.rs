@@ -497,22 +497,25 @@ fn enlarged_light_trade_rows_keep_primary_text_apart() {
 fn paper_values_and_actions_fit_narrow_panels_report_tiles() {
     for source in [None, Some(quantick_appearance::LIGHT)] {
         for width in [320.0, 400.0, 520.0] {
-            let mut state = super::super::ReportState {
-                report: Some(super::super::LoadedHistory {
-                    rows: vec![super::row(
-                        "LONG-INSTRUMENT-USDT",
-                        None,
-                        super::trade_at(CLOSED_MS, 123456789),
-                    )],
-                    files: 1,
-                    unreadable_files: 0,
-                    problem_rows: 0,
-                    sessions: Default::default(),
-                }),
-                ..Default::default()
-            };
+            let mut state = super::super::ReportState::default();
+            state.update(super::super::Intent::LoadedReport(
+                super::super::LoadedReport {
+                    history: super::super::LoadedHistory {
+                        rows: vec![super::row(
+                            "LONG-INSTRUMENT-USDT",
+                            None,
+                            super::trade_at(CLOSED_MS, 123456789),
+                        )],
+                        files: 1,
+                        unreadable_files: 0,
+                        problem_rows: 0,
+                        sessions: Default::default(),
+                    },
+                    symbols: Vec::new(),
+                },
+            ));
             state.ensure_report_view(TzOffset::new(0), PnlReader::plain());
-            let view = state.report_view.as_ref().unwrap();
+            let view = state.report_view().as_ref().unwrap();
             let texts = painted_text_with_theme(width, source, |ui| {
                 super::super::tables::draw_report_tiles(ui, view);
             });
@@ -533,24 +536,27 @@ fn measured_report_warm_frames_only_format_visible_rows() {
     use super::super::tables::{FORMATTED_ROWS, draw_trade_list};
     for count in [100, 1000] {
         let ctx = egui::Context::default();
-        let mut state = super::super::ReportState {
-            report: Some(super::super::LoadedHistory {
-                rows: (0..count)
-                    .map(|i| {
-                        super::row(
-                            "LONG-INSTRUMENT-USDT",
-                            None,
-                            super::trade_at(CLOSED_MS + i, i),
-                        )
-                    })
-                    .collect(),
-                files: 1,
-                unreadable_files: 0,
-                problem_rows: 0,
-                sessions: Default::default(),
-            }),
-            ..Default::default()
-        };
+        let mut state = super::super::ReportState::default();
+        state.update(super::super::Intent::LoadedReport(
+            super::super::LoadedReport {
+                history: super::super::LoadedHistory {
+                    rows: (0..count)
+                        .map(|i| {
+                            super::row(
+                                "LONG-INSTRUMENT-USDT",
+                                None,
+                                super::trade_at(CLOSED_MS + i, i),
+                            )
+                        })
+                        .collect(),
+                    files: 1,
+                    unreadable_files: 0,
+                    problem_rows: 0,
+                    sessions: Default::default(),
+                },
+                symbols: Vec::new(),
+            },
+        ));
         state.ensure_report_view(TzOffset::new(0), PnlReader::plain());
         for frame in 0..4 {
             FORMATTED_ROWS.with(|value| value.set(0));
@@ -566,9 +572,9 @@ fn measured_report_warm_frames_only_format_visible_rows() {
                     egui::CentralPanel::default().show(ctx, |ui| {
                         draw_trade_list(
                             ui,
-                            state.report_view.as_ref().unwrap(),
+                            state.adapter.model_state.report_view().as_ref().unwrap(),
                             true,
-                            &mut state.report_table_layout,
+                            &mut state.adapter.view.report_table_layout,
                         );
                     });
                 },

@@ -407,7 +407,9 @@ impl QuantickApp {
                     crate::control::flip_rail_magnet(self, on);
                 }
             }
-            FrameStage::Dock => self.draw_dock_stage(ctx),
+            FrameStage::Dock => {
+                let _unsupported = self.draw_dock_stage(ctx);
+            }
             // Chrome like the dock: declared before the central canvas so
             // the chart pays its width.
             FrameStage::PinnedInspector => {
@@ -433,7 +435,7 @@ impl QuantickApp {
             FrameStage::StrategyCleanup => self.active_tab_mut().apply_strategy_cleanup(),
             FrameStage::Tail => {
                 if let Some(tail) = tail.take() {
-                    self.run_frame_tail(ctx, now, &scratch.canvas, spawn, tail);
+                    let _unsupported = self.run_frame_tail(ctx, now, &scratch.canvas, spawn, tail);
                 }
             }
             // Live feed: keep polling the channel ~60×/s without busy-spinning.
@@ -620,50 +622,47 @@ impl QuantickApp {
         }
     }
 
-    fn draw_dock_stage(&mut self, ctx: &egui::Context) {
+    fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
         let response = panels::draw_dock(
             ctx,
             &mut self.surfaces,
             &mut self.runtime.tabs,
             self.runtime.tz,
         );
-        let response = response.paper_panel.map(|paper| *paper).unwrap_or_default();
+        let response = match begin_paper_panel_effects(
+            &mut self.runtime.tabs,
+            &mut self.surfaces.replay_browser,
+            response,
+        ) {
+            Ok(response) => response,
+            Err(response) => return Some(*response),
+        };
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
         // trader who opens it and then looks at the ledger has not asked for
         // it to close.
+        #[cfg(test)]
+        paper_panel_steps::record("strategy-editor");
         if self.active_tab_mut().paper.draw_strategy_editor(ctx) {
             self.paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
-        if response.close_replay {
-            // A click that lost its slot has the trader's next click behind
-            // it; only the one-shot hook cares about the answer.
-            let (tab, config) = self.active_with_config();
-            let _ =
-                super::replay_and_history::apply_replay_action(tab, config, ReplayAction::Close);
-        }
-        if let Some((opened, closed)) = response.navigate_to_trade {
-            panels::center_flow_pane_on_trade(self.active_tab_mut(), opened, closed);
-        }
-        if response.pick_trades_dir {
-            self.paper_settings().open_trades_dir_picker();
-        }
-        if response.order_strategies_changed {
-            self.paper_settings()
-                .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
-        }
-        if response.cmd_trading_changed {
-            self.paper_settings()
-                .persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
-        }
-        if response.risk_settings_changed {
-            self.paper_settings()
-                .persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
-        }
+        #[cfg(test)]
+        paper_panel_steps::record("strategy-editor-settled");
+        finish_paper_panel_effects(
+            &mut self.runtime.tabs,
+            &self.config,
+            &mut self.runtime.workspace,
+            response,
+        );
+        #[cfg(test)]
+        paper_panel_steps::record("trades-picker-poll");
         self.paper_settings().poll_trades_dir_picker();
+        #[cfg(test)]
+        paper_panel_steps::record("bundle-picker-poll");
         self.workspace_bundle_adapter().poll_picker();
+        None
     }
 
     /// The chart takes whatever the panels left.
@@ -761,34 +760,163 @@ impl QuantickApp {
         answers: &canvas::CanvasAnswers,
         spawn: &mut crate::tab::LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
-    ) {
+    ) -> Vec<crate::surfaces::SurfaceResponse> {
         let presented = self.presentation.resolve(&self.runtime, ctx).is_ok();
-        super::frame_tail::FrameTailOwners {
-            tabs: &mut self.runtime.tabs,
-            config: &self.config,
-            toast: &mut self.surfaces.toast,
-            chip_rect: &mut self.chrome.feed_chip_rect,
-            popup: &mut self.surfaces.feed_notice,
-        }
-        .execute_watched(
-            super::frame_tail::FrameTailInput {
-                presentation: presented.then_some(ctx),
-                now,
-                tz: self.runtime.tz,
-                notice_action: answers.notice_action,
-                popup_tab: answers.popup_tab,
-                chip_clicked: answers.chip_clicked,
-                dismissed: answers.dismissed,
-                chip_rect: answers.chip_rect,
+        let input = super::frame_tail::FrameTailInput {
+            presentation: presented.then_some(ctx),
+            now,
+            tz: self.runtime.tz,
+            notice_action: answers.notice_action,
+            popup_tab: answers.popup_tab,
+            chip_clicked: answers.chip_clicked,
+            dismissed: answers.dismissed,
+            chip_rect: answers.chip_rect,
+        };
+        run_frame_tail(
+            super::frame_tail::FrameTailOwners {
+                tabs: &mut self.runtime.tabs,
+                config: &self.config,
+                surfaces: &mut self.surfaces,
+                chip_rect: &mut self.chrome.feed_chip_rect,
             },
+            &input,
+            &mut self.runtime.workspace,
             spawn,
             stages,
+        )
+    }
+}
+
+/// Run the fixed tail while lending each stage its owners only until it returns.
+fn run_frame_tail(
+    owners: super::frame_tail::FrameTailOwners<'_>,
+    input: &super::frame_tail::FrameTailInput<'_>,
+    workspace: &mut crate::workspace_store::WorkspaceStore,
+    spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+    stages: impl IntoIterator<Item = FrameTailStage>,
+) -> Vec<crate::surfaces::SurfaceResponse> {
+    let mut unsupported = Vec::new();
+    for stage in stages {
+        let response = super::frame_tail::FrameTailOwners {
+            tabs: owners.tabs,
+            config: owners.config,
+            surfaces: owners.surfaces,
+            chip_rect: owners.chip_rect,
+        }
+        .execute_stage(input, spawn, stage);
+        // Temporary owners/domain borrows have ended before host execution.
+        match begin_paper_panel_effects(owners.tabs, &mut owners.surfaces.replay_browser, response)
+        {
+            Ok(paper) => finish_paper_panel_effects(owners.tabs, owners.config, workspace, paper),
+            Err(response) => unsupported.push(*response),
+        }
+    }
+    unsupported
+}
+
+/// The same recipient surrounds both Dock and tail painting, borrowing only
+/// the account collection and browser that its prefix can affect.
+fn begin_paper_panel_effects(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    browser: &mut crate::surfaces::replay_browser::ReplayBrowser,
+    response: crate::surfaces::SurfaceResponse,
+) -> Result<crate::surfaces::PaperPanelEffects, Box<crate::surfaces::SurfaceResponse>> {
+    let mut paper = response.into_paper_panel()?;
+    #[cfg(test)]
+    paper_panel_steps::record("journal-fanout");
+    if let Some(edit) = paper.journal_edit.take() {
+        let _ = super::paper_wiring::apply_journal_edit_across(tabs, &edit);
+    }
+    #[cfg(test)]
+    paper_panel_steps::record("replay-browser");
+    if paper.open_replay_browser {
+        browser.open_browser();
+    }
+    Ok(paper)
+}
+
+fn finish_paper_panel_effects(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    config: &crate::config::AppConfig,
+    workspace: &mut crate::workspace_store::WorkspaceStore,
+    response: crate::surfaces::PaperPanelEffects,
+) {
+    #[cfg(test)]
+    paper_panel_steps::record("close-replay");
+    if response.close_replay {
+        // A click that lost its slot has the trader's next click behind
+        // it; only the one-shot hook cares about the answer.
+        let active = tabs.active_index();
+        let _ = super::replay_and_history::apply_replay_action(
+            tabs.runtime_mut(active),
+            config,
+            ReplayAction::Close,
         );
+    }
+    #[cfg(test)]
+    paper_panel_steps::record("navigation");
+    if let Some((opened, closed)) = response.navigate_to_trade {
+        let active = tabs.active_index();
+        panels::center_flow_pane_on_trade(tabs.runtime_mut(active), opened, closed);
+    }
+    let mut settings = super::paper_wiring::PaperSettingsAdapter { tabs, workspace };
+    #[cfg(test)]
+    paper_panel_steps::record("trades-picker-open");
+    if response.pick_trades_dir {
+        settings.open_trades_dir_picker();
+    }
+    #[cfg(test)]
+    paper_panel_steps::record("order-settings");
+    if response.order_strategies_changed {
+        settings.persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
+    }
+    #[cfg(test)]
+    paper_panel_steps::record("command-settings");
+    if response.cmd_trading_changed {
+        settings.persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
+    }
+    #[cfg(test)]
+    paper_panel_steps::record("risk-settings");
+    if response.risk_settings_changed {
+        settings.persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
     }
 }
 
 #[cfg(test)]
 impl QuantickApp {
+    /// Exercise the real tail interpreter and recipient without unrelated frame IO.
+    pub(super) fn run_report_tail_test(
+        &mut self,
+        ctx: &egui::Context,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) -> Vec<crate::surfaces::SurfaceResponse> {
+        self.run_frame_tail(
+            ctx,
+            Instant::now(),
+            &canvas::CanvasAnswers::default(),
+            &mut |_, _, _, _| panic!("paper tail must not spawn a feed"),
+            stages,
+        )
+    }
+
+    pub(super) fn settle_paper_response_test(
+        &mut self,
+        response: crate::surfaces::SurfaceResponse,
+    ) -> Result<(), Box<crate::surfaces::SurfaceResponse>> {
+        let paper = begin_paper_panel_effects(
+            &mut self.runtime.tabs,
+            &mut self.surfaces.replay_browser,
+            response,
+        )?;
+        finish_paper_panel_effects(
+            &mut self.runtime.tabs,
+            &self.config,
+            &mut self.runtime.workspace,
+            paper,
+        );
+        Ok(())
+    }
+
     fn draw_frame_with_tail(
         &mut self,
         ctx: &egui::Context,
@@ -884,5 +1012,41 @@ pub(super) fn sync_appearance(
         .sync(&mut runtime.style, &runtime.appearance)
     {
         runtime.style_revision = runtime.style_revision.saturating_add(1);
+    }
+}
+
+/// Observe actual recipient checkpoints without replacing any host operation.
+/// A checkpoint records reaching a conditional section, not taking its branch.
+#[cfg(test)]
+pub(super) mod paper_panel_steps {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static STEPS: RefCell<Option<Vec<&'static str>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn record(step: &'static str) {
+        STEPS.with_borrow_mut(|steps| {
+            if let Some(steps) = steps {
+                steps.push(step);
+            }
+        });
+    }
+
+    pub(crate) fn observe<R>(run: impl FnOnce() -> R) -> (R, Vec<&'static str>) {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                STEPS.with_borrow_mut(|steps| *steps = None);
+            }
+        }
+        STEPS.with_borrow_mut(|steps| {
+            assert!(steps.is_none(), "paper recipient observation is not nested");
+            *steps = Some(Vec::new());
+        });
+        let _reset = Reset;
+        let result = run();
+        let steps = STEPS.with_borrow_mut(|steps| steps.take().unwrap());
+        (result, steps)
     }
 }

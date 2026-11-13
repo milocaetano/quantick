@@ -393,3 +393,110 @@ mod cases {
         }
     }
 }
+
+/// C35: the actual catalog row borrows each account's sole report adapter.
+#[test]
+fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
+    use super::*;
+    use crate::paper_trading::PaperTrading;
+    use crate::surfaces::Surfaces;
+    use quantick_ui_model::paper_report::{Intent as ReportIntent, LedgerIntent};
+    let ctx = egui::Context::default();
+    let mut registry = Surfaces::default();
+    let mut first = PaperTrading::new();
+    let mut second = PaperTrading::new();
+    let first_dir = crate::scratch::ScratchDir::new("paper-report-composed-first");
+    let second_dir = crate::scratch::ScratchDir::new("paper-report-composed-second");
+    for (paper, dir, symbol) in [
+        (&mut first, &first_dir, "FIRST"),
+        (&mut second, &second_dir, "SECOND"),
+    ] {
+        paper.redirect_history_dir(dir.path().to_path_buf());
+        paper.set_symbol(symbol);
+        let text =
+            quantick_sim::history::write_header(symbol, quantick_sim::history::SessionSource::Live)
+                + "1000,2000,long,1,100,105,5,manual,,,,\n";
+        dir.write(format!("{symbol}/saved.csv"), &text);
+        let (report, env) = paper.report_parts();
+        report.open(&env);
+    }
+    first
+        .report_state_mut()
+        .update(ReportIntent::Ledger(LedgerIntent::Pages(3)));
+    second
+        .report_state_mut()
+        .update(ReportIntent::ListOpen(false));
+    registry.dock.restore(false, None);
+    for paper in [&mut first, &mut second] {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                paper,
+                replay: None,
+                timezone: Default::default(),
+            });
+            assert_eq!(
+                registry.draw_slot_unscoped_with_env(
+                    Slot::FrameTailPaperPanels,
+                    &mut ViewContext { ctx, ui: None },
+                    Some(&mut env)
+                ),
+                SurfaceResponse::default()
+            );
+        });
+    }
+    assert_eq!(
+        first.report_state().snapshot().unwrap().symbol,
+        Some("FIRST")
+    );
+    assert_eq!(
+        second.report_state().snapshot().unwrap().symbol,
+        Some("SECOND")
+    );
+    assert_eq!(first.report_state().snapshot().unwrap().rows.len(), 1);
+    assert_eq!(second.report_state().snapshot().unwrap().rows.len(), 1);
+    assert_eq!(first.report_state().ledger_pages(), 3);
+    assert_eq!(second.report_state().ledger_pages(), 1);
+    assert!(first.report_state().report_list_open());
+    assert!(!second.report_state().report_list_open());
+    first.report_state_mut().update(ReportIntent::Close);
+    registry
+        .paper_tail_probe
+        .update(quantick_ui_model::paper_tail_probe::Intent::Arm {
+            opened: -20_000,
+            closed: -10_000,
+            mixed: false,
+        });
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        // An absent domain leaves the independent row armed.
+        assert_eq!(
+            registry.draw_slot_unscoped_with_env(
+                Slot::FrameTailPaperPanels,
+                &mut ViewContext { ctx, ui: None },
+                None
+            ),
+            SurfaceResponse::default()
+        );
+        let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            paper: &mut first,
+            replay: None,
+            timezone: Default::default(),
+        });
+        let response = registry.draw_slot_unscoped_with_env(
+            Slot::FrameTailPaperPanels,
+            &mut ViewContext { ctx, ui: None },
+            Some(&mut env),
+        );
+        assert_eq!(
+            response.paper_panel.unwrap().navigate_to_trade,
+            Some((-20_000, -10_000))
+        );
+    });
+    assert_eq!(
+        registry.paper_tail_probe.model_state.report_open,
+        Some(false)
+    );
+    assert!(
+        second.report_state().is_open(),
+        "closing one account never closes another"
+    );
+}

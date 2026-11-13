@@ -1,70 +1,33 @@
-//! The simulated performance report and the trades ledger: what the paper
-//! session *produced*, read back from the journal on disk.
-//!
-//! This is the reading half of paper trading, and it is a separate module
-//! from `paper_trading` because the writing half — placing orders,
-//! projecting brackets, sizing against capital, journaling a close — is
-//! the money path, and every line of calendar tinting and equity-curve
-//! plotting sitting beside it is a line someone auditing "was the stop
-//! placed at the right price?" has to read past. The two halves share a
-//! journal folder and nothing else.
-//!
-//! Shaped after `paper_calendar`, which took the date law out of the same
-//! file:
-//!
-//! - **It never reaches back.** Nothing here names `PaperTrading`. What
-//!   the report reads about the live session — the chart's symbol, the
-//!   journal folder, this session's own closed trades, the position still
-//!   open — arrives as [`ReportEnv`], borrowed for the call, the way
-//!   `SurfaceEnv` hands a floating surface what its host knows. What it
-//!   wants *done* leaves as [`ReportResponse`], because a module that
-//!   cannot open a file picker must not pretend to.
-//! - **The state is one struct.** [`ReportState`] holds the twenty-one
-//!   fields the report and the ledger used to spread across the trading
-//!   host: the filters, the loaded history, the cut view, the calendar
-//!   selection, the ledger's paging and folds.
-//! - **Pure below the two entry points.** [`ReportState::draw_window`] and
-//!   [`ReportState::draw_trades_tab`] are the only functions here that
-//!   need a window. Everything under them — the cut, the equity walk, the
-//!   day index, the paging arithmetic, the row layout — is plain functions
-//!   over plain values, which is what makes them testable without one.
-//!
-//! **The numbers are pinned.** `the_report_numbers_are_fixed` at the foot
-//! of this file asserts a fixed journal's whole report, byte for byte,
-//! across two cuts. It was written before this module existed, against the
-//! same code in its old home, and its expected text did not change when
-//! the code moved. Data honesty is not a review preference here: this is
-//! where a trader's own results are computed, and a rounding that shifts
-//! during a refactor is the code lying to them about their trading.
-
-#[cfg(test)]
-use quantick_sim::ClosedTrade;
-#[cfg(test)]
-use quantick_sim::PerformanceReport;
-
-// One date law for every trade surface - see `paper_calendar`.
-use crate::paper_calendar::{CalendarState, DayIndex};
-
+//! Native IO and painting for the one report model owned by each paper account.
+#[cfg(any(feature = "scenario-harness", test))]
+use crate::paper_calendar::DaySelection;
 use crate::timezone::TzOffset;
+use eframe::egui;
+use quantick_paper::pnl::PnlReader;
+use quantick_paper::report::layout::*;
+use quantick_paper::report::readout::LedgerTotals;
+use quantick_ui_model::paper_report::{
+    Effects, Intent, LedgerIntent, Load, LoadedLedger, LoadedReport, Model, State,
+};
+use quantick_ui_model::{Adapter, UpdateSession};
 
 mod curve;
 mod ledger;
 mod rows;
+#[cfg(any(feature = "scenario-harness", test))]
+mod scroll_probe;
 mod sessions;
 mod tables;
 mod window;
 
-/// The ledger's vocabulary, named by the ticket that hosts the tab.
-pub(crate) use ledger::{LedgerAction, LedgerScope};
-/// Named by the ticket's own tests, which drive a real journal folder.
+pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
 #[cfg(test)]
 pub(crate) use quantick_paper::report::load_history;
-use quantick_paper::report::readout::LedgerTotals;
-/// The report's numbers — the journal read back, cut and walked — live in
-/// the paper account's crate, so a backtest gets the answer this window
-/// paints. Re-exported where the window's callers already look.
+pub(crate) use quantick_paper::report::snapshot::{OpenRow, ReportEnv};
 pub(crate) use quantick_paper::report::{HistoryRow, LoadedHistory, ReportView, SourceFilter};
-
+#[cfg(test)]
+use quantick_sim::{ClosedTrade, PerformanceReport};
+pub(crate) use quantick_ui_model::paper_report::LedgerAction;
 /// Aggregate loaded history rows — the ticket tests' shortcut from a journal
 /// on disk to a report.
 #[cfg(test)]
@@ -72,287 +35,258 @@ pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport 
     let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
     PerformanceReport::from_trades(&trades)
 }
-#[cfg(test)]
-use quantick_paper::report::snapshot::ReportWindow;
-use window::ReportPeriod;
 
-pub(crate) use quantick_paper::report::snapshot::ReportEnv;
-
-pub(crate) use quantick_paper::report::snapshot::OpenRow;
-
-/// What the report asked its host to do.
-///
-/// One field today, and a struct rather than a `bool` because the reason
-/// it exists is the rule and not the count: this module can decide that a
-/// folder picker should open and must not be the thing that opens it.
 #[derive(Default)]
 pub(crate) struct ReportResponse {
-    /// The trader pressed Import. The host owns the dialog and the copy.
     pub start_import: bool,
-    /// An acknowledgement to show, if the window produced one. It leaves
-    /// for the same outbox every other paper acknowledgement uses, which
-    /// is the point: this module must not grow a second toast lane on a
-    /// second clock - exactly the divergence the panel's private toast was
-    /// converged away from.
     pub toast: Option<String>,
 }
 
-use quantick_paper::report::layout::*;
-pub(crate) use quantick_paper::report::snapshot::ReportSnapshot;
-/// The report window's and the trades ledger's whole state.
-///
-/// Twenty-one fields that used to sit on the trading host, where they made
-/// up better than a quarter of it. They are here because they answer one
-/// question together — "what did the saved journal produce, cut this way?"
-/// — and because none of them is read by an order, a bracket or a fill.
-#[cfg(any(feature = "scenario-harness", test))]
-mod scroll_probe;
-
-pub(crate) struct ReportState {
+#[derive(Default)]
+struct NativeView {
+    report_table_layout: Option<(egui::FontId, f32, f32, Vec<f32>)>,
+    report_layout_revision: u64,
     #[cfg(any(feature = "scenario-harness", test))]
     scroll_probe: scroll_probe::Probe,
-    /// An acknowledgement waiting to leave through [`ReportResponse`].
-    toast: Option<String>,
-    report_open: bool,
-    /// Report symbol filter: `None` is every symbol, `Some` one folder.
-    report_symbol: Option<String>,
-    report_period: ReportPeriod,
-    /// The report's session-source scope; opens on `Real`.
-    report_source: SourceFilter,
-    /// What the typed-period field holds; applied on Enter, kept verbatim
-    /// so a refused entry stays visible for fixing.
-    report_custom_text: String,
-    /// Symbol folders on disk, for the report's combo box.
-    report_symbols: Vec<String>,
-    /// The report's history in scope, loaded fresh from disk.
-    report: Option<LoadedHistory>,
-    /// Bumped on every history reload, so the day index below knows its
-    /// input changed without comparing months of trades.
-    report_generation: u64,
-    /// The report filtered to the period or the calendar range — rebuilt
-    /// when a filter, the timezone or the loaded history changes.
-    report_view: Option<ReportView>,
-    /// Measured columns for this view and font/DPI; never financial state.
-    report_table_layout: Option<(eframe::egui::FontId, f32, f32, Vec<f32>)>,
-    /// Journal reloads invalidate the ledger's measured row geometry.
-    ledger_layout_revision: u64,
-    /// The calendar: which month is on screen and which days are picked.
-    calendar: CalendarState,
-    /// Which civil days hold trades, for the calendar's highlighting.
-    /// Built from the source-filtered history and rebuilt only when that
-    /// history, the Source filter or the display timezone moves — walking
-    /// months of trades per frame is exactly what a cache is for.
-    report_days: DayIndex,
-    /// The `(generation, source, timezone)` the day index was built for.
-    report_days_key: Option<(u64, SourceFilter, TzOffset)>,
-    /// Whether the report lists the trades behind its curve. On by
-    /// default: a curve whose trades are hidden is the confusion this
-    /// window was asked to end.
-    report_list_open: bool,
-    // Trades ledger.
-    /// Which saved history the ledger lists — see [`LedgerScope`].
-    ledger_scope: LedgerScope,
-    /// Symbol folders on disk, for the ledger's own picker. Read with the
-    /// history, never scanned on the frame.
-    ledger_symbols: Vec<String>,
-    /// Civil days the trader has folded shut in the ledger, by day number.
-    /// A folded day keeps its header — the date, the count and the net —
-    /// so collapsing summarises rather than hides.
-    collapsed_days: std::collections::BTreeSet<i64>,
-    /// The display timezone the ledger last drew with. The fold controls
-    /// group by civil day and run outside the draw call, so they need the
-    /// same clock the rows were stamped on or they would fold a day the
-    /// list never showed.
-    ledger_tz: TzOffset,
-    /// Earlier sessions' journal rows, read on first draw and on demand —
-    /// the live session file is excluded (its trades are already in the
-    /// simulator).
-    /// How many pages of saved history the ledger has revealed. Starts at
-    /// one and grows by the "show older" control — a folder holding a year
-    /// of sessions must not paint a year of rows to show today's.
-    ledger_pages: usize,
-    history_cache: Option<LoadedHistory>,
-    /// Totals over the saved history above, summed with the load.
-    saved_totals: LedgerTotals,
-    /// Index into the session's closed trades selected in the ledger; the
-    /// chart emphasizes that round trip.
-    selected_trade: Option<usize>,
-    /// The ledger's session layer: its filter, folds, selection and edits.
-    sessions: sessions::LedgerSessions,
 }
 
-impl Default for ReportState {
-    /// Hand-written rather than derived: three of these do not open at
-    /// their type's default. The report lists its trades (a curve whose
-    /// trades are hidden is the confusion the window exists to end), the
-    /// ledger starts one page in, and its scope follows the chart.
+/// Nested adapter, without an account reference or global surface ownership.
+pub(crate) struct ReportAdapter {
+    adapter: Adapter<Model, NativeView, Effects>,
+}
+/// Preserve existing account and control wrapper signatures.
+pub(crate) type ReportState = ReportAdapter;
+impl Default for ReportAdapter {
     fn default() -> Self {
         Self {
-            #[cfg(any(feature = "scenario-harness", test))]
-            scroll_probe: scroll_probe::Probe::default(),
-            toast: None,
-            report_open: false,
-            report_symbol: None,
-            report_period: ReportPeriod::All,
-            report_source: SourceFilter::Real,
-            report_custom_text: String::new(),
-            report_symbols: Vec::new(),
-            report: None,
-            report_generation: 0,
-            report_view: None,
-            report_table_layout: None,
-            ledger_layout_revision: 0,
-            calendar: CalendarState::default(),
-            report_days: DayIndex::default(),
-            report_days_key: None,
-            report_list_open: true,
-            ledger_scope: LedgerScope::Chart,
-            ledger_symbols: Vec::new(),
-            collapsed_days: std::collections::BTreeSet::new(),
-            ledger_tz: TzOffset::new(0),
-            ledger_pages: 1,
-            history_cache: None,
-            saved_totals: LedgerTotals::default(),
-            selected_trade: None,
-            sessions: sessions::LedgerSessions::default(),
+            adapter: Adapter::new(NativeView::default(), std::convert::identity),
+        }
+    }
+}
+impl std::ops::Deref for ReportAdapter {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.adapter.model_state
+    }
+}
+struct Paint<'a, 's> {
+    updates: &'a mut UpdateSession<'s, Model>,
+    native: &'a mut NativeView,
+}
+impl std::ops::Deref for Paint<'_, '_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        self.updates.state()
+    }
+}
+impl Paint<'_, '_> {
+    fn update(&mut self, intent: Intent) {
+        self.updates.update(intent);
+    }
+    fn ledger(&mut self, intent: LedgerIntent) {
+        self.update(Intent::Ledger(intent));
+    }
+    fn ensure_report_view(&mut self, tz: TzOffset, pnl: PnlReader<'_>) {
+        if let Some(receipt) = self.project_report(tz, pnl) {
+            self.update(Intent::InstallReport(receipt));
+            if let Some(snapshot) = self.snapshot() {
+                tracing::info!(target: "quantick::app", schema_version = 1_u8,
+                    event_code = "PAPER_REPORT_CUT", symbol = snapshot.symbol.unwrap_or("*"),
+                    source = snapshot.source.label(), window = %snapshot.window.label(),
+                    trades = snapshot.rows.len(), hidden_outside = snapshot.hidden_outside,
+                    hidden_by_source = snapshot.hidden_by_source, net_points = %snapshot.report.net_points,
+                    "the simulated performance report was re-cut");
+            }
+        }
+        if self.native.report_layout_revision != self.report_layout_revision() {
+            self.native.report_table_layout = None;
+            self.native.report_layout_revision = self.report_layout_revision();
         }
     }
 }
 
-impl ReportState {
-    // ------------------------------------------------------------------
-    // What the trading host still needs to say
-    //
-    // Five named events and three reads, rather than public fields. The
-    // host owns the journal folder, the symbol and the venue, so it is the
-    // only thing that can know when one of them moved; what that *means*
-    // for a loaded history, a revealed page or a cut view is this module's
-    // business, and each method below is one sentence of it.
-    // ------------------------------------------------------------------
-
-    /// Post an acknowledgement for the host to hand on. An outbox, not a
-    /// toast: this module owns no lane and no clock, and the message
-    /// leaves through [`ReportResponse::toast`].
-    fn show_toast(&mut self, message: String) {
-        self.toast = Some(message);
+/// The existing IO, completed synchronously before UpdateSession returns.
+fn local_effects(mut effects: Effects, env: &ReportEnv<'_>) -> (Effects, Option<Intent>) {
+    let receipt = effects.load.take().map(|load| match load {
+        Load::Report(symbol) => Intent::LoadedReport(LoadedReport {
+            history: quantick_paper::report::load_history(env.dir, symbol.as_deref(), &[]),
+            symbols: crate::paper_chrome::list_symbol_folders(env.dir),
+        }),
+        Load::Ledger(scope) => {
+            let history = quantick_paper::report::load_history(
+                env.dir,
+                scope.folder(env.symbol),
+                env.session_journal_paths,
+            );
+            Intent::LoadedLedger(LoadedLedger::new(
+                history,
+                crate::paper_chrome::list_symbol_folders(env.dir),
+                env.pnl,
+            ))
+        }
+    });
+    (effects, receipt)
+}
+impl ReportAdapter {
+    fn with<R>(
+        &mut self,
+        env: &ReportEnv<'_>,
+        paint: impl FnOnce(&mut Paint<'_, '_>) -> R,
+    ) -> (R, Effects) {
+        let mut output = Effects::default();
+        let result = self.adapter.with_updates(
+            |effects| output.append_delivered(effects),
+            |native, session| {
+                session.with_local_effects(&mut |effects| local_effects(effects, env), |updates| {
+                    paint(&mut Paint { updates, native })
+                })
+            },
+        );
+        (result, output)
     }
-
-    /// Whether the report window is on screen.
-    ///
-    /// Read on the per-trade path, which is the whole reason it exists: a
-    /// close re-reads the journal only for a window somebody is looking
-    /// at, and the caller needs to know that *before* it gathers a
-    /// `ReportEnv` it would then throw away.
+    pub(crate) fn update(&mut self, intent: Intent) -> Effects {
+        self.adapter.update(intent)
+    }
+    fn event(&mut self, intent: Intent, env: &ReportEnv<'_>) {
+        self.with(env, |paint| paint.update(intent));
+    }
     pub(crate) fn is_open(&self) -> bool {
-        self.report_open
+        self.report_open()
     }
-
-    /// The journal moved to a new folder. Everything loaded describes the
-    /// old one, so it all goes — and an open window re-reads at once,
-    /// because cleared caches alone left it claiming "no saved trades"
-    /// until a manual refresh.
-    pub(crate) fn trades_dir_changed(&mut self, env: &ReportEnv<'_>) {
-        self.history_cache = None;
-        self.ledger_pages = 1;
-        self.report = None;
-        self.report_view = None;
-        if self.report_open {
-            self.reload_report(env);
-        }
-    }
-
-    /// The chart moved to another market. The saved history was read for
-    /// the old one, and the selected round trip belonged to it.
-    ///
-    /// The revealed page is deliberately left alone — see the caller, which
-    /// runs on every frame.
-    pub(crate) fn symbol_changed(&mut self) {
-        self.history_cache = None;
-        self.selected_trade = None;
-    }
-
-    /// A close was journaled while the window is open: re-read now, or the
-    /// report shows yesterday until a manual refresh — the "my trade is
-    /// missing" report.
-    ///
-    /// Call only when [`Self::is_open`] says so. It is stated that way
-    /// round rather than tested again here because this runs per closed
-    /// trade, and the caller has to build a `ReportEnv` to reach it —
-    /// work worth skipping entirely for a window nobody has open.
-    pub(crate) fn journal_changed(&mut self, env: &ReportEnv<'_>) {
-        debug_assert!(self.report_open, "the caller checks `is_open` first");
-        self.reload_report(env);
-    }
-
-    /// An import copied files into the journal folder.
-    pub(crate) fn history_imported(&mut self, env: &ReportEnv<'_>) {
-        self.history_cache = None;
-        self.ledger_pages = 1;
-        if self.report_open {
-            self.reload_report(env);
-        }
-    }
-
-    /// Open the report window — the ticket's "Report…" button.
     pub(crate) fn open(&mut self, env: &ReportEnv<'_>) {
-        self.open_report(env);
+        self.event(Intent::Open(env.symbol.to_owned()), env);
     }
-
-    /// Index of the ledger's selected round trip, for the chart to
-    /// emphasize.
+    pub(crate) fn trades_dir_changed(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::DirectoryChanged, env);
+    }
+    pub(crate) fn symbol_changed(&mut self) {
+        self.update(Intent::SymbolChanged);
+    }
+    pub(crate) fn journal_changed(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::JournalChanged, env);
+    }
+    pub(crate) fn history_imported(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::HistoryImported, env);
+    }
+    pub(crate) fn journal_edited(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::JournalEdited, env);
+    }
+    #[cfg(test)]
+    pub(crate) fn reload_ledger(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::Ledger(LedgerIntent::Reload), env);
+    }
     pub(crate) fn selected_trade(&self) -> Option<usize> {
-        self.selected_trade
+        self.adapter.model_state.selected_trade()
     }
-
-    /// Drop the ledger's selection, reporting whether there was one —
-    /// Escape's answer to "did I just undo something?".
     pub(crate) fn clear_selected_trade(&mut self) -> bool {
-        self.selected_trade.take().is_some()
+        let selected = self.selected_trade().is_some();
+        self.update(Intent::Ledger(LedgerIntent::ClearSelection));
+        selected
     }
-
-    /// Every saved row in the ledger's scope, loading them first if the
-    /// ledger has not been drawn yet. The export writes these beside the
-    /// live session's own trades, and an export that silently skipped the
-    /// saved half because nobody had opened the tab would be worse than a
-    /// slow one.
     pub(crate) fn saved_rows(&mut self, env: &ReportEnv<'_>) -> &[HistoryRow] {
-        if self.history_cache.is_none() {
-            self.reload_ledger(env);
-        }
-        self.history_cache
+        self.event(Intent::Ledger(LedgerIntent::EnsureLoaded), env);
+        self.history_cache()
             .as_ref()
-            .map_or(&[][..], |cache| cache.rows.as_slice())
+            .map_or(&[], |cache| cache.rows.as_slice())
+    }
+    pub(crate) fn ledger_view(
+        &mut self,
+        change: &quantick_paper::report::ledger_state::LedgerViewChange,
+    ) -> (quantick_paper::report::ledger_state::LedgerView, bool) {
+        let before = self.sessions().view.clone();
+        self.update(Intent::Ledger(LedgerIntent::View(change.clone())));
+        (self.sessions().view.clone(), self.sessions().view != before)
+    }
+    pub(crate) fn draw_window(
+        &mut self,
+        ctx: &egui::Context,
+        tz: TzOffset,
+        env: &ReportEnv<'_>,
+    ) -> ReportResponse {
+        let (_, effects) = self.with(env, |paint| paint.draw_window(ctx, tz, env));
+        ReportResponse {
+            start_import: effects.start_import,
+            toast: effects.toast,
+        }
+    }
+    pub(crate) fn draw_trades_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        tz: TzOffset,
+        env: &ReportEnv<'_>,
+    ) -> Option<LedgerAction> {
+        self.with(env, |paint| paint.draw_trades_tab(ui, tz, env))
+            .1
+            .ledger
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
+impl ReportAdapter {
+    pub(crate) fn autostart_report(&mut self, env: &ReportEnv<'_>) {
+        self.update(Intent::Symbol(None));
+        self.open(env);
+    }
+    pub(crate) fn autostart_calendar(&mut self, selection: DaySelection, env: &ReportEnv<'_>) {
+        self.autostart_report(env);
+        let mut calendar = self.calendar();
+        calendar.open = true;
+        calendar.selection = selection;
+        if let Some(range) = selection.range() {
+            calendar.month = Some(range.start.month_start());
+        }
+        self.update(Intent::Calendar(calendar));
+    }
+    pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
+        self.update(Intent::Ledger(LedgerIntent::Scope(scope)));
+    }
+    pub(crate) fn autostart_folded_days(&mut self, tz: TzOffset, env: &ReportEnv<'_>) {
+        self.event(Intent::Ledger(LedgerIntent::EnsureLoaded), env);
+        self.update(Intent::Ledger(LedgerIntent::Timezone(tz)));
+        let folds = self.project_day_folds(false, env.live_closes());
+        self.update(Intent::Ledger(LedgerIntent::FoldDays(folds)));
+    }
+    pub(crate) fn autostart_ledger_pages(&mut self, pages: usize) {
+        self.update(Intent::Ledger(LedgerIntent::Pages(pages)));
+    }
+    pub(crate) fn set_report_list_open(&mut self, open: bool) {
+        self.update(Intent::ListOpen(open));
+    }
+}
 #[cfg(test)]
-impl ReportState {
-    /// Test-only. The saved journal rows the ledger has loaded, or `None`
-    /// while it has never been drawn. `None` and "loaded, and empty" are
-    /// different answers, and a caller that could not tell them apart would
-    /// report a folder as empty because nobody had looked at it yet.
-    ///
-    /// This and the two below exist for the ten report tests that stayed
-    /// with `paper_trading` because they drive a real journal on disk. They
-    /// let those tests ask a question instead of reading a field, which is
-    /// what keeps this struct's state private now that it has any.
+impl ReportAdapter {
+    pub(crate) fn rescope_ledger(&mut self, env: &ReportEnv<'_>) {
+        self.event(Intent::Ledger(LedgerIntent::Rescope), env);
+    }
+    pub(crate) fn set_day_collapsed(
+        &mut self,
+        day: crate::paper_calendar::CivilDate,
+        collapsed: bool,
+    ) {
+        self.update(Intent::Ledger(LedgerIntent::FoldDay(day, collapsed)));
+    }
+    fn show_toast(&mut self, message: String) {
+        self.update(Intent::Toast(message));
+    }
     pub(crate) fn saved_rows_loaded(&self) -> Option<&[HistoryRow]> {
-        self.history_cache
+        self.history_cache()
             .as_ref()
             .map(|cache| cache.rows.as_slice())
     }
-
-    /// Test-only. How many pages of saved history the ledger has revealed.
     pub(crate) fn revealed_pages(&self) -> usize {
-        self.ledger_pages
+        self.ledger_pages()
     }
-
-    /// Test-only. The trades inside the report's current cut, or `None`
-    /// before one has been made.
     pub(crate) fn view_rows(&self) -> Option<&[HistoryRow]> {
-        self.report_view.as_ref().map(|view| view.rows.as_slice())
+        self.report_view().as_ref().map(|view| view.rows.as_slice())
+    }
+    pub(crate) fn ledger_loaded(&self) -> bool {
+        self.history_cache().is_some()
+    }
+    pub(crate) fn ensure_report_view(&mut self, tz: TzOffset, pnl: PnlReader<'_>) {
+        if let Some(receipt) = self.project_report(tz, pnl) {
+            self.update(Intent::InstallReport(receipt));
+        }
     }
 }
-
 #[cfg(test)]
 mod tests;

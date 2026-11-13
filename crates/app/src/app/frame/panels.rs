@@ -117,27 +117,11 @@ pub(super) fn draw_dock(
         paper,
         timezone: tz,
     });
-    let mut response = surfaces.draw_slot_unscoped_with_env(
+    surfaces.draw_slot_unscoped_with_env(
         quantick_ui_model::Slot::LateEdgePanels,
         &mut ViewContext { ctx, ui: None },
         Some(&mut env),
-    );
-    // Domain borrows end before host effects fan out across all accounts.
-    if let Some(edit) = response
-        .paper_panel
-        .as_mut()
-        .and_then(|paper| paper.journal_edit.take())
-    {
-        let _ = super::super::paper_wiring::apply_journal_edit_across(tabs, &edit);
-    }
-    if response
-        .paper_panel
-        .as_ref()
-        .is_some_and(|paper| paper.open_replay_browser)
-    {
-        surfaces.replay_browser.open_browser();
-    }
-    response
+    )
 }
 
 /// The ledger's jump-to-trade: center the flow pane on the round trip's

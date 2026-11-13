@@ -3399,10 +3399,13 @@ dependencies = [
  "quantick-paper",
  "quantick-replay",
  "quantick-session",
+ "quantick-sim",
  "quantick-sources",
  "quantick-stores",
  "quantick-strategy",
+ "quantick-trading",
  "quantick-workspace",
+ "rust_decimal",
  "toml 0.8.20",
 ]
 

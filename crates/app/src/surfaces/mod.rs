@@ -220,6 +220,20 @@ pub(crate) struct StyleLogRequest {
 }
 
 impl SurfaceResponse {
+    /// Validate the complete residual before a paper host performs any effect.
+    /// Direct model/domain changes made during painting are not rolled back.
+    pub(crate) fn into_paper_panel(mut self) -> Result<PaperPanelEffects, Box<Self>> {
+        let paper = self.paper_panel.take();
+        if self != Self::default() {
+            self.paper_panel = paper;
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "PAPER_PANEL_UNSUPPORTED_RESPONSE", response = ?self,
+                "paper panel response retained without external host execution");
+            return Err(Box::new(self));
+        }
+        Ok(paper.map(|paper| *paper).unwrap_or_default())
+    }
+
     /// Fold one surface's response into the frame's. Requests are
     /// independent, so a set flag stays set: no surface can cancel another's
     /// ask by being drawn after it.

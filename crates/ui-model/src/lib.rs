@@ -1,6 +1,7 @@
 //! Intent-driven UI state. Domain decisions remain in their owning crates.
 //! Time, snapshots and completion results arrive as intents; no clock is read.
 mod catalog;
+pub mod paper_report;
 #[cfg(test)]
 mod scratch;
 
@@ -190,6 +191,7 @@ pub enum Slot {
     EarlyEdgePanels,
     EdgePanels,
     LateEdgePanels,
+    FrameTailPaperPanels,
 }
 
 macro_rules! models {
