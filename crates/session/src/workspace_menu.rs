@@ -540,16 +540,35 @@ mod tests {
     }
 
     #[test]
-    fn every_opening_is_a_new_one_and_a_close_is_not() {
+    fn every_opening_measures_once_and_a_close_does_not() {
         let mut state = WorkspaceMenuState::default();
+        assert!(!state.take_chip_measure(), "nothing open");
         state.toggle_chip_menu(7);
-        let first = state.chip_menu_opened;
+        assert!(state.take_chip_measure(), "the opening frame measures");
+        assert!(!state.take_chip_measure(), "once");
         state.toggle_chip_menu(7);
-        assert_eq!(state.chip_menu_opened, first, "closing counts nothing");
+        assert!(!state.take_chip_measure(), "closing measures nothing");
         state.toggle_chip_menu(7);
-        assert_ne!(state.chip_menu_opened, first, "a reopening is fresh");
-        let second = state.chip_menu_opened;
         state.toggle_chip_menu(8);
-        assert_ne!(state.chip_menu_opened, second, "another tab's opening too");
+        assert!(state.take_chip_measure(), "another tab's opening too");
+    }
+
+    #[test]
+    fn a_name_is_cut_when_its_row_asks_the_whole_room() {
+        assert!(name_cut(300.0, 300.0));
+        assert!(name_cut(299.6, 300.0), "within the rounding");
+        assert!(!name_cut(240.0, 300.0));
+    }
+
+    #[test]
+    fn the_style_s_heights_become_rows_separators_and_a_frame() {
+        let metrics = MenuMetrics::of(20.0, 4.0, 12.0);
+        assert_eq!(metrics.row_pt, 24.0);
+        assert_eq!(metrics.separator_pt, CHIP_MENU_SEPARATOR_PT + 4.0);
+        assert_eq!(metrics.frame_pt, 12.0);
+        assert_eq!(
+            MenuBounds::new(1.0, 2.0, 3.0, 4.0),
+            rect(1.0, 2.0, 3.0, 4.0)
+        );
     }
 }

@@ -1133,6 +1133,32 @@ fn the_cell_menu_stays_inside_the_window_and_narrows_when_its_rows_do() {
     assert_eq!(listed, stored, "every row in view: {rows:?}");
 }
 
+/// How many area states egui keeps in `ctx`'s memory.
+fn stored_areas(ctx: &egui::Context) -> usize {
+    let areas = ctx.memory(|memory| format!("{:?}", memory.areas()));
+    areas.matches("AreaState").count()
+}
+
+/// Opening the menu again and again leaves egui no area state per opening.
+#[test]
+fn reopening_the_cell_menu_keeps_one_area_state_per_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-reopen", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let cycle = |app: &mut QuantickApp, count: usize| {
+        for _ in 0..count {
+            open_cell_menu(app, &ctx, 2);
+            app.chrome.window_menu.tab_workspace.close_chip_menu();
+            run_frame_at(app, &ctx, FULL_HD);
+        }
+    };
+    cycle(&mut app, 2);
+    let settled = stored_areas(&ctx);
+    cycle(&mut app, 30);
+    assert_eq!(stored_areas(&ctx), settled, "30 more openings");
+}
+
 /// The trader's nine workspaces fit whole below the capsule, and the capsule
 /// names the call that reads what the menu lists.
 #[test]
