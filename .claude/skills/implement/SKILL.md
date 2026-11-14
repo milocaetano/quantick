@@ -30,7 +30,7 @@ Review: <requested low|medium|high; only when the request starts with small|medi
 No: <essential exclusion; optional>.
 ```
 
-Use concise, unambiguous English. Omit empty optional fields. Never invent commands. Set `Review:` only from a leading `small` (low), `medium` or `high`; otherwise omit it. Execution applies the risk floor in `execute.md`.
+Be unambiguous. Omit empty optional fields. Never invent commands. Set `Review:` only from a leading `small` (low), `medium` or `high`; otherwise omit it. Execution applies the risk floor in `execute.md`.
 
 # Output
 Recheck and compact the saved plan. Ask if a blocking decision remains; otherwise output only:
