@@ -23,17 +23,19 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+#[cfg(test)]
 use crate::config::FeedCapabilities;
 use quantick_chart::toolbar_collapse::{
     CollapsePlan, SEPARATOR_AIR_PX, SEPARATOR_WIDTH_PX, W_PICKER, collapse_plan,
 };
-use quantick_engine::bar_selection::BarInputAvailability;
+pub(crate) use quantick_ui_model::chrome_toolbar::available_bar_inputs;
 pub(crate) mod bar_parameters;
 pub mod capsule;
 pub mod layout_popover;
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
+#[cfg(test)]
 use quantick_feed::history_run::RunStatus;
 use quantick_paper::desk::{
     TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX, TRADE_GAP_PX, TRADE_REVERSE_LABEL,
@@ -65,13 +67,7 @@ const WINDOW_MENU_RUN_PX: f32 = TOOLBAR_ICON.hit + SEPARATOR_AIR_PX * 2.0 + SEPA
 /// Gap between History's main button and its caret, in pixels.
 const HISTORY_SPLIT_GAP_PX: f32 = 6.0;
 
-/// The amber label that replaces SOURCE while a recording plays.
-pub struct ReplaySource {
-    /// What the label says.
-    pub label: String,
-    /// The hover detail (file, side source).
-    pub hover: String,
-}
+pub use quantick_ui_model::chrome_toolbar::{HistoryButton, ReplaySource};
 
 /// The toolbar's `≡`: the window menu the title bar's `⋮` opens, one door
 /// nearer the chart.
@@ -95,51 +91,20 @@ pub struct DrawnControl {
     pub capability: Option<&'static str>,
 }
 
-/// The toolbar's view of the app: fields it edits directly, and read-only
-/// context for gating and display.
+/// Borrow the registered projection; only geometry and popup mechanics are mutable.
 pub struct ToolbarModel<'a> {
-    /// The `≡` at the row's left end.
+    pub snapshot: &'a quantick_ui_model::chrome_toolbar::Snapshot,
     pub window_menu: WindowMenuDoor<'a>,
-    /// The capsule: the live layout and the tab's workspace.
     pub capsule: capsule::CapsuleModel<'a>,
-    /// Where the capsule's parts ended up, written back by the draw.
     pub capsule_rects: &'a mut capsule::CapsuleRects,
-    /// The market button: the venue's letter and the tab chip's own
-    /// `SYMBOL · venue`, so the two cannot disagree.
-    pub market: (char, &'a str),
-    /// Present while a recording is the source; replaces the market label.
-    pub replay: Option<ReplaySource>,
-    /// The deal recorder shown beside the symbol, when supported.
-    pub deal_recording: Option<crate::deal_recording::RecordingView>,
-    /// Open the REC popover through the launch hook.
     pub deal_recording_menu: bool,
-    /// The bar kind of the focused pane, which the REC popover speaks about.
-    pub focused_bars: &'static quantick_engine::bar_registry::BarDefinition,
-    /// Where the history menu's own button ended up, written back by the draw.
-    ///
-    /// Published for the same reason the Workspace menu's rect is: a menu is a
-    /// popup egui owns, so the only honest way to open one from a hook is to
-    /// deliver a click on the button's real rectangle. Guessing a pixel would
-    /// photograph whatever happens to be there.
     pub history_menu_rect: &'a mut Option<egui::Rect>,
-    /// The History button: its target, this tab's run and the clock face.
-    pub history: HistoryButton,
-    /// Venue candles held so far, for the history menu readout. Zero on a
-    /// feed that serves none.
-    pub history_candles: usize,
-    /// Whether asking for another span of older candles could get the trader
-    /// anything, and when it could not, why — see `Tab::older_candles`.
-    /// Decided by the tab, which is the only thing that knows what it has
-    /// already asked for. Carried as the reason rather than a bool because the
-    /// disabled tooltip is nothing but the reason.
-    pub older_candles: crate::tab::OlderCandles,
-    /// What the active source's backend can do.
-    pub capabilities: FeedCapabilities,
-    /// Whether the dock (strip included) is shown.
-    pub dock_visible: bool,
-    /// The TRADE group: readiness, state-aware entry labels and the close
-    /// button, all computed by the paper host (`PaperTrading`).
-    pub paper: PaperTradeModel,
+}
+impl std::ops::Deref for ToolbarModel<'_> {
+    type Target = quantick_ui_model::chrome_toolbar::Snapshot;
+    fn deref(&self) -> &Self::Target {
+        self.snapshot
+    }
 }
 
 /// What the TRADE group shows this frame: the paper desk's
@@ -149,79 +114,7 @@ pub struct ToolbarModel<'a> {
 /// the hovers disclose what the press would do to the open position.
 pub type PaperTradeModel = quantick_paper::desk::TradeBar;
 
-/// One active indicator as the picker shows it. Raw slot numbers
-/// keep the toolbar decoupled from the worker's types.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndicatorMenuEntry {
-    /// The app-side slot id this entry answers to.
-    pub slot: u64,
-    /// Display label (the indicator's short title).
-    pub label: String,
-    /// Whether the eye toggle currently hides it.
-    pub hidden: bool,
-    /// Whether the indicator is disabled by a runtime error.
-    pub errored: bool,
-    /// Whether the running version is stale (the file on disk has errors).
-    pub stale: bool,
-}
-
-/// A side effect the toolbar asks the app to perform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolbarAction {
-    /// Switch the canvas to a named arrangement from the layout registry.
-    ///
-    /// Carries the registry entry rather than a copy of its shape, so the
-    /// toolbar never holds a second opinion about what a layout contains.
-    SetLayout(&'static crate::canvas_layout::LayoutPreset),
-    /// Load back to a target: the main click's, or one the menu named.
-    LoadHistory(HistoryReach),
-    /// Stop the history run in flight and keep what arrived.
-    CancelHistory,
-    /// Open the palette in switch mode on this tab (the market button).
-    SwitchMarket,
-    /// What the REC control beside the symbol asked for.
-    DealRecording(crate::deal_recording::DealRecordingAction),
-    /// Fetch and prepend one more span of older venue candles.
-    ///
-    /// The trade twin above and this one are two different records — a page of
-    /// prints and a span of buckets — served by two different venue endpoints
-    /// under two different capabilities. A feed can page one and not the
-    /// other, so they are two actions rather than one with a mode.
-    LoadOlderCandles,
-    /// Show or hide the dock.
-    ToggleDock,
-    /// Open or close the window menu, hung from the toolbar's `≡`.
-    ToggleWindowMenu,
-    /// Open or close the layout popover, hung from the capsule's miniature.
-    ToggleLayoutPopover,
-    /// Open or close the ADD TO CANVAS menu, hung from the +.
-    ToggleAddMenu,
-    /// Open or close the workspace menu, hung from the capsule's name.
-    ToggleWorkspaceMenu,
-    /// Save the tab's edits to its workspace (the floppy, Ctrl+S).
-    SaveWorkspace,
-    /// Add a native indicator, by its catalog id
-    /// (`quantick_indicators::native`). One variant for every native there
-    /// will ever be — the menu is drawn from the catalog, so the toolbar
-    /// never learns which natives exist.
-    AddNative(&'static str),
-    /// Flip an indicator's render-side eye toggle (no recompute).
-    ToggleIndicatorHidden(u64),
-    /// Remove an indicator.
-    RemoveIndicator(u64),
-    /// Load a script from the library, by index into `ToolbarModel::scripts`.
-    AddScriptIndicator(usize),
-    /// Open the settings dialog of an indicator.
-    OpenIndicatorSettings(u64),
-    /// Simulated market buy at the Trading tab's quantity (paper trading).
-    PaperBuy,
-    /// Simulated market sell at the Trading tab's quantity (paper trading).
-    PaperSell,
-    /// Exit the open simulated position at the next print.
-    PaperClose,
-    /// Turn the open simulated position around at the next print.
-    PaperReverse,
-}
+pub use quantick_ui_model::chrome_toolbar::Action as ToolbarAction;
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
 /// app this frame. One pointer produces at most one click per frame, so the
@@ -334,14 +227,14 @@ fn draw_source(
         .on_hover_text(&replay.hover);
         return;
     }
-    if draw_market(ui, model.market, plan.feed_full_name).clicked() {
+    if draw_market(ui, (model.market.0, &model.market.1), plan.feed_full_name).clicked() {
         actions.push(ToolbarAction::SwitchMarket);
     }
     if let Some(view) = &model.deal_recording
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
             view,
-            model.focused_bars,
+            model.focused_bars.definition(),
             model.deal_recording_menu,
         )
     {
@@ -403,20 +296,6 @@ fn draw_market(ui: &mut egui::Ui, (chip, label): (char, &str), full: bool) -> eg
     response.on_hover_text(MARKET_HOVER)
 }
 
-/// What the running source can build bars from: the one answer each pane
-/// header's bars menu reads.
-pub(crate) fn available_bar_inputs(
-    capabilities: FeedCapabilities,
-    deal_recording: Option<&crate::deal_recording::RecordingView>,
-) -> BarInputAvailability {
-    BarInputAvailability {
-        traded_volume: capabilities.traded_volume,
-        deal_counter: capabilities.deal_counter,
-        deal_count: deal_recording
-            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
-    }
-}
-
 /// HISTORY: the `History` split button. The main click repeats this tab's
 /// last target (yesterday until it has pressed); the caret holds the one-click
 /// targets and the candle reach. While a run pages, the button names its
@@ -450,43 +329,14 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     *model.history_menu_rect = menu.then_some(caret.inner);
 }
 
-/// What the History button shows and does this frame.
-#[derive(Debug, Clone, Copy)]
-pub struct HistoryButton {
-    /// What the main click loads.
-    pub main: HistoryReach,
-    /// Where this tab's run stands.
-    pub status: RunStatus,
-    /// The clock face times are written in.
-    pub tz: crate::timezone::TzOffset,
-}
-
 /// The button's words: the target it loads, or the run it is making.
 fn history_button_label(button: &HistoryButton) -> String {
-    let at = |ms| quantick_civil::fmt_weekday_minute(ms, button.tz);
-    match button.status {
-        RunStatus::Idle => format!(
-            "{} History: {}",
-            icons::CLOCK_COUNTER_CLOCKWISE,
-            button.main.label()
-        ),
-        RunStatus::Queued(reach) => format!("Queued {}\u{2026} {}", reach.label(), icons::X),
-        RunStatus::Loading(progress) | RunStatus::Paused(progress) => format!(
-            "Loading {}\u{2026} back to {} {}",
-            progress.reach.label(),
-            at(progress.oldest_ms),
-            icons::X
-        ),
-    }
+    button.label(icons::CLOCK_COUNTER_CLOCKWISE, icons::X)
 }
 
 /// The main click repeats the target; while running it cancels.
 fn history_button_action(button: &HistoryButton) -> ToolbarAction {
-    if button.status.running() {
-        ToolbarAction::CancelHistory
-    } else {
-        ToolbarAction::LoadHistory(button.main)
-    }
+    button.action()
 }
 
 /// The button's refusal, read off the model. One owner, called by the bar's
@@ -782,6 +632,18 @@ mod tests {
 
     use super::*;
 
+    fn test_capsule() -> quantick_ui_model::chrome_toolbar::Capsule {
+        quantick_ui_model::chrome_toolbar::Capsule {
+            tree: crate::canvas_layout::LAYOUT_PRESETS[0].tree.clone(),
+            workspace: "Default".into(),
+            unsaved: false,
+            marks: Default::default(),
+            menu_open: false,
+            door_open: false,
+            door_hover: String::new(),
+        }
+    }
+
     #[test]
     fn trade_actions_keep_readable_labels() {
         let ctx = egui::Context::default();
@@ -1052,41 +914,47 @@ mod tests {
                         },
                         capsule: capsule::tests::model(),
                         capsule_rects: &mut capsule_rects,
-                        market: ('B', "BTCUSDT \u{b7} Binance"),
-                        replay: replaying.then(|| ReplaySource {
-                            label: "BTCUSDT · 2026-03-16".to_owned(),
-                            hover: "Replaying a recorded session".to_owned(),
-                        }),
-                        deal_recording: None,
                         deal_recording_menu: false,
-                        focused_bars: quantick_engine::BarKind::Tick.into(),
                         history_menu_rect: &mut history_menu_rect,
-                        history: HistoryButton {
-                            main: HistoryReach::default(),
-                            status: RunStatus::Idle,
-                            tz: crate::timezone::TzOffset::default(),
+                        snapshot: &quantick_ui_model::chrome_toolbar::Snapshot {
+                            capsule: test_capsule(),
+                            market: ('B', "BTCUSDT \u{b7} Binance".to_owned()),
+                            replay: replaying.then(|| ReplaySource {
+                                label: "BTCUSDT · 2026-03-16".to_owned(),
+                                hover: "Replaying a recorded session".to_owned(),
+                            }),
+                            deal_recording: None,
+                            focused_bars: <&quantick_engine::bar_registry::BarDefinition>::from(
+                                quantick_engine::BarKind::Tick,
+                            )
+                            .default_config(),
+                            history: HistoryButton {
+                                main: HistoryReach::default(),
+                                status: RunStatus::Idle,
+                                tz: crate::timezone::TzOffset::default(),
+                            },
+                            history_candles: 0,
+                            older_candles: crate::tab::OlderCandles::NotArrivedYet,
+                            capabilities: FeedCapabilities {
+                                transport: true,
+                                book_capture: !replaying,
+                                history_paging: !replaying,
+                                history_boundary: None,
+                                traded_volume: true,
+                                deal_counter: false,
+                                ohlcv_history: !replaying,
+                                ohlcv_generation: 0,
+                                ohlcv_daily_generation: 0,
+                                ohlcv_aggressor_split: false,
+                                native_candle_intervals: false,
+                                liquidations: false,
+                                open_interest: false,
+                                funding: false,
+                                spot_perp_pair: false,
+                            },
+                            dock_visible: true,
+                            paper: flat_trade(true),
                         },
-                        history_candles: 0,
-                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
-                        capabilities: FeedCapabilities {
-                            transport: true,
-                            book_capture: !replaying,
-                            history_paging: !replaying,
-                            history_boundary: None,
-                            traded_volume: true,
-                            deal_counter: false,
-                            ohlcv_history: !replaying,
-                            ohlcv_generation: 0,
-                            ohlcv_daily_generation: 0,
-                            ohlcv_aggressor_split: false,
-                            native_candle_intervals: false,
-                            liquidations: false,
-                            open_interest: false,
-                            funding: false,
-                            spot_perp_pair: false,
-                        },
-                        dock_visible: true,
-                        paper: flat_trade(true),
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");
@@ -1113,40 +981,46 @@ mod tests {
                     },
                     capsule: capsule::tests::model(),
                     capsule_rects: &mut capsule_rects,
-                    market: ('B', "US500 \u{b7} MetaTrader 5"),
-                    replay: None,
-                    deal_recording: None,
                     deal_recording_menu: false,
-                    focused_bars: quantick_engine::BarKind::Tick.into(),
                     history_menu_rect: &mut history_menu_rect,
-                    history: HistoryButton {
-                        main: HistoryReach::default(),
-                        status: RunStatus::Idle,
-                        tz: crate::timezone::TzOffset::default(),
+                    snapshot: &quantick_ui_model::chrome_toolbar::Snapshot {
+                        capsule: test_capsule(),
+                        market: ('B', "US500 \u{b7} MetaTrader 5".to_owned()),
+                        replay: None,
+                        deal_recording: None,
+                        focused_bars: <&quantick_engine::bar_registry::BarDefinition>::from(
+                            quantick_engine::BarKind::Tick,
+                        )
+                        .default_config(),
+                        history: HistoryButton {
+                            main: HistoryReach::default(),
+                            status: RunStatus::Idle,
+                            tz: crate::timezone::TzOffset::default(),
+                        },
+                        history_candles: 0,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
+                        capabilities: FeedCapabilities {
+                            transport: true,
+                            book_capture: false,
+                            history_paging: false,
+                            history_boundary: None,
+                            traded_volume: false,
+                            deal_counter: false,
+                            ohlcv_history: false,
+                            ohlcv_generation: 0,
+                            ohlcv_daily_generation: 0,
+                            ohlcv_aggressor_split: false,
+                            native_candle_intervals: false,
+                            liquidations: false,
+                            open_interest: false,
+                            funding: false,
+                            spot_perp_pair: false,
+                        },
+                        dock_visible: true,
+                        // Not yet ready: the TRADE pair must lay out in its
+                        // disabled state without asking anything of the app.
+                        paper: flat_trade(false),
                     },
-                    history_candles: 0,
-                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
-                    capabilities: FeedCapabilities {
-                        transport: true,
-                        book_capture: false,
-                        history_paging: false,
-                        history_boundary: None,
-                        traded_volume: false,
-                        deal_counter: false,
-                        ohlcv_history: false,
-                        ohlcv_generation: 0,
-                        ohlcv_daily_generation: 0,
-                        ohlcv_aggressor_split: false,
-                        native_candle_intervals: false,
-                        liquidations: false,
-                        open_interest: false,
-                        funding: false,
-                        spot_perp_pair: false,
-                    },
-                    dock_visible: true,
-                    // Not yet ready: the TRADE pair must lay out in its
-                    // disabled state without asking anything of the app.
-                    paper: flat_trade(false),
                 };
                 let actions = draw(ctx, &mut model);
                 assert!(actions.is_empty(), "no clicks, no actions");
@@ -1221,38 +1095,44 @@ mod tests {
                     },
                     capsule: capsule::tests::model(),
                     capsule_rects: &mut capsule_rects,
-                    market: ('B', "BTCUSDT \u{b7} Binance"),
-                    replay: None,
-                    deal_recording: None,
                     deal_recording_menu: false,
-                    focused_bars: quantick_engine::BarKind::Tick.into(),
                     history_menu_rect: &mut history_menu_rect,
-                    history: HistoryButton {
-                        main: HistoryReach::default(),
-                        status: RunStatus::Idle,
-                        tz: crate::timezone::TzOffset::default(),
+                    snapshot: &quantick_ui_model::chrome_toolbar::Snapshot {
+                        capsule: test_capsule(),
+                        market: ('B', "BTCUSDT \u{b7} Binance".to_owned()),
+                        replay: None,
+                        deal_recording: None,
+                        focused_bars: <&quantick_engine::bar_registry::BarDefinition>::from(
+                            quantick_engine::BarKind::Tick,
+                        )
+                        .default_config(),
+                        history: HistoryButton {
+                            main: HistoryReach::default(),
+                            status: RunStatus::Idle,
+                            tz: crate::timezone::TzOffset::default(),
+                        },
+                        history_candles: 0,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
+                        capabilities: FeedCapabilities {
+                            transport: true,
+                            book_capture: true,
+                            history_paging: true,
+                            history_boundary: None,
+                            traded_volume: true,
+                            deal_counter: false,
+                            ohlcv_history: true,
+                            ohlcv_generation: 0,
+                            ohlcv_daily_generation: 0,
+                            ohlcv_aggressor_split: false,
+                            native_candle_intervals: false,
+                            liquidations: false,
+                            open_interest: false,
+                            funding: false,
+                            spot_perp_pair: false,
+                        },
+                        dock_visible: true,
+                        paper: paper.clone(),
                     },
-                    history_candles: 0,
-                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
-                    capabilities: FeedCapabilities {
-                        transport: true,
-                        book_capture: true,
-                        history_paging: true,
-                        history_boundary: None,
-                        traded_volume: true,
-                        deal_counter: false,
-                        ohlcv_history: true,
-                        ohlcv_generation: 0,
-                        ohlcv_daily_generation: 0,
-                        ohlcv_aggressor_split: false,
-                        native_candle_intervals: false,
-                        liquidations: false,
-                        open_interest: false,
-                        funding: false,
-                        spot_perp_pair: false,
-                    },
-                    dock_visible: true,
-                    paper: paper.clone(),
                 };
                 let actions = draw(ctx, &mut model);
                 assert!(actions.is_empty(), "no clicks, no actions");
@@ -1273,57 +1153,6 @@ mod tests {
             })
         };
         (fill(theme::BUY), fill(theme::SELL))
-    }
-
-    /// The button names its target idle, names the run and its progress while
-    /// loading, and its click becomes the cancel.
-    #[test]
-    fn the_history_button_names_its_target_and_cancels_a_run() {
-        use quantick_feed::history_reach::ReachProgress;
-        let tz = crate::timezone::TzOffset::new(-180);
-        let idle = HistoryButton {
-            main: HistoryReach::Sessions(1),
-            status: RunStatus::Idle,
-            tz,
-        };
-        assert!(history_button_label(&idle).ends_with("Yesterday"));
-        assert_eq!(
-            history_button_action(&idle),
-            ToolbarAction::LoadHistory(HistoryReach::Sessions(1))
-        );
-        // Thursday 2026-10-01 13:14 UTC is 10:14 at UTC-03:00.
-        let loading = HistoryButton {
-            status: RunStatus::Loading(ReachProgress {
-                reach: HistoryReach::Sessions(5),
-                oldest_ms: 1_790_860_440_000,
-                sessions_reached: 2,
-                traded_ms: 0,
-                prints_pulled: 0,
-                pages: 3,
-            }),
-            ..idle
-        };
-        let label = history_button_label(&loading);
-        assert!(
-            label.starts_with("Loading 5 days\u{2026} back to Thu 10:14"),
-            "{label}"
-        );
-        assert_eq!(
-            history_button_action(&loading),
-            ToolbarAction::CancelHistory
-        );
-        let queued = HistoryButton {
-            status: RunStatus::Queued(HistoryReach::Hours(2)),
-            ..idle
-        };
-        assert!(history_button_label(&queued).starts_with("Queued +2 h"));
-        assert_eq!(history_button_action(&queued), ToolbarAction::CancelHistory);
-        assert!(
-            HistoryPagingOff::NothingToPage
-                .hover()
-                .contains("only streams forward"),
-            "and a feed that cannot page gets the other reason, not the run's"
-        );
     }
 
     /// Paint the TRADE group alone, settled: the rectangles of BUY, SELL,

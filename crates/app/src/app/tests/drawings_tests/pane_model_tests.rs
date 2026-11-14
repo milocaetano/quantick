@@ -6,7 +6,8 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 

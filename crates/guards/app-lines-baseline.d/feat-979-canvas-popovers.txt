@@ -1,0 +1,4 @@
+# #979 reviewed local ratchet amendment; original #920 acceptance remains unchanged.
+# Registered borrowed Views and stable-tab/menu/layout host plumbing; lifecycle decisions live in ui-model.
+crates/app +253
+!budget +253

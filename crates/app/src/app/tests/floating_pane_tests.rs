@@ -86,14 +86,28 @@ fn grip(app: &QuantickApp, slot: u32) -> egui::Pos2 {
 fn add_widget_opens_a_centred_floating_chart() {
     let (mut app, ctx) = saved_tab("time+flow");
     press(&mut app, &ctx, "toolbar.add_widget");
-    assert!(app.chrome.add_menu.open, "the + opens ADD TO CANVAS");
+    assert!(
+        app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .add_open,
+        "the + opens ADD TO CANVAS"
+    );
     let rows: Vec<_> = (app.chrome.add_menu.drawn.iter())
         .map(|control| control.id.trim_start_matches("add_widget.").to_owned())
         .collect();
     let registry: Vec<_> = WIDGETS.iter().map(|widget| widget.id.to_owned()).collect();
     assert_eq!(rows, registry, "one row per WIDGETS entry");
     press(&mut app, &ctx, "add_widget.timeframe-chart");
-    assert!(!app.chrome.add_menu.open, "a pick closes the menu");
+    assert!(
+        !app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .add_open,
+        "a pick closes the menu"
+    );
     frames(&mut app, &ctx, 6);
     let tab = app.active_tab();
     let floating = tab.canvas.state.floating();
@@ -267,7 +281,14 @@ fn canvas_hooks_add_hold_and_open_the_menu() {
     let floating = tab.canvas.state.floating();
     assert_eq!(floating.len(), 1, "{:?}", tab.canvas.state.panes());
     assert_eq!(floating[0].slot, 2, "the slot the hook holds");
-    assert!(app.chrome.add_menu.open, "the + menu is up");
+    assert!(
+        app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .add_open,
+        "the + menu is up"
+    );
     assert!(tab.canvas.floats.held.is_some(), "the chart is held");
     assert!(
         drawn(&app, "canvas.dock.left").is_some(),
@@ -437,8 +458,9 @@ fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
         (place, at(chart)),
         "they traded places"
     );
+    let id = app.runtime.tabs.active_id();
     assert!(
-        app.active_tab().canvas.menus.open.is_none(),
+        app.surfaces.remove_chart.scoped(id).0.menu_open().is_none(),
         "a drag opens no menu"
     );
     press_menu_opens(&mut app, &ctx, chart);
@@ -447,5 +469,9 @@ fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
 /// A click on the ⋯ still opens the chart's menu.
 fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
     press(app, ctx, &format!("pane_menu.{slot}"));
-    assert_eq!(app.active_tab().canvas.menus.open, Some(slot));
+    let id = app.runtime.tabs.active_id();
+    assert_eq!(
+        app.surfaces.remove_chart.scoped(id).0.menu_open(),
+        Some(slot)
+    );
 }

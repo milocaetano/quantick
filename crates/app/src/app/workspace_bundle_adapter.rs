@@ -9,7 +9,8 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
     tracing::warn!(target: "quantick::app", schema_version = 1_u8,
         event_code = "WORKSPACE_PICKER_LOST", action = "picker_reset",
         "the file dialog closed without an answer");
-    toast.note(
+    crate::surfaces::toast::note(
+        toast,
         "The file chooser could not open — see the log. Try again.",
         std::time::Instant::now(),
     );
@@ -19,9 +20,10 @@ pub(crate) struct WorkspaceBundleAdapter<'a> {
     pub(super) alerts: &'a mut quantick_stores::alerts::AlertRuntime,
     /// The tab strip and chrome ports an import restores, borrowed once.
     pub(super) arrangement: super::arrangement_adapter::ArrangementAdapter<'a>,
-    pub(super) replay_view: &'a crate::replay_view::ReplayView,
-    pub(super) layout_rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) layout_delete_confirm: &'a mut Option<crate::layouts::LayoutId>,
+    pub(super) indicator_settings:
+        &'a mut crate::surfaces::indicator_settings::IndicatorSettingsSurface,
+    pub(super) replay_view: &'a crate::surfaces::replay_browser::ReplayBrowser,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
     pub(super) added_symbols: &'a mut crate::symbols_file::AddedSymbols,
     pub(super) drawing_presets: &'a mut crate::drawings::presets::PresetStore,
     pub(super) footprint_config: &'a mut crate::footprint_config::FootprintConfig,
@@ -42,8 +44,8 @@ impl WorkspaceBundleAdapter<'_> {
             book: &self.arrangement.workspace.book,
             drawing_chrome: self.arrangement.drawing_chrome,
             toast: self.arrangement.toast,
-            rename: self.layout_rename,
-            delete_confirm: self.layout_delete_confirm,
+            dialogs: self.dialogs,
+            indicator_settings: self.indicator_settings,
         }
     }
     fn maintain_chart_layers(&mut self) {
@@ -65,9 +67,7 @@ impl WorkspaceBundleAdapter<'_> {
         );
     }
     fn note_workspace(&mut self, message: String) {
-        self.arrangement
-            .toast
-            .note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(self.arrangement.toast, message, std::time::Instant::now());
     }
     /// Route the file dialog's answer: a chosen path runs the intent the
     /// dialog was opened for, a lost dialog is reported once.
@@ -236,7 +236,7 @@ impl WorkspaceBundleAdapter<'_> {
             drawings::presets::PresetStore::load_from(drawings::presets::default_path());
         *self.footprint_config =
             crate::footprint_config::load(self.arrangement.workspace.footprint_settings_path());
-        self.chart_settings.reload_presets();
+        super::chart_settings_wiring::reload(self.chart_settings);
         self.arrangement.indicators.indicator_presets =
             preset_file::PresetStore::load(self.arrangement.workspace.indicator_presets_path());
 

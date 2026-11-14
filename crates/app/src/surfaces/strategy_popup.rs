@@ -1,681 +1,498 @@
-//! The arming dialog, as a [`Surface`].
-//!
-//! "Arm strategy" is the form a trader fills in over a drawn region: side,
-//! quantity, the force band, the projected brackets, the alarm — and then
-//! **Arm**. It was the largest single thing left in the trunk that was not
-//! `draw_frame` itself, and it is here for the reason the port exists: none
-//! of what it does needs `QuantickApp`. It needs a preset bank nothing else
-//! reads, a form it owns, and three answers from the application it can ask
-//! for by name.
-//!
-//! # What it asks the host for, and why each one
-//!
-//! **Arming** reaches into the pane, the simulator and the alarm scheduler,
-//! and can be refused for a reason the form has to show. So the dialog asks
-//! through [`SurfaceResponse::arm_strategy`] and stays open until
-//! [`StrategyPopupSurface::settle_arm`] answers — closing on success, and
-//! writing the refusal into the footer otherwise. A dialog that closed
-//! optimistically and reopened on failure would lose the form.
-//!
-//! **Auditioning a sound** goes through the host's one speaker, shared with
-//! every armed instance, so a test press reports a sound that cannot be heard
-//! exactly as a missed signal would. The cue is handed over; the host plays
-//! it.
-//!
-//! **Whether a share of the bar means anything** is a property of the bar
-//! rule the pane is running, which the dialog reads from
-//! [`SurfaceEnv::counted_bar_sides`] rather than by reaching for the tab.
-//!
-//! # The alarm section
-//!
-//! `draw_alarm_controls` is its own function because it is the one part of
-//! the form that is about hearing rather than trading, and because the fields
-//! under the checkbox are only meaningful while it is ticked — a shape the
-//! rest of the dialog does not have. It moved with the dialog it is a section
-//! of; it was never separable from it.
-
+//! Paint the strategy form and emit field intents; bank IO stays host-owned.
+use super::{SurfaceEnv, SurfaceResponse, ViewContext};
+use crate::{
+    audio::{AlertSound, SoundCategory},
+    strategy_presets as presets, theme,
+};
 use eframe::egui;
+use quantick_ui_model::{
+    UpdateSession,
+    strategy_popup::{Effects, Field, Intent, Model, State, TextField},
+};
 
-use super::{ArmRequest, Surface, SurfaceEnv, SurfaceResponse};
-use crate::audio::{AlertSound, Cue, SoundCategory};
-use crate::drawings;
-use crate::pane;
-use crate::strategy_presets::{self as presets, StrategyBank};
-use crate::theme;
-
-/// How much of the viewport's height the arming dialog's scrolling body may
-/// take. The rest pays for the window's own chrome, its Arm/Cancel footer and
-/// the margin that keeps a centred dialog off the chart's edges.
-///
-/// A fraction rather than a fixed height because the form's length is not
-/// fixed either: unfolding the alarm section adds six rows, and on a laptop
-/// that was enough to push **Arm** past the bottom of a window the trader
-/// cannot resize. Sized so the whole dialog — body, footer and chrome — sits
-/// comfortably inside the shortest viewport the app is used on.
+type Session<'a> = UpdateSession<'a, Model>;
+pub(crate) type StrategyPopupSurface = super::Adapter<Model, View>;
 const ARM_DIALOG_BODY_SCREEN_FRACTION: f32 = 0.45;
-
-/// Floor under that fraction. On a viewport too short for even this the form
-/// scrolls within it rather than collapsing to nothing — a dialog whose Arm
-/// button cannot be reached is worse than one that scrolls.
 const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
-
-/// The arming dialog's state: which drawing on which pane of which tab, and
-/// the form — the stored-preset shape edited in place, so "form", "bank row"
-/// and "what a future NL layer emits" stay one structure.
-struct StrategyPopup {
-    /// The **stable id** of the tab the dialog was opened over. Drawing ids
-    /// are per-pane counters, so the same id on another tab is an unrelated
-    /// object — switching tabs closes the dialog rather than arm it.
-    ///
-    /// The id and not the index, which is what this was before it moved here.
-    /// `close_tab` clamps `active_tab` rather than shifting it, so closing a
-    /// tab to the left of the active one leaves the index pointing at a
-    /// *different market* while comparing equal — and Arm would then act on
-    /// that market. Every other cross-tab reference in the application
-    /// (`indicator_settings_target`, `slot_kinds`, `operator_slots`,
-    /// `script_files`) keys on the id for exactly this reason.
-    tab: u64,
-    side: pane::PaneSide,
-    drawing: drawings::DrawingId,
-    form: presets::StoredPreset,
-    /// The bank preset the form was seeded from, shown on the badge.
-    preset_choice: Option<String>,
-    save_name: String,
-    error: Option<String>,
+pub(crate) struct View {
+    pub bank: presets::StrategyBank,
+    initialized: bool,
 }
-
-/// The "Arm strategy" dialog and the preset bank it reads from.
-pub(crate) struct StrategyPopupSurface {
-    popup: Option<StrategyPopup>,
-    /// The saved forms offered in the dialog's preset list. Nothing else in
-    /// the application reads them, so they live with the one window that
-    /// does.
-    bank: StrategyBank,
-    /// One-shot: the next draw of the dialog drops the sound list open. Set
-    /// by the `QUANTICK_STRATEGY_DEMO=sounds` hook, consumed by
-    /// `draw_alarm_controls` on the first frame it draws the box.
-    pending_sound_picker: bool,
-}
-
-impl Default for StrategyPopupSurface {
-    /// Loads the bank, like the footprint window loads its presets: a list
-    /// that stays empty until something remembers to call a second
-    /// initialiser is a list that ships empty the one time nobody does.
-    /// `StrategyBank::default_path` already redirects under `cfg!(test)`, so
-    /// this reads a test file rather than the trader's saved strategies.
+impl Default for View {
     fn default() -> Self {
         Self {
-            popup: None,
-            bank: StrategyBank::load_from(crate::strategy_presets::default_path()),
-            pending_sound_picker: false,
+            bank: presets::StrategyBank::load_from(presets::default_path()),
+            initialized: false,
         }
     }
 }
-
-impl StrategyPopupSurface {
-    /// Whether the dialog is on screen — read by the host each frame, because
-    /// the per-side bar-rule answer the dialog reads is built for it alone.
-    pub fn is_open(&self) -> bool {
-        self.popup.is_some()
+fn form<'a>(session: &'a Session<'_>) -> &'a presets::StoredPreset {
+    &session.state().popup().expect("painted open dialog").form
+}
+pub(crate) fn effects(effects: Effects) -> SurfaceResponse {
+    SurfaceResponse {
+        arm_strategy: effects.arm,
+        test_alert: effects.test_alert,
+        ..Default::default()
     }
-
-    /// Open the dialog over `drawing`, starting from `form`.
-    ///
-    /// One door for every way in: a pane's right-click request, the capture
-    /// hook, and any named call a future operator layer makes.
-    pub fn open(
+}
+impl super::View<Model> for View {
+    fn id(&self) -> &'static str {
+        "strategy-popup"
+    }
+    fn paint(
         &mut self,
-        tab: u64,
-        side: pane::PaneSide,
-        drawing: drawings::DrawingId,
-        form: presets::StoredPreset,
+        _: &State,
+        _: &mut ViewContext<'_>,
+        _: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        None
+    }
+    fn paint_updated(
+        &mut self,
+        session: &mut Session<'_>,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
     ) {
-        self.popup = Some(StrategyPopup {
-            tab,
-            side,
-            drawing,
-            form,
-            preset_choice: None,
-            save_name: String::new(),
-            error: None,
-        });
-    }
-
-    /// Drop the sound list open on the next frame the dialog draws it.
-    #[cfg(any(feature = "scenario-harness", test))]
-    pub fn stage_sound_picker(&mut self) {
-        self.pending_sound_picker = true;
-    }
-
-    /// The host's answer to [`SurfaceResponse::arm_strategy`]: the instance
-    /// armed, or the reason it could not be.
-    ///
-    /// A refusal keeps the form exactly as the trader left it — they are one
-    /// corrected field away from an arming that works, and a dialog that
-    /// vanished and reopened empty would make the refusal read as a crash.
-    pub fn settle_arm(&mut self, outcome: Result<(), String>) {
-        match outcome {
-            Ok(()) => self.popup = None,
-            Err(error) => {
-                if let Some(popup) = self.popup.as_mut() {
-                    popup.error = Some(error);
-                }
-            }
+        let Some(env) = env else {
+            return;
+        };
+        if session.state().popup().is_some_and(|popup| {
+            popup.tab != env.active_tab
+                || session.state().shares_available != env.counted_bar_sides.contains(&popup.side)
+        }) || session.state().alert_failure.as_deref() != env.alert_failure
+        {
+            session.update(Intent::Observe {
+                active_tab: env.active_tab,
+                counted_bar_sides: env.counted_bar_sides.to_vec(),
+                alert_failure: env.alert_failure.map(str::to_owned),
+            });
         }
+        if !session.state().is_open() {
+            return;
+        }
+        if !self.initialized {
+            session.update(Intent::BankSnapshot(presets::snapshot(&self.bank)));
+            self.initialized = true;
+        }
+        session.with_local_effects(
+            &mut |mut effects: Effects| {
+                let receipt = effects
+                    .bank
+                    .take()
+                    .map(|effect| presets::apply(&mut self.bank, effect));
+                (effects, receipt)
+            },
+            |session| paint_popup(session, target.context()),
+        );
     }
+}
+fn paint_popup(session: &mut Session<'_>, ctx: &egui::Context) {
+    let mut open = true;
+    let max_body =
+        (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION).max(ARM_DIALOG_MIN_BODY_PT);
+    egui::Window::new("Arm strategy")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .max_height(max_body)
+                .show(ui, |ui| {
+                    preset_row(ui, session);
+                    trade_fields(ui, session);
+                    ui.separator();
+                    alarm_controls(ui, session);
+                    ui.separator();
+                    bank_row(ui, session);
+                });
+            footer(ui, session);
+        });
+    if !open {
+        session.update(Intent::Cancel);
+    }
+}
 
-    /// The alarm section of the arming dialog.
-    ///
-    /// Its own function because it is the one part of the form that is
-    /// about hearing rather than trading, and because the fields under the
-    /// checkbox are only meaningful while it is ticked — a shape the rest
-    /// of the dialog does not have. The rows are drawn by [`AlarmSection`].
-    fn draw_alarm_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        side: pane::PaneSide,
-        form: &mut presets::StoredPreset,
-        env: &SurfaceEnv<'_>,
-        test_alert: &mut Option<Cue>,
-    ) {
-        let palette = theme::get(ui.ctx());
-        // Taken before the early return below, so it is a one-shot whatever
-        // the form looks like. Left until the combo row, a staged flag on a
-        // form whose alarm box is clear would survive to a later arming and
-        // drop the sound list open under the trader's cursor.
-        let drop_sound_list_open = std::mem::take(&mut self.pending_sound_picker);
-
-        ui.checkbox(&mut form.alarm, "alarm on signal bar")
-            .on_hover_text(
-                "play a sound the moment this strategy's signal happens — the trigger \
+fn preset_row(ui: &mut egui::Ui, session: &mut Session<'_>) {
+    ui.horizontal(|ui| {
+        ui.label("preset");
+        let current = session
+            .state()
+            .popup()
+            .unwrap()
+            .preset_choice
+            .as_deref()
+            .unwrap_or("custom");
+        egui::ComboBox::from_id_salt("strategy_preset_pick")
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for index in 0..session.state().rows().len() {
+                    let name = &session.state().rows()[index].0;
+                    let picked =
+                        session.state().popup().unwrap().preset_choice.as_ref() == Some(name);
+                    if ui.selectable_label(picked, name).clicked() {
+                        session.update(Intent::SelectPreset(name.clone()));
+                    }
+                }
+            });
+    });
+}
+fn bank_row(ui: &mut egui::Ui, session: &mut Session<'_>) {
+    ui.horizontal(|ui| {
+        let mut name = session.state().popup().unwrap().save_name.clone();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut name)
+                    .hint_text("preset name")
+                    .desired_width(140.0),
+            )
+            .changed()
+        {
+            session.update(Intent::SaveName(name));
+        }
+        let can_save = !session.state().popup().unwrap().save_name.trim().is_empty();
+        if ui
+            .add_enabled(can_save, egui::Button::new("Save preset"))
+            .clicked()
+        {
+            session.update(Intent::SavePreset);
+        }
+        if session.state().popup().unwrap().preset_choice.is_some()
+            && ui
+                .button("Delete preset")
+                .on_hover_text("remove it from the bank; the form keeps its values")
+                .clicked()
+        {
+            session.update(Intent::DeletePreset);
+        }
+    });
+}
+fn footer(ui: &mut egui::Ui, session: &mut Session<'_>) {
+    if let Some(error) = &session.state().popup().unwrap().error {
+        ui.colored_label(theme::get(ui.ctx()).sell(), error);
+    }
+    ui.separator();
+    let mut intent = None;
+    ui.horizontal(|ui| {
+        if ui.button("Arm").clicked() {
+            intent = Some(Intent::Submit);
+        }
+        if ui.button("Cancel").clicked() {
+            intent = Some(Intent::Cancel);
+        }
+    });
+    if let Some(intent) = intent {
+        session.update(intent);
+    }
+}
+fn alarm_controls(ui: &mut egui::Ui, session: &mut Session<'_>) {
+    let drop_sound_list_open = session.state().sound_picker_pending();
+    session.update(Intent::AlarmSection);
+    let mut alarm = form(session).alarm;
+    if ui
+        .checkbox(&mut alarm, "alarm on signal bar")
+        .on_hover_text(
+            "play a sound the moment this strategy's signal happens — the trigger \
                  fires on your side, inside the region. It is the *signal* that alarms, \
                  not the order: with the share option below, you hear it before the bar \
                  closes and before any order could be placed, which is the time you need \
                  to act on another platform.",
-            );
-        if !form.alarm {
-            // The alarm-only mode goes with the alarm: an instance that
-            // neither trades nor alarms does nothing, and the form must not
-            // be able to describe one.
-            form.alarm_only = false;
-            return;
-        }
-
-        // The bar rule the chart is actually running decides whether a
-        // share of the bar means anything. An adaptive rule closes on a
-        // condition, not on a count, so there is no fraction of it to wait
-        // for — and saying so here is cheaper than a trader wondering for a
-        // session why the alarm only ever speaks at the close.
-        // The pane the dialog is arming on, not the focused one: with a
-        // split open, a strategy going onto the time pane must be judged by
-        // the time pane's bar rule. Reading the focused pane would disable
-        // the share gate because the *other* pane runs an adaptive rule.
-        let shares_available = env.counted_bar_sides.contains(&side);
-        let mut section = AlarmSection { form };
-        section.when_rows(ui, shares_available);
-        section.repeat_row(ui);
-        // Read once for both rows: the cut row's note speaks about the sound
-        // the frame started with, even on the frame a new one is picked.
-        let current = AlertSound::from_token(&section.form.alarm_sound).unwrap_or_default();
-        if let Some(cue) = section.sound_row(ui, current, drop_sound_list_open) {
-            *test_alert = Some(cue);
-        }
-        section.cut_row(ui, current);
-
-        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
-            .on_hover_text(
-                "the instance watches, judges and alarms, and places nothing. For a \
+        )
+        .changed()
+    {
+        session.update(Intent::Edit(Field::Alarm(alarm)));
+    }
+    if !form(session).alarm {
+        session.update(Intent::Edit(Field::Alarm(false)));
+        return;
+    }
+    when_rows(session, ui, session.state().shares_available);
+    repeat_row(session, ui);
+    // Preserve the pre-selection sound and pre-cut length used by this frame's Test.
+    let current = AlertSound::from_token(&form(session).alarm_sound).unwrap_or_default();
+    sound_row(session, ui, current, drop_sound_list_open);
+    cut_row(session, ui, current);
+    let mut only = form(session).alarm_only;
+    if ui
+        .checkbox(&mut only, "alarm only \u{2014} never place an order")
+        .on_hover_text(
+            "the instance watches, judges and alarms, and places nothing. For a \
                  trader who executes elsewhere: a simulated position they never meant \
                  to take would occupy the account and silence the next signal.",
-            );
-        if let Some(reason) = env.alert_failure {
-            ui.colored_label(palette.sell(), format!("no sound was played: {reason}"));
+        )
+        .changed()
+    {
+        session.update(Intent::Edit(Field::AlarmOnly(only)));
+    }
+    if let Some(reason) = &session.state().alert_failure {
+        ui.colored_label(
+            theme::get(ui.ctx()).sell(),
+            format!("no sound was played: {reason}"),
+        );
+    }
+}
+fn when_rows(session: &mut Session<'_>, ui: &mut egui::Ui, shares_available: bool) {
+    let mut alarm_when = form(session).alarm_when.clone();
+    let mut alarm_share_percent = form(session).alarm_share_percent;
+
+    ui.horizontal(|ui| {
+        ui.label("when:");
+        let on_close = alarm_when != "share";
+        if ui
+            .selectable_label(on_close, "bar closes")
+            .on_hover_text("the same instant the strategy itself judges")
+            .clicked()
+        {
+            alarm_when = "on_close".to_owned();
         }
-    }
-}
-
-#[cfg(test)]
-impl StrategyPopupSurface {
-    /// The refusal on screen, if any.
-    pub fn error(&self) -> Option<&str> {
-        self.popup.as_ref().and_then(|popup| popup.error.as_deref())
-    }
-
-    /// The form as it stands, for the tests that fill it in.
-    pub fn form_mut(&mut self) -> Option<&mut presets::StoredPreset> {
-        self.popup.as_mut().map(|popup| &mut popup.form)
-    }
-}
-
-/// The alarm rows under a ticked "alarm on signal bar": when it speaks, how
-/// often, with which sound, and for how long. Each row owns its slice of
-/// the form.
-struct AlarmSection<'a> {
-    form: &'a mut presets::StoredPreset,
-}
-
-impl AlarmSection<'_> {
-    /// When the alarm judges: at the close, or from a share of the bar on.
-    fn when_rows(&mut self, ui: &mut egui::Ui, shares_available: bool) {
-        let form = &mut *self.form;
-        ui.horizontal(|ui| {
-            ui.label("when:");
-            let on_close = form.alarm_when != "share";
-            if ui
-                .selectable_label(on_close, "bar closes")
-                .on_hover_text("the same instant the strategy itself judges")
-                .clicked()
-            {
-                form.alarm_when = "on_close".to_owned();
-            }
-            let share_button = ui.add_enabled(
-                shares_available,
-                egui::SelectableLabel::new(!on_close, "part-way through the bar"),
-            );
-            if share_button.clicked() {
-                form.alarm_when = "share".to_owned();
-            }
-            if !shares_available {
-                share_button.on_hover_text(
-                    "this bar rule closes on a condition rather than on a count, so there \
+        let share_button = ui.add_enabled(
+            shares_available,
+            egui::SelectableLabel::new(!on_close, "part-way through the bar"),
+        );
+        if share_button.clicked() {
+            alarm_when = "share".to_owned();
+        }
+        if !shares_available {
+            share_button.on_hover_text(
+                "this bar rule closes on a condition rather than on a count, so there \
                      is no share of it to wait for — the alarm speaks at the close",
-                );
-            }
-        });
-        if form.alarm_when == "share" {
-            ui.horizontal(|ui| {
-                ui.label("from");
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_share_percent)
-                        .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
-                );
-                ui.label("% of the bar onward").on_hover_text(
-                    "on a 2000-tick chart at 70%, the alarm starts judging past tick \
+            );
+        }
+    });
+    if alarm_when == "share" {
+        ui.horizontal(|ui| {
+            ui.label("from");
+            ui.add(
+                egui::DragValue::new(&mut alarm_share_percent)
+                    .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
+            );
+            ui.label("% of the bar onward").on_hover_text(
+                "on a 2000-tick chart at 70%, the alarm starts judging past tick \
                      1400. The bar is still moving, so the signal is marked \"preview\" \
                      — and if it stops qualifying before the close, the chart says so.",
-                );
-            });
-        }
-    }
-
-    /// How often it repeats: once per bar, or on a cooldown.
-    fn repeat_row(&mut self, ui: &mut egui::Ui) {
-        let form = &mut *self.form;
-        ui.horizontal(|ui| {
-            ui.label("repeat:");
-            let once = form.alarm_repeat != "cooldown";
-            if ui
-                .selectable_label(once, "once per bar")
-                .on_hover_text("one sound per bar, however many prints agree")
-                .clicked()
-            {
-                form.alarm_repeat = "once_per_bar".to_owned();
-            }
-            if ui.selectable_label(!once, "every").clicked() {
-                form.alarm_repeat = "cooldown".to_owned();
-            }
-            if form.alarm_repeat == "cooldown" {
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_cooldown_secs)
-                        .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
-                );
-                ui.label("s").on_hover_text(
-                    "counted across bars, not reset by one closing — the rule for a \
-                     trader who wants a reminder rather than one notice",
-                );
-            }
+            );
         });
     }
+    if alarm_when != form(session).alarm_when {
+        session.update(Intent::Edit(Field::AlarmWhen(alarm_when == "share")));
+    }
+    if alarm_share_percent != form(session).alarm_share_percent {
+        session.update(Intent::Edit(Field::AlarmShare(alarm_share_percent)));
+    }
+}
+fn repeat_row(session: &mut Session<'_>, ui: &mut egui::Ui) {
+    let mut alarm_repeat = form(session).alarm_repeat.clone();
+    let mut alarm_cooldown_secs = form(session).alarm_cooldown_secs;
 
-    /// The sound picker and its audition. Returns the cue a Test press
-    /// asks the host to play.
-    fn sound_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        current: AlertSound,
-        drop_sound_list_open: bool,
-    ) -> Option<Cue> {
-        let form = &mut *self.form;
-        let mut audition = None;
-        ui.horizontal(|ui| {
-            ui.label("sound");
-            const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
-            /// The shortest the sound list is allowed to be, in points:
-            /// a heading and two names, enough to see that it scrolls.
-            const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
-            if drop_sound_list_open {
-                // The capture hook's one click: open the list the way the
-                // button's own click does. The popup id is the widget id
-                // plus "popup", and the widget id is the salt *as an `Id`*
-                // under this `Ui` — how `ComboBox::from_id_salt` derives
-                // it. The one private detail this hook depends on; a
-                // capture that opens nothing is the symptom if egui moves
-                // it.
-                let button_id = ui.make_persistent_id(egui::Id::new(SOUND_PICKER_ID));
-                ui.memory_mut(|memory| memory.open_popup(button_id.with("popup")));
-            }
-            // The list scrolls inside the room under the button. egui flips
-            // a combo above its button only from the size it remembered
-            // last frame, and a thirty-two-row list opened from the last
-            // rows of a dialog docked at the window's foot otherwise runs
-            // off the screen; a shorter list that scrolls is the honest
-            // answer, and the headings keep the scroll short.
-            let room_below = ui.ctx().screen_rect().bottom()
-                - ui.next_widget_position().y
-                - ui.spacing().interact_size.y
-                - ui.spacing().menu_margin.sum().y;
-            // `min` then `max`, not `clamp`: `clamp` asserts its bounds are
-            // ordered, and a style whose combo height is under the floor
-            // must shorten the list, not crash the dialog.
-            let list_height = room_below
-                .min(ui.spacing().combo_height)
-                .max(SOUND_PICKER_MIN_HEIGHT);
-            egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
-                .selected_text(current.label())
-                .height(list_height)
-                .show_ui(ui, |ui| {
-                    // Grouped under the catalogue's headings: five system
-                    // beeps, then the clips that behave like alarms, then
-                    // the ones that behave like a room. A flat list of
-                    // thirty-two names would make the trader read every
-                    // row to find the phone.
-                    for category in SoundCategory::ALL {
-                        ui.label(egui::RichText::new(category.label()).small().weak());
-                        for sound in AlertSound::in_category(category) {
-                            if ui
-                                .selectable_label(sound == current, sound.label())
-                                .clicked()
-                            {
-                                form.alarm_sound = sound.token().to_owned();
-                            }
+    ui.horizontal(|ui| {
+        ui.label("repeat:");
+        let once = alarm_repeat != "cooldown";
+        if ui
+            .selectable_label(once, "once per bar")
+            .on_hover_text("one sound per bar, however many prints agree")
+            .clicked()
+        {
+            alarm_repeat = "once_per_bar".to_owned();
+        }
+        if ui.selectable_label(!once, "every").clicked() {
+            alarm_repeat = "cooldown".to_owned();
+        }
+        if alarm_repeat == "cooldown" {
+            ui.add(
+                egui::DragValue::new(&mut alarm_cooldown_secs)
+                    .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
+            );
+            ui.label("s").on_hover_text(
+                "counted across bars, not reset by one closing — the rule for a \
+                     trader who wants a reminder rather than one notice",
+            );
+        }
+    });
+    if alarm_repeat != form(session).alarm_repeat {
+        session.update(Intent::Edit(Field::AlarmRepeat(alarm_repeat == "cooldown")));
+    }
+    if alarm_cooldown_secs != form(session).alarm_cooldown_secs {
+        session.update(Intent::Edit(Field::AlarmCooldown(alarm_cooldown_secs)));
+    }
+}
+fn sound_row(
+    session: &mut Session<'_>,
+    ui: &mut egui::Ui,
+    current: AlertSound,
+    drop_sound_list_open: bool,
+) {
+    let mut alarm_sound = form(session).alarm_sound.clone();
+
+    ui.horizontal(|ui| {
+        ui.label("sound");
+        const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
+        /// The shortest the sound list is allowed to be, in points:
+        /// a heading and two names, enough to see that it scrolls.
+        const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
+        if drop_sound_list_open {
+            // The capture hook's one click: open the list the way the
+            // button's own click does. The popup id is the widget id
+            // plus "popup", and the widget id is the salt *as an `Id`*
+            // under this `Ui` — how `ComboBox::from_id_salt` derives
+            // it. The one private detail this hook depends on; a
+            // capture that opens nothing is the symptom if egui moves
+            // it.
+            let button_id = ui.make_persistent_id(egui::Id::new(SOUND_PICKER_ID));
+            ui.memory_mut(|memory| memory.open_popup(button_id.with("popup")));
+        }
+        // The list scrolls inside the room under the button. egui flips
+        // a combo above its button only from the size it remembered
+        // last frame, and a thirty-two-row list opened from the last
+        // rows of a dialog docked at the window's foot otherwise runs
+        // off the screen; a shorter list that scrolls is the honest
+        // answer, and the headings keep the scroll short.
+        let room_below = ui.ctx().screen_rect().bottom()
+            - ui.next_widget_position().y
+            - ui.spacing().interact_size.y
+            - ui.spacing().menu_margin.sum().y;
+        // `min` then `max`, not `clamp`: `clamp` asserts its bounds are
+        // ordered, and a style whose combo height is under the floor
+        // must shorten the list, not crash the dialog.
+        let list_height = room_below
+            .min(ui.spacing().combo_height)
+            .max(SOUND_PICKER_MIN_HEIGHT);
+        egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
+            .selected_text(current.label())
+            .height(list_height)
+            .show_ui(ui, |ui| {
+                // Grouped under the catalogue's headings: five system
+                // beeps, then the clips that behave like alarms, then
+                // the ones that behave like a room. A flat list of
+                // thirty-two names would make the trader read every
+                // row to find the phone.
+                for category in SoundCategory::ALL {
+                    ui.label(egui::RichText::new(category.label()).small().weak());
+                    for sound in AlertSound::in_category(category) {
+                        if ui
+                            .selectable_label(sound == current, sound.label())
+                            .clicked()
+                        {
+                            alarm_sound = sound.token().to_owned();
                         }
                     }
-                });
-            if ui
-                .button("Test")
-                .on_hover_text(
-                    "play it now, cut where the row below says, so the sound is chosen \
+                }
+            });
+        if ui
+            .button("Test")
+            .on_hover_text(
+                "play it now, cut where the row below says, so the sound is chosen \
                      with the ears",
-                )
-                .clicked()
-            {
-                // Same door as a real alarm, and the same cue — length
-                // included — so an audition that cannot be heard reports
-                // itself exactly as a missed signal would, and one that can
-                // is what the signal will sound like.
-                // The speaker is the host's — one sink, shared with every
-                // armed instance — so the audition is asked for rather than
-                // played here. Same door, same cue, and the same report of a
-                // sound that could not be heard.
-                audition = Some(Cue::new(current, form.alarm_play_secs));
-            }
-        });
-        audition
+            )
+            .clicked()
+        {
+            // Same door as a real alarm, and the same cue — length
+            // included — so an audition that cannot be heard reports
+            // itself exactly as a missed signal would, and one that can
+            // is what the signal will sound like.
+            // The speaker is the host's — one sink, shared with every
+            // armed instance — so the audition is asked for rather than
+            // played here. Same door, same cue, and the same report of a
+            // sound that could not be heard.
+            session.update(Intent::TestSound { current });
+        }
+    });
+    if alarm_sound != form(session).alarm_sound {
+        session.update(Intent::Edit(Field::AlarmSound(
+            AlertSound::from_token(&alarm_sound).unwrap_or_default(),
+        )));
     }
-
-    /// Whether and where the sound is cut short.
-    fn cut_row(&mut self, ui: &mut egui::Ui, current: AlertSound) {
-        let form = &mut *self.form;
-        ui.horizontal(|ui| {
-            let mut cut = form.alarm_play_secs.is_some();
-            if ui
-                .checkbox(&mut cut, "stop after")
-                .on_hover_text(
-                    "cut the sound here rather than letting it run to its end — a nature \
+}
+fn cut_row(session: &mut Session<'_>, ui: &mut egui::Ui, current: AlertSound) {
+    ui.horizontal(|ui| {
+        let mut cut = form(session).alarm_play_secs.is_some();
+        if ui
+            .checkbox(&mut cut, "stop after")
+            .on_hover_text(
+                "cut the sound here rather than letting it run to its end — a nature \
                      clip runs for minutes, and an alarm that outstays its news is one the \
                      trader learns to talk over. Off, the sound plays whole.",
-                )
-                .changed()
-            {
-                form.alarm_play_secs = cut.then_some(presets::DEFAULT_ALARM_PLAY_SECS);
-            }
-            if let Some(secs) = form.alarm_play_secs.as_mut() {
-                ui.add(
-                    egui::DragValue::new(secs)
-                        .range(presets::MIN_ALARM_PLAY_SECS..=presets::MAX_ALARM_PLAY_SECS),
-                );
-                ui.label("s");
-                if !current.can_be_cut() {
-                    // Honest rather than silent: the cut is stored and
-                    // applies the moment a clip is picked, but this sound
-                    // is one beep the operating system plays whole.
-                    ui.weak("(a system sound is one beep — the cut applies to the clips)");
-                }
-            }
-        });
-    }
-}
-
-impl Surface for StrategyPopupSurface {
-    fn id(&self) -> &'static str {
-        "strategy-popup"
-    }
-
-    /// No hook of its own, on purpose. The dialog arms a **drawn region**, so
-    /// staging it means placing that region first — a form opened over a
-    /// drawing that does not exist photographs a dialog nobody could press
-    /// Arm on. `QUANTICK_STRATEGY_DEMO` therefore stages both, from the host
-    /// that owns the drawing, and reaches this surface through [`Self::open`]
-    /// and [`Self::stage_sound_picker`]: the same door a right-click uses.
-    #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
-
-    /// The arming dialog. Drains the panes' menu requests first, so the
-    /// click that chose "Add strategy…" opens the form on this same frame.
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        let Some(mut popup) = self.popup.take() else {
-            return SurfaceResponse::default();
-        };
-        // The dialog speaks for one drawing on one tab. Switching tabs
-        // closes it: drawing ids are per-pane counters, and the same id
-        // over there names an unrelated object.
-        if popup.tab != env.active_tab {
-            return SurfaceResponse::default();
+            )
+            .changed()
+        {
+            session.update(Intent::Edit(Field::AlarmCut(cut)));
         }
-        let mut open = true;
-        let mut footer = None;
-        let mut test_alert = None;
-        // The form grew past a 900 pt window once the alarm section unfolds,
-        // and an anchored, non-resizable window simply clipped the rows past
-        // the edge — including **Arm**, which makes the dialog unusable at
-        // that height rather than merely cramped. The body scrolls instead,
-        // and its ceiling is read from the viewport rather than fixed, so the
-        // same form fits a laptop and still uses a tall monitor.
-        let max_body = (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION)
-            .max(ARM_DIALOG_MIN_BODY_PT);
-        egui::Window::new("Arm strategy")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(max_body)
-                    .show(ui, |ui| {
-                        popup.preset_row(ui, &self.bank);
-                        trade_fields(ui, &mut popup.form);
-                        ui.separator();
-                        self.draw_alarm_controls(
-                            ui,
-                            popup.side,
-                            &mut popup.form,
-                            env,
-                            &mut test_alert,
-                        );
-                        ui.separator();
-                        popup.bank_row(ui, &mut self.bank);
-                    });
-                footer = popup.footer(ui);
-            });
-        let mut arm = None;
-        let mut done = false;
-        match footer {
-            None => {}
-            Some(Footer::Arm(request)) => arm = Some(request),
-            Some(Footer::Cancel) => done = true,
-        }
-        if !done && open {
-            self.popup = Some(popup);
-        }
-        SurfaceResponse {
-            arm_strategy: arm,
-            test_alert,
-            ..SurfaceResponse::default()
-        }
-    }
-}
-
-/// What the dialog's footer was pressed for.
-enum Footer {
-    /// Ask the host to arm the form; the dialog stays open for the answer.
-    Arm(ArmRequest),
-    /// Close the dialog, arming nothing.
-    Cancel,
-}
-
-impl StrategyPopup {
-    /// The bank preset the form starts from; picking one replaces the form.
-    fn preset_row(&mut self, ui: &mut egui::Ui, bank: &StrategyBank) {
-        ui.horizontal(|ui| {
-            ui.label("preset");
-            let current = self.preset_choice.as_deref().unwrap_or("custom");
-            egui::ComboBox::from_id_salt("strategy_preset_pick")
-                .selected_text(current.to_owned())
-                .show_ui(ui, |ui| {
-                    let names: Vec<String> = bank.names().map(str::to_owned).collect();
-                    for name in names {
-                        let picked = self.preset_choice.as_deref() == Some(name.as_str());
-                        if ui.selectable_label(picked, &name).clicked()
-                            && let Some(stored) = bank.get(&name)
-                        {
-                            self.form = stored.clone();
-                            self.preset_choice = Some(name.clone());
-                        }
-                    }
-                });
-        });
-    }
-
-    /// Save the form into the bank under a typed name, or delete the preset
-    /// it was seeded from.
-    fn bank_row(&mut self, ui: &mut egui::Ui, bank: &mut StrategyBank) {
-        ui.horizontal(|ui| {
+        if let Some(mut secs) = form(session).alarm_play_secs {
             ui.add(
-                egui::TextEdit::singleline(&mut self.save_name)
-                    .hint_text("preset name")
-                    .desired_width(140.0),
+                egui::DragValue::new(&mut secs)
+                    .range(presets::MIN_ALARM_PLAY_SECS..=presets::MAX_ALARM_PLAY_SECS),
             );
-            let name = self.save_name.trim().to_owned();
-            if ui
-                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                .clicked()
-            {
-                bank.save(&name, self.form.clone());
-                self.preset_choice = Some(name);
+            if Some(secs) != form(session).alarm_play_secs {
+                session.update(Intent::Edit(Field::AlarmSeconds(secs)));
             }
-            if let Some(chosen) = self.preset_choice.clone()
-                && ui
-                    .button("Delete preset")
-                    .on_hover_text("remove it from the bank; the form keeps its values")
-                    .clicked()
-            {
-                bank.remove(&chosen);
-                self.preset_choice = None;
+            ui.label("s");
+            if !current.can_be_cut() {
+                // Honest rather than silent: the cut is stored and
+                // applies the moment a clip is picked, but this sound
+                // is one beep the operating system plays whole.
+                ui.weak("(a system sound is one beep — the cut applies to the clips)");
             }
-        });
-    }
-
-    /// Outside the scroll: **Arm** is the one control the dialog exists
-    /// for, and a form that grows must never be able to push it off the
-    /// bottom. Body scrolls, footer stays. The error goes with it — a
-    /// refusal the trader has to scroll to find reads as a dialog that did
-    /// nothing.
-    fn footer(&self, ui: &mut egui::Ui) -> Option<Footer> {
-        let palette = theme::get(ui.ctx());
-        if let Some(error) = &self.error {
-            ui.colored_label(palette.sell(), error);
         }
-        ui.separator();
-        let mut pressed = None;
-        ui.horizontal(|ui| {
-            if ui.button("Arm").clicked() {
-                let label = self
-                    .preset_choice
-                    .clone()
-                    .or_else(|| {
-                        let name = self.save_name.trim();
-                        (!name.is_empty()).then(|| name.to_owned())
-                    })
-                    .unwrap_or_else(|| "custom".to_owned());
-                // Asked for, not performed: arming reaches into the pane,
-                // the simulator and the alarm scheduler, none of which a
-                // surface may touch. The dialog therefore stays open until
-                // the host answers through
-                // [`StrategyPopupSurface::settle_arm`] — which closes it on
-                // success and writes the refusal into the footer otherwise.
-                pressed = Some(Footer::Arm(ArmRequest {
-                    side: self.side,
-                    drawing: self.drawing,
-                    form: Box::new(self.form.clone()),
-                    label,
-                }));
-            }
-            if ui.button("Cancel").clicked() {
-                pressed = Some(Footer::Cancel);
-            }
-        });
-        pressed
-    }
+    });
 }
-
-/// The trading half of the form: side, size, the force band, the projected
-/// brackets and what happens after a fill or a cut.
-fn trade_fields(ui: &mut egui::Ui, form: &mut presets::StoredPreset) {
+fn trade_fields(ui: &mut egui::Ui, session: &mut Session<'_>) {
     egui::Grid::new("strategy_trade_fields")
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Side");
             ui.horizontal(|ui| {
-                let buy = form.side == "buy";
+                let buy = form(session).side == "buy";
                 if ui.selectable_label(buy, "BUY").clicked() {
-                    form.side = "buy".to_owned();
+                    session.update(Intent::Edit(Field::Side(true)));
                 }
                 if ui.selectable_label(!buy, "SELL").clicked() {
-                    form.side = "sell".to_owned();
+                    session.update(Intent::Edit(Field::Side(false)));
                 }
             });
             ui.end_row();
-            for (label, text) in [
-                ("Quantity", &mut form.quantity),
-                ("Minimum body / average", &mut form.min_factor),
-                ("Maximum body / average", &mut form.max_factor),
-                ("Minimum candle (pts)", &mut form.min_range),
-                ("TP / range ahead", &mut form.tp_mult),
-                ("SL / range behind", &mut form.sl_mult),
+            for (label, field) in [
+                ("Quantity", TextField::Quantity),
+                ("Minimum body / average", TextField::MinFactor),
+                ("Maximum body / average", TextField::MaxFactor),
+                ("Minimum candle (pts)", TextField::MinRange),
+                ("TP / range ahead", TextField::TpMult),
+                ("SL / range behind", TextField::SlMult),
             ] {
                 ui.label(label);
-                ui.add(egui::TextEdit::singleline(text).desired_width(70.0));
+                let mut text = field.read(form(session)).to_owned();
+                if ui
+                    .add(egui::TextEdit::singleline(&mut text).desired_width(70.0))
+                    .changed()
+                {
+                    session.update(Intent::Edit(Field::Text(field, text)));
+                }
                 ui.end_row();
             }
             ui.label("Average body window");
-            ui.add(
-                egui::DragValue::new(&mut form.window)
-                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-            );
+            let mut window = form(session).window;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut window)
+                        .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+                )
+                .changed()
+            {
+                session.update(Intent::Edit(Field::Window(window)));
+            }
             ui.end_row();
         });
     ui.label("The candle floor includes wicks. Zero disables the floor or a projected leg.");
-    let mut auto = form.rearm == "auto";
+    let mut auto = form(session).rearm == "auto";
     if ui
         .checkbox(&mut auto, "re-arm automatically after the operation closes")
         .on_hover_text("off = one shot per arming, the over-fire guard")
         .changed()
     {
-        form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+        session.update(Intent::Edit(Field::Rearm(auto)));
     }
-    let mut retest = form.on_break == "retest_limit";
+    let mut retest = form(session).on_break == "retest_limit";
     if ui
         .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
         .on_hover_text(
@@ -692,111 +509,10 @@ fn trade_fields(ui: &mut egui::Ui, form: &mut presets::StoredPreset) {
         )
         .changed()
     {
-        form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
+        session.update(Intent::Edit(Field::OnBreak(retest)));
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Instant;
-
-    use super::*;
-
-    fn env(active_tab: u64) -> SurfaceEnv<'static> {
-        SurfaceEnv {
-            active_tab,
-            ..SurfaceEnv::quiet(Instant::now())
-        }
-    }
-
-    fn form() -> presets::StoredPreset {
-        presets::StoredPreset::starting_point(quantick_engine::Side::Buy)
-    }
-
-    /// A dialog nobody opened asks for nothing, and costs one `Option` test.
-    #[test]
-    fn a_closed_dialog_asks_for_nothing() {
-        let ctx = egui::Context::default();
-        let mut surface = StrategyPopupSurface::default();
-        assert!(!surface.is_open());
-        let mut response = SurfaceResponse::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            response = surface.draw(ctx, &env(0));
-        });
-        assert_eq!(response, SurfaceResponse::default());
-    }
-
-    /// Drawing ids are per-pane counters, so the same id on another tab names
-    /// an unrelated object. Switching tabs therefore closes the dialog rather
-    /// than arming the wrong drawing.
-    #[test]
-    fn switching_tabs_closes_the_dialog() {
-        let ctx = egui::Context::default();
-        let mut surface = StrategyPopupSurface::default();
-        surface.open(0, pane::PaneSide::Flow, drawings::DrawingId(1), form());
-        let _ = ctx.run(Default::default(), |ctx| {
-            surface.draw(ctx, &env(1));
-        });
-        assert!(
-            !surface.is_open(),
-            "the dialog does not follow the trader to another tab"
-        );
-    }
-
-    /// An open dialog nobody touched survives the frame with the form intact
-    /// — several fields long, and losing it on any quiet frame would make it
-    /// unusable.
-    #[test]
-    fn an_untouched_dialog_survives_the_frame() {
-        let ctx = egui::Context::default();
-        let mut surface = StrategyPopupSurface::default();
-        surface.open(0, pane::PaneSide::Flow, drawings::DrawingId(1), form());
-        surface.form_mut().expect("the dialog is open").quantity = "3".to_owned();
-        let mut response = SurfaceResponse::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            response = surface.draw(ctx, &env(0));
-        });
-        assert!(surface.is_open());
-        assert_eq!(
-            surface.form_mut().expect("still open").quantity.as_str(),
-            "3"
-        );
-        assert!(response.arm_strategy.is_none());
-        assert!(response.test_alert.is_none());
-    }
-
-    /// The host's refusal lands in the footer and the form stays exactly as
-    /// it was — one corrected field from an arming that works.
-    #[test]
-    fn a_refused_arming_keeps_the_form_and_shows_why() {
-        let mut surface = StrategyPopupSurface::default();
-        surface.open(0, pane::PaneSide::Flow, drawings::DrawingId(1), form());
-        surface.form_mut().expect("the dialog is open").quantity = "not a number".to_owned();
-        surface.settle_arm(Err("a field does not parse".to_owned()));
-        assert!(surface.is_open(), "a refusal does not close the dialog");
-        assert_eq!(surface.error(), Some("a field does not parse"));
-        assert_eq!(
-            surface.form_mut().expect("still open").quantity.as_str(),
-            "not a number"
-        );
-    }
-
-    /// And an arming that worked closes it.
-    #[test]
-    fn an_accepted_arming_closes_the_dialog() {
-        let mut surface = StrategyPopupSurface::default();
-        surface.open(0, pane::PaneSide::Flow, drawings::DrawingId(1), form());
-        surface.settle_arm(Ok(()));
-        assert!(!surface.is_open());
-    }
-
-    /// The host may answer after the trader has already cancelled. An answer
-    /// with nowhere to land is dropped, not a panic.
-    #[test]
-    fn an_answer_for_a_dialog_that_left_is_dropped() {
-        let mut surface = StrategyPopupSurface::default();
-        surface.settle_arm(Err("too late".to_owned()));
-        assert!(!surface.is_open());
-        assert_eq!(surface.error(), None);
-    }
-}
+#[path = "strategy_popup/tests/mod.rs"]
+mod tests;

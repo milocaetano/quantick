@@ -347,7 +347,7 @@ fn alert_socket_target_binding_and_reopen() {
         "rectangle",
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     let selector = schema::DrawingSelector {
@@ -483,7 +483,7 @@ fn alerts_right_rail_entry() {
         let response = remote_call(&mut app, &ctx, &mut operator, schema::OPEN, json!({}));
         assert_eq!(success_result(&response)["open"], true);
         assert!(app.surfaces.alerts.is_open());
-        assert!(app.dock.visible());
+        assert!(app.surfaces.dock.visible());
         assert!(app.chrome_reads().alerts_open);
         let scene = crate::control::scene_snapshot(&app);
         let control = scene

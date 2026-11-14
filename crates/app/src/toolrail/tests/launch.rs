@@ -26,7 +26,7 @@ fn launch_capture_reads_each_input_once_in_legacy_order_without_mutation() {
             "QUANTICK_TOOLBOX_FLYOUT",
         ]
     );
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     assert_eq!(rail.tool(), Tool::Pointer);
     assert!(!rail.magnet());
     assert!(rail.favorites().is_empty());
@@ -50,7 +50,7 @@ fn launch_capture_reads_each_input_once_in_legacy_order_without_mutation() {
 
 #[test]
 fn absent_or_invalid_launch_inputs_preserve_the_existing_recipient_state() {
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.arm(Tool::Drawing(DrawingTool::by_id("measure").unwrap()));
     rail.set_magnet(true);
     rail.set_favorites(&["measure".into()]);
@@ -84,7 +84,7 @@ fn malformed_unicode_is_absence_for_every_launch_input() {
         use std::os::unix::ffi::OsStringExt;
         std::ffi::OsString::from_vec(vec![0xff])
     };
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     rail.set_favorites(&["measure".into()]);
     let outcome = rail.apply_launch(ToolRailLaunch::capture(|_| Some(invalid.clone())));
     assert!(!outcome.favorites_staged);
@@ -97,7 +97,7 @@ fn malformed_unicode_is_absence_for_every_launch_input() {
 
 #[test]
 fn a_pending_flyout_can_be_rearmed_after_unknown_family_retry() {
-    let mut rail = ToolRail::new();
+    let mut rail = ToolRail::new_rail();
     let ctx = egui::Context::default();
     rail.apply_launch(ToolRailLaunch::capture(|name| {
         (name == "QUANTICK_TOOLBOX_FLYOUT").then(|| "unknown".into())

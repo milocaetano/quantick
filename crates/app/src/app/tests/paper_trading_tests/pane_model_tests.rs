@@ -25,7 +25,8 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
 
     // Something anchored to a bar index, and a view off the live edge, so
     // the shift has something to preserve.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);

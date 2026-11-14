@@ -38,7 +38,14 @@ fn script_library_control_discovery_permissions_paging_and_copy_retry() {
     )
     .0;
     assert_eq!(error_code(&refusal), Some(codes::PERMISSION_DENIED));
-    assert!(app.surfaces.script_editor.state.document.is_none());
+    assert!(
+        app.surfaces
+            .script_editor
+            .model_state
+            .editor()
+            .document
+            .is_none()
+    );
     let mut client = connect(
         &directory,
         &options(

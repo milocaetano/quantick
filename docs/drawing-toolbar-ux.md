@@ -345,7 +345,7 @@ scroll_length(k)             = fixed_length(k) + 2*chevron(18) + floor(4 slots =
 ```
 
 For today's registry (`n = 9`, no pins). The numbers are pinned by
-`stage_lengths_match_the_spec_for_the_shipped_registry`:
+`crates/ui-model/src/tool_rail/tests.rs::stages_fold_the_shipped_registry_by_extent`:
 
 | Stage | Trigger | Rail shows | Length |
 |---|---|---|---|

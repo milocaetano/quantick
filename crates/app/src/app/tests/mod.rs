@@ -23,6 +23,8 @@
 // work around a problem that was really the shadowing. There is no such rule.
 // The suffix fixes it; the second glob was redundant and is gone.
 
+use crate::toolrail::ToolRailExt as _;
+use crate::toolrail::tests::ToolRailTestExt as _;
 // `DrawingsDemo` reached these files through `app.rs`'s own imports until the
 // demo appliers moved to `app::demo_hooks`. Bound here, beside the other
 // test-only binding, so the one `use super::*` per file still carries it.
@@ -36,6 +38,29 @@ use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
 
+pub(crate) fn update_indicator_settings(
+    app: &mut QuantickApp,
+    intent: quantick_ui_model::indicator_settings::Intent,
+) {
+    let mut effects = Vec::new();
+    app.surfaces.indicator_settings.with_updates(
+        |effect| effects.extend(effect.model_effects),
+        |_, session| session.update(intent),
+    );
+    for effect in effects {
+        if let quantick_ui_model::HostEffect::IndicatorSettings(effects) = effect {
+            assert!(
+                effects.local_operation.is_none(),
+                "fixture does not execute preset IO"
+            );
+            for change in effects.changes {
+                app.indicator_wiring()
+                    .apply_indicator_settings_change(change.into());
+            }
+        }
+    }
+}
+
 mod alert_target_binding_tests;
 mod alerts_control_tests;
 mod alerts_native_tests;
@@ -47,6 +72,7 @@ mod calendar_history_tests;
 mod canvas_follow_tests;
 mod canvas_layout_tests;
 mod capsule_tests;
+mod catalog_registration_tests;
 mod chart_settings_local_tests;
 mod chart_view_tests;
 mod context_menu_settings_tests;
@@ -145,13 +171,13 @@ impl QuantickApp {
         arrangement_adapter::ArrangementRead {
             tabs: &self.runtime.tabs,
             config: &self.config,
-            toolrail: &self.toolrail,
+            toolrail: &self.surfaces.toolrail,
             tz: &self.runtime.tz,
-            dock: &self.dock,
+            dock: &self.surfaces.dock.model_state,
             show_perf: self.health.show_perf,
             record_deals: self.chrome.record_deals,
             history: &self.runtime.history,
-            drawing_chrome: &self.drawings.chrome,
+            drawing_chrome: &self.surfaces.drawing_chrome,
             workspace_book: self.runtime.workspace.book.book(),
         }
     }
@@ -160,7 +186,7 @@ impl QuantickApp {
         workspace_save_adapter::WorkspaceRead {
             arrangement: self.arrangement_state(),
             session: self.runtime.workspace.session(),
-            replay_view: &self.replay_view,
+            replay_view: &self.surfaces.replay_browser,
         }
     }
 
@@ -631,8 +657,8 @@ fn with_flow_pane<R>(
                 footprint_config,
                 ..
             },
-        toolrail,
         drawings,
+        surfaces,
         ..
     } = app;
     let tab_id = tabs.id_at(tabs.active_index());
@@ -640,9 +666,9 @@ fn with_flow_pane<R>(
     let mut chrome = pane::PaneChrome {
         tab: tab_id,
         side: pane::PaneSide::Flow,
-        toolrail,
+        toolrail: &mut surfaces.toolrail,
         presets: &drawings.presets,
-        drawing_chrome: &mut drawings.chrome,
+        drawing_chrome: &mut surfaces.drawing_chrome,
         begin_text_edit: &mut begin_text_edit,
         style,
         tz: *tz,
@@ -969,7 +995,7 @@ fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end
 /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
 /// test that proves this shortcut matches the real button.
 fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     // Two frames: the first opens the window, the second lets it settle
     // its size and automatic placement before anything reads its rect.
     run_frame(app, ctx);
@@ -990,7 +1016,7 @@ fn arm_drawing_from_toolbox(
 ) -> drawings::DrawingTool {
     let drawing = drawing_tool(id);
     let tool = Tool::Drawing(drawing);
-    if let Some(button) = app.toolrail.button_rect(tool) {
+    if let Some(button) = app.surfaces.toolrail.button_rect(tool) {
         click_chart(app, ctx, button.center());
     } else {
         // A folded family member has no direct slot: open the family
@@ -1006,18 +1032,19 @@ fn arm_drawing_from_toolbox(
                     .family()
                     .is_some_and(|candidate_family| candidate_family.id == family.id)
             })
-            .find_map(|candidate| app.toolrail.button_rect(Tool::Drawing(candidate)))
+            .find_map(|candidate| app.surfaces.toolrail.button_rect(Tool::Drawing(candidate)))
             .expect("the family slot was rendered");
         click_chart(app, ctx, slot.max - egui::vec2(4.0, 4.0));
         run_frame(app, ctx);
         let row = app
+            .surfaces
             .toolrail
             .flyout_row_rect(drawing)
             .expect("the flyout lists the folded member");
         click_chart(app, ctx, row.center());
     }
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         tool,
         "arming {id} through the rail must land"
     );
@@ -1235,7 +1262,8 @@ fn chrome_with_popup_at(position: Option<[f32; 2]>) -> ui_state::SavedChrome {
 /// Put a horizontal line on the chart at that height and leave it there.
 /// Two of them is the setup every "the next drawing too" claim needs.
 fn draw_horizontal_line(app: &mut QuantickApp, ctx: &egui::Context, price_y: f32) {
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(app, ctx, egui::pos2(700.0, price_y));
     run_frame(app, ctx);
@@ -1254,8 +1282,8 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
     // The write is queued during the release frame and flushed at the top
     // of the next one, where every other workspace write lives.
     run_frame(app, ctx);
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .inspector_pos()
         .expect("the drag records a position")
 }
@@ -1269,7 +1297,7 @@ fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str
         .set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
     app.workspace_save_adapter().save_workspace("test");
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     assert!(
         app.runtime.workspace.ui_state_path().exists(),
         "the cockpit is on disk"
@@ -1286,7 +1314,7 @@ fn place_drawing(
     id: &str,
     anchors: &[egui::Pos2],
 ) -> usize {
-    app.toolrail.arm(Tool::Drawing(drawing_tool(id)));
+    app.surfaces.toolrail.arm(Tool::Drawing(drawing_tool(id)));
     for anchor in anchors {
         click_chart(app, ctx, *anchor);
     }
@@ -1312,11 +1340,11 @@ fn select_and_open_popup(app: &mut QuantickApp, ctx: &egui::Context, index: usiz
     // value that would make a position assertion pass on a popup that is
     // no longer floating. Ask the app what it drew before reading egui.
     assert!(
-        app.drawings.chrome.inspector_open(),
+        app.surfaces.drawing_chrome.inspector_open(),
         "the gear's door is open"
     );
     assert!(
-        !app.drawings.chrome.inspector_pinned(),
+        !app.surfaces.drawing_chrome.inspector_pinned(),
         "and the popup is floating, not docked"
     );
     assert_eq!(
@@ -1598,10 +1626,12 @@ struct TabEnds {
 fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
     app.apply_tab_action(TabAction::New);
     assert!(
-        app.surfaces.market_palette.is_open(),
+        app.surfaces.market_palette.model_state.is_open(),
         "the + opens the picker"
     );
-    app.surfaces.market_palette.close();
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Close);
 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);

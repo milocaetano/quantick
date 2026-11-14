@@ -1,193 +1,157 @@
 use super::*;
 use egui_phosphor::regular as icons;
-impl AlertSurface {
-    pub(super) fn draw_manager(
-        &mut self,
-        ui: &mut egui::Ui,
-        book: &AlertBook,
-        context: Option<&Context>,
-        response: &mut SurfaceResponse,
-    ) {
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.history, false, format!("{} Alerts", icons::BELL));
-            ui.selectable_value(&mut self.history, true, "History");
-            if ui
-                .add_enabled(
-                    context.is_some(),
-                    egui::Button::new(format!("{} + Create", icons::BELL)),
-                )
-                .on_hover_text("Create an alert for the focused chart")
-                .clicked()
-                && let Some(context) = context
-            {
-                self.create(context, None);
+use quantick_alerts::{AlertCommand, AlertId, AlertStatus, MAX_HISTORY, Unavailable};
+
+pub(super) fn draw_manager(
+    ui: &mut egui::Ui,
+    state: &State,
+    book: &AlertBook,
+    context: Option<&Context>,
+    intents: &mut Vec<Intent>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        let mut history = state.history();
+        ui.selectable_value(&mut history, false, format!("{} Alerts", icons::BELL));
+        ui.selectable_value(&mut history, true, "History");
+        if history != state.history() {
+            intents.push(Intent::ShowHistory(history));
+        }
+        if ui
+            .add_enabled(
+                context.is_some(),
+                egui::Button::new(format!("{} + Create", icons::BELL)),
+            )
+            .on_hover_text("Create an alert for the focused chart")
+            .clicked()
+            && let Some(context) = context
+        {
+            intents.push(Intent::Create {
+                context: Box::new(context.clone()),
+                target: None,
+            });
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Search");
+        let mut search = state.search().to_owned();
+        let edit = egui::TextEdit::singleline(&mut search).desired_width(ui.available_width());
+        if ui.add(edit).changed() {
+            intents.push(Intent::Search(search));
+        }
+    });
+    let mut newest_first = state.newest_first();
+    if ui.checkbox(&mut newest_first, "Newest first").changed() {
+        intents.push(Intent::NewestFirst(newest_first));
+    }
+    ui.separator();
+    let body_height = (ui.ctx().screen_rect().height() - 180.0).max(40.0);
+    egui::ScrollArea::vertical()
+        .id_salt("alert_manager_body")
+        .max_height(body_height)
+        .show(ui, |ui| {
+            if state.history() {
+                draw_history(ui, state, book);
+            } else {
+                draw_rows(ui, state, book, context, intents);
             }
+            if let Some(message) = state.error() {
+                error(ui, message);
+            }
+            super::editor::follow_focus(ui);
         });
-        ui.horizontal(|ui| {
-            ui.label("Search");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.search).desired_width(ui.available_width()),
-            );
-        });
-        ui.checkbox(&mut self.newest_first, "Newest first");
-        ui.separator();
-        let body_height = (ui.ctx().screen_rect().height() - 180.0).max(40.0);
-        egui::ScrollArea::vertical()
-            .id_salt("alert_manager_body")
-            .max_height(body_height)
-            .show(ui, |ui| {
-                if self.history {
-                    self.draw_history(ui, book);
-                } else {
-                    self.draw_rows(ui, book, context, response);
-                }
-                if let Some(message) = &self.error {
-                    error(ui, message);
-                }
-                super::editor::follow_focus(ui);
-            });
+}
+fn draw_rows(
+    ui: &mut egui::Ui,
+    state: &State,
+    book: &AlertBook,
+    context: Option<&Context>,
+    intents: &mut Vec<Intent>,
+) {
+    let Ok(mut views) = book.views() else {
+        error(ui, "Alert definitions are unavailable.");
+        return;
+    };
+    let total = views.len();
+    let needle = state.search().to_lowercase();
+    views.retain(|view| {
+        let spec = &view.spec;
+        spec.name.to_lowercase().contains(&needle)
+            || spec.market.symbol.to_lowercase().contains(&needle)
+    });
+    if state.newest_first() {
+        views.reverse();
     }
-    fn draw_rows(
-        &mut self,
-        ui: &mut egui::Ui,
-        book: &AlertBook,
-        context: Option<&Context>,
-        response: &mut SurfaceResponse,
-    ) {
-        let Ok(mut views) = book.views() else {
-            error(ui, "Alert definitions are unavailable.");
-            return;
-        };
-        let total = views.len();
-        let needle = self.search.to_lowercase();
-        views.retain(|view| {
-            let spec = &view.spec;
-            spec.name.to_lowercase().contains(&needle)
-                || spec.market.symbol.to_lowercase().contains(&needle)
+    if views.is_empty() {
+        ui.label(match total {
+            0 => "No alerts. Create one for a price or drawing.",
+            _ => "No alerts match the search.",
         });
-        if self.newest_first {
-            views.reverse();
-        }
-        if views.is_empty() {
-            ui.label(match total {
-                0 => "No alerts. Create one for a price or drawing.",
-                _ => "No alerts match the search.",
-            });
-        }
-        for view in views {
-            ui.push_id(view.spec.id.0, |ui| {
-                ui.group(|ui| {
-                    ui.strong(&view.spec.name);
-                    super::editor::market_label(ui, &view.spec.market);
-                    ui.label(super::editor::summary(&view.spec, context));
-                    ui.label(status_label(view.status));
-                    ui.horizontal_wrapped(|ui| {
-                        if let Some(command) =
-                            status_action(ui, view.status, view.spec.id, view.revision)
-                        {
-                            response.alerts = Some(Box::new(Request {
-                                command: Some(command),
-                                ..Default::default()
-                            }));
-                        }
-                        let edit = action(ui, icons::PENCIL_SIMPLE, "Edit").clicked();
-                        let delete = action(ui, icons::TRASH, "Delete").clicked();
-                        if edit || delete {
-                            let mut context = context.cloned().unwrap_or_else(|| Context {
-                                market: view.spec.market.clone(),
-                                price: None,
-                                utc_ms: 0,
-                                display_offset_minutes: 0,
-                                drawings: Vec::new(),
-                            });
-                            if context.market != view.spec.market {
-                                context.drawings.clear();
-                                context.price = None;
-                                context.market = view.spec.market.clone();
-                            }
-                            let (expiration_choice, custom_expiry) = match view.spec.expiration {
-                                Expiration::Never => (0, context.utc_ms),
-                                Expiration::At {
-                                    utc_ms,
-                                    display_offset_minutes,
-                                } => {
-                                    context.display_offset_minutes = display_offset_minutes;
-                                    (4, utc_ms)
-                                }
-                            };
-                            let tz = quantick_civil::TzOffset::new(context.display_offset_minutes);
-                            let (_, _, _, hour, minute, _) =
-                                quantick_civil::civil_utc(custom_expiry.saturating_add(
-                                    i64::from(context.display_offset_minutes) * 60_000,
-                                ));
-                            let custom_date =
-                                quantick_civil::CivilDate::from_ms(custom_expiry, tz).iso();
-                            self.draft = Some(Draft {
-                                spec: view.spec.clone(),
-                                revision: Some(view.revision),
-                                context,
-                                subview: Subview::Conditions,
-                                resolving: None,
-                                expiration_error: None,
-                                waiting: false,
-                                confirming_delete: delete,
-                                focus_delete_cancel: delete,
-                                focus_name: true,
-                                expiration_choice,
-                                custom_expiry,
-                                custom_date,
-                                custom_hour: hour as u32,
-                                custom_minute: minute as u32,
-                            });
-                        }
-                    });
+    }
+    for view in views {
+        ui.push_id(view.spec.id.0, |ui| {
+            ui.group(|ui| {
+                ui.strong(&view.spec.name);
+                super::editor::market_label(ui, &view.spec.market);
+                ui.label(super::editor::summary(&view.spec, context));
+                ui.label(status_label(view.status));
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(command) =
+                        status_action(ui, view.status, view.spec.id, view.revision)
+                    {
+                        intents.push(Intent::Command(Box::new(command)));
+                    }
+                    let edit = action(ui, icons::PENCIL_SIMPLE, "Edit").clicked();
+                    let delete = action(ui, icons::TRASH, "Delete").clicked();
+                    if edit || delete {
+                        intents.push(Intent::EditExisting {
+                            spec: Box::new(view.spec.clone()),
+                            revision: view.revision,
+                            context: context.cloned().map(Box::new),
+                            delete,
+                        });
+                    }
                 });
             });
-        }
-    }
-    fn draw_history(&self, ui: &mut egui::Ui, book: &AlertBook) {
-        let Ok(mut events) = book.history(0, MAX_HISTORY) else {
-            error(ui, "Alert history is unavailable.");
-            return;
-        };
-        events.retain(|event| {
-            event
-                .spec
-                .name
-                .to_lowercase()
-                .contains(&self.search.to_lowercase())
         });
-        if self.newest_first {
-            events.reverse();
-        }
-        if events.is_empty() {
-            ui.label("No alert events yet.");
-        }
-        for event in events {
-            ui.push_id(event.sequence, |ui| {
-                ui.group(|ui| {
-                    ui.strong(&event.spec.name);
-                    super::editor::market_label(ui, &event.spec.market);
-                    ui.label(format!(
-                        "{} · {} · Price {}",
-                        event.spec.market.symbol, event.spec.market.aggregation, event.price
-                    ));
-                    ui.label(format!(
-                        "Received {} UTC · {:?}",
-                        quantick_civil::fmt_offset_minute(
-                            event.utc_ms,
-                            quantick_civil::TzOffset::new(0)
-                        ),
-                        event.delivery
-                    ));
-                    ui.label(&event.spec.message);
-                    ui.label(format!(
-                        "Definition revision {} · Event {}",
-                        event.definition_revision, event.sequence
-                    ));
-                });
+    }
+}
+fn draw_history(ui: &mut egui::Ui, state: &State, book: &AlertBook) {
+    let Ok(mut events) = book.history(0, MAX_HISTORY) else {
+        error(ui, "Alert history is unavailable.");
+        return;
+    };
+    let needle = state.search().to_lowercase();
+    events.retain(|event| event.spec.name.to_lowercase().contains(&needle));
+    if state.newest_first() {
+        events.reverse();
+    }
+    if events.is_empty() {
+        ui.label("No alert events yet.");
+    }
+    for event in events {
+        ui.push_id(event.sequence, |ui| {
+            ui.group(|ui| {
+                ui.strong(&event.spec.name);
+                super::editor::market_label(ui, &event.spec.market);
+                ui.label(format!(
+                    "{} · {} · Price {}",
+                    event.spec.market.symbol, event.spec.market.aggregation, event.price
+                ));
+                ui.label(format!(
+                    "Received {} UTC · {:?}",
+                    quantick_civil::fmt_offset_minute(
+                        event.utc_ms,
+                        quantick_civil::TzOffset::new(0)
+                    ),
+                    event.delivery
+                ));
+                ui.label(&event.spec.message);
+                ui.label(format!(
+                    "Definition revision {} · Event {}",
+                    event.definition_revision, event.sequence
+                ));
             });
-        }
+        });
     }
 }
 pub(super) fn status_action(

@@ -87,7 +87,7 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
     );
     let plus = app.chrome.title_bar.strip.add.unwrap().center();
     click_sized(&mut app, &ctx, egui::vec2(300.0, 760.0), plus);
-    assert!(app.surfaces.market_palette.is_open());
+    assert!(app.surfaces.market_palette.model_state.is_open());
 }
 
 #[test]
@@ -113,6 +113,93 @@ fn title_bar_window_requests_emit_native_commands_without_mutating_markets() {
             WindowState::Normal => matches!(command, egui::ViewportCommand::Maximized(false)),
             WindowState::Minimized => matches!(command, egui::ViewportCommand::Minimized(true)),
         }));
+        assert_eq!(app.runtime.tabs.active_id(), identity);
+        assert_eq!(app.runtime.tabs.len(), 1);
+    }
+}
+
+#[test]
+fn title_bar_native_clicks_traverse_registered_view_model_and_host() {
+    for (control, maximized, clicks, expected) in [
+        ("minimize", false, 1, egui::ViewportCommand::Minimized(true)),
+        ("maximize", false, 1, egui::ViewportCommand::Maximized(true)),
+        ("maximize", true, 1, egui::ViewportCommand::Maximized(false)),
+        ("drag", false, 2, egui::ViewportCommand::Maximized(true)),
+        ("drag", true, 2, egui::ViewportCommand::Maximized(false)),
+    ] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        let identity = app.runtime.tabs.active_id();
+        fn frame(
+            app: &mut QuantickApp,
+            ctx: &egui::Context,
+            maximized: bool,
+            events: Vec<egui::Event>,
+            time: f64,
+        ) -> egui::FullOutput {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 760.0),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .maximized = Some(maximized);
+            ctx.run(input, |ctx| {
+                let _ = super::super::title_bar::draw(
+                    ctx,
+                    &app.runtime.tabs,
+                    &mut app.chrome.title_bar,
+                    &mut app.surfaces,
+                );
+            })
+        }
+        frame(&mut app, &ctx, maximized, Vec::new(), 1.0);
+        let at = app
+            .chrome
+            .title_bar
+            .controls
+            .iter()
+            .find(|(id, _)| *id == control)
+            .unwrap()
+            .1
+            .center();
+        let mut native = Vec::new();
+        for click in 0..clicks {
+            for pressed in [true, false] {
+                let output = frame(
+                    &mut app,
+                    &ctx,
+                    maximized,
+                    vec![egui::Event::PointerMoved(at), pointer_button(at, pressed)],
+                    1.1 + f64::from(click) * 0.1 + if pressed { 0.0 } else { 0.02 },
+                );
+                native.extend(
+                    output
+                        .viewport_output
+                        .into_values()
+                        .flat_map(|viewport| viewport.commands),
+                );
+            }
+        }
+        assert_eq!(
+            native
+                .iter()
+                .filter(|command| **command == expected)
+                .count(),
+            1,
+            "{control}, maximized={maximized}: {native:?}"
+        );
+        if control != "minimize" {
+            assert!(native.contains(&egui::ViewportCommand::Minimized(false)));
+        }
+        assert!(!native.contains(&egui::ViewportCommand::Close));
         assert_eq!(app.runtime.tabs.active_id(), identity);
         assert_eq!(app.runtime.tabs.len(), 1);
     }
@@ -206,8 +293,12 @@ fn title_bar_idle_frames_preserve_text_focus_and_native_close_uses_normal_shutdo
     let mut draft = String::from("original");
     for frame in 0..2 {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let _ =
-                super::super::title_bar::draw(ctx, &app.runtime.tabs, &mut app.chrome.title_bar);
+            let _ = super::super::title_bar::draw(
+                ctx,
+                &app.runtime.tabs,
+                &mut app.chrome.title_bar,
+                &mut app.surfaces,
+            );
             egui::CentralPanel::default().show(ctx, |ui| {
                 let field = ui.add(egui::TextEdit::singleline(&mut draft).id(focus));
                 if frame == 0 {
@@ -310,8 +401,12 @@ fn title_bar_accepts_degenerate_client_widths_without_negative_widget_sizes() {
             ..Default::default()
         };
         let _ = ctx.run(input, |ctx| {
-            let _ =
-                super::super::title_bar::draw(ctx, &app.runtime.tabs, &mut app.chrome.title_bar);
+            let _ = super::super::title_bar::draw(
+                ctx,
+                &app.runtime.tabs,
+                &mut app.chrome.title_bar,
+                &mut app.surfaces,
+            );
         });
         assert!(
             app.chrome

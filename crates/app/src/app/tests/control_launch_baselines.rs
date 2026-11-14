@@ -216,7 +216,17 @@ fn constructor_case(case: &str, env: Env) {
         assert!(access.journal().read(1, 64, 1 << 20).events.is_empty());
         // Paint only the access panel: a full app frame would consume ACCESS.
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| access.draw_panel(ctx));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let mut env =
+                crate::surfaces::BorrowedSurfaceEnv::Access(crate::surfaces::AccessPanelEnv {
+                    access: Some(access),
+                });
+            app.surfaces.draw_slot_unscoped_with_env(
+                quantick_ui_model::Slot::MenuDialogs,
+                &mut crate::surfaces::ViewContext { ctx, ui: None },
+                Some(&mut env),
+            );
+        });
         assert_eq!(
             ctx.memory(|memory| memory
                 .area_rect(egui::Id::new("control_access_panel"))
@@ -593,7 +603,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 assert_eq!(notifications[0]["payload"]["message"], message);
                 assert_eq!(notifications[0]["actor"]["kind"], "agent");
                 if case == "F07-popup" {
-                    let popup = app.surfaces.agent_popup.pending().unwrap();
+                    let popup = app.surfaces.agent_popup.model_state.pending().unwrap();
                     assert_eq!(popup.title, "From your assistant");
                     assert_eq!(popup.message, "hello:again");
                     assert!(popup.author.contains("agent"));
@@ -699,7 +709,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
                 );
                 if case == "F10" {
                     assert_ne!(
-                        app.surfaces.toast.message(),
+                        app.surfaces.toast.model_state.message(),
                         Some("Your assistant captured a picture of this window.")
                     );
                     assert!(
@@ -732,7 +742,7 @@ fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
             if case == "F12" {
                 assert!(!bundle["screenshot"].is_null());
                 assert_eq!(
-                    app.surfaces.toast.message(),
+                    app.surfaces.toast.model_state.message(),
                     Some("Your assistant captured a picture of this window.")
                 );
             }
@@ -886,4 +896,116 @@ fn assert_combined_actions(app: &QuantickApp) {
     assert!(mark < annotation && annotation < notify);
     assert_eq!(journal[mark]["payload"]["note"], "phase");
     assert_eq!(journal[notify]["payload"]["message"], "beta");
+}
+
+/// The painted popup follows the real frame's speaker and TabRuntime routes.
+#[test]
+fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
+    use quantick_ui_model::strategy_popup::{Field, Intent, TextField};
+    struct RefusingSpeaker(Arc<Mutex<Vec<crate::audio::Cue>>>);
+    impl crate::audio::AlertSink for RefusingSpeaker {
+        fn play(&mut self, cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
+            self.0.lock().unwrap().extend_from_slice(cues);
+            Err("fixture speaker refused")
+        }
+    }
+    let (mut app, _commands) = app_with_history(30);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    app.audio.alerts = Box::new(RefusingSpeaker(calls.clone()));
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.drawings
+        .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+    pane.drawings
+        .place(rectangle, drawings::ChartPoint::at(60.0, 110.0));
+    let drawing = pane.drawings.items()[0].id;
+    pane.drawings.select(None);
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.quantity = "invalid quantity".into();
+    form.alarm = true;
+    let expected_cue =
+        crate::audio::Cue::new(crate::audio::AlertSound::default(), form.alarm_play_secs);
+    app.surfaces.strategy_popup.update(Intent::Open {
+        tab: app.runtime.tabs.active_id(),
+        side: pane::PaneSide::Flow,
+        drawing,
+        form: Box::new(form),
+    });
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let painted = run_frame(&mut app, &ctx);
+    click_chart(
+        &mut app,
+        &ctx,
+        painted_text_center(&painted, "Test").expect("audition button painted"),
+    );
+    assert_eq!(*calls.lock().unwrap(), vec![expected_cue]);
+    assert_eq!(
+        app.audio.alert_failure.as_deref(),
+        Some("fixture speaker refused")
+    );
+    // Let the anchored window settle after the new error row changes its height.
+    run_frame(&mut app, &ctx);
+    let painted = run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.surfaces
+            .strategy_popup
+            .model_state
+            .alert_failure
+            .as_deref(),
+        Some("fixture speaker refused")
+    );
+    click_chart(
+        &mut app,
+        &ctx,
+        painted_text_center(&painted, "Arm").expect("arm footer painted"),
+    );
+    let popup = app
+        .surfaces
+        .strategy_popup
+        .model_state
+        .popup()
+        .expect("real arm refusal retains popup");
+    assert_eq!(popup.form.quantity, "invalid quantity");
+    assert!(popup.error.is_some());
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .strategies
+            .anchors
+            .for_drawing(drawing)
+            .is_none()
+    );
+    app.surfaces
+        .strategy_popup
+        .update(Intent::Edit(Field::Text(TextField::Quantity, "2".into())));
+    // The host refusal also adds a row; measure the retry after it settles.
+    run_frame(&mut app, &ctx);
+    let painted = run_frame(&mut app, &ctx);
+    click_chart(
+        &mut app,
+        &ctx,
+        painted_text_center(&painted, "Arm").unwrap(),
+    );
+    assert!(
+        !app.surfaces.strategy_popup.model_state.is_open(),
+        "real TabRuntime success settles the dialog: {:?}",
+        app.surfaces
+            .strategy_popup
+            .model_state
+            .popup()
+            .map(|popup| &popup.error)
+    );
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .strategies
+            .anchors
+            .for_drawing(drawing)
+            .is_some()
+    );
 }

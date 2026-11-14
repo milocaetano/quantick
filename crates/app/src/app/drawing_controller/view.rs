@@ -8,6 +8,8 @@
 //! Editing a drawing *on the canvas* is [`super::DrawingController`]; this is
 //! the chrome around it.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 
 use crate::drawings;
@@ -16,7 +18,7 @@ use crate::toolrail::{Tool, ToolRail};
 
 #[cfg(any(feature = "drawing-harness", test))]
 use super::DrawingAccess;
-use super::{DrawingController, DrawingReadAccess};
+use super::{DrawingController, DrawingControllerAccess, DrawingReadAccess};
 
 /// The slice the drawing chrome reads, assembled from the pieces of the
 /// application it is allowed to see.
@@ -45,27 +47,30 @@ fn drawing_env<'a>(
             .get(index)
             .map(|drawing| crate::surfaces::drawing_chrome::SelectedDrawing { index, drawing })
     });
-    let automatic_bar_area = selected.as_ref().and_then(|selection| {
-        if !matches!(selection.drawing.band, drawings::DrawingBand::Indicator(_)) {
-            return None;
-        }
-        let band = drawings::egui_rect(host.band(selection.drawing)?.rect);
-        let header = crate::indicator_render::pane_header_rect(
-            band,
-            false,
-            crate::theme::get(ctx)
-                .resolved
-                .axis_metrics()
-                .indicator_header,
-        );
-        Some(egui::Rect::from_min_max(
-            egui::pos2(
-                band.left(),
-                header.bottom() + drawings::context_bar::OBJECT_GAP_PX,
-            ),
-            band.max,
-        ))
-    });
+    let automatic_bar_area = selected
+        .as_ref()
+        .filter(|_| read.context_bar)
+        .and_then(|selection| {
+            if !matches!(selection.drawing.band, drawings::DrawingBand::Indicator(_)) {
+                return None;
+            }
+            let band = drawings::egui_rect(host.band(selection.drawing)?.rect);
+            let header = crate::indicator_render::pane_header_rect(
+                band,
+                false,
+                crate::theme::get(ctx)
+                    .resolved
+                    .axis_metrics()
+                    .indicator_header,
+            );
+            Some(egui::Rect::from_min_max(
+                egui::pos2(
+                    band.left(),
+                    header.bottom() + drawings::context_bar::OBJECT_GAP_PX,
+                ),
+                band.max,
+            ))
+        });
     crate::surfaces::DrawingEnv {
         linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
@@ -98,6 +103,7 @@ fn drawing_env<'a>(
 /// that only runs the capture hooks gathers none of them and says so.
 #[derive(Default)]
 struct DrawingViewCosts<'a> {
+    context_bar: bool,
     linked_alerts: usize,
     selected_bbox: Option<egui::Rect>,
     selected_band: Option<String>,
@@ -106,6 +112,37 @@ struct DrawingViewCosts<'a> {
 }
 
 impl DrawingController {
+    /// Borrow only domain facts, leaving the catalog free for its complete pass.
+    pub(crate) fn pinned_env<'a>(
+        &'a self,
+        ctx: &egui::Context,
+        host: &'a DrawingReadAccess<'_>,
+        tools: &ToolRail,
+        pinned: bool,
+    ) -> crate::surfaces::DrawingEnv<'a> {
+        // A closed inspector does not need a band label or painted bounds.
+        // Its view gates itself; the caller still dispatches every catalog row.
+        let selected_band = pinned
+            .then(|| {
+                let store = host.drawings();
+                host.band_label(store.items().get(store.selected()?)?)
+                    .chip()
+            })
+            .flatten();
+        drawing_env(
+            ctx,
+            host,
+            tools,
+            &self.presets,
+            DrawingViewCosts {
+                selected_band,
+                ..Default::default()
+            },
+        )
+    }
+}
+
+impl DrawingControllerAccess<'_> {
     fn drawing_manager_rows(
         &self,
         host: &DrawingReadAccess<'_>,
@@ -167,25 +204,6 @@ impl DrawingController {
         ));
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
-    pub(crate) fn draw_pinned_inspector(
-        &mut self,
-        ctx: &egui::Context,
-        host: &DrawingReadAccess<'_>,
-        tools: &ToolRail,
-    ) -> Option<crate::surfaces::drawing_chrome::DrawingChromeAsk> {
-        if !self.chrome.inspector_pinned() {
-            return None;
-        }
-        // No painted bounds: a docked panel has no placement rule to keep
-        // clear of the object, so the projection the floating one needs is not
-        // gathered here. The band still is — it is in the title.
-        let read = DrawingViewCosts {
-            selected_band: self.selected_drawing_band(host),
-            ..DrawingViewCosts::default()
-        };
-        let ask = self.draw_chrome_pass(ctx, host, tools, read, false);
-        Some(ask)
-    }
     pub(crate) fn draw_drawing_chrome(
         &mut self,
         ctx: &egui::Context,
@@ -206,6 +224,7 @@ impl DrawingController {
         // allocates, every frame, for a value nothing would read.
         let inspector_showing = self.chrome.inspector_open() || self.chrome.inspector_pinned();
         let read = DrawingViewCosts {
+            context_bar: true,
             linked_alerts: host
                 .drawings()
                 .selected()
@@ -226,7 +245,7 @@ impl DrawingController {
             },
             manager_rows: &rows,
         };
-        self.draw_chrome_pass(ctx, host, tools, read, true)
+        self.draw_chrome_pass(ctx, host, tools, read)
     }
     fn draw_chrome_pass(
         &mut self,
@@ -234,13 +253,22 @@ impl DrawingController {
         host: &DrawingReadAccess<'_>,
         tools: &ToolRail,
         read: DrawingViewCosts<'_>,
-        floating: bool,
     ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        let env = drawing_env(ctx, host, tools, &self.presets, read);
-        let current = floating
-            .then(|| host.current_range_owner(self.chrome.quick_range.owner()))
-            .flatten();
-        self.chrome.draw_pass(ctx, &env, current, floating)
+        let env = drawing_env(ctx, host, tools, self.presets, read);
+        let current = host.current_range_owner(self.chrome.quick_range_read().owner());
+        let mut asks = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+        self.chrome.with_pass(
+            quantick_ui_model::Slot::DrawingChrome,
+            |response| {
+                for effect in response.model_effects {
+                    if let quantick_ui_model::HostEffect::DrawingChrome(ask) = effect {
+                        asks.merge(ask);
+                    }
+                }
+            },
+            |view, session| view.paint_pass(session.reborrow(), ctx, &env, current, true),
+        );
+        asks
     }
 
     #[cfg(any(feature = "drawing-harness", test))]
@@ -248,13 +276,13 @@ impl DrawingController {
         let Some(tool) = crate::surfaces::drawing_chrome::launch::NotePlacement::tool() else {
             return false;
         };
-        let Some(point) = host.text_note_point() else {
+        let Some(point) = host.text_note_point(self.chrome) else {
             return false;
         };
         // Through the same door the click path uses, saved defaults and all —
         // and on the same pane every drawing surface reads, so the index the
         // editor opens on is the object this just placed.
-        let fresh = drawings::new_drawing_from_defaults(&self.presets, tool);
+        let fresh = drawings::new_drawing_from_defaults(self.presets, tool);
         let placed =
             host.drawings_mut()
                 .place_with(tool, &drawings::DrawingBand::Price, point, |_| fresh);
@@ -280,7 +308,7 @@ impl DrawingController {
             return false;
         }
         host.drawings_mut().select(Some(index));
-        host.sync_inline(&self.chrome);
+        host.sync_inline(self.chrome);
         true
     }
 }

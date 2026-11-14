@@ -9,11 +9,6 @@ fn launch(values: &[(&str, &str)]) -> DrawingDemoLaunch {
             .map(|(_, value)| value.into())
     })
 }
-fn state(values: &[(&str, &str)]) -> DrawingDemoState {
-    let mut state = DrawingDemoState::default();
-    state.install(launch(values));
-    state
-}
 fn facts() -> SeriesFacts {
     SeriesFacts {
         slots: 200,
@@ -84,6 +79,7 @@ fn capture_retains_conditional_reads_and_exact_grammars() {
 #[cfg(windows)]
 #[test]
 fn non_unicode_inputs_are_absent_without_subordinate_reads() {
+    use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     let mut reads = Vec::new();
     let input = DrawingDemoLaunch::capture(|name| {
@@ -129,23 +125,46 @@ impl DrawingRecipient for RefusingRecipient {
 }
 
 #[test]
-fn ready_gallery_consumes_even_when_recipient_places_nothing_and_retains_recut_tail() {
-    let mut state = state(&[
-        ("QUANTICK_DRAWINGS_DEMO", "1"),
-        ("QUANTICK_DRAWINGS_DEMO_SHARED", "1"),
-        ("QUANTICK_DRAWINGS_DEMO_RECUT", "1"),
-    ]);
-    assert!(state.take_gallery(0).is_none() && state.gallery_requested());
-    let request = state.take_gallery(200).unwrap();
-    assert!(!state.gallery_requested());
-    let mut plan = request.plan(facts(), &crate::indicators::IndicatorViews::default());
+fn gallery_executor_projects_every_anchor_and_preserves_failed_placement() {
+    use quantick_ui_model::Model as _;
+    let mut owner = quantick_ui_model::drawing_chrome::State::default();
+    use quantick_ui_model::drawing_chrome::{Intent, Model};
+    Model::update(
+        &mut owner,
+        Intent::Scenario(scenario::Intent::RequestGallery(DrawingsDemo {
+            shared: Some(true),
+            ..Default::default()
+        })),
+    );
+    let effect = Model::update(
+        &mut owner,
+        Intent::Scenario(scenario::Intent::GalleryReady {
+            series: facts(),
+            tools: DRAWING_TOOLS.to_vec(),
+            samples: vec![],
+        }),
+    )
+    .take_scenario()
+    .unwrap();
+    let scenario::Effect::Gallery(mut plan) = effect else {
+        panic!("gallery plan")
+    };
     let mut projected = Vec::new();
     plan.project_times(|slot| {
         projected.push(slot);
         Some(slot as i64 * 17)
     });
     let mut target = RefusingRecipient::default();
-    assert!(plan.apply_main(&mut target).is_none());
+    assert!(
+        plan.apply_main(&mut target, |intent| {
+            let mut effect = quantick_ui_model::drawing_chrome::Model::update(
+                &mut owner,
+                quantick_ui_model::drawing_chrome::Intent::Scenario(intent),
+            );
+            effect.take_scenario()
+        })
+        .is_none()
+    );
     plan.apply_bands(&mut target);
     assert!(!target.points.is_empty());
     assert_eq!(target.points.len(), projected.len());
@@ -154,161 +173,106 @@ fn ready_gallery_consumes_even_when_recipient_places_nothing_and_retains_recut_t
     }
     assert_eq!(target.shares, 0);
     assert!(target.finishes > 0);
-    assert!(
-        state.recut_requested(),
-        "recut is owed after the ready take, independent of completion"
-    );
-    assert!(state.take_gallery(200).is_none());
 }
-
 #[test]
-fn draft_waits_for_prerequisites_and_consumes_effective_zero() {
-    let mut state = state(&[
-        ("QUANTICK_DRAWING_DRAFT", "2"),
-        ("QUANTICK_DRAWING_CONSTRAIN", "1"),
-    ]);
-    let tool = DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == "horizontal-line")
-        .unwrap();
-    let chart = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(800.0, 400.0));
-    assert!(state.take_draft(None, Some(chart), facts()).is_none());
-    assert!(state.take_draft(Some(tool), None, facts()).is_none());
-    assert!(
-        state
-            .take_draft(
-                Some(tool),
-                Some(chart),
-                SeriesFacts {
-                    slots: 0,
-                    ..facts()
-                }
-            )
-            .is_none()
-    );
-    assert!(state.draft_requested().is_some());
-    let plan = state.take_draft(Some(tool), Some(chart), facts()).unwrap();
-    assert!(state.draft_requested().is_none());
+fn draft_adapter_maps_the_normalized_hand_and_applies_empty_plan() {
+    let tool = DrawingTool::by_id("horizontal-line").unwrap();
+    let plan = DrawingDraft {
+        anchors: 2,
+        constrain: true,
+    }
+    .plan(tool, facts());
     let mut target = RefusingRecipient::default();
     plan.apply(&mut target);
     assert!(target.points.is_empty());
+    let chart = eframe::egui::Rect::from_min_size(
+        eframe::egui::pos2(100.0, 100.0),
+        eframe::egui::vec2(800.0, 400.0),
+    );
     assert_eq!(
-        plan.hand.position,
-        crate::drawings::px(egui::pos2(660.0, 240.0))
+        plan.hand(chart).position,
+        crate::drawings::px(eframe::egui::pos2(660.0, 240.0))
     );
-    assert_eq!(plan.hand.constrain, crate::drawings::Constrain::Level);
+    assert_eq!(
+        plan.hand(chart).constrain,
+        crate::drawings::Constrain::Level
+    );
 }
-
 #[test]
-fn profile_wait_missing_tool_prefix_retry_and_compare_rearm_are_distinct() {
-    let mut state = state(&[("QUANTICK_FRVP_DEMO", "stress")]);
-    assert!(matches!(
-        state.prepare_profile_with_tool(None, None),
-        ProfilePreparation::Wait
-    ));
-    assert!(state.profile_requested().is_some());
-    assert!(matches!(
-        state.prepare_profile_with_tool(Some(11), None),
-        ProfilePreparation::Wait
-    ));
-    assert!(state.profile_requested().is_some());
-    assert!(matches!(
-        state.prepare_profile(Some(12)),
-        ProfilePreparation::Prefix { candles: 25_000 }
-    ));
-    assert!(
-        state.profile_requested().is_some(),
-        "an undelivered prefix has not consumed anything"
+fn profile_executor_selects_after_each_pair_even_when_placement_fails() {
+    use quantick_ui_model::Model as _;
+    use quantick_ui_model::drawing_chrome::{Intent, Model, State};
+    let mut state = State::default();
+    Model::update(
+        &mut state,
+        Intent::Scenario(scenario::Intent::QueueLaunch(scenario::Launch {
+            demos: scenario::DrawingDemoLaunch {
+                profile: Some(FrvpDemo {
+                    compare: true,
+                    select: true,
+                    stress: false,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        })),
     );
-    assert!(matches!(
-        state.prepare_profile_with_tool(Some(12), None),
-        ProfilePreparation::Wait
-    ));
-    assert!(state.profile_requested().is_none());
-    state.install(launch(&[
-        ("QUANTICK_FRVP_DEMO", "compare"),
-        ("QUANTICK_FRVP_DEMO_SELECT", "1"),
-    ]));
-    assert!(
-        state
-            .finish_profile(ProfileFacts {
-                slots: 100,
-                prefix: 41
-            })
-            .is_none()
-    );
-    assert!(state.profile_requested().is_some());
-    let geometry = state
-        .finish_profile(ProfileFacts {
+    Model::update(&mut state, Intent::Scenario(scenario::Intent::ApplyLaunch));
+    let effect = Model::update(
+        &mut state,
+        Intent::Scenario(scenario::Intent::ProfileReady(ProfileFacts {
             slots: 100,
             prefix: 40,
-        })
-        .unwrap();
-    assert!(state.profile_requested().is_none());
-    assert_eq!(
-        geometry.close_slot, 64,
-        "price still comes from seam geometry, not the compare endpoints"
-    );
-    let mut plan = geometry.plan(None);
+        })),
+    )
+    .take_scenario()
+    .unwrap();
+    let scenario::Effect::Profile(geometry) = effect else {
+        panic!("profile geometry")
+    };
+    let mut plan = geometry.plan(DrawingTool::by_id(crate::frvp::TOOL_ID).unwrap(), None);
     plan.project_times(|slot| Some(slot as i64));
     let mut target = RefusingRecipient::default();
     plan.apply(&mut target);
     assert_eq!(
         target.selections,
         [0, 0],
-        "each range selects len.saturating_sub(1) even if placement failed"
+        "select len.saturating_sub(1) even when placement fails"
     );
     assert_eq!(
         target
             .points
             .iter()
-            .map(|(_, point)| point.bar)
+            .map(|(_, p)| p.time_ms)
             .collect::<Vec<_>>(),
-        [50.0, 74.0, 75.0, 99.0]
-    );
-    assert!(target.points.iter().all(|(_, point)| point.price == 1.0));
-}
-
-#[test]
-fn avwap_consumes_before_a_missing_tool_and_does_not_lookup_before_ready() {
-    let mut state = state(&[("QUANTICK_AVWAP_DEMO", "1")]);
-    assert!(
-        state
-            .take_avwap_with_lookup(11, || panic!("not ready"))
-            .is_none()
-    );
-    assert!(state.avwap_requested());
-    assert!(state.take_avwap_with_lookup(12, || None).is_none());
-    assert!(!state.avwap_requested());
-    assert!(
-        state
-            .take_avwap_with_lookup(200, || panic!("already consumed"))
-            .is_none()
+        [Some(50), Some(74), Some(75), Some(99)]
     );
 }
 
 #[test]
-fn fallback_arithmetic_keeps_nonfinite_and_negative_values() {
-    let (_, _, center, band) = SeriesFacts {
-        auto_range: Some((f64::NEG_INFINITY, f64::INFINITY)),
-        ..facts()
-    }
-    .window();
-    assert!(center.is_nan() && band.is_infinite());
-    let (_, _, center, band) = SeriesFacts {
-        auto_range: Some((10.0, 5.0)),
-        last_close: Some(-2.0),
-        ..facts()
-    }
-    .window();
-    assert_eq!((center, band), (-2.0, -0.008));
-    assert_eq!(
-        SeriesFacts {
-            auto_range: None,
-            last_close: None,
-            ..facts()
-        }
-        .window(),
-        (90, 110, 1.0, 0.004)
+fn avwap_lookup_waits_for_model_readiness_and_is_not_retried_after_missing_tool() {
+    use quantick_ui_model::Model as _;
+    use quantick_ui_model::drawing_chrome::{Intent, Model, State};
+    let mut owner = State::default();
+    Model::update(
+        &mut owner,
+        Intent::Scenario(scenario::Intent::QueueLaunch(scenario::Launch {
+            demos: scenario::DrawingDemoLaunch {
+                avwap: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })),
     );
+    Model::update(&mut owner, Intent::Scenario(scenario::Intent::ApplyLaunch));
+    let mut advance = |slots| {
+        Model::update(
+            &mut owner,
+            Intent::Scenario(scenario::Intent::AvwapReady { slots }),
+        )
+        .take_scenario()
+    };
+    assert!(resolve_avwap(advance(11), || panic!("not ready")).is_none());
+    assert!(resolve_avwap(advance(12), || None).is_none());
+    assert!(resolve_avwap(advance(200), || panic!("already consumed")).is_none());
 }

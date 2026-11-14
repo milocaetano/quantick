@@ -13,7 +13,7 @@ fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
     run_frame(&mut app, &ctx);
     let anchor = pane_body(&app, 0).center();
     let index = place_drawing(&mut app, &ctx, "horizontal-line", &[anchor]);
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -36,8 +36,8 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
         .expect("price chart drawn");
     let header = crate::indicator_render::pane_header_rect(band, false, 18.0);
     let bar = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("selected bar drawn");
     assert!(
@@ -56,7 +56,7 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
 
 #[test]
 fn selected_indicator_bounds_use_the_drawn_band_scale() {
-    let (app, _ctx, index, anchor) = selected_cvd_line();
+    let (mut app, _ctx, index, anchor) = selected_cvd_line();
     let chart = app
         .active_tab()
         .drawing_pane()
@@ -65,6 +65,7 @@ fn selected_indicator_bounds_use_the_drawn_band_scale() {
         .expect("price chart drawn");
     let bbox = app
         .drawings
+        .with(&mut app.surfaces.drawing_chrome)
         .drawing_bbox_on_screen(
             &crate::app::drawing_controller::DrawingReadAccess::new(&app.runtime.tabs),
             chart,
@@ -94,15 +95,18 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
                 })
                 .expect("real indicator legend drawn");
             if parked {
-                app.drawings.chrome.context_bar_mut().set_manual(legend.min);
+                app.surfaces
+                    .drawing_chrome
+                    .context_bar_mut()
+                    .set_manual(legend.min);
             } else {
-                app.drawings.chrome.context_bar_mut().clear_manual();
+                app.surfaces.drawing_chrome.context_bar_mut().clear_manual();
             }
-            app.drawings.chrome.forget_context_bar_rect();
+            app.surfaces.drawing_chrome.forget_context_bar_rect();
             run_frame(&mut app, &ctx);
             let bar = app
-                .drawings
-                .chrome
+                .surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .expect("selected CVD line raises its bar");
             assert!(
@@ -111,7 +115,7 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
             );
             if parked {
                 assert_eq!(
-                    app.drawings.chrome.context_bar().manual_position(),
+                    app.surfaces.drawing_chrome.context_bar().manual_position(),
                     Some(legend.min),
                     "placement repair preserves the trader's parked point"
                 );
@@ -127,7 +131,8 @@ fn a_click_in_an_indicator_pane_draws_on_that_band() {
     let ctx = egui::Context::default();
     add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
 
     let inside = pane_body(&app, 0).center();
@@ -480,22 +485,32 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     app.active_tab_mut().flow_pane.request_settings(slot);
     app.service_indicator_requests();
     let dialog = app
-        .runtime
-        .indicators
+        .surfaces
         .indicator_settings
-        .as_ref()
+        .model_state
+        .dialog()
         .expect("the dialog opened");
-    assert_eq!(dialog.slot, slot, "on the indicator the gesture named");
+    assert_eq!(
+        dialog.target.slot, slot,
+        "on the indicator the gesture named"
+    );
     assert_eq!(
         dialog.draft,
         app.active_tab().flow_pane.indicators.all()[0].input_values,
         "holding that indicator's own values"
     );
 
-    app.runtime.indicators.indicator_settings = None;
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Close,
+    );
     app.service_indicator_requests();
     assert!(
-        app.runtime.indicators.indicator_settings.is_none(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_none(),
         "the request was taken, not left to fire again next frame"
     );
 }
@@ -590,14 +605,19 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     app.service_indicator_requests();
 
     let dialog = app
-        .runtime
-        .indicators
+        .surfaces
         .indicator_settings
-        .as_ref()
+        .model_state
+        .dialog()
         .expect("the hook found the indicator on the pane that has one");
-    assert_eq!(dialog.slot, slot);
+    assert_eq!(dialog.target.slot, slot);
     assert_eq!(
-        app.runtime.indicators.indicator_settings_target.side,
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .target()
+            .expect("dialog target")
+            .side,
         PaneSide::Time(0),
         "and addressed it on the focused pane, which carries the layout too"
     );
@@ -658,9 +678,20 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    assert!(app.runtime.indicators.indicator_settings.is_some());
+    assert!(
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some()
+    );
     assert_eq!(
-        app.runtime.indicators.indicator_settings_target.side,
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .target()
+            .expect("dialog target")
+            .side,
         PaneSide::Time(0),
         "the dialog's Apply will land on the legend's pane"
     );

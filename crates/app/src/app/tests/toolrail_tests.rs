@@ -10,7 +10,7 @@ fn starring_a_tool_reaches_the_disk_on_the_spot() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("star-written"));
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
@@ -30,9 +30,9 @@ fn unstarring_a_tool_reaches_the_disk_too() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("star-removed"));
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert!(
@@ -56,7 +56,7 @@ fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
         .workspace
         .set_ui_state_path(scratch_ui_state("star-no-autosave"));
     app.runtime.workspace.session_mut().set_save_on_exit(false);
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     let file = ui_state::load(app.runtime.workspace.ui_state_path());
@@ -86,7 +86,7 @@ fn restoring_the_saved_stars_writes_nothing() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("star-restore"));
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     run_frame(&mut app, &ctx);
 
     assert!(
@@ -106,7 +106,7 @@ fn resetting_the_startup_layout_keeps_the_starred_tools() {
         .workspace
         .set_ui_state_path(scratch_ui_state("reset-stars"));
     app.workspace_save_adapter().save_workspace("test");
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     app.workspace_save_adapter().forget_workspace();
@@ -137,7 +137,7 @@ fn a_staged_rail_is_never_written_down() {
         .set_ui_state_path(scratch_ui_state("star-staged"));
     app.runtime.workspace.session_mut().stage_favorites();
 
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert!(
@@ -161,7 +161,7 @@ fn starring_a_tool_does_not_pretend_a_layout_was_saved() {
         .set_ui_state_path(scratch_ui_state("star-not-a-layout"));
     app.runtime.workspace.session_mut().set_saved(false);
 
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert!(
@@ -181,7 +181,7 @@ fn starring_a_tool_does_not_pretend_a_layout_was_saved() {
 #[test]
 fn a_restored_workspace_with_no_stars_leaves_the_rail_alone() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
 
     let config = app.config.clone();
     app.arrangement_adapter().restore_workspace(
@@ -205,7 +205,7 @@ fn the_next_session_opens_on_the_stars_the_last_one_left() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("star-next-session"));
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     // A second session reading the same file, restoring as startup does.
@@ -236,7 +236,7 @@ fn a_rail_folded_away_puts_no_tools_on_a_screen_that_does_not_show_them() {
         "the rail opens with the pointer armed"
     );
 
-    app.toolrail.toggle_visible();
+    app.surfaces.toolrail.toggle_visible();
     run_frame(&mut app, &ctx);
     let folded = scene_control_ids(&observer_scene(&app));
     assert!(
@@ -249,4 +249,80 @@ fn a_rail_folded_away_puts_no_tools_on_a_screen_that_does_not_show_them() {
     for id in folded {
         assert!(visible.contains(&id), "{id} appeared out of nowhere");
     }
+}
+
+#[test]
+fn toolrail_multi_event_frame_preserves_effect_order() {
+    use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+    use quantick_ui_model::tool_rail::{Effect, Intent};
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(12);
+    let mut response = crate::surfaces::SurfaceResponse::default();
+    app.surfaces.toolrail.with_updates(
+        |effect| response.model_effects.extend(effect.model_effects),
+        |_, session| {
+            session.update(Intent::Arm(Tool::Crosshair));
+            session.update(Intent::SetAllHidden(true));
+            session.update(Intent::SetManagerOpen(true));
+            session.update(Intent::SetAllHidden(false));
+            session.update(Intent::SetManagerOpen(false));
+            session.update(Intent::SetAllLocked(true));
+            session.update(Intent::RequestMagnet);
+            session.update(Intent::Arm(Tool::Pointer));
+        },
+    );
+    assert_eq!(
+        response.model_effects,
+        vec![
+            crate::surfaces::HostEffect::ToolRail(vec![Effect::SetAllHidden(true)]),
+            crate::surfaces::HostEffect::ToolRail(vec![Effect::SetManagerOpen(true)]),
+            crate::surfaces::HostEffect::ToolRail(vec![Effect::SetAllHidden(false)]),
+            crate::surfaces::HostEffect::ToolRail(vec![Effect::SetManagerOpen(false)]),
+            crate::surfaces::HostEffect::ToolRail(vec![Effect::SetAllLocked(true)]),
+        ]
+    );
+    assert!(
+        !app.surfaces.toolrail.magnet(),
+        "a queued magnet request is unconfirmed"
+    );
+    let requested = app
+        .surfaces
+        .toolrail
+        .take_magnet_request()
+        .expect("one magnet request");
+    crate::control::flip_rail_magnet(&mut app, requested);
+    assert_eq!(
+        app.surfaces.toolrail.take_magnet_request(),
+        None,
+        "the request settles once"
+    );
+    let tab = app
+        .runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index());
+    let drawings = &mut tab.flow_pane.drawings;
+    super::super::frame::settle_rail_effects(response, drawings, &mut app.surfaces.drawing_chrome);
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |_| {
+            assert!(
+                !drawings.all_hidden(),
+                "queued hide/show settles before canvas"
+            );
+            assert!(
+                !drawings.all_locked(),
+                "empty-store lock policy stays in Drawings"
+            );
+            assert!(!app.surfaces.drawing_chrome.manager_open());
+            assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
+            assert!(
+                app.surfaces.toolrail.magnet(),
+                "confirmed magnet is visible to the same canvas"
+            );
+        });
+    });
+    assert!(drawings.undo(), "show created an undo entry");
+    assert!(drawings.all_hidden(), "undo proves hide preceded show");
+    assert!(drawings.undo(), "hide created one earlier entry");
+    assert!(!drawings.all_hidden());
+    assert!(!drawings.undo(), "each queued effect settled only once");
 }

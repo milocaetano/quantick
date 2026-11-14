@@ -561,7 +561,13 @@ fn an_export_files_pending_edits_and_says_when_the_disk_refused_them() {
             .set_ignore_flow_opening(true)
     );
     app.workspace_bundle_adapter().export_workspace_to(&file);
-    let message = app.surfaces.toast.message().unwrap_or_default().to_owned();
+    let message = app
+        .surfaces
+        .toast
+        .model_state
+        .message()
+        .unwrap_or_default()
+        .to_owned();
     assert!(message.contains("as last saved"), "{message}");
     std::fs::remove_dir(&blocked).expect("the folder goes");
 }

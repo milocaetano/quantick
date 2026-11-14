@@ -217,25 +217,38 @@ impl LedgerState {
         live: LiveCloses<'_>,
         tz: TzOffset,
     ) {
+        if let Some(cut) = self.project_cut(history, live, tz) {
+            self.cut = Some(cut);
+        }
+    }
+
+    /// Borrow the current inputs to prepare a cut without installing it.
+    /// UI models can carry the result through their own revision-checked update.
+    pub fn project_cut(
+        &self,
+        history: Option<&LoadedHistory>,
+        live: LiveCloses<'_>,
+        tz: TzOffset,
+    ) -> Option<LedgerCut> {
         let closes = live.trades.len();
         if self
             .cut
             .as_ref()
             .is_some_and(|cut| cut.tz == tz && cut.filter == self.view.filter && cut.live == closes)
         {
-            return;
+            return None;
         }
         let labels = session_labels(history, live.journaled(), tz);
         let kept = history.map_or_else(Vec::new, |history| {
             kept_rows(history, &labels, &self.view.filter, tz)
         });
-        self.cut = Some(LedgerCut {
+        Some(LedgerCut {
             tz,
             filter: self.view.filter.clone(),
             live: closes,
             kept,
             labels,
-        });
+        })
     }
 
     /// Apply what a session row, an inline row or a key asked for; an edit
