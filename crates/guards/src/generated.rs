@@ -619,12 +619,15 @@ fn not_hooks(root: &Path) -> BTreeSet<String> {
 
 /// Whether a source file holds tests rather than shipped code.
 ///
-/// `crates/app` keeps whole modules of tests in `src/**/tests/` and in files
-/// suffixed `_tests.rs`, neither of which a release build compiles. A
-/// `QUANTICK_*` named in one is a fixture, not a hook, and demanding a harness
-/// row for it would document something that does not exist.
+/// `crates/app` keeps whole modules of tests in `src/**/tests/`, in `tests.rs`
+/// files and in files suffixed `_tests.rs`, none of which a release build
+/// compiles. A `QUANTICK_*` named in one is a fixture, not a hook, and
+/// demanding a harness row for it would document something that does not
+/// exist.
 fn is_test_source(relative: &str) -> bool {
-    relative.contains("/tests/") || relative.ends_with("_tests.rs")
+    relative.contains("/tests/")
+        || relative.ends_with("/tests.rs")
+        || relative.ends_with("_tests.rs")
 }
 
 /// Every hook name a `declare_hooks!` or `MAIN_HOOKS` declaration carries,
@@ -1007,6 +1010,7 @@ fn also_real() -> bool {
             "crates/app/src/app/tests/control_plane_tests.rs"
         ));
         assert!(is_test_source("crates/app/src/app/drawings_tests.rs"));
+        assert!(is_test_source("crates/app/src/hooks/tests.rs"));
         assert!(!is_test_source("crates/app/src/frvp.rs"));
     }
 
