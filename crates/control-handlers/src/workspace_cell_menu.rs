@@ -128,6 +128,16 @@ impl CellRow {
         scene_id(&self.key)
     }
 
+    /// What hovering the row says: why it is greyed while it is, else what it
+    /// does, else its whole label when `cut` short.
+    #[must_use]
+    pub fn tip(&self, cut: bool) -> Option<&str> {
+        if self.unavailable.is_some() {
+            return self.disabled_hover;
+        }
+        self.hover.or_else(|| cut.then_some(self.label.as_str()))
+    }
+
     /// Whether this is the tab's own workspace in the list, the row the list
     /// scrolls to.
     #[must_use]

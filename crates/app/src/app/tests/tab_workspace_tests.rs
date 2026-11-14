@@ -1332,3 +1332,149 @@ fn the_scene_lists_a_greyed_row_unavailable_with_its_reason() {
     assert!(menu.selected && menu.availability.available);
     assert!(control("toolbar.workspace_menu.new").availability.available);
 }
+
+/// Names painted whole or cut short, among the texts `output` painted that
+/// start with `prefix`: (whole, cut).
+fn painted_names(output: &egui::FullOutput, prefix: &str) -> (usize, usize) {
+    fn walk(shape: &egui::Shape, prefix: &str, found: &mut (usize, usize)) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with(prefix) => {
+                if text.galley.elided {
+                    found.1 += 1;
+                } else {
+                    found.0 += 1;
+                }
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, prefix, found)),
+            _ => {}
+        }
+    }
+    let mut found = (0, 0);
+    for clipped in &output.shapes {
+        walk(&clipped.shape, prefix, &mut found);
+    }
+    found
+}
+
+/// Workspaces named `Flow Mini Index Morning Desk NN` until the book holds `count`.
+fn fill_named(app: &mut QuantickApp, tab: u64, count: usize) {
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1.. {
+        if book.list().len() >= count {
+            break;
+        }
+        book.create(tab, &format!("Flow Mini Index Morning Desk {n:02}"))
+            .expect("a fresh name");
+    }
+}
+
+/// The scroll bar's gutter is counted in the width the menu wants, so names
+/// that fit with nine workspaces still fit with thirty.
+#[test]
+fn names_that_fit_with_nine_workspaces_fit_with_thirty() {
+    let mut widths = Vec::new();
+    for count in [9, 30] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-gutter", "layouts.toml");
+        let (mut app, _, second) = two_tabs(&layouts);
+        // Made on the other tab, so the list's rows, not Save, set the width.
+        fill_named(&mut app, second, count);
+        app.runtime.tabs.select(0);
+        let ctx = egui::Context::default();
+        let shown = open_cell_menu(&mut app, &ctx);
+        let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+        let (whole, cut) = painted_names(&output, "Flow Mini Index");
+        eprintln!(
+            "{count} workspaces: {} x {} pt",
+            shown.menu.width(),
+            shown.menu.height()
+        );
+        assert!(whole > 0, "{count}: no name painted");
+        assert_eq!(cut, 0, "{count}: {cut} names cut, {whole} whole");
+        widths.push(shown.menu.width());
+    }
+    assert!(
+        widths[0] > 215.0,
+        "nine names wider than the floor: {widths:?}"
+    );
+    assert!(widths[1] > widths[0], "the gutter is counted: {widths:?}");
+}
+
+/// Open the `?` menu and its Workspace submenu at the test window's size:
+/// the menu's rect, the submenu's and the last frame painted.
+fn open_workspace_submenu(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+) -> (egui::Rect, egui::Rect, egui::FullOutput) {
+    use quantick_control_schema::window_menu::KEBAB_CONTROL;
+    run_frame(app, ctx);
+    let kebab = app.chrome.title_bar.control_rect(KEBAB_CONTROL).unwrap();
+    click_sized(app, ctx, TEST_WINDOW, kebab.center());
+    let output = run_frame(app, ctx);
+    let row = painted_text_center(&output, "Workspace").expect("the Workspace row");
+    click_sized(app, ctx, TEST_WINDOW, row);
+    run_frame(app, ctx);
+    let output = run_frame(app, ctx);
+    let pane = |level: usize| {
+        let id = egui::Id::new(("window_menu_pane", level));
+        ctx.memory(|memory| memory.area_rect(id)).expect("a pane")
+    };
+    (pane(0), pane(1), output)
+}
+
+/// The `?` menu's Workspace submenu keeps to the window with thirty
+/// workspaces: twelve rows scroll, the rows after them stay in view.
+#[test]
+fn the_window_menu_workspace_submenu_stays_inside_the_window() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-bounded", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 30);
+    let ctx = egui::Context::default();
+    let (_, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    eprintln!("window submenu, 30 workspaces: {submenu:?}");
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW);
+    assert!(window.contains_rect(submenu), "{submenu:?}");
+    for row in [
+        "Manage workspaces\u{2026}",
+        "Layouts",
+        "Save as new\u{2026}",
+    ] {
+        let at = painted_text_center(&output, row).unwrap_or_else(|| panic!("{row}"));
+        assert!(submenu.contains(at), "{row} at {at:?} out of {submenu:?}");
+    }
+    let listed = painted_text(&output)
+        .iter()
+        .filter(|text| text.starts_with("Desk "))
+        .count();
+    assert!(listed <= 13, "{listed} workspace rows painted");
+}
+
+/// Where the Workspace submenu meets the `?` menu, the menu is on top, as
+/// it was before the rows were shared, and nine workspaces list whole.
+#[test]
+fn the_window_menu_covers_its_workspace_submenu_and_lists_nine_whole() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-order", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let (menu, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    let overlap = menu.intersect(submenu);
+    eprintln!("menu {menu:?}, submenu {submenu:?}, overlap {overlap:?}");
+    if overlap.is_positive() {
+        let top = ctx.layer_id_at(overlap.center()).expect("a layer");
+        let menu_layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(("window_menu_pane", 0)),
+        );
+        assert_eq!(top, menu_layer, "the submenu draws over the menu");
+    }
+    let names = app.runtime.workspace.book.book().list();
+    for row in names {
+        assert!(
+            painted_text_center(&output, &row.name).is_some(),
+            "{}",
+            row.name
+        );
+    }
+}

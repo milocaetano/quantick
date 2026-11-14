@@ -397,6 +397,18 @@ impl ChipMenuBudget {
     }
 }
 
+/// The height a list of `rows` workspace rows may take in a menu with no
+/// anchor to keep below, the `⋮` menu's Workspace submenu: unbounded while
+/// [`CHIP_MENU_MAX_LIST_ROWS`] or fewer show whole, that many rows after.
+#[must_use]
+pub fn list_cap(rows: usize, metrics: MenuMetrics) -> f32 {
+    if rows > CHIP_MENU_MAX_LIST_ROWS {
+        CHIP_MENU_MAX_LIST_ROWS as f32 * metrics.row_pt
+    } else {
+        f32::INFINITY
+    }
+}
+
 /// What the cell's menu may take on `screen`, hanging below `anchor` with
 /// `workspaces` rows in its list: no wider than [`CHIP_MENU_MAX_WIDTH_PT`] or
 /// the window, and no lower than the window's bottom edge, the list shrinking
@@ -735,6 +747,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_window_menu_list_shows_twelve_rows_at_most() {
+        assert_eq!(list_cap(9, METRICS), f32::INFINITY, "nine show whole");
+        assert_eq!(list_cap(12, METRICS), f32::INFINITY);
+        let twelve = CHIP_MENU_MAX_LIST_ROWS as f32 * METRICS.row_pt;
+        assert_eq!(list_cap(30, METRICS), twelve);
+    }
     #[test]
     fn the_measuring_frame_keeps_to_the_floor_and_the_others_to_the_cap() {
         let budget = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 9, METRICS);

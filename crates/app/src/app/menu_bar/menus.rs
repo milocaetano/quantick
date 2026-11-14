@@ -67,7 +67,6 @@ pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) help: Option<HelpPage>,
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
-    /// The chip menu's rows in view, as last drawn, for the scene.
     pub(in crate::app) cell_rows: Vec<(CellRow, egui::Rect)>,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
     /// The pane whose first row takes the keyboard next.
@@ -200,7 +199,7 @@ impl WindowMenu<'_> {
         items: &[Item],
         corner: egui::Pos2,
         commands: &mut Vec<MenuCommand>,
-    ) {
+    ) -> egui::LayerId {
         let mut child = None;
         let mut over_submenu = false;
         let rightwards = state.door == MenuDoor::Toolbar;
@@ -260,8 +259,13 @@ impl WindowMenu<'_> {
             child = None;
         }
         if let Some((id, at)) = child {
-            self.pane(ctx, state, level + 1, submenu(id).1, at, commands);
+            let below = self.pane(ctx, state, level + 1, submenu(id).1, at, commands);
+            // The menu stays over the edge its first submenu tucks under.
+            if level == 0 {
+                ctx.set_sublayer(below, area.response.layer_id);
+            }
         }
+        area.response.layer_id
     }
 
     /// A submenu's own row, or nothing when it has nothing to hold.

@@ -2,6 +2,7 @@
 //! workspace cell and the name dialog. The words are `window_menu`'s, the state is
 //! `workspace_menu`'s and what a row does is [`WorkspaceCommand`]'s.
 
+use crate::app::tab_workspaces::symbols_of;
 use eframe::egui;
 use quantick_control_handlers::workspace_cell_menu::{CellRow, RowKind, action_row, cell_menu};
 use quantick_control_handlers::workspace_cell_menu::{state_of, window_list};
@@ -36,14 +37,6 @@ impl<'a> WorkspaceRows<'a> {
         }
     }
 
-    fn symbols(&self, tabs: &[u64]) -> Vec<String> {
-        crate::app::tab_workspaces::symbols_of(self.tabs, tabs)
-    }
-
-    fn push(commands: &mut Vec<MenuCommand>, command: WorkspaceCommand) {
-        commands.push(MenuCommand::Workspace(command));
-    }
-
     /// `Save WINV26 to Scalp`, which names the tabs it will change before the click.
     pub(super) fn save_to_row(
         self,
@@ -60,40 +53,34 @@ impl<'a> WorkspaceRows<'a> {
                 egui::Button::new(text::save_to_label(self.symbol, workspace))
                     .shortcut_text(crate::theme::supporting_text(ui, keys)),
             )
-            .on_hover_text(text::save_to_hover(&self.symbols(&followers)))
+            .on_hover_text(text::save_to_hover(&symbols_of(self.tabs, &followers)))
             .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
         if response.clicked() {
-            Self::push(commands, WorkspaceCommand::SaveTo);
+            commands.push(MenuCommand::Workspace(WorkspaceCommand::SaveTo));
         }
         response
     }
 
     /// Every workspace, the active tab's lit, beside the tabs on it.
     pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        for row in window_list(self.book, self.tab, |tabs| self.symbols(tabs)) {
-            let asked = cell_row(ui, &row, &mut ChipSizing::default(), &mut Vec::new());
-            commands.extend(asked.map(MenuCommand::Workspace));
-        }
+        let rows = window_list(self.book, self.tab, |tabs| symbols_of(self.tabs, tabs));
+        let draw = |ui: &mut egui::Ui| rows.iter().for_each(|row| plain(ui, row, commands));
+        scrolled(model::list_cap(rows.len(), metrics(ui)), ui, draw);
     }
 
-    /// The rows that act on the tab's workspace. Handles the rows `menus` routes
-    /// here and answers false for any other.
+    /// The workspace rows `menus` routes here; false for any other row.
     pub(super) fn action_row(
         self,
         ui: &mut egui::Ui,
         id: RowId,
         commands: &mut Vec<MenuCommand>,
     ) -> bool {
-        let Some(row) = action_row(self.book, self.tab, id) else {
-            return false;
-        };
-        let asked = cell_row(ui, &row, &mut ChipSizing::default(), &mut Vec::new());
-        commands.extend(asked.map(MenuCommand::Workspace));
-        true
+        let row = action_row(self.book, self.tab, id);
+        row.iter().for_each(|row| plain(ui, row, commands));
+        row.is_some()
     }
 
-    /// The menu below the capsule's workspace name: `cell_menu`'s rows within
-    /// `chip_menu_budget`, the workspaces alone scrolling, and their scene.
+    /// The capsule's workspace menu: `cell_menu`'s rows within `chip_menu_budget`.
     pub(super) fn chip_menu(
         self,
         ctx: &egui::Context,
@@ -107,10 +94,9 @@ impl<'a> WorkspaceRows<'a> {
             return drawn;
         }
         let rows = cell_menu(self.book, self.tab, &keys);
-        let (recorded, (measuring, shown)) =
+        let (recorded, (measure, show)) =
             (commands.len(), menu.chip_sizing.frame(rows.signature()));
-        let id = egui::Id::new(("tab_workspace_menu", self.tab));
-        let area = egui::Area::new(id)
+        let area = egui::Area::new(egui::Id::new(("tab_workspace_menu", self.tab)))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_TOP)
             .fixed_pos(anchor.right_bottom() + egui::vec2(0.0, model::CHIP_MENU_DROP_PT))
@@ -118,19 +104,17 @@ impl<'a> WorkspaceRows<'a> {
             .show(ctx, |ui| {
                 super::menus::flat_rows(ui);
                 let at = |r: egui::Rect| MenuBounds::new(r.left(), r.top(), r.right(), r.bottom());
-                let (sp, text) = (ui.spacing(), ui.text_style_height(&egui::TextStyle::Button));
-                let button = text + 2.0 * sp.button_padding.y;
-                let m = MenuMetrics::of(button, sp.item_spacing.y, sp.menu_margin.sum().y);
+                let m = metrics(ui);
                 let n = rows.list.len();
                 let budget = model::chip_menu_budget(at(ctx.screen_rect()), at(anchor), n, m);
-                ui.set_max_width(ui.available_width().min(budget.width(measuring)));
-                if !shown {
+                ui.set_max_width(ui.available_width().min(budget.width(measure)));
+                if !show {
                     ui.set_invisible();
                 }
-                if !measuring {
+                if !measure {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 }
-                let layout = egui::Layout::default().with_cross_justify(!measuring);
+                let layout = egui::Layout::default().with_cross_justify(!measure);
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(budget.min_width);
                     ui.with_layout(layout, |ui| {
@@ -141,10 +125,7 @@ impl<'a> WorkspaceRows<'a> {
                             }
                         };
                         draw(ui, &rows.head);
-                        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                        egui::ScrollArea::vertical()
-                            .max_height(budget.list_max())
-                            .show(ui, |ui| draw(ui, &rows.list));
+                        scrolled(budget.list_max(), ui, |ui| draw(ui, &rows.list));
                         draw(ui, &rows.foot);
                     });
                 });
@@ -160,9 +141,30 @@ impl<'a> WorkspaceRows<'a> {
             menu.close_chip_menu();
         }
         drawn.insert(0, (CellRow::menu(), rect));
-        drawn.retain(|_| shown); // An unseen frame shows nothing to press.
+        drawn.retain(|_| show); // An unseen frame shows nothing to press.
         drawn
     }
+}
+
+/// The menu's heights as `ui`'s style draws them.
+fn metrics(ui: &egui::Ui) -> MenuMetrics {
+    let (sp, text) = (ui.spacing(), ui.text_style_height(&egui::TextStyle::Button));
+    let button = text + 2.0 * sp.button_padding.y;
+    MenuMetrics::of(button, sp.item_spacing.y, sp.menu_margin.sum().y)
+}
+
+/// Workspace rows no taller than `height`, the bar shown and measured while they scroll.
+fn scrolled(height: f32, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    use egui::scroll_area::ScrollBarVisibility as Bar;
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
+    let bar = [Bar::AlwaysHidden, Bar::AlwaysVisible][usize::from(height.is_finite())];
+    let list = egui::ScrollArea::vertical().max_height(height);
+    list.scroll_bar_visibility(bar).show(ui, add);
+}
+
+fn plain(ui: &mut egui::Ui, row: &CellRow, commands: &mut Vec<MenuCommand>) {
+    let asked = cell_row(ui, row, &mut ChipSizing::default(), &mut Vec::new());
+    commands.extend(asked.map(MenuCommand::Workspace));
 }
 
 /// One cell-menu row as its kind draws it; answers what a press on it asked.
@@ -185,11 +187,8 @@ fn cell_row(
     };
     let asked = response.intrinsic_size.map_or(0.0, |size| size.x);
     let cut = row.kind == RowKind::Press && sizing.cut(&row.key, asked, ui.available_width());
-    if let Some(text) = row.hover.or(cut.then_some(label)) {
-        response = response.on_hover_text(text);
-    }
-    if let Some(text) = row.disabled_hover {
-        response = response.on_disabled_hover_text(text);
+    if let Some(text) = row.tip(cut) {
+        response = response.on_hover_text(text).on_disabled_hover_text(text);
     }
     if response.gained_focus() || (row.lit() && sizing.measuring()) {
         response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
