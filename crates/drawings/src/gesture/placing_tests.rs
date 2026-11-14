@@ -234,6 +234,45 @@ fn the_magnet_previews_and_commits_a_snap_on_the_forming_bar() {
     });
 }
 
+/// A magnetic buy/sell mark hangs from the forming bar's own extreme — the
+/// live use of the tool — and without the magnet keeps the pointer's price.
+#[test]
+fn a_magnetic_mark_on_the_forming_bar_hangs_from_its_extreme() {
+    with_prints(&[50, 60, 40], |projection, bands| {
+        assert_eq!(projection.series.closed_slots(), 0, "one forming bar");
+        let x = projection.viewport.x_at_bar_position(0.0, 400.0, 1);
+        let at = pos2(x, bands[0].scale.as_ref().unwrap().y(45.0));
+        let commit = |tool: &str, magnet: bool| {
+            let (mut gestures, mut store) = (PaneGestures::default(), Marks::default());
+            gestures.update_placement(
+                &mut store,
+                projection,
+                frame(bands, at, true, false),
+                PlacementOptions {
+                    tool: DrawingTool::by_id(tool),
+                    magnet,
+                    constrain: Constrain::Free,
+                    parked_position: None,
+                },
+                PlacementDefaults {
+                    presets: &NullPresetHost,
+                    repeat: false,
+                },
+            );
+            let [mark] = store.items() else {
+                panic!("{tool} commits on the press");
+            };
+            mark.points[0].price
+        };
+        assert_eq!(commit("arrow-mark-up", true), 40.0, "the forming low");
+        assert_eq!(commit("arrow-mark-down", true), 60.0, "the forming high");
+        for tool in ["arrow-mark-up", "arrow-mark-down"] {
+            let free = commit(tool, false);
+            assert!((free - 45.0).abs() < 0.01, "{tool} free stays at {free}");
+        }
+    });
+}
+
 /// A held stroke takes its last allowed point and refuses the next.
 #[test]
 fn a_freehand_stroke_stops_at_its_point_cap() {
