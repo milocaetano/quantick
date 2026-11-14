@@ -26,7 +26,7 @@ pub(super) fn draw_manager(
             && let Some(context) = context
         {
             intents.push(Intent::Create {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 target: None,
             });
         }
@@ -98,7 +98,7 @@ fn draw_rows(
                     if let Some(command) =
                         status_action(ui, view.status, view.spec.id, view.revision)
                     {
-                        intents.push(Intent::Command(command));
+                        intents.push(Intent::Command(Box::new(command)));
                     }
                     let edit = action(ui, icons::PENCIL_SIMPLE, "Edit").clicked();
                     let delete = action(ui, icons::TRASH, "Delete").clicked();
@@ -106,7 +106,7 @@ fn draw_rows(
                         intents.push(Intent::EditExisting {
                             spec: Box::new(view.spec.clone()),
                             revision: view.revision,
-                            context: context.cloned(),
+                            context: context.cloned().map(Box::new),
                             delete,
                         });
                     }

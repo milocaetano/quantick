@@ -9,13 +9,13 @@ use quantick_control_schema::alerts::DrawingSelector;
 /// An open surface; with `context`, its new draft too.
 fn surface(context: Option<&Context>) -> AlertSurface {
     let mut surface = new_surface();
-    let _ = surface.update(Intent::Apply(Request {
+    let _ = surface.update(Intent::Apply(Box::new(Request {
         open: true,
         ..Request::default()
-    }));
+    })));
     if let Some(context) = context {
         let _ = surface.update(Intent::Create {
-            context: context.clone(),
+            context: Box::new(context.clone()),
             target: None,
         });
     }

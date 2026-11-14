@@ -261,7 +261,8 @@ pub(super) fn apply_alert_request(
             );
         }
     }
-    let _ = (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Apply(request));
+    let _ =
+        (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Apply(Box::new(request)));
 }
 
 /// After the dock: its bell opens the manager, another open dock tab closes

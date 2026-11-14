@@ -39,10 +39,11 @@ impl super::View<Model> for View {
         };
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(context) = ready_fixture(session.state(), env) {
-            session.update(Intent::FixtureReady(context.clone()));
+            session.update(Intent::FixtureReady(Box::new(context.clone())));
         }
         if session.state().has_pending_drawing() {
-            session.update(Intent::ConsumePending(env.alert_context.cloned()));
+            let context = env.alert_context.cloned().map(Box::new);
+            session.update(Intent::ConsumePending(context));
         }
         // Consume Escape only after a nested combo has had an opportunity to close.
         if !ctx.memory(|memory| memory.any_popup_open())

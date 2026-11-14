@@ -122,7 +122,7 @@ impl State {
 pub enum Intent {
     /// A host request: open, or open on a drawing. Commands, resolves and
     /// locates belong to the host and are refused here.
-    Apply(Request),
+    Apply(Box<Request>),
     OpenDrawing(Option<DurableDrawingRef>),
     /// The window or the manager's Close.
     Close,
@@ -131,15 +131,15 @@ pub enum Intent {
     /// Escape with no popup open: confirmation, then draft, then manager.
     Escape,
     /// The pending drawing request meets this frame's context, if any.
-    ConsumePending(Option<Context>),
+    ConsumePending(Option<Box<Context>>),
     Create {
-        context: Context,
+        context: Box<Context>,
         target: Option<DurableDrawingRef>,
     },
     EditExisting {
         spec: Box<AlertSpec>,
         revision: u64,
-        context: Option<Context>,
+        context: Option<Box<Context>>,
         delete: bool,
     },
     /// The capture fixture: open, on an editor subview or the history.
@@ -148,13 +148,13 @@ pub enum Intent {
         history: bool,
     },
     /// The fixture's draft, once its context is ready.
-    FixtureReady(Context),
+    FixtureReady(Box<Context>),
     Edit(Box<Draft>),
     Cancel,
     ShowHistory(bool),
     Search(String),
     NewestFirst(bool),
-    Command(AlertCommand),
+    Command(Box<AlertCommand>),
     Submit,
     ConfirmDelete,
     Resolve {
@@ -213,7 +213,7 @@ impl crate::Model for Model {
                 revision,
                 context,
                 delete,
-            } => state.draft = Some(existing(*spec, revision, context, delete)),
+            } => state.draft = Some(existing(*spec, revision, context.map(|c| *c), delete)),
             Intent::Fixture { subview, history } => {
                 state.open = true;
                 state.pending_fixture = subview;
@@ -241,7 +241,7 @@ impl crate::Model for Model {
             Intent::NewestFirst(newest) => state.newest_first = newest,
             Intent::Command(command) => {
                 return Effects::request(Request {
-                    command: Some(command),
+                    command: Some(*command),
                     ..Request::default()
                 });
             }

@@ -519,7 +519,7 @@ fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
         open: true,
         ..Request::default()
     };
-    let _ = surface.update(quantick_ui_model::alerts::Intent::Apply(open));
+    let _ = surface.update(quantick_ui_model::alerts::Intent::Apply(Box::new(open)));
     let _ = surface.update(quantick_ui_model::alerts::Intent::Search(
         "nothing matches".into(),
     ));

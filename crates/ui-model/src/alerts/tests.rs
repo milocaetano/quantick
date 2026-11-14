@@ -20,12 +20,12 @@ fn context() -> Context {
 
 fn opened_draft() -> State {
     let mut state = State::default();
-    Model::update(&mut state, Intent::Apply(Request {
+    Model::update(&mut state, Intent::Apply(Box::new(Request {
         open: true,
         ..Request::default()
-    }));
+    })));
     Model::update(&mut state, Intent::Create {
-        context: context(),
+        context: Box::new(context()),
         target: None,
     });
     state
@@ -139,7 +139,7 @@ fn alert_target_resolution_keeps_operators_compatible() {
         });
         let mut state = State::default();
         Model::update(&mut state, Intent::Create {
-            context: chart,
+            context: Box::new(chart),
             target: None,
         });
         edit(&mut state, |draft| draft.spec.conditions[0].operator = initial);
@@ -155,7 +155,7 @@ fn alert_target_resolution_keeps_operators_compatible() {
 #[test]
 fn host_owned_requests_are_refused_and_drawing_opens_wait_for_a_chart() {
     let mut state = State::default();
-    Model::update(&mut state, Intent::Apply(Request {
+    Model::update(&mut state, Intent::Apply(Box::new(Request {
         locate: Some(DurableDrawingRef {
             workspace: "w".into(),
             origin: "o".into(),
@@ -164,7 +164,7 @@ fn host_owned_requests_are_refused_and_drawing_opens_wait_for_a_chart() {
             incarnation: "i".into(),
         }),
         ..Request::default()
-    }));
+    })));
     assert_eq!(state.error(), Some("Unavailable"));
     Model::update(&mut state, Intent::OpenDrawing(None));
     assert!(state.is_editing());
@@ -173,7 +173,7 @@ fn host_owned_requests_are_refused_and_drawing_opens_wait_for_a_chart() {
     Model::update(&mut state, Intent::ConsumePending(None));
     assert_eq!(state.error(), Some("Open a chart before creating an alert."));
     Model::update(&mut state, Intent::OpenDrawing(None));
-    Model::update(&mut state, Intent::ConsumePending(Some(context())));
+    Model::update(&mut state, Intent::ConsumePending(Some(Box::new(context()))));
     assert_eq!(state.draft().unwrap().spec.name, "TEST price alert");
 }
 
