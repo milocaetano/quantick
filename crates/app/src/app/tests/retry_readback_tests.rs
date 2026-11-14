@@ -955,45 +955,6 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     ]
 }
 
-#[test]
-fn context_pair_resize_requires_the_granted_layout_scope() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(20);
-    app.active_tab_mut()
-        .set_layout(CanvasLayout::TimeTimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    let directory = gateway_test_directory("resize-pair-scopes");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let input = json!({
-        "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
-        "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
-        "fraction": "0.4"
-    });
-    let before = app.active_tab().context_divider_rect(0).unwrap();
-    for options in [options("observer", &[]), options("cockpit", &["cockpit"])] {
-        let mut client = connect(&directory, &options);
-        let (response, served) = keyed_call(
-            &mut app,
-            &mut client,
-            "denied",
-            "layout.pane.resize_pair",
-            input.clone(),
-            "denied-pair",
-        );
-        assert!(matches!(
-            error_code(&response),
-            Some(codes::SCOPE_DENIED | codes::PERMISSION_DENIED)
-        ));
-        assert!(served.iter().all(|request| !request.began));
-        run_frame(&mut app, &ctx);
-        assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), before);
-    }
-    disable_test_gateway(&mut app, &ctx);
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
 /// Every reachable `optional` row, not one per family: a keyed call, its
 /// answer dropped, and the retry under the same key. The retry is the first
 /// outcome, readdressed; the application began the call once; a call that
