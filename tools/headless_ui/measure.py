@@ -24,6 +24,11 @@ TARGETS = {
     'chrome_wiring_retired': CHROME_WIRING,
     'surface_count': 12,
 }
+# #920 acceptance as amended on 2026-11-13. TARGETS stays as pinned in
+# baseline.json; the checks read these. App-owned test lines are reported,
+# not gated: their reduction moved to per-domain relocation on main.
+AMENDED = {'quantick_app_fields_max': 11,
+           'final_strict': ('production', 'guard_production')}
 
 
 def git(*args):
@@ -196,8 +201,9 @@ def check_recipe(files, recipe_path):
 
 def check_targets(current, baseline, files, chrome=False, final=False):
     failures = []
-    if current['quantick_app_field_count'] > TARGETS['quantick_app_fields_max']:
-        failures.append('QuantickApp has more than 30 fields')
+    if current['quantick_app_field_count'] > AMENDED['quantick_app_fields_max']:
+        failures.append('QuantickApp has more than %d fields'
+                        % AMENDED['quantick_app_fields_max'])
     if set(current['wiring_paths']) - set(baseline['wiring_paths']):
         failures.append('new *_wiring.rs paths')
     if chrome or final:
@@ -205,7 +211,7 @@ def check_targets(current, baseline, files, chrome=False, final=False):
             if any(Path(p).stem == stem for p in current['wiring_paths']):
                 failures.append('chrome wiring remains: ' + stem)
     if final:
-        for key in ('production', 'guard_production', 'tests'):
+        for key in AMENDED['final_strict']:
             if current['totals'][key] >= baseline['totals'][key]:
                 failures.append('app ' + key + ' must be strictly below baseline')
         models = {p: s for p, s in files.items() if p.startswith('crates/ui-model/')}
