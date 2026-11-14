@@ -620,6 +620,20 @@ fn channel_needs_three_points() {
     assert!(drawings.place(channel, ChartPoint::at(3.0, 1.0)));
 }
 
+/// A mark is one click, born in the colour of the side it means; the arrow
+/// beside it stays a two-anchor vector.
+#[test]
+fn a_mark_is_one_click_in_its_sides_colour_and_the_arrow_is_still_two() {
+    for (id, colour) in [
+        ("arrow-mark-up", crate::palette::BUY),
+        ("arrow-mark-down", crate::palette::SELL),
+    ] {
+        assert_eq!(tool(id).required_points(), 1, "{id}");
+        assert_eq!(tool(id).default_style().color, colour, "{id}");
+    }
+    assert_eq!(tool("arrow").required_points(), 2);
+}
+
 #[test]
 fn moving_a_selected_drawing_preserves_its_shape() {
     let mut drawings = Drawings::default();

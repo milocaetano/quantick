@@ -325,6 +325,33 @@ fn a_trend_line_body_drag_ignores_distant_visible_prints() {
     });
 }
 
+/// A trend line's body drag passes the line through the nearest print of the
+/// candle under the pointer, at that candle's own bar rather than the
+/// pointer's fraction of it, and keeps its slope.
+#[test]
+fn a_trend_line_body_drag_passes_through_the_print_at_the_candles_bar() {
+    with_visible_tape(|projection, band| {
+        let scale = band.scale.as_ref().unwrap();
+        let x =
+            projection
+                .viewport
+                .x_at_bar_position(DISTANT_BAR as f32 + 0.3, HISTORY_RIGHT, TAPE);
+        // Through 67 at bar 80, three units under that candle's high.
+        let mut line = [ChartPoint::at(75.0, 66.0), ChartPoint::at(85.0, 68.0)];
+        projection.snap_body(
+            &mut line,
+            BodySnap::Line,
+            band,
+            crate::pos2(x, scale.y(67.0)),
+            (HISTORY_RIGHT, TAPE),
+        );
+        assert_eq!(
+            line,
+            [ChartPoint::at(75.0, 69.0), ChartPoint::at(85.0, 71.0)]
+        );
+    });
+}
+
 /// The edge a level reads is the band's, not the viewport's generous range:
 /// a candle mostly scrolled off the left edge is no candidate, even when it
 /// is the nearer print, and the first candle fully in view is one.

@@ -172,7 +172,7 @@ fn crate_sources(owner: &str) -> Vec<PathBuf> {
                 if name != "tests" {
                     stack.push(path);
                 }
-            } else if name.ends_with(".rs") && !name.ends_with("_tests.rs") {
+            } else if name.ends_with(".rs") && name != "tests.rs" && !name.ends_with("_tests.rs") {
                 files.push(path);
             }
         }
