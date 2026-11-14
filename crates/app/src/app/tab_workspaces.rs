@@ -103,8 +103,8 @@ impl TabRecipeHost for BookTabs<'_> {
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
                 quantick_workspace::canvas::signal(&tab.canvas.state),
-                tab.canvas.context_collapsed,
-                tab.canvas.flow_collapsed,
+                tab.canvas.folds().0,
+                tab.canvas.folds().1,
             );
             (canvas, tab.canvas.split_fraction.to_bits()).hash(&mut hash);
             tab.canvas.context_collapsed_slots().hash(&mut hash);
@@ -240,9 +240,9 @@ fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &Wor
     let sets = sides
         .iter()
         .map(|(pane, side)| (*pane, recipe.for_pane(side.index()).0));
-    layouts.store.session_mut().part_copies(sets);
-    for (_, side) in sides {
-        layouts.show_pane_indicators(id, side, recipe.for_pane(side.index()).0);
+    let shown = layouts.store.session().shared_sets(sets);
+    for ((_, side), (_, set)) in sides.into_iter().zip(shown) {
+        layouts.show_pane_indicators(id, side, set);
     }
 }
 

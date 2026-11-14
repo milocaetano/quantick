@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::{
     self, HOME_SHOWN_HOVER, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId,
@@ -66,6 +67,7 @@ pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) help: Option<HelpPage>,
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
+    pub(in crate::app) cell_rows: Vec<(CellRow, egui::Rect)>,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
     /// The pane whose first row takes the keyboard next.
     focus_pane: Option<usize>,
@@ -197,7 +199,7 @@ impl WindowMenu<'_> {
         items: &[Item],
         corner: egui::Pos2,
         commands: &mut Vec<MenuCommand>,
-    ) {
+    ) -> egui::LayerId {
         let mut child = None;
         let mut over_submenu = false;
         let rightwards = state.door == MenuDoor::Toolbar;
@@ -257,8 +259,13 @@ impl WindowMenu<'_> {
             child = None;
         }
         if let Some((id, at)) = child {
-            self.pane(ctx, state, level + 1, submenu(id).1, at, commands);
+            let below = self.pane(ctx, state, level + 1, submenu(id).1, at, commands);
+            // The menu stays over the edge its first submenu tucks under.
+            if level == 0 {
+                ctx.set_sublayer(below, area.response.layer_id);
+            }
         }
+        area.response.layer_id
     }
 
     /// A submenu's own row, or nothing when it has nothing to hold.
@@ -456,7 +463,7 @@ impl WindowMenu<'_> {
             LiveRows::Legend => self.legend_entry(ui, commands),
             LiveRows::ChartMoves => self.chart_moves(ui, commands),
             LiveRows::RecentFiles => self.recent_files(ui, commands),
-            LiveRows::WorkspaceList => self.workspace.list(ui, commands, false),
+            LiveRows::WorkspaceList => self.workspace.list(ui, commands),
         }
         if wants_focus && !self.focus_live_row.get() {
             state.focus_pane = None;
@@ -546,7 +553,7 @@ impl WindowMenu<'_> {
         if !(self.tab.canvas.layout.shows_time() && self.tab.canvas.layout.shows_flow()) {
             return;
         }
-        let label = if self.tab.canvas.context_collapsed {
+        let label = if !self.tab.shows_context_charts() {
             "Show context charts"
         } else {
             "Hide context charts"

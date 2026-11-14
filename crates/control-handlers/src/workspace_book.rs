@@ -46,6 +46,8 @@ use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
 use crate::tabs::TabDirectory;
 
+pub mod cell_menu;
+
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
 }

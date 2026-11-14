@@ -193,7 +193,7 @@ fn publish(
         &state.workspace,
         rects.name,
         workspace_open,
-        None,
+        Some(quantick_control_handlers::workspace_book::cell_menu::MENU_CAPABILITY_ID),
     ));
     if let Some(floppy) = rects.floppy {
         let save = Some(quantick_control_schema::workspace_book::WORKSPACE_SAVE_TO_CAPABILITY_ID);

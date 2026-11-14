@@ -26,6 +26,7 @@ use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
+use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::market_list::{self as list, OpenChoice};
@@ -527,7 +528,7 @@ pub(crate) struct ChromeReads<'a> {
     drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
     drawn: ChromeDrawn,
     title_bar: Option<&'a super::title_bar::TitleBarState>,
-    settings_section: Option<quantick_control_schema::settings_sections::SettingsSection>,
+    window_menu: Option<&'a super::menu_bar::WindowMenuState>,
     /// The toolbar's list door, capsule and layout popover, as drawn.
     pub(crate) toolbar: &'a [crate::toolbar::DrawnControl],
 }
@@ -552,7 +553,12 @@ impl<'a> ChromeReads<'a> {
     pub(crate) fn settings_section(
         self,
     ) -> Option<quantick_control_schema::settings_sections::SettingsSection> {
-        self.settings_section
+        self.window_menu?.settings_shown()
+    }
+
+    /// The workspace cell menu's rows in view, as last drawn.
+    pub(crate) fn cell_menu(self) -> &'a [(CellRow, egui::Rect)] {
+        self.window_menu.map_or(&[], |menu| &menu.cell_rows)
     }
 
     /// The view over the window's own roots, as [`TabReads::new`].
@@ -575,7 +581,7 @@ impl<'a> ChromeReads<'a> {
             drawn,
             alerts_open: false,
             title_bar: None,
-            settings_section: None,
+            window_menu: None,
             toolbar: &[],
         }
     }
@@ -957,7 +963,7 @@ impl ChromePort for QuantickApp {
         );
         reads.alerts_open = self.surfaces.alerts.is_open();
         reads.title_bar = Some(&self.chrome.title_bar);
-        reads.settings_section = self.chrome.window_menu.settings_shown();
+        reads.window_menu = Some(&self.chrome.window_menu);
         reads.toolbar = &self.chrome.toolbar_controls;
         reads
     }

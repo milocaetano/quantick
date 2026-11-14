@@ -211,3 +211,88 @@ fn a_gesture_alone_refuses_selection_and_delete() {
     );
     assert!(session.book().get(second).is_some());
 }
+
+/// A pane that left a twin of its tab's copy finds the survivor on its way
+/// back once the twins merge; the twin leaves the book.
+#[test]
+fn a_kept_twin_follows_the_copy_it_merged_into() {
+    let mut book = LayoutBook::starter(Vec::new());
+    let origin = book.active_id();
+    let shared = book.make_private_copy(origin).unwrap();
+    let twin = book.make_private_copy(origin).unwrap();
+    let mut session = LayoutSession::new(book);
+    let levels = session.create(Some("levels")).unwrap();
+    for (pane, layout) in [(1, shared), (2, levels)] {
+        session.register_in(10, pane, Some(layout));
+        session.seed(pane, None, None);
+    }
+    session.owner.insert(twin, 10);
+    session.kept.insert((2, origin), twin);
+    assert!(session.own_copies([(10, 1), (10, 2)]).changed);
+    assert_eq!(session.kept.get(&(2, origin)), Some(&shared));
+    assert!(session.book().get(twin).is_none(), "merged away");
+    let back = session.select(2, origin, PaneFacts::default()).unwrap();
+    assert_eq!(back.to(), shared);
+}
+
+fn entry(kind: crate::indicator_document::SavedKind) -> SavedIndicator {
+    SavedIndicator {
+        kind,
+        hidden: false,
+        mouse_vertical_line: false,
+        inputs: Vec::new(),
+        plot_styles: Vec::new(),
+    }
+}
+
+fn force_bar() -> SavedIndicator {
+    entry(SavedKind::Script {
+        name: "force_bar.pine".to_owned(),
+    })
+}
+
+fn cvd() -> SavedIndicator {
+    entry(SavedKind::native("native.cvd"))
+}
+
+/// Fullness counts kinds, not entries: three CVDs never outweigh a bar study
+/// and a CVD, in a merge or in a landing recipe.
+#[test]
+fn the_fullest_set_counts_kinds_not_entries() {
+    let (three, two) = (vec![cvd(), cvd(), cvd()], vec![force_bar(), cvd()]);
+    assert_eq!((fullness(&three), fullness(&two)), (1, 2));
+
+    let mut book = LayoutBook::starter(Vec::new());
+    let origin = book.active_id();
+    let copies = [three.clone(), two.clone()].map(|set| {
+        let copy = book.make_private_copy(origin).unwrap();
+        book.get_mut(copy).unwrap().indicators = set;
+        copy
+    });
+    let mut session = LayoutSession::new(book);
+    for (pane, copy) in [1, 2].into_iter().zip(copies) {
+        session.register(pane, Some(copy));
+        session.seed(pane, None, None);
+    }
+    session.own_copies([(10, 1), (10, 2)]);
+    assert_eq!([session.layout(1), session.layout(2)], [copies[1]; 2]);
+    let shown = session.shared_sets([(1, three.as_slice()), (2, two.as_slice())]);
+    assert_eq!(shown, [(1, two.as_slice()), (2, two.as_slice())]);
+}
+
+/// What a merge or a landing leaves out is named: a kind the shown set lacks,
+/// and a kind it has whose entry carries other settings.
+#[test]
+fn what_is_not_shown_names_lost_kinds_and_lost_settings() {
+    let hidden_cvd = SavedIndicator {
+        hidden: true,
+        ..cvd()
+    };
+    let rsi = entry(SavedKind::native("native.rsi"));
+    let shown = [force_bar(), cvd()];
+    let given = [force_bar(), hidden_cvd, rsi.clone(), rsi];
+    let (lacked, other_settings) = unshown(&shown, [&given[..], &shown[..]]);
+    assert_eq!(lacked, ["native.rsi"]);
+    assert_eq!(other_settings, ["native.cvd"]);
+    assert_eq!(unshown(&shown, [&shown[..]]), (Vec::new(), Vec::new()));
+}

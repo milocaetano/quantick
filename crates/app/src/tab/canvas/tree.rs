@@ -11,7 +11,7 @@ use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
     CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
-    tree_seams,
+    tree_rails, tree_seams,
 };
 use smallvec::SmallVec;
 
@@ -22,6 +22,12 @@ use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneSide, split_flow_pane, split_pane_header, split_pane_layout_strip,
 };
 use crate::{floating_panes, theme};
+
+/// The resize cursor over a seam laying charts top to bottom, then side by side.
+const CURSORS: [egui::CursorIcon; 2] = [
+    egui::CursorIcon::ResizeVertical,
+    egui::CursorIcon::ResizeHorizontal,
+];
 
 impl Tab {
     /// Lay the canvas out from the model's tree and spend each band's header,
@@ -42,7 +48,8 @@ impl Tab {
             canvas,
             CANVAS_DIVIDER_PX,
         );
-        let bands = bands.into_iter().map(|band| {
+        // A rail is painted over its whole node with the seams.
+        let bands = bands.into_iter().filter(|band| !band.railed).map(|band| {
             let at = egui::Rect::from_min_size(
                 egui::pos2(band.rect.x, band.rect.y),
                 egui::vec2(band.rect.w, band.rect.h),
@@ -129,39 +136,46 @@ impl Tab {
 
     /// The seams between the docked bands, painted as the column painter's
     /// dividers and dragged as they are: a resize cursor over each, and a
-    /// drag moving it through the canvas model. After the panes, so a seam's
-    /// grab margin wins over the chart beside it.
+    /// drag moving it through the canvas model, folding a side to its rail
+    /// at the edge. Then every rail, as the column painter paints its own.
+    /// After the panes, so a seam's grab margin wins over the chart beside it.
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        let rect =
+            |at: CanvasRect| egui::Rect::from_min_size((at.x, at.y).into(), (at.w, at.h).into());
+        let mut hot = None;
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let at = egui::Rect::from_min_size(
-                egui::pos2(seam.rect.x, seam.rect.y),
-                egui::vec2(seam.rect.w, seam.rect.h),
-            );
             ui.painter()
-                .rect_filled(at, egui::Rounding::ZERO, palette.border());
+                .rect_filled(rect(seam.rect), egui::Rounding::ZERO, palette.border());
             if !seam.resizable {
                 continue;
             }
             let row = seam.axis == SplitAxis::Row;
-            let margin = CANVAS_DIVIDER_HANDLE_PX;
-            let (grab, cursor) = if row {
-                (egui::vec2(margin, 0.0), egui::CursorIcon::ResizeHorizontal)
-            } else {
-                (egui::vec2(0.0, margin), egui::CursorIcon::ResizeVertical)
-            };
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
-            let handle = ui.interact(at.expand2(grab), id, egui::Sense::drag());
+            let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
+            let handle = ui.interact(grab, id, egui::Sense::drag());
             if handle.hovered() || handle.dragged() {
-                ui.ctx().set_cursor_icon(cursor);
+                ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
+                hot = hot.or(seam.rail.map(|rail| rail.slot));
             }
-            // Every step the pointer took, as the column divider adds them up:
-            // an off-centre grab never jumps the seam.
+            // Every step the pointer took since the press, as the column
+            // divider adds them up: an off-centre grab never jumps the seam,
+            // and travel past a floor still reaches the fold.
             let step = [handle.drag_delta().y, handle.drag_delta().x][usize::from(row)];
-            if handle.dragged() && step.abs() > f32::EPSILON {
-                let _ = (self.canvas.state).move_seam(&seam.address, step, canvas);
+            if handle.dragged() {
+                let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
+                let pressed = (&seam.address, step, handle.drag_started());
+                let _ = state.step_seam_drag(held, pressed, canvas);
             }
+            self.canvas.seam_drag.take_if(|_| handle.drag_stopped());
+        }
+        for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
+            let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);
+            let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
+            let edge = (edges[usize::from(rail.meets_after)], across);
+            super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
+            self.canvas.menus.publish_rail(rail.control_id(), at);
         }
     }
 
