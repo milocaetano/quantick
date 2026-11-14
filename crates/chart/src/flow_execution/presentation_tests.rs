@@ -520,3 +520,145 @@ fn a_regions_sectors_sweep_its_exact_sides_in_turn() {
     let sold: Vec<_> = region(1).unwrap().sectors(&frame, 1.0).collect();
     assert_eq!(sold, [(1, 1.0, tau as f32)], "the buy side draws nothing");
 }
+
+/// Peak spheres hold no mass back as context, however small against the
+/// largest, and label only the top fifth by rank, whatever fits.
+#[test]
+fn peak_spheres_promote_every_mass_and_label_the_top_fifth() {
+    let quantities = [4500_i64, 600, 90];
+    let trades: Vec<_> = quantities
+        .iter()
+        .enumerate()
+        .map(|(index, &quantity)| Trade {
+            agg_id: index as u64 + 1,
+            timestamp_ms: (index as i64 + 1) * 1000,
+            price: 100.into(),
+            quantity: quantity.into(),
+            side: Side::Buy,
+        })
+        .collect();
+    let frame = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal,
+                accepted_ordinal: 0,
+                ticks_per_bar: 1.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        3,
+        3,
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 3,
+            clip_left: 0.into(),
+            clip_right: 3.into(),
+            width_px: 400.0,
+            height_px: 300.0,
+            prices: PriceWindow::new(99.into(), 101.into()).unwrap(),
+            reference: FlowReference::VisibleRegions,
+            radius_limit: 32.0,
+            merge_support_radius: 6.0,
+            region: quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1),
+            exclude_opening: false,
+        },
+    );
+    assert_eq!(frame.large_region_threshold(), None);
+    let style = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        viewport_scale: None,
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let centers = [[60.0, 100.0], [200.0, 100.0], [340.0, 100.0]];
+    let plan = FlowPresentation::styled(&frame, HISTORY, Some(style), |dot| {
+        Some(centers[dot.mark.agg_id as usize - 1])
+    });
+    assert_eq!(plan.regions.len(), 3);
+    assert!(
+        plan.regions
+            .iter()
+            .all(|region| region.role == FlowRegionRole::Peak),
+        "{plan:?}"
+    );
+    let fits = plan
+        .regions
+        .iter()
+        .filter(|region| region.disc.radius >= style.label_min_radius)
+        .count();
+    assert_eq!(fits, 2, "the middle mass would fit its label");
+    let labels = plan.quantity_labels(&frame, Some(style));
+    assert_eq!(labels.len(), 1, "only the top fifth carries one");
+    let readable = quantick_orderflow::TickBubbleStyle {
+        label_min_radius: 64.0,
+        ..style
+    };
+    assert_eq!(
+        plan.quantity_labels(&frame, Some(readable)).len(),
+        1,
+        "test agent D2: the top fifth is offered whatever the readable radius"
+    );
+    assert_eq!(labels[0].center, centers[0]);
+    // The fill strength is part of each region's key, so a drawing kept
+    // from before the mode flipped is never reused at the wrong strength.
+    let mut off = frame.clone();
+    off.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Candles(1);
+    assert_ne!(plan.region_keys(&frame, true), plan.region_keys(&off, true));
+}
+
+/// Under peak spheres the labels are placed from the largest sphere down:
+/// a sphere too small for its text ends the placement, so no larger sphere
+/// goes unlabelled for want of room beside a smaller labelled one. A label
+/// off screen, or one that would cover a label already placed, is skipped
+/// alone: that is the one documented exception to the order.
+#[test]
+fn peak_labels_stop_only_at_a_sphere_too_small_for_its_text() {
+    let label = |center: [f32; 2], radius: f32, text: &str| super::super::FlowQuantityLabel {
+        center,
+        radius,
+        text: text.to_owned(),
+    };
+    let measure = |_: &super::super::FlowQuantityLabel| [20.0, 10.0];
+    let texts = |placed: Vec<([f32; 2], super::super::FlowQuantityLabel)>| {
+        placed
+            .into_iter()
+            .map(|(_, label)| label.text)
+            .collect::<Vec<_>>()
+    };
+    let fit = [2.0, 1.0];
+    let place = |labels: Vec<super::super::FlowQuantityLabel>| {
+        texts(super::super::place_quantity_labels_until_miss(
+            labels, HISTORY, fit, measure, true,
+        ))
+    };
+    // Off screen and covered labels are skipped alone.
+    let skipped = vec![
+        label([-30.0, 100.0], 30.0, "50K"),
+        label([100.0, 100.0], 30.0, "45K"),
+        label([104.0, 100.0], 20.0, "30K"),
+        label([300.0, 100.0], 15.0, "10K"),
+    ];
+    assert_eq!(place(skipped), ["45K", "10K"]);
+    // A sphere too small for its text stops every smaller one.
+    let small = vec![
+        label([100.0, 100.0], 30.0, "45K"),
+        label([200.0, 100.0], 8.0, "30K"),
+        label([300.0, 100.0], 15.0, "10K"),
+    ];
+    assert_eq!(place(small), ["45K"]);
+    // Counts at several radii: every sphere wide enough for its text.
+    for (radius, placed) in [(30.0, 3), (12.0, 3), (10.0, 3), (9.0, 0)] {
+        let labels = (0..3)
+            .map(|n| label([50.0 + n as f32 * 100.0, 100.0], radius, "86K"))
+            .collect();
+        assert_eq!(place(labels).len(), placed, "radius {radius}");
+    }
+}

@@ -10,6 +10,7 @@ use crate::{analysis, attention, feed, indicator_guide, layers, layout, notify, 
 /// Every family that declares readback rows. Order is irrelevant: the
 /// document is rendered in the registry's order.
 pub const FAMILIES: &[&[Readback]] = &[
+    crate::alerts::READBACKS,
     analysis::READBACKS,
     crate::appearance::READBACKS,
     attention::READBACKS,
@@ -18,8 +19,10 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::canvas::READBACKS,
     crate::chart_settings::READBACKS,
     crate::indicator_picker::READBACKS,
+    crate::native_indicator::READBACKS,
     crate::drawing_magnet::READBACKS,
     crate::drawing_scope::READBACKS,
+    crate::drawing_text::READBACKS,
     feed::READBACKS,
     crate::history::READBACKS,
     indicator_guide::READBACKS,

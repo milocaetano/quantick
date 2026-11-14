@@ -1,5 +1,7 @@
 use crate::theme;
 mod pane_model_tests;
+#[path = "text_note_tests.rs"]
+mod text_note_tests;
 
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
@@ -1689,21 +1691,17 @@ fn clicking_a_drawing_keeps_it_selected_after_the_release() {
     }
 }
 
-/// The two Fib tools ask different questions, so they open with different
-/// spans — this is not one shared default:
-///
-/// - a retracement measures how much of *one move* was given back, so its
-///   lines live between its own anchors and end where the trader stopped
-///   dragging ("a linha deve ir até o ponto onde eu tô traçando e não ir
-///   para o infinito", reported from the running build);
-/// - an extension projects what comes *after* its last anchor, so drawing
-///   its targets back over the measured leg is backwards on its face.
+/// Both Fib tools open finite, between their own anchors: a retracement's
+/// lines end where the trader stopped dragging ("a linha deve ir até o ponto
+/// onde eu tô traçando e não ir para o infinito", reported from the running
+/// build), and an extension's targets running on to the chart's edge is an
+/// opt-in on the Levels tab rather than the default.
 #[test]
 fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
     use quantick_drawings::{FibExtend as Extend, FibPayload};
     for (tool, expected) in [
         ("fib-retracement", Extend::Anchors),
-        ("fib-extension", Extend::Forward),
+        ("fib-extension", Extend::Anchors),
     ] {
         let payload = drawing_tool(tool).default_payload();
         let fib = payload
@@ -3887,11 +3885,10 @@ fn the_note_stops_painting_itself_while_its_editor_is_open() {
     );
 }
 
-/// A note against the top of the chart opens its field *below* the
-/// anchor. Pinned upward it lands on the flow legend — chrome over the
-/// key it is annotating — and the trader reads neither.
+/// At the chart edge, the editor keeps the note's anchor and clips its paint
+/// instead of flipping away from the words' committed position.
 #[test]
-fn the_field_opens_below_a_note_that_has_no_room_above_it() {
+fn the_field_stays_anchored_when_a_note_has_no_room_above_it() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
@@ -3910,23 +3907,20 @@ fn the_field_opens_below_a_note_that_has_no_room_above_it() {
         "the editor is open"
     );
 
-    let hint = output
-        .shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.text() == INLINE_TEXT_HINT => Some(text.pos),
-            _ => None,
-        })
-        .next()
-        .expect("the field is on screen with its hint");
+    let editor = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("inline-text-editor")))
+        .expect("the editor retains its chart position");
     assert!(
-        hint.y >= chart.top(),
-        "the field must stay inside the chart: {hint:?} against {chart:?}"
+        editor.top() < chart.top(),
+        "the editor must stay above its anchor: {editor:?} against {chart:?}"
     );
-    assert!(
-        hint.y > chart.top() + 2.0,
-        "with no room above the anchor the field opens below it: {hint:?}"
-    );
+    for shape in &output.shapes {
+        if let egui::Shape::Text(text) = &shape.shape
+            && text.galley.text() == INLINE_TEXT_HINT
+        {
+            assert!(chart.contains_rect(shape.clip_rect));
+        }
+    }
 }
 
 /// Fixing a typo has to be possible. Placing a note no longer opens the

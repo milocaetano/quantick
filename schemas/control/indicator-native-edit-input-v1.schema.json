@@ -1,0 +1,306 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "Operation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "add",
+              "type": "string"
+            },
+            "native_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "native_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "set_inputs",
+              "type": "string"
+            },
+            "slot_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "values": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Value"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "slot_id",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "set_plot_style",
+              "type": "string"
+            },
+            "plot": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "style": {
+              "$ref": "#/$defs/PlotStyle"
+            }
+          },
+          "required": [
+            "action",
+            "slot_id",
+            "plot",
+            "style"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "set_hidden",
+              "type": "string"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "slot_id": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "action",
+            "slot_id",
+            "hidden"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "remove",
+              "type": "string"
+            },
+            "slot_id": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "action",
+            "slot_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PlotStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "visible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id"
+      ],
+      "type": "object"
+    },
+    "Value": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "int",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "float",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/CanonicalDecimal"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "bool",
+              "type": "string"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "color",
+              "type": "string"
+            },
+            "value": {
+              "items": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "str",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "source",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "$ref": "#/$defs/Operation"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    }
+  },
+  "required": [
+    "target",
+    "operation"
+  ],
+  "title": "EditInput",
+  "type": "object"
+}

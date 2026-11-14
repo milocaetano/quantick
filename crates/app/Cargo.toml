@@ -21,6 +21,7 @@ scenario-harness = ["quantick-feed/harness"]
 
 [dependencies]
 quantick-ui-model = { path = "../ui-model" }
+quantick-alerts = { path = "../alerts" }
 quantick-appearance = { path = "../appearance" }
 quantick-anchored-studies = { path = "../anchored-studies" }
 # Bounded admission between the window and its workers, and their progress.

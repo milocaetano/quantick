@@ -58,17 +58,17 @@ impl CanvasAnswers {
     /// What the frame already knows before the canvas draws: which tab's popup
     /// this is, and what the status bar was just asked.
     pub(in crate::app) fn seeded(
+        app: &crate::app::QuantickApp,
         popup_tab: u64,
-        surfaces: &crate::surfaces::Surfaces,
         status: &crate::statusbar::StatusResponse,
     ) -> Self {
         Self {
             popup_tab,
-            popup_open: surfaces.feed_notice.model_state.open() == Some(popup_tab),
+            popup_open: app.surfaces.feed_notice.model_state.open() == Some(popup_tab),
             chip_clicked: status.word_clicked,
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {
-                feed_notice::NoticeAction::Reconnect
+                app.active_tab().link.quick_action()
             } else {
                 feed_notice::NoticeAction::None
             },
@@ -88,8 +88,9 @@ fn source_name<'a>(tab: &'a Tab, config: &'a crate::config::AppConfig) -> &'a st
 }
 
 /// Measure whether the overlay's control fits before the status bar draws, so
-/// exactly one of them offers Reconnect. On last frame's rects: a resize can
-/// leave neither for its one frame, never both, since the overlay checks again.
+/// exactly one of them offers it — Reconnect, or the popup's roll. On last
+/// frame's rects: a resize can leave neither for its one frame, never both,
+/// since the overlay checks again.
 pub(super) fn settle_overlay_control(
     ctx: &egui::Context,
     tab: &mut Tab,
@@ -100,7 +101,10 @@ pub(super) fn settle_overlay_control(
         .connection
         .overlay(source_name(tab, config), now)
         .zip(tab.empty_panes_rect())
-        .is_some_and(|(words, rect)| loading::reconnect_fits(ctx, rect, &tab.symbol, &words));
+        .is_some_and(|(words, rect)| {
+            let label = tab.link.quick_action().label();
+            loading::reconnect_fits(ctx, rect, &tab.symbol, &words, &label)
+        });
     tab.connection.set_overlay_control_fits(fits);
 }
 
@@ -126,9 +130,11 @@ pub(super) fn overlays(
         let owns = tab.connection.overlay_owns_canvas();
         let palette = owns.then(|| tab.lead_pane().palette(ui.ctx()));
         let _palette = palette.map(|palette| crate::theme::scope(ui.ctx(), palette));
-        let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, clock);
+        let action = tab.link.quick_action();
+        let label = action.label();
+        let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, &label, clock);
         if pressed {
-            answers.notice_action = feed_notice::NoticeAction::Reconnect;
+            answers.notice_action = action;
         }
     }
     if let Some(chip) = answers.chip_rect
@@ -168,9 +174,11 @@ fn draw_recovery_popup(
                 needs_user: true,
                 severity: feed_notice::Severity::Offline,
                 primary: quantick_feed::stall::Recovery::Reconnect,
+                roll: None,
             }
         }
     };
+    let report = report.with_roll(tab.link.roll_note());
     let (action, dismissed) = view.draw(ui, area, chip, &report);
     if action != feed_notice::NoticeAction::None {
         answers.notice_action = action;

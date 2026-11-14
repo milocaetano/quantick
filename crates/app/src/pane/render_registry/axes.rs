@@ -563,15 +563,17 @@ impl AxisMarksPass<'_> {
             // telling you about, at the height it sits. The ink is *computed*
             // rather than borrowed from that chip — the last price wears one
             // of two saturated colours and a drawing wears whatever the
-            // trader picked, dark navy included.
+            // trader picked, dark navy included. A theme without label
+            // plates paints the price in that colour over the axis instead.
+            let (fill, ink) = palette.drawing_tag_paint(level.color);
             pointer_compass::paint_price_tag(
                 painter,
                 axis_x,
                 level.y,
                 pointer_compass::price_text(level.price),
                 None,
-                level.color,
-                palette.ink_on(level.color),
+                fill,
+                ink,
             );
         }
     }

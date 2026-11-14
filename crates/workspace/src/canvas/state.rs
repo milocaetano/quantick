@@ -6,9 +6,9 @@
 //! other workspace edit. Transitions answer whether anything changed, so a
 //! repeated call is safe and says it did nothing.
 
-use super::drop::{Corner, Edge, park_rect};
+use super::drop::{Corner, DockTarget, park_rect};
 use super::presets::{LayoutPreset, MAX_CANVAS_PANES, PaneKind, matching_preset, timeframes_with};
-use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
+use super::tree::{CanvasRect, PaneSlot, PaneTree};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -64,6 +64,8 @@ pub enum CanvasRefusal {
     LastOpenPane,
     /// The canvas already holds [`MAX_CANVAS_PANES`].
     Full,
+    /// The canvas already holds an order-flow pane, and the window draws one.
+    SecondFlow,
     /// No seam there can move: it needs two unfolded docked neighbours along
     /// a split, and no chart maximized over the canvas.
     NoSeam,
@@ -86,6 +88,7 @@ impl CanvasRefusal {
             Self::LastDockedPane => "canvas.last_docked_pane",
             Self::LastOpenPane => "canvas.last_open_pane",
             Self::Full => "canvas.full",
+            Self::SecondFlow => "canvas.second_flow",
             Self::NoSeam => "canvas.no_seam",
             Self::NoRoom => "canvas.no_room",
         }
@@ -104,6 +107,7 @@ impl std::fmt::Display for CanvasRefusal {
             Self::LastDockedPane => f.write_str("the canvas keeps at least one docked chart"),
             Self::LastOpenPane => f.write_str("the canvas keeps at least one chart unfolded"),
             Self::Full => write!(f, "the canvas holds at most {MAX_CANVAS_PANES} charts"),
+            Self::SecondFlow => f.write_str("the canvas already holds the order flow"),
             Self::NoSeam => f.write_str(
                 "no seam there can move: it needs two unfolded docked charts side by side and none maximized",
             ),
@@ -225,29 +229,53 @@ impl CanvasState {
         })
     }
 
-    /// Lay the docked panes out as `preset`. Panes already docked keep their
-    /// slots where the preset has a place of their kind, in reading order; a
-    /// place left over opens a new pane. Folds and the maximized pane are
-    /// cleared; floating panes stay.
+    /// Lay the docked panes out as `preset`. Each place of the preset takes a
+    /// pane of its kind: a docked one first, in reading order, then a
+    /// floating one, which comes back into the tree; only a place left over
+    /// opens a new pane, so a floating flow pane is never doubled. A pane over
+    /// the canvas is taken before one in its own window, so a chart moved to
+    /// another monitor comes back only when nothing else can serve. Folds and
+    /// the maximized pane are cleared; floating panes no place took stay.
+    ///
+    /// Refused, answering `false` with nothing changed, when the new tree and
+    /// the panes still floating would hold more than [`MAX_CANVAS_PANES`]:
+    /// only a canvas at the cap with no flow pane and most charts floating
+    /// reaches it.
     pub fn apply_preset(&mut self, preset: &LayoutPreset) -> bool {
-        let mut existing = self.tree.panes();
+        let mut docked = self.tree.panes();
+        let mut floating = self.floating.clone();
         let mut next = self.next_slot;
-        let slots: Vec<PaneSlot> = preset
-            .kinds
-            .iter()
-            .map(
-                |kind| match existing.iter().position(|(_, held)| held == kind) {
-                    Some(index) => existing.remove(index).0,
-                    None => {
-                        next += 1;
-                        next - 1
-                    }
-                },
-            )
+        let take = |floating: &[FloatingPane], kind: PaneKind| {
+            let of_kind = |over_canvas: bool| {
+                (floating.iter()).position(|pane| {
+                    pane.kind == kind
+                        && matches!(pane.host, FloatHost::Canvas { .. }) == over_canvas
+                })
+            };
+            of_kind(true).or_else(|| of_kind(false))
+        };
+        let slots: Vec<PaneSlot> = (preset.kinds.iter())
+            .map(|kind| {
+                if let Some(index) = docked.iter().position(|(_, held)| held == kind) {
+                    docked.remove(index).0
+                } else if let Some(index) = take(&floating, *kind) {
+                    floating.remove(index).slot
+                } else {
+                    next += 1;
+                    next - 1
+                }
+            })
             .collect();
+        if slots.len() + floating.len() > MAX_CANVAS_PANES {
+            return false;
+        }
         let tree = preset.tree.relabelled(&|slot| slots[slot as usize]);
-        let changed = tree != self.tree || self.maximized.is_some() || !self.minimized.is_empty();
+        let changed = tree != self.tree
+            || floating != self.floating
+            || self.maximized.is_some()
+            || !self.minimized.is_empty();
         self.tree = tree;
+        self.floating = floating;
         self.next_slot = next;
         self.maximized = None;
         self.minimized.clear();
@@ -330,10 +358,11 @@ impl CanvasState {
     /// slot.
     ///
     /// # Errors
-    /// The canvas is full.
+    /// The canvas is full, or `kind` is the order flow and the canvas holds
+    /// one: the window draws one flow pane, so a second would be a phantom.
     pub fn add(&mut self, kind: PaneKind, canvas: CanvasRect) -> Result<PaneSlot, CanvasRefusal> {
-        if self.tree.len() + self.floating.len() >= MAX_CANVAS_PANES {
-            return Err(CanvasRefusal::Full);
+        if let Some(refusal) = self.add_refusal(kind) {
+            return Err(refusal);
         }
         let slot = self.next_slot;
         self.next_slot += 1;
@@ -353,6 +382,18 @@ impl CanvasState {
         Ok(slot)
     }
 
+    /// Why a pane of `kind` cannot be added now, if it cannot.
+    #[must_use]
+    pub fn add_refusal(&self, kind: PaneKind) -> Option<CanvasRefusal> {
+        if self.tree.len() + self.floating.len() >= MAX_CANVAS_PANES {
+            return Some(CanvasRefusal::Full);
+        }
+        let flow = |held: &PaneKind| *held == PaneKind::Flow;
+        let has_flow = self.tree.panes().iter().any(|(_, held)| flow(held))
+            || self.floating.iter().any(|pane| flow(&pane.kind));
+        (kind == PaneKind::Flow && has_flow).then_some(CanvasRefusal::SecondFlow)
+    }
+
     /// Float a pane over the canvas at `rect`: a docked one leaves the tree, a
     /// floating one moves, one in its own window comes back to the canvas.
     ///
@@ -362,30 +403,82 @@ impl CanvasState {
         self.set_host(slot, FloatHost::Canvas { rect })
     }
 
-    /// Insert a floating pane into the docked tree at `edge`.
+    /// Put a pane into the docked tree at `target`: at a canvas edge, beside
+    /// a docked pane, or in a docked pane's place. A floating pane docks
+    /// there, and a docked pane it swaps with floats where it stood; a docked
+    /// pane moves there, and swapping two docked panes trades their places.
     ///
     /// # Errors
-    /// The pane is not floating.
-    pub fn dock(&mut self, slot: PaneSlot, edge: Edge) -> Result<bool, CanvasRefusal> {
+    /// No such pane; the pane `target` names is not docked; a pane in its
+    /// own window swapping (the docked pane would leave for that window); or
+    /// moving the last docked pane.
+    pub fn dock(&mut self, slot: PaneSlot, target: DockTarget) -> Result<bool, CanvasRefusal> {
+        if self.tree.holds(slot) {
+            return self.redock(slot, target);
+        }
         let index = self
             .floating_index(slot)
             .ok_or_else(|| self.missing_or(slot, CanvasRefusal::NotFloating(slot)))?;
-        let pane = self.floating.remove(index);
-        let (axis, at_start) = match edge {
-            Edge::Left => (SplitAxis::Row, true),
-            Edge::Right => (SplitAxis::Row, false),
-            Edge::Top => (SplitAxis::Column, true),
-            Edge::Bottom => (SplitAxis::Column, false),
+        let (kind, host) = (self.floating[index].kind, self.floating[index].host.clone());
+        let pane = PaneTree::pane(slot, kind);
+        let tree = match target {
+            DockTarget::Canvas(edge) => {
+                let (axis, at_start) = edge.placing();
+                self.tree.docked(pane, axis, at_start)
+            }
+            DockTarget::Beside { slot: beside, side } => (self.tree)
+                .docked_beside(beside, pane, side)
+                .ok_or_else(|| self.missing_or(beside, CanvasRefusal::NotDocked(beside)))?,
+            DockTarget::Swap(other) => {
+                let other_kind = self.docked(other)?;
+                if !matches!(host, FloatHost::Canvas { .. }) {
+                    return Err(CanvasRefusal::NotFloating(slot));
+                }
+                let swapped = |held, held_kind| {
+                    if held == other {
+                        (slot, kind)
+                    } else {
+                        (held, held_kind)
+                    }
+                };
+                let tree = self.tree.replaced(&swapped);
+                self.minimized.remove(&other);
+                let (slot, kind) = (other, other_kind);
+                self.floating.push(FloatingPane { slot, kind, host });
+                tree
+            }
         };
-        self.tree = self
-            .tree
-            .docked(PaneTree::pane(pane.slot, pane.kind), axis, at_start);
+        self.floating.retain(|pane| pane.slot != slot);
+        self.tree = tree;
         self.maximized = None;
         Ok(true)
     }
 
+    /// Move the docked pane `slot` to `target`: a swap trades two docked
+    /// panes' places, anything else takes it out of the tree and docks it
+    /// again. Nothing changes when refused.
+    fn redock(&mut self, slot: PaneSlot, target: DockTarget) -> Result<bool, CanvasRefusal> {
+        if let DockTarget::Swap(other) = target {
+            self.docked(other)?;
+            let tree = self.tree.swap(slot, other);
+            let changed = tree != self.tree;
+            self.tree = tree;
+            return Ok(changed);
+        }
+        let mut moved = self.clone();
+        let kind = moved.take_docked(slot)?;
+        let host = FloatHost::Canvas {
+            rect: CanvasRect::new(0.0, 0.0, 0.0, 0.0),
+        };
+        moved.floating.push(FloatingPane { slot, kind, host });
+        moved.dock(slot, target)?;
+        let changed = moved != *self;
+        *self = moved;
+        Ok(changed)
+    }
+
     /// Snap a pane floating over the canvas into `corner` of `canvas`,
-    /// keeping its size.
+    /// keeping its size, clear of every folded chart's strip.
     ///
     /// # Errors
     /// The pane is not floating over the canvas.
@@ -400,9 +493,18 @@ impl CanvasState {
         let FloatHost::Canvas { rect } = self.floating[index].host else {
             return Err(not_floating);
         };
-        let parked = park_rect(canvas, corner, (rect.w, rect.h));
+        let parked = park_rect(canvas, corner, (rect.w, rect.h), &self.strips(canvas));
         self.floating[index].host = FloatHost::Canvas { rect: parked };
         Ok(parked != rect)
+    }
+
+    /// Every folded chart's strip on `canvas`: what a parked pane keeps
+    /// clear of.
+    #[must_use]
+    pub fn strips(&self, canvas: CanvasRect) -> Vec<CanvasRect> {
+        (self.rects(canvas).into_iter())
+            .filter_map(|(held, strip)| self.minimized.contains(&held).then_some(strip))
+            .collect()
     }
 
     /// Put a pane in its own OS window on `monitor` at `rect`.
@@ -535,9 +637,10 @@ impl CanvasState {
 /// workspace as last saved, holds that pane. A pane added since goes quietly.
 ///
 /// Compared by slot, the pane's identity for its life: a save keeps the
-/// canvas whenever it is not [`CanvasState::numbered_as`] its preset, so a
-/// saved tab and the live one always number their panes alike, and a slot
-/// added since the save is one the save never held.
+/// canvas whenever its preset and split do not rebuild it
+/// ([`CanvasState::saved_form`]), so a saved tab and the live one always
+/// number their panes alike, and a slot added since the save is one the
+/// save never held.
 #[must_use]
 pub fn remove_needs_confirm(saved: &CanvasState, live: &CanvasState, slot: PaneSlot) -> bool {
     saved.holds(slot) && live.holds(slot)

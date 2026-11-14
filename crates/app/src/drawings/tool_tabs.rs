@@ -5,8 +5,8 @@
 
 use eframe::egui;
 use quantick_drawings::{
-    AVWAP_SOURCES, AvwapPayload, ChannelPayload, DEFAULT_VALUE_AREA_PCT, FrvpPayload, MAX_TEXT_PX,
-    MAX_WIDTH_FRAC, MIN_TEXT_PX, MIN_WIDTH_FRAC, RectanglePayload, TEXT_PLACEHOLDER, TextPayload,
+    AVWAP_SOURCES, AvwapPayload, ChannelPayload, DEFAULT_VALUE_AREA_PCT, FrvpPayload,
+    MAX_WIDTH_FRAC, MIN_WIDTH_FRAC, RectanglePayload,
 };
 
 use super::{Drawing, DrawingPayload, DrawingTool, PresetHost, StyleColor32, fib};
@@ -21,7 +21,7 @@ fn tab_drawer(tool_id: &str) -> Option<TabDrawer> {
         "fixed-range-profile" => draw_profile_tab,
         "parallel-channel" => |ui, drawing, _| draw_channel_tab(ui, drawing),
         "rectangle" => |ui, drawing, _| draw_rectangle_tab(ui, drawing),
-        "text" => |ui, drawing, _| draw_text_tab(ui, drawing),
+        "text" => |ui, drawing, _| super::text_properties::draw(ui, drawing),
         "fib-retracement" | "fib-extension" => |ui, drawing, host| {
             fib::remember_drawing_color(ui, drawing.style.color32());
             fib::draw_levels_tab(ui, drawing, host)
@@ -277,30 +277,6 @@ fn draw_rectangle_tab(ui: &mut egui::Ui, drawing: &mut Drawing) -> bool {
         )
         .changed();
     left || right
-}
-
-/// The Text tab: the words and their size.
-fn draw_text_tab(ui: &mut egui::Ui, drawing: &mut Drawing) -> bool {
-    let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<TextPayload>() else {
-        return false;
-    };
-    let mut changed = ui
-        .add(
-            egui::TextEdit::multiline(&mut payload.text)
-                .desired_rows(3)
-                .hint_text(TEXT_PLACEHOLDER)
-                .desired_width(f32::INFINITY),
-        )
-        .changed();
-    ui.add_space(4.0);
-    changed |= ui
-        .add(
-            egui::Slider::new(&mut payload.size_px, MIN_TEXT_PX..=MAX_TEXT_PX)
-                .text("Size")
-                .suffix(" px"),
-        )
-        .changed();
-    changed
 }
 
 #[cfg(test)]

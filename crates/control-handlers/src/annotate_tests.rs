@@ -618,3 +618,6 @@ fn a_projection_call_takes_two_anchors_or_the_legacy_three() {
     assert!(refused.is_err(), "a retracement never takes three");
     assert_eq!(window.flow.drawings.items().len(), 2, "nothing more placed");
 }
+
+#[path = "drawing_text_tests.rs"]
+mod drawing_text_tests;

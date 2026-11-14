@@ -63,6 +63,12 @@ fn draw(
         )
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
+            response.open_alerts = IconButton::new(icons::BELL, RAIL_ICON)
+                .strong()
+                .active(env.alerts_open)
+                .hover_text("Alerts")
+                .show(ui)
+                .clicked();
             let position = env.paper.position_summary();
             for tab in DockTab::ALL {
                 // Only the Trading-with-position hover is dynamic; the
@@ -116,11 +122,13 @@ fn draw(
             .resizable(true)
             .default_width(dock.state().width(tab))
             .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)
-            .frame(
+            .frame(if tab == DockTab::Trades {
+                crate::panel_chrome::ground(ctx)
+            } else {
                 egui::Frame::none()
                     .fill(palette.chrome())
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
-            )
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            })
             .show(ctx, |ui| {
                 let mut export = false;
                 draw_tab_header(ui, tab, &mut collapse, |ui| {
@@ -191,6 +199,7 @@ fn draw(
 
 /// Title row shared by every tab, with the collapse affordance and one
 /// optional action slot left of it (the Trades tab's export lives there).
+/// The Trades tab writes it on the settings panels' title plate.
 fn draw_tab_header(
     ui: &mut egui::Ui,
     tab: DockTab,
@@ -198,12 +207,10 @@ fn draw_tab_header(
     actions: impl FnOnce(&mut egui::Ui),
 ) {
     let palette = theme::get(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(tab.title())
-                .strong()
-                .color(palette.text_primary()),
-        );
+    let row = |ui: &mut egui::Ui| {
+        let ink = ui.visuals().override_text_color;
+        let words = egui::RichText::new(tab.title()).strong();
+        ui.label(words.color(ink.unwrap_or(palette.text_primary())));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // `×` is Latin-1, so it renders in egui's default proportional
             // font without borrowing an icon that means "delete".
@@ -216,8 +223,13 @@ fn draw_tab_header(
             }
             actions(ui);
         });
-    });
-    ui.separator();
+    };
+    if tab == DockTab::Trades {
+        crate::panel_chrome::title_plate(ui, |ui| ui.horizontal(row));
+    } else {
+        ui.horizontal(row);
+        ui.separator();
+    }
 }
 
 /// The Session tab: what is playing (amber, like everything not live) and

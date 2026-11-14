@@ -230,11 +230,21 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "orderflow.bubbles.tick.set",
         title: "Select tick-chart spheres for a config-mode asset independently of the tape",
-        reach: "Bubbles settings, Tick chart spheres preset picker",
-        keys: &[(
-            Source::Authored,
-            "chart-only preset picker under the whole-look presets",
-        )],
+        reach: "Bubbles settings, Tick chart spheres preset picker, Peak spheres checkbox and sphere opacity slider",
+        keys: &[
+            (
+                Source::Authored,
+                "chart-only preset picker under the whole-look presets",
+            ),
+            (
+                Source::Authored,
+                "Peak spheres checkbox under the picker (peak_spheres)",
+            ),
+            (
+                Source::Authored,
+                "sphere opacity slider under the picker (opacity)",
+            ),
+        ],
         mapping: capability!("orderflow.bubbles.tick.set"),
     },
     UiBehaviour {

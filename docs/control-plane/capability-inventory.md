@@ -24,6 +24,19 @@ capability that cannot change application state.
 
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
+| `alerts.clear_history` | 1 | `alerts` | no | `cockpit`, `cockpit.alert.delete` |
+| `alerts.create` | 1 | `alerts` | no | `cockpit` |
+| `alerts.delete` | 1 | `alerts` | no | `cockpit`, `cockpit.alert.delete` |
+| `alerts.edit` | 1 | `alerts` | no | `cockpit` |
+| `alerts.history` | 1 | `alerts` | yes | `observe` |
+| `alerts.list` | 1 | `alerts` | yes | `observe` |
+| `alerts.open` | 1 | `alerts` | no | `cockpit`, `cockpit.layout` |
+| `alerts.pause` | 1 | `alerts` | no | `cockpit` |
+| `alerts.read` | 1 | `alerts` | yes | `observe` |
+| `alerts.rearm` | 1 | `alerts` | no | `cockpit` |
+| `alerts.resume` | 1 | `alerts` | no | `cockpit` |
+| `alerts.target.resolve` | 1 | `alerts` | no | `cockpit` |
+| `alerts.validate` | 1 | `alerts` | yes | `observe` |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.drawing_magnet.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.drawing_scope.set` | 1 | `annotate` | no | `cockpit` |
@@ -37,6 +50,8 @@ capability that cannot change application state.
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.text.repeat` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
+| `annotate.text.set` | 1 | `annotate` | no | `cockpit`, `cockpit.layout` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
@@ -83,6 +98,8 @@ capability that cannot change application state.
 | `home.show` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
 | `indicator.library.edit` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
+| `indicator.native.edit` | 1 | `indicator` | no | `cockpit`, `cockpit.indicators` |
+| `indicator.native.list` | 1 | `indicator` | yes | `observe`, `observe.indicators` |
 | `indicator.picker.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -167,4 +184,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-142 capabilities registered.
+159 capabilities registered.

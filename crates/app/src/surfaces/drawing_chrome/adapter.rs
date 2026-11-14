@@ -16,7 +16,7 @@ pub(crate) trait DrawingChromeExt {
     fn inspector_open(&self) -> bool;
     #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
     fn carry_across_selection(&mut self);
-    fn request_text_edit(&mut self);
+    fn frame_facts(&mut self, text_edit: bool, surface_over: bool);
     #[cfg(any(feature = "drawing-harness", test))]
     fn note_text_note_placed(&mut self);
     fn inline_edit_is_on(&self, tab: u64, side: PaneSide) -> bool;
@@ -131,8 +131,8 @@ impl DrawingChromeExt for Owner {
     fn carry_across_selection(&mut self) {
         borrow(self).carry_across_selection()
     }
-    fn request_text_edit(&mut self) {
-        borrow(self).request_text_edit()
+    fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
+        borrow(self).frame_facts(text_edit, surface_over);
     }
     #[cfg(any(feature = "drawing-harness", test))]
     fn note_text_note_placed(&mut self) {

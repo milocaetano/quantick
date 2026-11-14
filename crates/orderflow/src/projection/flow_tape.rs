@@ -12,8 +12,12 @@ mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
 pub use constants::{
     FLOW_REGION_HOLD_BAND, FLOW_REGION_MIN_WIDTH_PX, FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD,
-    LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS,
+    LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS, PEAK_BALANCED_STRENGTH,
+    PEAK_LABEL_SHARE_DIVISOR, PEAK_MIN_RADIUS_PX, PEAK_PROFILE_MAX_ROWS, PEAK_PROMINENCE_PERCENT,
+    PEAK_RADIUS_SHARES, PEAK_RANK_STOPS, PEAK_ROW_MAX_DOUBLINGS, PEAK_SIGMA_RADIUS_SHARE,
+    PEAK_SMOOTHING_KERNEL, PEAK_SMOOTHING_SIGMA_TICKS,
 };
+mod peaks;
 mod region;
 pub use region::FlowRegionSpan;
 mod reading;
@@ -74,6 +78,13 @@ pub enum FlowScaleBasis {
     OpeningOnlyFallback,
     TypedReference,
     VisibleRegionMaxWithFloor,
+    /// Peak spheres: each mass's radius is its rank among `masses` visible
+    /// masses (the opening left out when it is ignored); the largest is
+    /// drawn at full radius and masses from `labelled_from` up carry labels.
+    RankedVisibleMasses {
+        masses: usize,
+        labelled_from: Decimal,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -224,6 +235,7 @@ impl FlowTapeFrame {
     }
 
     fn order_for_paint(&mut self) {
+        self.rank_peaks();
         self.paint_order = (0..self.dots.len()).collect();
         self.paint_order.sort_by_key(|&index| {
             let dot = &self.dots[index];
@@ -389,6 +401,10 @@ enum Admission {
 }
 
 fn admit(group: &Group, view: FlowTapeView) -> Admission {
+    if view.region.divides_at_peaks() {
+        // A region's profile reads every cell; the axis drops whole masses.
+        return Admission::Mergeable;
+    }
     if !(0.0..=1.0).contains(&group.y()) {
         return Admission::OffAxis(group.members.len());
     }
@@ -431,8 +447,17 @@ fn region_window(group: &Group, view: FlowTapeView) -> i64 {
         .key(group.first_slot, group.first_timestamp_ms())
 }
 
-/// One region window's mergeable groups, merged.
-fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+/// One region window's mergeable groups, merged: divided at the peaks of
+/// their volume profile, or pooled by proximity.
+fn merge_window(
+    window: Vec<Group>,
+    view: FlowTapeView,
+    key: i64,
+    peaks: peaks::PeakDivision<'_>,
+) -> Vec<Group> {
+    if view.region.divides_at_peaks() {
+        return peaks.divide(key, window, view);
+    }
     let (bubbles, sizing, geometry) = merge_frame(view);
     collide(
         window,
@@ -603,6 +628,7 @@ impl FlowTapeFrame {
 fn finish_groups(
     groups: Vec<Group>,
     view: FlowTapeView,
+    peaks: peaks::PeakDivision<'_>,
 ) -> (
     Vec<FlowTapeDot>,
     Option<Decimal>,
@@ -630,10 +656,11 @@ fn finish_groups(
         }
     }
     let mut groups = Vec::new();
-    for window in windows.into_values() {
-        groups.extend(merge_window(window, view));
+    for (key, window) in windows {
+        groups.extend(merge_window(window, view, key, peaks));
     }
     groups.append(&mut standalone);
+    off_axis_executions += peaks::drop_off_axis(&mut groups, view);
     offscreen_executions += clip_merged(&mut groups, view, |group| group);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (
