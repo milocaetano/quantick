@@ -1997,6 +1997,31 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
     );
 }
 
+#[test]
+fn volume_body_double_click_opens_settings_but_between_columns_does_not() {
+    use quantick_indicators::Indicator;
+    let ctx = egui::Context::default();
+    let mut pane = pane_with_overlay(vec![20.0; 8]);
+    let slot = pane.indicators.all()[0].slot;
+    let view = pane.indicators.view_mut(slot).unwrap();
+    view.kind = std::sync::Arc::from("native.volume");
+    view.descriptor = quantick_indicators::native::Volume::default()
+        .descriptor()
+        .clone();
+    view.columns = vec![vec![20.0; 8], vec![f64::NAN; 8], vec![f64::NAN; 8]];
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    let (chart, right, total, _) = pane.hit_test().last_projection().unwrap();
+    let x = pane.model.viewport.x_center(2, right, total);
+    let body = egui::pos2(x, chart.bottom() - chart.height() * 0.125);
+    assert_eq!(
+        double_click_at(&mut pane, &ctx, TEST_PLOT, body),
+        Some(slot)
+    );
+    let next = pane.model.viewport.x_center(3, right, total);
+    let gap = egui::pos2((x + next) / 2.0, chart.bottom() - chart.height() * 0.25);
+    assert_eq!(double_click_at(&mut pane, &ctx, TEST_PLOT, gap), None);
+}
+
 /// The fourth place a double click opens settings from, and the one that
 /// needs real geometry: the pointer is on an overlay's own line.
 ///

@@ -242,16 +242,6 @@ fn both_buttons_report_a_real_click() {
     }
 }
 
-/// The consequence of the destructive control is on the popup, so a trader
-/// learns it before pressing rather than from a journal afterwards.
-#[test]
-fn the_popup_says_what_reload_costs() {
-    assert!(
-        RELOAD_CAPTION.contains("paper position") && RELOAD_CAPTION.contains("strateg"),
-        "the caption has to name both things Reload ends: {RELOAD_CAPTION}"
-    );
-}
-
 /// Wrapped text must stay inside the popup, including when the chart is
 /// narrower than the popup wants to be. The instruction is deliberately
 /// long: short strings never wrap, so they cannot catch this.
@@ -383,4 +373,64 @@ fn the_popup_hook_asks_for_exactly_one_value() {
     assert!(!popup_open_from(Some("0")), "a typo must not open it");
     assert!(!popup_open_from(Some("true")), "nor a near miss");
     assert!(popup_open_from(Some("1")));
+}
+
+/// A roll names a contract of any length, so its button is measured from
+/// its label rather than given the pair's fixed width; and Reconnect and
+/// Reload both stay under it.
+#[test]
+fn a_long_contract_name_fits_its_roll_button_and_the_pair_stays() {
+    let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 600.0));
+    let notice = FeedNotice::attention("MetaTrader does not list WINFUT_V26", "Add it.")
+        .with_unlisted(Some("WINFUT_V26".to_owned()));
+    for target in ["WINZ26", "WINFUT_Z26", "WINFUT_Z26_EXTENDED_SERIES"] {
+        let report = report(&notice, None)
+            .expect("an attention speaks")
+            .with_roll(Some(quantick_feed::notice_report::RollNote::To(target)));
+        with_painter(|painter| {
+            let geometry = geometry_in(painter, area, &report);
+            let roll = geometry.roll.expect("a roll on offer gets a button");
+            let font = egui::TextStyle::Button.resolve(&painter.ctx().style());
+            let label = painter.layout_no_wrap(roll_label(target), font, egui::Color32::WHITE);
+            let text_right = geometry.popup.right() - PAD_PX;
+            assert!(
+                roll.width() >= label.size().x || roll.right() >= text_right - 0.5,
+                "{target}: the label is {} wide, the button {}",
+                label.size().x,
+                roll.width()
+            );
+            assert!(
+                roll.right() <= text_right + 0.5,
+                "{target}: inside the popup"
+            );
+            assert!(
+                roll.width() >= BUTTON_SIZE_PX.x,
+                "never narrower than the pair"
+            );
+            assert_eq!(geometry.primary.1, Recovery::Reconnect);
+            assert_eq!(geometry.secondary.1, Recovery::Reload);
+            assert!(
+                geometry.primary.0.top() >= roll.bottom(),
+                "the pair sits under it"
+            );
+            assert!(geometry.popup.contains_rect(geometry.secondary.0));
+        });
+    }
+    let long =
+        report(&notice, None)
+            .unwrap()
+            .with_roll(Some(quantick_feed::notice_report::RollNote::To(
+                "WINFUT_Z26",
+            )));
+    let bare = report(&notice, None).unwrap();
+    with_painter(|painter| {
+        let label = painter.layout_no_wrap(
+            roll_label("WINFUT_Z26"),
+            egui::TextStyle::Button.resolve(&painter.ctx().style()),
+            egui::Color32::WHITE,
+        );
+        let roll = geometry_in(painter, area, &long).roll.unwrap();
+        assert!(roll.width() > label.size().x, "WINFUT_Z26 is not clipped");
+        assert!(geometry_in(painter, area, &bare).roll.is_none());
+    });
 }

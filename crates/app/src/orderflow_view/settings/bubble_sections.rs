@@ -10,6 +10,7 @@ use quantick_orderflow::config::labels::{
     region_window_label, render_mode_label, size_reference_label,
 };
 use quantick_orderflow::engine::OrderflowHealth;
+use quantick_orderflow::health_words::{BubbleHealthWords, FLOORED_HOVER, FOLDED_HOVER};
 use quantick_orderflow::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig, LaneView,
     LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
@@ -17,7 +18,6 @@ use quantick_orderflow::{
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
     format_window_ms, lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
 };
-use rust_decimal::Decimal;
 
 use crate::orderflow_render::ThemeBubbleRgb;
 use crate::orderflow_view::constants::{
@@ -29,6 +29,7 @@ use crate::orderflow_view::constants::{
     SIDE_OFFSET_RANGE, SIZE_REFERENCE_QUANTITY_DRAG_SPEED, SIZE_REFERENCE_QUANTITY_RANGE,
     SPHERE_HIGHLIGHT_RANGE, SPHERE_SHADING_RANGE, TRAIL_LENGTH_RANGE, TRAIL_OPACITY_RANGE,
 };
+use crate::panel_chrome;
 use quantick_layers::ChartLayer;
 
 fn select<T: Copy + PartialEq, L: Into<egui::WidgetText>>(
@@ -192,6 +193,7 @@ impl LiveLaneSection<'_> {
             native_block,
             bbo_block,
         } = self;
+        panel_chrome::caption(ui, "tape");
         // The layer's second door: shut, with its reason, where the call refuses.
         let mut native = lane.native();
         let native_box = egui::Checkbox::new(&mut native, "Native tape (execution time and price)");
@@ -217,13 +219,12 @@ impl LiveLaneSection<'_> {
             .on_disabled_hover_text(bbo_block.map_or("", |block| block.explanation));
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;
-        egui::CollapsingHeader::new("live lane")
-            .id_salt("bubble_live_lane_section")
-            .default_open(false)
-            .show(ui, |ui| {
-                let fold_setting = ui.checkbox(&mut lane.fold_market_closed, MARKET_FOLD_SETTING);
-                lane_set |= fold_setting.on_hover_text(MARKET_FOLD_SETTING_HOVER).changed();
-                if !lane.tape_only {
+        panel_chrome::folding_caption(ui, ("live lane", "bubble_live_lane_section"), false, |ui| {
+            let fold_setting = ui.checkbox(&mut lane.fold_market_closed, MARKET_FOLD_SETTING);
+            lane_set |= fold_setting
+                .on_hover_text(MARKET_FOLD_SETTING_HOVER)
+                .changed();
+            if !lane.tape_only {
                 let width = ui.horizontal(|ui| {
                     ui.label("width");
                     ui.add(
@@ -243,9 +244,9 @@ impl LiveLaneSection<'_> {
                 .on_hover_text(
                     "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge closes that side to a rail this slider opens again; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
-                }
-                lane_set |= window_rows(ui, lane, window_setting, native_tape);
-                if !native_tape {
+            }
+            lane_set |= window_rows(ui, lane, window_setting, native_tape);
+            if !native_tape {
                 ui.horizontal(|ui| {
                     ui.label("cluster");
                         select(ui, "bubble_live_lane_cluster", &mut lane.cluster_ms,
@@ -270,14 +271,14 @@ impl LiveLaneSection<'_> {
                 .on_hover_text(
                     "multiplies both bubble radii inside the lane only. The lane is the one region with room to spare, so a wider range reads as detail here and as overlap anywhere else",
                 );
-                }
-                ui.checkbox(&mut lane.show_marks, "boundary and live-edge line")
+            }
+            ui.checkbox(&mut lane.show_marks, "boundary and live-edge line")
                     .on_hover_text(if lane.tape_only {
                         "the tape's left boundary and the live edge at its right end"
                     } else {
                         "the dashed line where the bar slots end and the tape begins, and the line on the live edge itself at its right end"
                     });
-            });
+        });
         lane_set
     }
 }
@@ -357,14 +358,16 @@ pub(super) struct SizePlacementSection<'a> {
 impl SizePlacementSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let bubbles = self.bubbles;
-        egui::CollapsingHeader::new("size & placement")
-            .id_salt("bubble_size_section")
-            .default_open(true)
-            .show(ui, |ui| {
+        panel_chrome::folding_caption(
+            ui,
+            ("size & placement", "bubble_size_section"),
+            true,
+            |ui| {
                 render_style_rows(ui, bubbles);
                 size_rows(ui, bubbles, self.native_tape, self.fixed_tape_size);
                 finish_rows(ui, bubbles, self.native_tape);
-            });
+            },
+        );
     }
 }
 
@@ -545,10 +548,11 @@ pub(super) struct ConsumptionMarksSection<'a> {
 impl ConsumptionMarksSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let bubbles = self.bubbles;
-        egui::CollapsingHeader::new("consumption marks")
-            .id_salt("bubble_consumption_section")
-            .default_open(true)
-            .show(ui, |ui| {
+        panel_chrome::folding_caption(
+            ui,
+            ("consumption marks", "bubble_consumption_section"),
+            true,
+            |ui| {
                 ui.small(
                     "Drawn only when a print aligned with a factual L2 reduction — the bubble \
                      ate resting liquidity.",
@@ -606,7 +610,8 @@ impl ConsumptionMarksSection<'_> {
                     egui::Slider::new(&mut bubbles.trail_opacity, TRAIL_OPACITY_RANGE)
                         .text("trail opacity"),
                 );
-            });
+            },
+        );
     }
 }
 
@@ -618,22 +623,18 @@ pub(super) struct LabelsSection<'a> {
 impl LabelsSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let bubbles = self.bubbles;
-        egui::CollapsingHeader::new("labels")
-            .id_salt("bubble_label_section")
-            .show(ui, |ui| {
-                ui.checkbox(
-                    &mut bubbles.show_quantity_labels,
-                    "quantity inside the bubble",
-                );
-                ui.checkbox(&mut bubbles.show_trade_count, "×N clustered prints");
-                ui.add(
-                    egui::Slider::new(&mut bubbles.label_min_radius, LABEL_MIN_RADIUS_RANGE)
-                        .text("label from px"),
-                )
-                .on_hover_text(
-                    "only bubbles this big get a label, and only when the text fits inside",
-                );
-            });
+        panel_chrome::folding_caption(ui, ("labels", "bubble_label_section"), false, |ui| {
+            ui.checkbox(
+                &mut bubbles.show_quantity_labels,
+                "quantity inside the bubble",
+            );
+            ui.checkbox(&mut bubbles.show_trade_count, "×N clustered prints");
+            ui.add(
+                egui::Slider::new(&mut bubbles.label_min_radius, LABEL_MIN_RADIUS_RANGE)
+                    .text("label from px"),
+            )
+            .on_hover_text("only bubbles this big get a label, and only when the text fits inside");
+        });
     }
 }
 
@@ -646,22 +647,20 @@ pub(super) struct ColoursSection<'a> {
 impl ColoursSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let Self { bubbles, theme_rgb } = self;
-        egui::CollapsingHeader::new("colours")
-            .id_salt("bubble_colour_section")
-            .show(ui, |ui| {
-                let front_fallback = bubbles.front_color.unwrap_or(theme_rgb.front);
-                color_override(ui, "buy", &mut bubbles.buy_color, theme_rgb.buy);
-                color_override(ui, "sell", &mut bubbles.sell_color, theme_rgb.sell);
-                color_override(
-                    ui,
-                    "consumption front",
-                    &mut bubbles.front_color,
-                    theme_rgb.front,
-                );
-                color_override(ui, "trail", &mut bubbles.trail_color, front_fallback);
-                color_override(ui, "label", &mut bubbles.label_color, theme_rgb.text);
-                ui.small("Unset colours follow the chart theme.");
-            });
+        panel_chrome::folding_caption(ui, ("colours", "bubble_colour_section"), false, |ui| {
+            let front_fallback = bubbles.front_color.unwrap_or(theme_rgb.front);
+            color_override(ui, "buy", &mut bubbles.buy_color, theme_rgb.buy);
+            color_override(ui, "sell", &mut bubbles.sell_color, theme_rgb.sell);
+            color_override(
+                ui,
+                "consumption front",
+                &mut bubbles.front_color,
+                theme_rgb.front,
+            );
+            color_override(ui, "trail", &mut bubbles.trail_color, front_fallback);
+            color_override(ui, "label", &mut bubbles.label_color, theme_rgb.text);
+            ui.small("Unset colours follow the chart theme.");
+        });
     }
 }
 
@@ -673,47 +672,13 @@ pub(super) struct BubbleHealthSection<'a> {
 
 impl BubbleHealthSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
-        let health = self.health;
-        // The projection carries clusters whether or not the
-        // bubble layer draws them — the live strip reads the
-        // same ones. Calling them "bubbles" while none is on
-        // screen would report a layer that is off.
-        let noun = if self.show_aggressions {
-            "bubbles"
-        } else {
-            "clusters (bubble layer off)"
-        };
-        ui.label(format!(
-            "{} {noun} projected · {} aggressions retained",
-            health.projection_aggressions, health.aggression_count
-        ));
-        if health.floored_quantity > Decimal::ZERO {
-            ui.small(format!(
-                "{} contracts below your display floor are not drawn",
-                health.floored_quantity
-            ))
-            .on_hover_text(concat!(
-                "the minimum-quantity setting under bubble visuals. It is the ",
-                "only thing left that keeps contracts off the canvas, so it says ",
-                "how many - in contracts, not in dots, because what matters is ",
-                "the size of what is missing. Set it to zero to draw everything",
-            ));
+        let words = BubbleHealthWords::of(self.health, self.show_aggressions);
+        ui.label(words.projected);
+        if let Some(floored) = words.floored {
+            ui.small(floored).on_hover_text(FLOORED_HOVER);
         }
-        if health.folded_aggressions > 0 {
-            ui.small(format!(
-                "{} marks merged into a neighbour to fit the frame",
-                health.folded_aggressions
-            ))
-            .on_hover_text(concat!(
-                "the frame draws a bounded number of bubbles, split between ",
-                "the candles and the tape so neither can crowd the other out. ",
-                "Over that budget the marks merge - the candles fold their ",
-                "smallest together, the tape folds its oldest - and a merged ",
-                "bubble carries the exact summed quantity and says how many ",
-                "marks it stands for. A fold never crosses a side, a pane or a ",
-                "bar, so a frame with more of those than it has budget draws ",
-                "the extra marks instead. Nothing is discarded",
-            ));
+        if let Some(folded) = words.folded {
+            ui.small(folded).on_hover_text(FOLDED_HOVER);
         }
     }
 }

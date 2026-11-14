@@ -131,6 +131,9 @@ pub struct SavedAuthor {
 /// undo history does not travel — a launch starts with nothing to undo.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedDrawing {
+    /// Absent on legacy marks; never inferred from a local drawing id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_identity: Option<crate::drawing_identity::DurableDrawingRef>,
     /// The id the drawing had on its pane, kept so it comes back under the
     /// same one: a strategy armed on a region and an annotation an agent
     /// placed both name their object by id. Absent in files written before

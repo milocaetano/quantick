@@ -23,6 +23,9 @@ pub enum FlowRegionSpan {
     Time,
     /// This many whole candles, counted from the series' first.
     Candles(usize),
+    /// The candles of [`Self::Candles`], each region divided at the valleys
+    /// of its volume-by-price profile: one sphere per peak.
+    Peaks(usize),
 }
 
 impl FlowRegionSpan {
@@ -32,7 +35,9 @@ impl FlowRegionSpan {
     pub fn key(self, slot: usize, timestamp_ms: i64) -> i64 {
         match self {
             Self::Time => timestamp_ms.div_euclid(FLOW_REGION_WINDOW_MS),
-            Self::Candles(candles) => i64::try_from(slot / candles.max(1)).unwrap_or(i64::MAX),
+            Self::Candles(candles) | Self::Peaks(candles) => {
+                i64::try_from(slot / candles.max(1)).unwrap_or(i64::MAX)
+            }
         }
     }
 
@@ -41,7 +46,25 @@ impl FlowRegionSpan {
     pub fn candles(self) -> Option<usize> {
         match self {
             Self::Time => None,
-            Self::Candles(candles) => Some(candles.max(1)),
+            Self::Candles(candles) | Self::Peaks(candles) => Some(candles.max(1)),
+        }
+    }
+
+    /// Whether a region is divided at the valleys of its volume profile
+    /// rather than merged by proximity.
+    #[must_use]
+    pub fn divides_at_peaks(self) -> bool {
+        matches!(self, Self::Peaks(_))
+    }
+
+    /// This span's candles divided at their peaks when `peaks` says so; a
+    /// span of market time stays one.
+    #[must_use]
+    pub fn with_peaks(self, peaks: bool) -> Self {
+        match self {
+            Self::Candles(candles) | Self::Peaks(candles) if peaks => Self::Peaks(candles),
+            Self::Peaks(candles) => Self::Candles(candles),
+            other => other,
         }
     }
 

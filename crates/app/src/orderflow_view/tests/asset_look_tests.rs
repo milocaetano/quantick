@@ -212,6 +212,6 @@ fn the_sphere_picker_follows_the_tick_sphere_rule() {
     let offered = texts(&mut gold, true);
     assert!(offered.contains("Tick chart spheres"), "{offered}");
     assert!(!offered.contains("quantity in"), "{offered}");
-    assert_eq!(gold.apply_tick_preset(None), Ok(true));
+    assert_eq!(gold.apply_tick_preset(None, Default::default()), Ok(true));
     assert_eq!(gold.config.volume_dots.tick_bubbles, None);
 }

@@ -655,3 +655,6 @@ fn a_profile_anchor_past_the_last_bar_answers_without_a_time() {
     let points = &window.flow.drawings.items()[0].points;
     assert_eq!(points[1], ChartPoint::at_time(12.5, 104.25, None));
 }
+
+#[path = "drawing_text_tests.rs"]
+mod drawing_text_tests;

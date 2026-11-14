@@ -194,3 +194,24 @@ impl PresetHost for NullPresetHost {
         false
     }
 }
+
+/// Explicit repeat preserves the selected note's style but starts with no words.
+/// A named default cannot override the appearance the trader just chose.
+pub fn prepare_repeat(host: &mut dyn PresetHost, drawing: &Drawing<crate::DrawingTool>) {
+    if drawing.tool.holds_text() {
+        host.set_default_preset(drawing.tool.id(), None);
+        save_tool_default(host, drawing);
+    }
+}
+
+/// A repeated object carries the source's preset appearance, never its content.
+pub fn repeat_opening<T: ToolCatalog>(drawing: &Drawing<T>) -> NewDrawing {
+    let mut payload = drawing.tool.default_payload();
+    if let Some(value) = drawing.payload.export_preset() {
+        payload.import_preset(&value);
+    }
+    NewDrawing {
+        style: drawing.style,
+        payload,
+    }
+}

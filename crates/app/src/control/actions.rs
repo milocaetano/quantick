@@ -30,9 +30,11 @@ pub(crate) use quantick_control_host::authority::{ANNOTATE_PERMISSION_ID, ANNOTA
 /// and one handler here; nothing else opens.
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
+    quantick_control_handlers::alerts::register(&mut registry)?;
     quantick_control_handlers::attention::register(&mut registry)?;
     quantick_control_handlers::appearance::register_actions(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;
+    quantick_control_handlers::drawing_text::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
     quantick_control_handlers::layout::register(&mut registry)?;
     quantick_control_handlers::canvas::register(&mut registry)?;
@@ -66,6 +68,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::chart_settings::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
     super::indicator_picker::register(&mut registry)?;
+    super::native_indicator::register(&mut registry)?;
     super::script::register(&mut registry)?;
     super::script_editor::register(&mut registry)?;
     quantick_control_handlers::trade::register(&mut registry)?;

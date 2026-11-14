@@ -107,6 +107,8 @@ mod shared_routing_tests {
     fn flow_and_upper_context_collapsed_focus_the_visible_lower_chart() {
         let mut tab = tab_with_context_panes(2);
         tab.canvas.layout = CanvasLayout::TimeTimeAndFlow;
+        tab.canvas.state =
+            quantick_workspace::canvas::CanvasState::from_preset(tab.canvas.layout.preset());
         tab.canvas
             .restore_context_heights(&[0.4, 0.6], &[true, false]);
         tab.canvas.set_flow_collapsed(true);
@@ -669,6 +671,8 @@ mod collapse_path_tests {
             crate::time_header::DEFAULT_INTERVAL_MS,
         ));
         tab.canvas.layout = CanvasLayout::Time;
+        tab.canvas.state =
+            quantick_workspace::canvas::CanvasState::from_preset(tab.canvas.layout.preset());
         tab.canvas.context_collapsed = true;
 
         assert_eq!(

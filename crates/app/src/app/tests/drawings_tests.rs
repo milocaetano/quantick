@@ -1,5 +1,7 @@
 use crate::theme;
 mod pane_model_tests;
+#[path = "text_note_tests.rs"]
+mod text_note_tests;
 
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
@@ -3090,11 +3092,10 @@ fn the_note_stops_painting_itself_while_its_editor_is_open() {
     );
 }
 
-/// A note against the top of the chart opens its field *below* the
-/// anchor. Pinned upward it lands on the flow legend — chrome over the
-/// key it is annotating — and the trader reads neither.
+/// At the chart edge, the editor keeps the note's anchor and clips its paint
+/// instead of flipping away from the words' committed position.
 #[test]
-fn the_field_opens_below_a_note_that_has_no_room_above_it() {
+fn the_field_stays_anchored_when_a_note_has_no_room_above_it() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
@@ -3113,23 +3114,20 @@ fn the_field_opens_below_a_note_that_has_no_room_above_it() {
         "the editor is open"
     );
 
-    let hint = output
-        .shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.text() == INLINE_TEXT_HINT => Some(text.pos),
-            _ => None,
-        })
-        .next()
-        .expect("the field is on screen with its hint");
+    let editor = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("inline-text-editor")))
+        .expect("the editor retains its chart position");
     assert!(
-        hint.y >= chart.top(),
-        "the field must stay inside the chart: {hint:?} against {chart:?}"
+        editor.top() < chart.top(),
+        "the editor must stay above its anchor: {editor:?} against {chart:?}"
     );
-    assert!(
-        hint.y > chart.top() + 2.0,
-        "with no room above the anchor the field opens below it: {hint:?}"
-    );
+    for shape in &output.shapes {
+        if let egui::Shape::Text(text) = &shape.shape
+            && text.galley.text() == INLINE_TEXT_HINT
+        {
+            assert!(chart.contains_rect(shape.clip_rect));
+        }
+    }
 }
 
 /// Fixing a typo has to be possible. Placing a note no longer opens the

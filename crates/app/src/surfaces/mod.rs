@@ -9,6 +9,8 @@ mod chrome_probe_view;
 
 /// The actual paper owner and frame facts needed by a paper panel.
 pub(crate) struct PaperPanelEnv<'a> {
+    /// Whether the alert manager is up, so the rail's bell reads as pressed.
+    pub alerts_open: bool,
     pub paper: &'a mut crate::paper_trading::PaperTrading,
     pub replay: Option<&'a quantick_feed::ReplayLink>,
     pub timezone: crate::timezone::TzOffset,
@@ -50,6 +52,9 @@ pub(crate) use toast::ToastSurface;
 /// What the surfaces need from the application, kept to what they actually
 /// read so a surface cannot quietly acquire the whole app.
 pub(crate) struct SurfaceEnv<'a> {
+    pub alerts: Option<&'a quantick_alerts::AlertBook>,
+    pub alert_error: Option<&'a quantick_alerts::AlertError>,
+    pub alert_context: Option<&'a alerts::Context>,
     #[cfg(any(feature = "scenario-harness", test))]
     pub picker_pane_id: u64,
     pub picker_scripts: &'a [quantick_stores::script_library::ScriptEntry],
@@ -105,6 +110,9 @@ impl SurfaceEnv<'static> {
     /// that can grow and one nobody wants to touch.
     pub fn quiet(now: Instant) -> Self {
         Self {
+            alerts: None,
+            alert_error: None,
+            alert_context: None,
             picker_pane_id: 0,
             picker_scripts: &[],
             now,
@@ -134,6 +142,7 @@ pub(crate) struct SurfaceResponse {
     pub paper_panel: Option<Box<PaperPanelEffects>>,
     /// Typed effects belonging to the host that drew a scoped catalog entry.
     pub model_effects: Vec<HostEffect>,
+    pub alerts: Option<Box<alerts::Request>>,
     pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
     pub script_editor_actions: Vec<quantick_stores::script_library::ScriptEditorAction>,
     /// The toast's Undo button was pressed — the host owns the drawing stack,
@@ -163,6 +172,8 @@ pub(crate) struct SurfaceResponse {
 /// Host outputs of the complete borrowed paper-panel pass.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct PaperPanelEffects {
+    /// The rail's bell: open the alert manager.
+    pub open_alerts: bool,
     pub close_replay: bool,
     pub open_replay_browser: bool,
     pub navigate_to_trade: Option<(i64, i64)>,
@@ -174,6 +185,7 @@ pub(crate) struct PaperPanelEffects {
 }
 impl PaperPanelEffects {
     fn merge(&mut self, other: Self) {
+        self.open_alerts |= other.open_alerts;
         self.close_replay |= other.close_replay;
         self.open_replay_browser |= other.open_replay_browser;
         self.navigate_to_trade = self.navigate_to_trade.or(other.navigate_to_trade);
@@ -252,6 +264,7 @@ impl SurfaceResponse {
                 .merge(*paper);
         }
         self.model_effects.extend(other.model_effects);
+        self.alerts = self.alerts.take().or(other.alerts);
         self.indicator_actions.extend(other.indicator_actions);
         self.script_editor_actions
             .extend(other.script_editor_actions);

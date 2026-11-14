@@ -6,10 +6,12 @@
 #[must_use]
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     let mut documents = Vec::new();
+    documents.extend(crate::alerts::documents());
     documents.extend(crate::workspace_book::documents());
     documents.extend(crate::native_window::documents());
     documents.extend(crate::home_tab::documents());
     documents.extend(crate::indicator_picker::documents());
+    documents.extend(crate::native_indicator::documents());
     documents.extend(crate::scene::documents());
     documents.extend(crate::price_axis::documents());
     documents.extend(crate::price_tag_progress::documents());

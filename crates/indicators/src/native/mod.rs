@@ -19,12 +19,14 @@ mod cvd;
 mod ema;
 #[cfg(feature = "fake-native")]
 mod fake;
+mod volume;
 
 pub use avwap::{AVWAP_BAND_PAIRS, AVWAP_PLOT_COUNT, AnchoredVwap};
 pub use cvd::Cvd;
 pub use ema::Ema;
 #[cfg(feature = "fake-native")]
 pub use fake::Fake;
+pub use volume::{VOLUME_SOURCE_NOTE, Volume};
 
 use crate::indicator::Indicator;
 use crate::input::{InputSpec, InputValue};
@@ -48,9 +50,19 @@ pub struct Native {
     pub menu_label: &'static str,
     /// Builds a fresh instance at its declared defaults.
     construct: fn() -> Box<dyn Indicator>,
+    /// Independent bottom band height, or the ordinary price/pane scale.
+    pub bottom_scale_fraction: Option<f32>,
+    /// Whether the output measures source volume and needs its units labelled.
+    pub measures_volume: bool,
 }
 
 impl Native {
+    /// Provenance caveat shared by chart legends and control catalog readers.
+    #[must_use]
+    pub fn source_note(&self) -> Option<&'static str> {
+        self.measures_volume.then_some(VOLUME_SOURCE_NOTE)
+    }
+
     /// A fresh instance at its declared defaults.
     #[must_use]
     pub fn build(&self) -> Box<dyn Indicator> {
@@ -95,11 +107,22 @@ pub static NATIVES: &[Native] = &[
         id: "native.ema",
         menu_label: "Add EMA(9) on close",
         construct: || Box::new(Ema::default()),
+        bottom_scale_fraction: None,
+        measures_volume: false,
     },
     Native {
         id: "native.cvd",
         menu_label: "Add CVD pane",
         construct: || Box::new(Cvd::new()),
+        bottom_scale_fraction: None,
+        measures_volume: false,
+    },
+    Native {
+        id: "native.volume",
+        menu_label: "Add Volume",
+        construct: || Box::new(Volume::default()),
+        bottom_scale_fraction: Some(0.25),
+        measures_volume: true,
     },
     // The whole registration of a native, and the reason the port can be
     // tested rather than merely asserted. Feature-gated, never in a build a
@@ -109,6 +132,8 @@ pub static NATIVES: &[Native] = &[
         id: "native.fake",
         menu_label: "Add FAKE(2)",
         construct: || Box::new(Fake::default()),
+        bottom_scale_fraction: None,
+        measures_volume: false,
     },
 ];
 
@@ -194,7 +219,7 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            ["native.ema", "native.cvd"],
+            ["native.ema", "native.cvd", "native.volume"],
             "the ids are serialised into a trader's workspace; changing one              orphans every saved indicator that names it"
         );
     }
@@ -213,7 +238,10 @@ mod tests {
             .filter(|entry| !entry.id.starts_with("native.fake"))
             .map(|entry| entry.menu_label)
             .collect();
-        assert_eq!(labels, ["Add EMA(9) on close", "Add CVD pane"]);
+        assert_eq!(
+            labels,
+            ["Add EMA(9) on close", "Add CVD pane", "Add Volume"]
+        );
     }
 
     #[test]

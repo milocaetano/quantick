@@ -191,6 +191,40 @@ pub fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn volume_settings_restore_the_native_inputs_and_alpha() {
+        let dir = crate::scratch::ScratchDir::new("volume-state");
+        let path = dir.join("state.toml");
+        let saved = SavedIndicator {
+            kind: SavedKind::native("native.volume"),
+            hidden: true,
+            mouse_vertical_line: false,
+            inputs: vec![SavedInput::Bool(true), SavedInput::Int(37)],
+            plot_styles: vec![SavedPlotStyle {
+                visible: Some(true),
+                color: Some([7, 100, 90, 80]),
+                width: None,
+            }],
+        };
+        save(&path, &[saved]);
+        let restored = load(&path);
+        assert_eq!(restored[0].kind, SavedKind::native("native.volume"));
+        assert!(restored[0].hidden);
+        assert_eq!(restored[0].plot_styles[0].color, Some([7, 100, 90, 80]));
+        let values: Vec<_> = restored[0]
+            .inputs
+            .iter()
+            .filter_map(SavedInputExt::to_value)
+            .collect();
+        let indicator = quantick_indicators::native::native("native.volume")
+            .unwrap()
+            .build_with(&values);
+        assert_eq!(
+            indicator.input_values(),
+            [InputValue::Bool(true), InputValue::Int(37)]
+        );
+    }
+
     fn sample() -> Vec<SavedIndicator> {
         vec![
             SavedIndicator {

@@ -28,12 +28,9 @@ impl ChartPort for dyn ControlPort {
         for (tab_index, tab) in reads.tabs().iter().enumerate() {
             let tab_id = reads.tabs().id_at(tab_index);
             let focused = tab.focused_side();
-            let shown = usize::from(!tab.canvas.context_collapsed) * tab.context_panes_shown();
+            let drawn = tab.drawn_panes();
             for (pane, side) in tab.panes() {
-                let visible = match side {
-                    PaneSide::Flow => tab.canvas.layout.shows_flow(),
-                    PaneSide::Time(slot) => tab.canvas.layout.shows_time() && slot < shown,
-                };
+                let visible = drawn.shows(side);
                 let framing = PaneFraming {
                     visible: tab_index == active && visible,
                     focused: tab_index == active && focused == side,

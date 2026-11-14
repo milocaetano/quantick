@@ -110,9 +110,11 @@ pub(super) fn draw_dock(
     surfaces: &mut Surfaces,
     tabs: &mut ArrangementHost,
     tz: TzOffset,
+    alerts_open: bool,
 ) -> SurfaceResponse {
     let Tab { link, paper, .. } = tabs.runtime_mut(tabs.active_index());
     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        alerts_open,
         replay: link.replay.as_ref(),
         paper,
         timezone: tz,

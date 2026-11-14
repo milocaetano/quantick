@@ -10,9 +10,13 @@ candle_outline_width = 1.0
 candle_outline_opacity = 1.0
 candle_wick_opacity = 1.0
 chart_time_grid = true
+# Drawing labels are ink alone on paper: no plate behind a measurement's
+# readout or a drawing's price-axis tag, the text in the drawing's colour.
+drawing_label_plates = false
 
 [colors]
-drawing_default = "#2B3640"
+# New drawings are born black on paper, as on TradingView's light chart.
+drawing_default = "#000000"
 drawing_buy = "#1F7A34"
 drawing_sell = "#111111"
 drawing_vwap = "#2B3640"
@@ -174,6 +178,32 @@ ledger_card_edge = "#D5D9E0"
 ledger_session = "#F1F4F8"
 ledger_session_edge = "#E1E6EE"
 ledger_selection = "#D6E6FB"
+# Paper plates: a level under the hand (the Alt aim, its stop and target, a
+# leg being dragged) sits on a white plate edged in its side's colour, dashed
+# while the order is unsent; its price-axis chip is filled in that colour with
+# white digits. The ruler readout is edged in a neutral grey.
+paper_tag_gain = "#1A8743"
+paper_tag_loss = "#D1403A"
+readout_edge = "#AEB6BF"
+# The settings panels' graphite bands (docs/fable/layout, option 01): a
+# grey ground, white blocks under graphite header bands, dark title and
+# pale footer plates. No gold, ochre or orange.
+panel_ground = "#DFE2E6"
+panel_plate = "#2B3037"
+panel_plate_ink = "#F2F4F7"
+panel_block = "#FFFFFF"
+panel_block_edge = "#9AA1AB"
+panel_band = "#4A5059"
+panel_band_state = "#D5DAE1"
+panel_caption = "#4A5059"
+panel_caption_rule = "#C9CED6"
+panel_footer = "#C9CED6"
+panel_strong_ink = "#2B3037"
+panel_filter_bar = "#CDD2D9"
+panel_live_row = "#E9ECEF"
+panel_stripe_loss = "#B3261E"
+# The buy ink reads 4.0:1 on the footer grey; gains there go one step deeper.
+panel_gain_ink = "#145A24"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.
@@ -224,6 +254,8 @@ candle_fill_opacity = 0.20
 candle_outline_width = 1.25
 candle_outline_opacity = 0.96
 candle_wick_opacity = 0.90
+# The dark island keeps its label plates: paper's bare ink would vanish here.
+drawing_label_plates = true
 
 [bookmap.colors]
 drawing_default = "#E8ECF2"

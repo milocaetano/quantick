@@ -194,7 +194,9 @@ fn the_scene_names_the_corner_and_what_operates_it() {
         })
         .filter_map(|control| control["capability_id"].as_str().map(str::to_owned))
         .collect();
-    assert_eq!(calls, ["feed.reconnect", "feed.reload"]);
+    // A connected feed gone silent leads with Reload: the popup fills and
+    // paints it first, and the scene lists it first.
+    assert_eq!(calls, ["feed.reload", "feed.reconnect"]);
 }
 
 /// The toolbar's heatmap lamp answers "is this switched on", not "is the
@@ -2084,11 +2086,14 @@ fn observer_per_scope_capture_cost() {
 /// `appearance.state` were merged together; 81179 on Windows with the tab
 /// strip's three tokens, each semantic color adding about 67 bytes to the
 /// capture; 1303 allocations, 83242 bytes on Windows once main's venue candles
-/// (#786) were merged in. No Linux reading of that tree yet, and Linux has read
-/// a few bytes apart before, so the byte ceiling sits about 3.5% above the
-/// Windows reading: room for a few more tokens, not for a new scope.
+/// (#786) were merged in; 1317 allocations, 86540 bytes on Windows with the
+/// settings panels' fourteen `panel_*` tokens; Light's paper plates add three
+/// more tokens, about 200 bytes. No Linux reading of that tree yet, and Linux
+/// has read a few bytes apart before, so the byte ceiling sits about 3.5%
+/// above the Windows reading: room for a few more tokens, not for a new
+/// scope.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 86200;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 89800;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
@@ -5044,7 +5049,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 163);
+    assert_eq!(documents.len(), 169);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",
@@ -5157,6 +5162,9 @@ fn observer_catalog(update: bool) {
                         // consent text is the `cockpit.journal.delete`
                         // permission, sensitive and off until ticked.
                         || capability["effect"] == "cockpit.journal.delete"
+                        // Permanent alert removal has its own sensitive consent.
+                        || capability["effect"] == "cockpit.alert.delete"
+                        || capability["effect"] == "cockpit.indicators"
                         // The trade tier. Discoverable like the rest, and
                         // reachable by nothing a trader can currently grant:
                         // its permission's only ceiling is the `trader`

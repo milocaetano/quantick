@@ -33,26 +33,14 @@ pub(crate) fn layout_dto(layout: CanvasLayout) -> CanvasLayoutDto {
 ///
 /// One rule for every projection that walks a tab's canvases: a pane the
 /// cursor can resolve against is a pane the scene lists, because both ask
-/// here.
+/// here, and both ask `Tab::drawn_panes`, which the focus asks too.
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
-    if tab.canvas.layout.shows_time() {
-        let shown = tab.context_panes_shown();
-        panes.extend(
-            tab.time_panes
-                .iter()
-                .take(shown)
-                .enumerate()
-                .filter_map(|(slot, time)| {
-                    let side = PaneSide::Time(slot);
-                    (!tab.canvas.pane_collapsed(side)).then_some((time, side))
-                }),
-        );
-    }
-    if tab.canvas.layout.shows_flow() && !tab.canvas.pane_collapsed(PaneSide::Flow) {
-        panes.push((&tab.flow_pane, PaneSide::Flow));
-    }
-    panes
+    let drawn = tab.drawn_panes();
+    let time = (tab.time_panes.iter().enumerate()).map(|(slot, time)| (time, PaneSide::Time(slot)));
+    let flow = std::iter::once((&tab.flow_pane, PaneSide::Flow));
+    time.chain(flow)
+        .filter(|(_, side)| drawn.shows(*side))
+        .collect()
 }
 
 #[cfg(test)]

@@ -232,7 +232,7 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
         pnl,
     };
     let in_box =
-        quantick_appearance::paper::ledger_frame(Some([false, false]), Some([false, false]));
+        quantick_appearance::paper::ledger_frame(true, Some([false, false]), Some([false, false]));
     for width in [280.0, 320.0] {
         let texts = painted_rows(width, |ui| {
             framed(ui, &in_box, |ui| {
@@ -282,8 +282,11 @@ fn trade_rows_and_session_headers_never_wrap_at_the_docked_widths() {
             focused: false,
             live: false,
         };
-        let session =
-            quantick_appearance::paper::ledger_frame(Some([false, false]), Some([true, false]));
+        let session = quantick_appearance::paper::ledger_frame(
+            true,
+            Some([false, false]),
+            Some([true, false]),
+        );
         let texts = painted_rows(width, |ui| {
             framed(ui, &session, |ui| _ = draw_session_head(ui, &head));
         });
@@ -356,7 +359,7 @@ fn a_trade_row_shows_its_whole_prices_and_instrument_at_the_docked_widths() {
         ..btc.clone()
     };
     let in_box =
-        quantick_appearance::paper::ledger_frame(Some([false, false]), Some([false, false]));
+        quantick_appearance::paper::ledger_frame(true, Some([false, false]), Some([false, false]));
     let rows = [
         (&btc, "BTCUSDT", Some("BTCUSDT"), "75099.03 → 75070.01"),
         (&win, "WINZ26", None, "173603.33 → 173662"),
