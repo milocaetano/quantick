@@ -67,7 +67,7 @@ def skip_code(data: bytes, i: int) -> int:
             else:
                 j += 1
         return j
-    raw = re.match(rb'b?r(#*)"', data[i : i + 300])
+    raw = re.match(rb'[bc]?r(#*)"', data[i : i + 300])
     if raw and (i == 0 or not (data[i - 1 : i].isalnum() or data[i - 1 : i] == b"_")):
         close = b'"' + raw.group(1)
         j = data.find(close, i + raw.end())
@@ -199,7 +199,7 @@ def naturally_declared(source: Path, path: Path) -> bool:
                 continue
             j = k - 1
             attributes = []
-            while j >= 0 and lines[j].startswith(b"#["):
+            while j >= 0 and (lines[j].startswith(b"#[") or lines[j].startswith(b"//")):
                 attributes.append(lines[j])
                 j -= 1
             if not any(a.startswith(b"#[path") for a in attributes):
