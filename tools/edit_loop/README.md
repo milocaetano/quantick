@@ -216,6 +216,27 @@ recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
 top-three selection and representatives are unchanged, and the PR's own
 ordinary exact-final-head run must pass every one.
 
+The ui-model member-only amendment (#922 under feature #920) binds root SHA256
+`49d241582f073971d2b97237be6c76b368744cefc1ad82e4d053e7fb1a662d2c`.
+Compared with active identity
+`d7deec344053783fb6387a12dfbedfd34692f5a0bdba2744ea44254971b72086`,
+only `crates/ui-model` is added to the workspace members; all other parsed
+manifest values are equal. This is an applicability amendment, not a new
+calibration. Every numerical ceiling, historical calibration identity, host,
+toolchain, jobs, protocol, selection and representative remains unchanged.
+The [complete initial series](https://github.com/milocaetano/quantick/actions/runs/43147064393)
+at `1641593d86b1d2c8c2c86f708653354bdcd0a0f6` failed the identity check;
+its five-loop maxima were app 49.598 s, orderflow 37.337 s and pine 2.292 s,
+below the existing ceilings 82.126 s, 38.703 s and 2.653 s. The retained full
+artifact is `edit-loop-1641593d86b1d2c8c2c86f708653354bdcd0a0f6-1`.
+This failed run does not replace the mandatory fresh ordinary exact-final-head
+run against all original limits, and authorizes no automatic future refresh.
+
+The ui-model + alerts merge identity (origin/main into feature/headless-ui) binds root SHA256
+`9c2907f397690d770e58b82c0be1d068f24cecc2cdb70a6028d9787dd75a8def`: the union of the two
+member-only amendments above (ui-model, #922) and below (alerts, PR #867), with no other
+manifest change. Every numerical ceiling, representative and the protocol hash are main's.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the
@@ -358,6 +379,26 @@ at `85b7f57d3c39637977211aa950a937de84748647` measured the representative
 `ceil(1.25 * 2.122264053 * 1000) / 1000` sets the Pine ceiling to **2.653 s**.
 The app and orderflow ceilings, host, toolchain, jobs, profile and protocol
 remain unchanged. A separate ordinary run on the final commit must pass.
+
+#### Scoped 2026-11-12 app representative amendment
+
+The #923 pane-header extraction makes `crates/app/src/pane_header.rs` the
+frozen app representative at 1,097 production lines, replacing
+`crates/app/src/control/gateway/server.rs`. The coordinator authorized this
+source-only amendment in [#923](https://github.com/milocaetano/quantick/issues/923).
+The [retained reference run](https://github.com/milocaetano/quantick/actions/runs/43162580947)
+at `4701dbd8fa0f0369e0469f8768d0e1b8e6d9790b` failed the source identity check.
+All five samples and package tests completed: maximum loops were app
+51.189645685 s, orderflow 38.025611858 s and Pine 2.277488648 s.
+
+Only the app representative changes. The fixed ceilings remain **82.126**,
+**38.703** and **2.653 seconds**; the selected packages, other representatives,
+historical calibration SHA/time, host, toolchain, jobs, profile and protocol
+remain unchanged. This does not establish performance comparability with the
+old representative or permit future automatic source refreshes. The failed
+run remains diagnostic evidence. Independent scoped review verifies its raw
+series and frozen ranking; a separate ordinary final-head run must pass all
+unchanged limits before delivery.
 
 ### Rules for every calibration
 

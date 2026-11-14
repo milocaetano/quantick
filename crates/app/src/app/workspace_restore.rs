@@ -5,6 +5,7 @@ use crate::tab::{CanvasLayout, LegendFold};
 use crate::ui_state::{self, SavedFocusExt};
 use quantick_workspace::arrangement::{RestoreEffect, RestoreMode};
 
+use crate::toolrail::ToolRailExt as _;
 impl ArrangementAdapter<'_> {
     pub(super) fn restore_workspace(&mut self, workspace: ui_state::Workspace) {
         self.run_restore(

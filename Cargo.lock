@@ -2957,6 +2957,7 @@ dependencies = [
  "quantick-sim",
  "quantick-stores",
  "quantick-strategy",
+ "quantick-ui-model",
  "quantick-workspace",
  "raw-window-handle",
  "rfd",
@@ -3393,6 +3394,35 @@ version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-ui-model"
+version = "0.1.0"
+dependencies = [
+ "quantick-alerts",
+ "quantick-appearance",
+ "quantick-chart",
+ "quantick-chart-interaction",
+ "quantick-civil",
+ "quantick-control",
+ "quantick-control-handlers",
+ "quantick-control-schema",
+ "quantick-drawings",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-orderflow",
+ "quantick-paper",
+ "quantick-replay",
+ "quantick-session",
+ "quantick-sim",
+ "quantick-sources",
+ "quantick-stores",
+ "quantick-strategy",
+ "quantick-trading",
+ "quantick-workspace",
+ "rust_decimal",
+ "toml 0.8.20",
 ]
 
 [[package]]

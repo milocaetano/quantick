@@ -58,8 +58,8 @@ fn commit_baseline_close_overwrites_unknown_and_consumes_inspector_dirty_each_ti
     app.runtime.workspace.session_mut().set_save_on_exit(true);
     for position in [[120.0, 240.0], [220.0, 340.0]] {
         std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .restore_inspector_position(Some(position));
         app.runtime.workspace.session_mut().inspector_moved();
         maintain(&mut app, true);
@@ -92,14 +92,14 @@ fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.runtime.workspace.session_mut().set_save_on_exit(true);
     std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .restore_inspector_position(Some([120.0, 240.0]));
     app.runtime.workspace.session_mut().inspector_moved();
-    let before = app.surfaces.toast.message().map(str::to_owned);
+    let before = app.surfaces.toast.model_state.message().map(str::to_owned);
     maintain(&mut app, false);
     assert!(!app.runtime.workspace.session().inspector_pending());
-    assert_eq!(app.surfaces.toast.message(), before.as_deref());
+    assert_eq!(app.surfaces.toast.model_state.message(), before.as_deref());
     assert_eq!(
         std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
@@ -130,10 +130,10 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
         } else {
             vec![]
         };
-        app.toolrail.set_favorites(&favorites);
+        app.surfaces.toolrail.set_favorites(&favorites);
         assert!(app.runtime.workspace.session().bookmarks().is_empty());
         assert!(app.runtime.workspace.session().recent().is_empty());
-        assert!(app.replay_view.stored_pick().is_none());
+        assert!(app.surfaces.replay_browser.stored_pick().is_none());
         std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
         app.workspace_save_adapter().forget_workspace();
         assert_eq!(app.runtime.workspace.ui_state_path().exists(), keep_star);
@@ -150,7 +150,7 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
 #[test]
 fn commit_baseline_day_before_alone_does_not_keep_a_reset_file() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&[]);
+    app.surfaces.toolrail.set_favorites(&[]);
     app.workspace_save_adapter().write_replay_day_before(true);
     assert!(app.runtime.workspace.session().saved());
     assert_eq!(
@@ -165,7 +165,7 @@ fn commit_baseline_day_before_alone_does_not_keep_a_reset_file() {
 #[test]
 fn commit_baseline_saved_flag_depends_on_write_purpose_and_failure_is_or() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.toolrail.set_favorites(&["measure".to_owned()]);
+    app.surfaces.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace_save_adapter().write_favorites();
     assert!(app.runtime.workspace.ui_state_path().is_file());
     assert!(!app.runtime.workspace.session().saved());

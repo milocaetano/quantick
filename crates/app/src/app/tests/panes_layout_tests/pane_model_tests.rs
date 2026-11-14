@@ -15,7 +15,8 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     run_frame(&mut app, &ctx);
     // Clicking the time pane focuses it and lands the mark there — the
     // real gesture, not a poked field.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = app
         .active_tab()

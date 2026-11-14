@@ -62,16 +62,7 @@ pub struct TabChip<'a> {
     pub feed: TabFeed,
 }
 
-/// What the strip asked the window to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabAction {
-    Activate(usize),
-    Close(usize),
-    /// The `+`: open the source picker.
-    New,
-    /// The first tab: show Home over the canvas.
-    Home,
-}
+pub use quantick_ui_model::chrome_tab_strip::Action as TabAction;
 
 /// Draw the strip and report the one action it produced.
 ///

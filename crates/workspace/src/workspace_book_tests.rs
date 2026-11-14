@@ -974,3 +974,49 @@ fn an_old_book_s_context_bars_land_on_the_panes() {
         None
     );
 }
+
+/// Tabs 1 and 2 on Scalp, autosave off, a Swing to switch to; each tab's copy
+/// edited by `edit`.
+fn switch_away(edit: impl Fn(u64, &mut WorkspaceRecipe)) -> SetOutcome {
+    let mut book = two_tabs_on_scalp();
+    book.open_tab(3);
+    book.observe(3, &recipe(DeclaredLayout::Flow)).unwrap();
+    book.save_as(3, "Swing").unwrap();
+    for tab in [1, 2] {
+        let mut copy = book.tab_copy(tab).unwrap().clone();
+        edit(tab, &mut copy);
+        book.observe(tab, &copy).unwrap();
+    }
+    book.set(1, "Swing").unwrap()
+}
+
+/// A footprint style is the tab's: a switch away drops it and says so, even
+/// while the other tab holds edits of its own.
+#[test]
+fn a_switch_drops_a_tabs_own_edit_beside_another_tabs() {
+    let dropped = switch_away(|tab, copy| {
+        copy.footprint_style = Some(format!("style-{tab}"));
+    });
+    assert!(dropped.dropped_edits);
+}
+
+/// An indicator edit both tabs hold stays with the tab still there, but a
+/// footprint edit of the leaving tab's own is dropped, and says so.
+#[test]
+fn a_switch_drops_its_own_edit_beside_a_shared_indicator_edit() {
+    let dropped = switch_away(|tab, copy| {
+        copy.flow_indicators = vec![ema()];
+        if tab == 1 {
+            copy.footprint_style = Some("mine".to_owned());
+        }
+    });
+    assert!(dropped.dropped_edits);
+}
+
+/// The leaving tab holds only the indicator edit the other still shows:
+/// nothing of it is dropped, and nothing is said.
+#[test]
+fn a_switch_keeps_quiet_over_an_indicator_edit_another_tab_holds() {
+    let dropped = switch_away(|_, copy| copy.flow_indicators = vec![ema()]);
+    assert!(!dropped.dropped_edits);
+}

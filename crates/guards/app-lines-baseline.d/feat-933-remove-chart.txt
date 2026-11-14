@@ -1,0 +1,5 @@
+# #933: scoped Model/View pending lifecycle, cached prompt and typed effect sink.
+# Domain policy stays in workspace/control-handlers; per-tab UI state is headless.
+# #920 coordinator authorized measured excess in #933; final feature reductions stand.
+crates/app +47
+!budget +47

@@ -11,6 +11,10 @@ use quantick_workspace::canvas::{PaneSlot, pane_menu};
 
 use crate::theme;
 use crate::toolbar::DrawnControl;
+use quantick_ui_model::{
+    UpdateSession,
+    remove_chart::{Intent, Model},
+};
 
 /// The menu's width, a row's height and a separator's.
 const MENU_PX: f32 = 190.0;
@@ -21,15 +25,11 @@ const NAME_GAP_PX: f32 = 40.0;
 /// How far in from its door's right end a ⋯ sits.
 const DOOR_INSET_PX: f32 = 4.0;
 
-/// One tab's chart menus: the one open, a press this frame, a ⋯ dragged
-/// this frame to lift its chart, the dialog up, and every ⋯, row, restore
-/// and dialog button as drawn, for the scene.
+/// One tab's chart menus: a ⋯ dragged this frame to lift its chart, and
+/// every ⋯, row, restore and dialog button as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct PaneMenus {
-    pub(crate) open: Option<PaneSlot>,
-    pub(crate) picked: Option<(PaneSlot, Item)>,
     pub(crate) lift: Option<PaneSlot>,
-    pub(crate) removing: Option<PaneSlot>,
     pub(crate) drawn: Vec<DrawnControl>,
 }
 
@@ -72,6 +72,7 @@ pub(crate) fn button(
     (slot, state): (PaneSlot, &CanvasState),
     menus: &mut PaneMenus,
     ink: Color32,
+    session: &mut UpdateSession<'_, Model>,
 ) {
     let palette = theme::get(ui.ctx());
     let side = PANE_MENU_BUTTON_PX.min(strip.height());
@@ -80,10 +81,10 @@ pub(crate) fn button(
     let id = ui.id().with(("pane_menu", slot));
     let response = ui.interact(rect, id, Sense::click_and_drag());
     if response.clicked() {
-        menus.open = (menus.open != Some(slot)).then_some(slot);
+        session.update(Intent::ToggleMenu(slot));
     }
     menus.lift = menus.lift.or(response.dragged().then_some(slot));
-    let open = menus.open == Some(slot);
+    let open = session.state().menu_open() == Some(slot);
     if response.hovered() || open {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());
     }
@@ -91,7 +92,7 @@ pub(crate) fn button(
     let response = response.on_hover_text("Chart options · drag to move");
     menus.publish(format!("pane_menu.{slot}"), "Chart options", rect, None);
     if open {
-        hang(ui.ctx(), rect, (slot, state), menus, &response);
+        hang(ui.ctx(), rect, (slot, state), menus, &response, session);
     }
 }
 
@@ -103,6 +104,7 @@ fn hang(
     (slot, state): (PaneSlot, &CanvasState),
     menus: &mut PaneMenus,
     response: &egui::Response,
+    session: &mut UpdateSession<'_, Model>,
 ) {
     let rule = theme::get(ctx).border();
     let shown = egui::Area::new(egui::Id::new(("pane_menu_rows", slot)))
@@ -122,20 +124,25 @@ fn hang(
                             let (at, _) = ui.allocate_exact_size(size, Sense::hover());
                             ui.painter().hline(at.x_range(), at.center().y, (0.5, rule));
                         }
-                        row(ui, item, (slot, menus));
+                        row(ui, item, (slot, menus), session);
                     }
                 });
         });
     let pointer = ctx.input(|input| input.pointer.any_click());
     let outside = !shown.response.contains_pointer() && !response.contains_pointer();
     let escape = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    if (pointer && outside) || escape || menus.picked.is_some() {
-        menus.open = None;
+    if (pointer && outside) || escape {
+        session.update(Intent::DismissMenu);
     }
 }
 
 /// One row: a hover patch, its icon and words, red for removal.
-fn row(ui: &mut egui::Ui, item: Item, (slot, menus): (PaneSlot, &mut PaneMenus)) {
+fn row(
+    ui: &mut egui::Ui,
+    item: Item,
+    (slot, menus): (PaneSlot, &mut PaneMenus),
+    session: &mut UpdateSession<'_, Model>,
+) {
     let palette = theme::get(ui.ctx());
     let size = vec2(MENU_PX, ROW_PX);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -168,7 +175,7 @@ fn row(ui: &mut egui::Ui, item: Item, (slot, menus): (PaneSlot, &mut PaneMenus))
     let id = format!("pane_menu.{slot}.{}", item.id());
     menus.publish(id, item.label(), rect, Some(item_capability(item)));
     if response.clicked() {
-        menus.picked = Some((slot, item));
+        session.update(Intent::Pick(slot, item));
     }
 }
 
@@ -191,6 +198,7 @@ pub(crate) fn strip(
     name: &str,
     slot: PaneSlot,
     menus: &mut PaneMenus,
+    session: &mut UpdateSession<'_, Model>,
 ) -> Rect {
     let palette = theme::get(ui.ctx());
     let painter = ui.painter_at(rect);
@@ -211,7 +219,7 @@ pub(crate) fn strip(
     let (ink, icon) = (palette.text_primary(), (icons::CARET_DOUBLE_RIGHT, 13.0));
     glyph(&painter, restore.center(), icon, ink);
     if response.on_hover_text("Restore").clicked() {
-        menus.picked = Some((slot, Item::Restore));
+        session.update(Intent::Pick(slot, Item::Restore));
     }
     let restores = Some(item_capability(Item::Restore));
     menus.publish(format!("pane_menu.{slot}.strip"), "Restore", rect, restores);

@@ -110,8 +110,8 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     let drawings = app.active_tab().flow_pane.drawings.items().len();
     let side = app.active_tab().focused_side();
     app.indicator_wiring().open_indicator_picker_on(side);
-    app.surfaces.indicator_picker.state.query = "owned".into();
-    let picker = app.surfaces.indicator_picker.state.clone();
+    app.surfaces.indicator_picker.model_state.picker.query = "owned".into();
+    let picker = app.surfaces.indicator_picker.model_state.picker.clone();
     let destination = egui::ViewportId::from_hash_of("rebound-workspace");
     app.presentation.rebind(&app.runtime, destination).unwrap();
     assert_eq!(app.runtime.id(), owner);
@@ -174,10 +174,16 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
             .collect::<Vec<_>>(),
         live.iter().map(|n| n + 1).collect::<Vec<_>>()
     );
-    assert_eq!(app.surfaces.indicator_picker.state, picker);
+    assert_eq!(app.surfaces.indicator_picker.model_state.picker, picker);
     assert!(!native_frame(&mut app, &ctx, destination).shapes.is_empty());
-    assert_eq!(app.surfaces.indicator_picker.state.target, picker.target);
-    assert_eq!(app.surfaces.indicator_picker.state.query, picker.query);
+    assert_eq!(
+        app.surfaces.indicator_picker.model_state.picker.target,
+        picker.target
+    );
+    assert_eq!(
+        app.surfaces.indicator_picker.model_state.picker.query,
+        picker.query
+    );
     assert_eq!(
         app.runtime
             .tabs
@@ -206,7 +212,9 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
     app.active_tab_mut().link.notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
     let tab = app.runtime.tabs.active_id();
-    app.chrome.feed_popup_tab = Some(tab);
+    app.surfaces
+        .feed_notice
+        .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(tab));
     for _ in 0..3 {
         native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
     }
@@ -231,7 +239,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
     for _ in 0..2 {
         let old = native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
         assert!(old.shapes.is_empty(), "the old native view must not paint");
-        assert_eq!(app.chrome.feed_popup_tab, Some(tab));
+        assert_eq!(app.surfaces.feed_notice.model_state.open(), Some(tab));
         assert_eq!(app.chrome.feed_chip_rect, Some(chip));
         let report = app.active_tab().paper.report_state();
         assert!(report.is_open());
@@ -251,7 +259,7 @@ fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settl
     let rebound = native_frame(&mut app, &ctx, destination);
     assert!(painted_text_center(&rebound, "Simulated performance").is_some());
     assert!(painted_text_center(&rebound, "Reload").is_some());
-    assert_eq!(app.chrome.feed_popup_tab, Some(tab));
+    assert_eq!(app.surfaces.feed_notice.model_state.open(), Some(tab));
     assert_eq!(
         app.active_tab()
             .paper
@@ -476,7 +484,12 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
         app.runtime.validate_target(target),
         Err(ResourceError::MissingPane)
     );
-    let moved = app.runtime.indicators.indicator_settings_target;
+    let moved = app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .target()
+        .expect("dialog target");
     assert_eq!(moved.pane, target.pane);
     assert_eq!(moved.side, PaneSide::Time(1));
     assert_eq!(app.runtime.validate_target(moved), Ok(()));

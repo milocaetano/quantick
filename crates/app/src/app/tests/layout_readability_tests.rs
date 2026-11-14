@@ -11,35 +11,40 @@ fn drawing_toolbar_avoids_manager() {
         "trend-line",
         &[egui::pos2(400.0, 300.0), egui::pos2(600.0, 400.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     for parked in [false, true] {
         if parked {
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_mut()
                 .set_manual(egui::pos2(55.0, 190.0));
         }
         for (locked, hidden) in [(false, false), (true, false), (false, true)] {
             app.drawing_pane_mut().drawings.set_locked_at(index, locked);
             app.drawing_pane_mut().drawings.set_hidden_at(index, hidden);
-            app.drawings.chrome.set_manager_open(true);
-            app.drawings.chrome.forget_context_bar_rect();
+            app.surfaces.drawing_chrome.set_manager_open(true);
+            app.surfaces.drawing_chrome.forget_context_bar_rect();
             for _ in 0..3 {
                 run_frame(&mut app, &ctx);
             }
             assert!(
-                app.drawings.chrome.context_bar_rect().is_none(),
+                app.surfaces.drawing_chrome.context_bar_rect().is_none(),
                 "the manager owns object actions while open"
             );
-            assert!(!app.drawings.chrome.manager_action_rects().is_empty());
-            app.drawings.chrome.set_manager_open(false);
+            assert!(
+                !app.surfaces
+                    .drawing_chrome
+                    .manager_action_rects()
+                    .is_empty()
+            );
+            app.surfaces.drawing_chrome.set_manager_open(false);
             for _ in 0..3 {
                 run_frame(&mut app, &ctx);
             }
             if !hidden {
                 assert!(
-                    app.drawings.chrome.context_bar_rect().is_some(),
+                    app.surfaces.drawing_chrome.context_bar_rect().is_some(),
                     "closing restores the selected object's toolbar"
                 );
             }
@@ -58,8 +63,10 @@ fn layout_readability_combined() {
                 let ctx = egui::Context::default();
                 let (mut app, _commands) = app_with_history(100);
                 app.runtime.appearance.apply_builtin(theme, false).unwrap();
-                app.toolrail.set_dock(crate::toolrail::ToolboxDock::Top);
-                app.dock.open_tab(crate::dock::DockTab::Trading);
+                app.surfaces
+                    .toolrail
+                    .set_dock(crate::toolrail::ToolboxDock::Top);
+                app.surfaces.dock.open_tab(crate::dock::DockTab::Trading);
                 let paper = &mut app.active_tab_mut().paper;
                 paper.seed(&trade(0));
                 paper.market(quantick_engine::Side::Buy);
@@ -68,9 +75,12 @@ fn layout_readability_combined() {
                     .account()
                     .open_pnl_text()
                     .expect("simulated open position");
-                app.surfaces
-                    .market_palette
-                    .open("no-market-match-with-a-long-symbol-name", None);
+                app.surfaces.market_palette.update(
+                    quantick_ui_model::market_palette::Intent::Open {
+                        query: "no-market-match-with-a-long-symbol-name".into(),
+                        switching: None,
+                    },
+                );
                 let mut output = None;
                 for _ in 0..4 {
                     let mut input = egui::RawInput {
@@ -221,8 +231,12 @@ fn top_rail_has_no_unpainted_gutter_after_restore() {
                     egui::Modifiers::NONE,
                 );
             }
-            assert_eq!(app.toolrail.dock(), crate::toolrail::ToolboxDock::Top);
+            assert_eq!(
+                app.surfaces.toolrail.dock(),
+                crate::toolrail::ToolboxDock::Top
+            );
             let objects = app
+                .surfaces
                 .toolrail
                 .objects_button_rect()
                 .expect("restored rail actions are reachable");
@@ -266,13 +280,13 @@ fn drawing_text_and_forms_remain_readable_inspector() {
                 let anchors = [egui::pos2(400.0, 300.0), egui::pos2(600.0, 400.0)];
                 let count = if id == "anchored-vwap" { 1 } else { 2 };
                 let index = place_drawing(&mut app, &ctx, id, &anchors[..count]);
-                app.toolrail.arm(Tool::Pointer);
+                app.surfaces.toolrail.arm(Tool::Pointer);
                 app.drawing_pane_mut().drawings.select(Some(index));
                 let locked = id == "trend-line";
                 app.drawing_pane_mut().drawings.set_locked_at(index, locked);
-                app.drawings.chrome.set_inspector_pinned(true);
-                app.drawings.chrome.set_inspector_open(true);
-                app.drawings.chrome.set_inspector_tab(if locked {
+                app.surfaces.drawing_chrome.set_inspector_pinned(true);
+                app.surfaces.drawing_chrome.set_inspector_open(true);
+                app.surfaces.drawing_chrome.set_inspector_tab(if locked {
                     InspectorTab::Coordinates
                 } else {
                     InspectorTab::Extra
@@ -345,8 +359,8 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 run_frame(&mut app, &ctx);
             }
             let index = place_drawing(&mut app, &ctx, "text", &[egui::pos2(400.0, 300.0)]);
-            app.drawings.chrome.end_inline_text_edit();
-            app.toolrail.arm(Tool::Pointer);
+            app.surfaces.drawing_chrome.end_inline_text_edit();
+            app.surfaces.toolrail.arm(Tool::Pointer);
             for color in [
                 egui::Color32::from_rgb(181, 131, 43),
                 egui::Color32::from_rgb(250, 250, 250),
@@ -411,8 +425,8 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 let tab = app.runtime.tabs.active_id();
                 let side = app.active_tab().focused_side();
                 assert!(
-                    app.drawings
-                        .chrome
+                    app.surfaces
+                        .drawing_chrome
                         .begin_inline_text_edit(tab, side, index, &drawing)
                 );
                 let mut output = run_frame(&mut app, &ctx);
@@ -423,7 +437,10 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                 for _ in 0..16 {
                     output = run_frame(&mut app, &ctx);
                 }
-                assert_eq!(app.drawings.chrome.inline_text_editing(), Some(index));
+                assert_eq!(
+                    app.surfaces.drawing_chrome.inline_text_editing(),
+                    Some(index)
+                );
                 let palette = crate::theme::get(&ctx);
                 let resolved = palette.resolved.legible_drawing(authored);
                 let text = output
@@ -476,7 +493,7 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                         .color,
                     authored
                 );
-                app.drawings.chrome.end_inline_text_edit();
+                app.surfaces.drawing_chrome.end_inline_text_edit();
             }
         }
     }

@@ -156,8 +156,10 @@ fn a_click_anywhere_on_a_strip_restores_it() {
     assert!(strip.contains_rect(door), "{door:?} inside {strip:?}");
     click_sized(&mut app, &ctx, TEST_WINDOW, door.center());
     frames(&mut app, &ctx, 2);
+    let id = app.runtime.tabs.active_id();
+    let open = app.surfaces.remove_chart.scoped(id).0.menu_open();
+    assert_eq!(open, Some(slot), "the ⋯ opens the menu");
     let tab = app.active_tab();
-    assert_eq!(tab.canvas.menus.open, Some(slot), "the ⋯ opens the menu");
     assert_eq!(tab.canvas.state.mode(slot), Some(PaneMode::Minimized));
 }
 

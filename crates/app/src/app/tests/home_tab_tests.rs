@@ -643,9 +643,35 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
     let output = frame(&mut app, &ctx);
     let open = painted_text_center(&output, "Open a market").expect("the page offers a market");
     assert!(painted_text_center(&output, "Market Shelf not built yet").is_some());
-    click_sized(&mut app, &ctx, WINDOW, open);
-    assert!(app.surfaces.market_palette.is_open());
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(open), pointer_button(open, true)],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(open), pointer_button(open, false)],
+    );
+    assert!(app.surfaces.market_palette.model_state.is_open());
+    frame(&mut app, &ctx);
+    let query = egui::Id::new("market_palette").with("query");
+    assert!(
+        egui::TextEdit::load_state(&ctx, query).is_some(),
+        "the earlier overlay stage paints the query on the following frame"
+    );
     assert!(on_home(&app), "the picker alone does not leave Home");
+
+    press(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!app.surfaces.market_palette.model_state.is_open());
+    assert!(on_home(&app), "cancelling the picker keeps Home visible");
+    click_sized(&mut app, &ctx, WINDOW, open);
+    assert!(
+        app.surfaces.market_palette.model_state.is_open(),
+        "the page can reopen it"
+    );
 
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     frame(&mut app, &ctx);
@@ -874,7 +900,12 @@ fn a_text_field_keeps_both_home_shortcuts() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.surfaces.market_palette.open("", None);
+    app.surfaces
+        .market_palette
+        .update(quantick_ui_model::market_palette::Intent::Open {
+            query: String::new(),
+            switching: None,
+        });
     frame(&mut app, &ctx);
     frame(&mut app, &ctx);
     assert!(ctx.memory(|memory| memory.focused().is_some()), "the field");
@@ -896,13 +927,24 @@ fn home_draws_no_toolbar_and_the_canvas_returns_at_its_full_size() {
     let area = app.active_tab().flow_pane.frame.chart_area;
     assert!(area.is_some());
 
-    app.chrome.layout_picker_open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     app.show_home_tab().unwrap();
     for _ in 0..3 {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, &buy).is_none(), "on Home");
     }
-    assert!(!app.chrome.layout_picker_open, "the picker went with it");
+    assert!(
+        !app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .layout_open,
+        "the picker went with it"
+    );
     assert!(app.active_tab().paper.is_flat());
 
     app.chrome.title_bar.surface.show_market();
@@ -922,7 +964,7 @@ fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let title = crate::dock::DockTab::Trading.title();
-    app.dock.open_tab(crate::dock::DockTab::Trading);
+    app.surfaces.dock.open_tab(crate::dock::DockTab::Trading);
     frame(&mut app, &ctx);
     let output = frame(&mut app, &ctx);
     assert!(painted_text_center(&output, title).is_some(), "on a market");
@@ -932,7 +974,7 @@ fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
         let output = frame(&mut app, &ctx);
         assert!(painted_text_center(&output, title).is_none(), "on Home");
     }
-    assert!(app.dock.visible(), "hidden with Home, not closed");
+    assert!(app.surfaces.dock.visible(), "hidden with Home, not closed");
 
     app.chrome.title_bar.surface.show_market();
     let output = frame(&mut app, &ctx);
@@ -995,9 +1037,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");
 
     // What is not the chart's still works, and the window stays on Home.
-    let dock = app.dock.visible();
+    let dock = app.surfaces.dock.visible();
     app.apply_menu_command(MenuCommand::ToggleDock);
-    assert_ne!(app.dock.visible(), dock, "window commands");
+    assert_ne!(app.surfaces.dock.visible(), dock, "window commands");
     app.apply_menu_command(MenuCommand::OpenReplayBrowser);
     assert!(on_home(&app));
     app.apply_tab_action(TabAction::Activate(0));

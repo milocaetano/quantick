@@ -7,6 +7,7 @@ use crate::surfaces::ChartSettingsTab;
 use quantick_chart::pane_style::StyleTarget;
 use quantick_control_handlers::chart_settings as settings;
 use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
+use quantick_ui_model::Model as _;
 
 impl LayerWiring<'_> {
     fn focused_target(&self) -> StyleTarget {
@@ -67,6 +68,7 @@ impl LayerWiring<'_> {
         &mut self,
         input: ChartSettingsInput,
     ) -> Result<ChartSettingsResult, PresetError> {
+        initialize(self.chart_settings);
         let target = self
             .chart_settings
             .editor
@@ -86,13 +88,20 @@ impl LayerWiring<'_> {
         );
         let applied = settings::apply(
             &mut self.chart_settings.session,
-            &mut self.chart_settings.candles.state,
+            self.chart_settings
+                .candles
+                .as_mut()
+                .expect("initialized settings"),
             input,
             current.map(|_| target),
             current,
             surface,
         )?;
         self.chart_settings.editor.observe(target, context);
+        quantick_ui_model::chart_settings::Model::update(
+            self.chart_settings,
+            quantick_ui_model::chart_settings::Intent::SessionChanged(applied.style.or(current)),
+        );
         if let Some(style) = applied.style {
             self.set_style_at(target, style)?;
             *self.style_revision = self.style_revision.saturating_add(1);
@@ -116,6 +125,7 @@ impl LayerWiring<'_> {
         tab: ChartSettingsTab,
         requested: Option<StyleTarget>,
     ) {
+        initialize(self.chart_settings);
         let target = requested.unwrap_or_else(|| self.focused_target());
         if let Ok(style) = self.style_at(target) {
             let context = self
@@ -123,7 +133,14 @@ impl LayerWiring<'_> {
                 .ok()
                 .map(|pane| pane.presentation.candles.context());
             self.chart_settings.editor.observe(target, context);
-            self.chart_settings.open_target(tab, target, style);
+            quantick_ui_model::chart_settings::Model::update(
+                self.chart_settings,
+                quantick_ui_model::chart_settings::Intent::Open {
+                    tab,
+                    target: Some(target),
+                    style,
+                },
+            );
             self.chart_settings.editor.observe(target, context);
         }
     }
@@ -131,3 +148,75 @@ impl LayerWiring<'_> {
         self.open_target_settings(tab, None);
     }
 }
+
+/// Load once at host entry, including control calls before the first paint.
+pub(crate) fn initialize(state: &mut quantick_ui_model::chart_settings::State) {
+    if !state.loaded {
+        reload(state);
+    }
+}
+pub(crate) fn reload(state: &mut quantick_ui_model::chart_settings::State) {
+    use quantick_ui_model::chart_settings::{Intent, Model};
+    if let Some(candles) = &mut state.candles {
+        candles.reload_presets();
+        state.footprint_presets = quantick_stores::footprint_presets::PresetStore::load(
+            &crate::footprint_presets::default_path(),
+        );
+        Model::update(state, Intent::StoresChanged);
+    } else {
+        Model::update(
+            state,
+            Intent::Loaded {
+                candles: quantick_stores::candle_settings::CandleSettings::open(
+                    crate::candle_presets::default_path(),
+                ),
+                footprint: quantick_stores::footprint_presets::PresetStore::load(
+                    &crate::footprint_presets::default_path(),
+                ),
+            },
+        );
+    }
+}
+pub(crate) fn persist(
+    state: &mut quantick_ui_model::chart_settings::State,
+    requests: Vec<quantick_ui_model::chart_settings::Persistence>,
+) {
+    use quantick_ui_model::chart_settings::{Intent, Model, Persistence};
+    for request in requests {
+        match request {
+            Persistence::SaveCandle { name, style } => {
+                let result = state
+                    .candles
+                    .as_mut()
+                    .ok_or_else(|| "Settings presets are not loaded".to_owned())
+                    .and_then(|candles| {
+                        candles
+                            .save(&name, style)
+                            .map(|_| ())
+                            .map_err(|error| error.message())
+                    });
+                Model::update(state, Intent::CandleSaved { name, result });
+            }
+            Persistence::DeleteCandle(name) => {
+                let result = state
+                    .candles
+                    .as_mut()
+                    .ok_or_else(|| "Settings presets are not loaded".to_owned())
+                    .and_then(|candles| {
+                        candles
+                            .delete(&name)
+                            .map(|_| ())
+                            .map_err(|error| error.message())
+                    });
+                Model::update(state, Intent::CandleDeleted(result));
+            }
+            Persistence::SaveFootprint => state
+                .footprint_presets
+                .save(&crate::footprint_presets::default_path()),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../surfaces/chart_settings/tests/mod.rs"]
+mod view_tests;

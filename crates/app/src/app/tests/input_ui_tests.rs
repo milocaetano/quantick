@@ -188,7 +188,8 @@ fn a_click_that_wanders_a_few_pixels_is_still_a_click() {
         "it anchored one end and is waiting for the other"
     );
     assert_eq!(
-        app.toolrail
+        app.surfaces
+            .toolrail
             .tool()
             .drawing_tool()
             .map(drawings::DrawingTool::id),
@@ -343,12 +344,12 @@ fn a_parked_popup_comes_back_after_a_restart() {
         .restore_workspace(ui_state::load(app.runtime.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
-        next.drawings.chrome.inspector_pos(),
+        next.surfaces.drawing_chrome.inspector_pos(),
         Some(parked),
         "the popup opens where the last session left it"
     );
     assert!(
-        next.drawings.chrome.inspector_moved(),
+        next.surfaces.drawing_chrome.inspector_moved(),
         "and counts as hand-placed, so nothing places it again"
     );
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
@@ -359,17 +360,18 @@ fn button_manager_and_keyboard_send_the_same_delete_command() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.drawings.chrome.set_manager_open(true);
+    app.surfaces.drawing_chrome.set_manager_open(true);
     // Let the manager window settle its size before reading button rects.
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     let delete = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .manager_action_rects()
         .iter()
         .find(|(index, action, _)| *index == 0 && *action == "Delete")
@@ -381,7 +383,7 @@ fn button_manager_and_keyboard_send_the_same_delete_command() {
         "the manager's Delete lands the same command"
     );
     assert!(
-        app.surfaces.toast.message().is_some(),
+        app.surfaces.toast.model_state.message().is_some(),
         "the manager delete raises the same Undo toast as the keyboard"
     );
     run_frame_with_modifiers(
@@ -432,7 +434,8 @@ fn delete_and_backspace_never_leak_out_of_focused_inputs() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
@@ -464,7 +467,8 @@ fn keyboard_delete_offers_an_undo_toast_and_ctrl_z_restores() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
@@ -509,7 +513,8 @@ fn alt_l_and_alt_h_protect_the_selection_from_the_keyboard() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
@@ -535,7 +540,7 @@ fn alt_l_and_alt_h_protect_the_selection_from_the_keyboard() {
         "Alt+H hides the selection"
     );
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "Alt+H must not arm the horizontal-line tool"
     );
@@ -546,7 +551,8 @@ fn ctrl_d_duplicates_the_selection_offset_and_selected() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let original_bar = app.active_tab().flow_pane.drawings.items()[0].points[0].bar;
@@ -573,7 +579,8 @@ fn the_paste_chord_pastes_a_drawing_when_the_platform_sends_no_paste_event() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let original = app.active_tab().flow_pane.drawings.items()[0].clone();
@@ -614,7 +621,8 @@ fn the_paste_chord_pastes_once_when_the_platform_also_sends_a_paste_event() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
@@ -650,7 +658,8 @@ fn native_clipboard_events_paste_the_copied_drawing_not_the_current_selection() 
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let original = app.active_tab().flow_pane.drawings.items()[0].clone();
@@ -668,7 +677,8 @@ fn native_clipboard_events_paste_the_copied_drawing_not_the_current_selection() 
         "copy is not a chart edit"
     );
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("vertical-line")));
     click_chart(&mut app, &ctx, egui::pos2(760.0, 360.0));
     let other = app.active_tab().flow_pane.drawings.items()[1].clone();
@@ -779,7 +789,8 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
     let (mut app, _commands) = app_with_history(200);
     let drawing_ctx = egui::Context::default();
     run_frame(&mut app, &drawing_ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &drawing_ctx, egui::pos2(700.0, 300.0));
     let text_ctx = egui::Context::default();
@@ -799,14 +810,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.surfaces.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -818,14 +831,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.surfaces.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -839,14 +854,16 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
-                &mut app.toolrail,
-                &mut *app.audio.alerts,
-                ctx,
-                Instant::now(),
-                false,
-            );
+            app.drawings
+                .with(&mut app.surfaces.drawing_chrome)
+                .handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+                    &mut app.surfaces.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                    false,
+                );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -865,7 +882,8 @@ fn arrow_nudges_move_the_selection_and_shift_multiplies_by_ten() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let start = app.active_tab().flow_pane.drawings.items()[0].points[0];
@@ -910,7 +928,8 @@ fn drawing_controller_characterization_delete_precedes_stale_manager_rows() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.resolve_drawing_response(
@@ -937,7 +956,8 @@ fn drawing_controller_characterization_cancel_follows_locked_delete_request() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -952,7 +972,7 @@ fn drawing_controller_characterization_cancel_follows_locked_delete_request() {
         },
         Instant::now(),
     );
-    assert!(!app.drawings.chrome.delete_confirm());
+    assert!(!app.surfaces.drawing_chrome.delete_confirm());
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
     assert!(app.active_tab().flow_pane.drawings.items()[0].locked);
 }
@@ -962,10 +982,11 @@ fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             force_delete: true,
@@ -974,8 +995,11 @@ fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
         },
         Instant::now(),
     );
-    assert_eq!(app.surfaces.toast.message(), Some("Drawing deleted."));
-    assert!(app.surfaces.toast.offers_undo());
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some("Drawing deleted.")
+    );
+    assert!(app.surfaces.toast.model_state.offers_undo());
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 }
 
@@ -985,7 +1009,8 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     for y in [260.0, 320.0, 380.0] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, y));
     }
@@ -997,7 +1022,7 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
     });
     drawings.select(Some(2));
     drawings.set_selected_locked(true);
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         crate::surfaces::drawing_chrome::DrawingChromeAsk {
             request_delete: true,
@@ -1015,8 +1040,11 @@ fn drawing_controller_combined_destructive_notices_keep_last_undo() {
         Instant::now(),
     );
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
-    assert_eq!(app.surfaces.toast.message(), Some("All drawings deleted."));
-    assert!(app.surfaces.toast.offers_undo());
+    assert_eq!(
+        app.surfaces.toast.model_state.message(),
+        Some("All drawings deleted.")
+    );
+    assert!(app.surfaces.toast.model_state.offers_undo());
     app.active_tab_mut().flow_pane.drawings.undo();
     assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
     assert!(

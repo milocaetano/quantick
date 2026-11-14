@@ -1,7 +1,7 @@
 //! The toolbar's capsule, popover A and row, operated the way a trader does.
 use super::*;
 
-use crate::app::capsule_wiring::CapsuleState;
+use crate::app::chrome::capsule::snapshot;
 use crate::canvas_layout::{LAYOUT_PRESETS, PresetGroup, preset};
 
 fn frames(app: &mut QuantickApp, ctx: &egui::Context, count: usize) -> egui::FullOutput {
@@ -45,7 +45,7 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     app.runtime.workspace.book.book_mut().set_autosave(false);
     frames(&mut app, &ctx, 2);
     assert!(
-        !CapsuleState::of(&app, &egui::Context::default()).marks().1,
+        !snapshot(&app, &egui::Context::default()).marks().1,
         "a clean tab"
     );
     assert!(control(&app, "toolbar.capsule.save").is_none());
@@ -53,7 +53,7 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     app.apply_layout_preset(preset("charts-4").unwrap());
     // A frame builds each new chart; the tab settles once all four stand.
     frames(&mut app, &ctx, 6);
-    let (_, unsaved, layout) = CapsuleState::of(&app, &egui::Context::default()).marks();
+    let (_, unsaved, layout) = snapshot(&app, &egui::Context::default()).marks();
     assert!(
         unsaved && layout,
         "the floppy ({unsaved}) and the miniature ({layout}) carry the dot"
@@ -66,7 +66,7 @@ fn layout_change_shows_unsaved_marks_until_ctrl_s() {
     let save = vec![key_press_with(egui::Key::S, egui::Modifiers::CTRL)];
     run_sized_frame(&mut app, &ctx, TEST_WINDOW, save);
     frames(&mut app, &ctx, 2);
-    let (_, unsaved, layout) = CapsuleState::of(&app, &egui::Context::default()).marks();
+    let (_, unsaved, layout) = snapshot(&app, &egui::Context::default()).marks();
     assert!(!unsaved && !layout, "Ctrl+S cleared both dots");
     assert!(
         control(&app, "toolbar.capsule.save").is_none(),
@@ -132,8 +132,19 @@ fn popover_lists_registry_rings_current_tags_saved() {
         app.active_tab().canvas.state.preset().map(|p| p.id),
         Some("charts-2")
     );
-    assert!(!app.chrome.layout_picker_open, "a pick closes the popover");
-    app.chrome.layout_picker_open = true;
+    assert!(
+        !app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .layout_open,
+        "a pick closes the popover"
+    );
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     let output = frames(&mut app, &ctx, 2);
     let lit = control(&app, "toolbar.layout_popover.charts-2").unwrap();
     assert!(lit.selected, "the ring follows the canvas");
@@ -191,5 +202,46 @@ fn toolbar_row_order_matches_the_mock() {
     assert!(
         capsule.name.right() < tray,
         "the capsule stands before the tray"
+    );
+}
+
+#[test]
+fn canvas_popover_projection_is_consumed_by_one_paint() {
+    use crate::surfaces::View as _;
+    use quantick_ui_model::canvas_popovers::Intent;
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    app.surfaces
+        .canvas_popovers
+        .update(Intent::SetAddOpen(true));
+    frames(&mut app, &ctx, 2);
+    let scope = app.runtime.tabs.windows().presented().0;
+    let (state, view) = app.surfaces.chrome_toolbar.scoped(scope);
+    assert!(
+        view.popovers.is_none(),
+        "the registered paint consumed its borrowed projection"
+    );
+    let capsule = view.capsule;
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        assert!(
+            view.paint(
+                state,
+                &mut crate::surfaces::ViewContext { ctx, ui: None },
+                None
+            )
+            .is_none()
+        );
+    });
+    assert!(
+        output.shapes.is_empty(),
+        "a second paint without input is inert"
+    );
+    assert_eq!(view.capsule.miniature, capsule.miniature);
+    assert!(
+        app.surfaces
+            .canvas_popovers
+            .model_state
+            .projection()
+            .add_open
     );
 }

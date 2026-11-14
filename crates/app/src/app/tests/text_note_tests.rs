@@ -26,8 +26,8 @@ fn text_properties_t_commits_and_rearms_without_copying_content() {
     payload.appearance.italic = true;
     run_frame(&mut app, &ctx);
     let repeat = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .draw_again_rect()
         .expect("T is offered");
@@ -38,8 +38,11 @@ fn text_properties_t_commits_and_rearms_without_copying_content() {
     );
     click_chart(&mut app, &ctx, repeat.center());
     run_frame(&mut app, &ctx);
-    assert_eq!(app.toolrail.tool(), Tool::Drawing(drawing_tool("text")));
-    assert_eq!(app.drawings.chrome.inline_text_editing(), None);
+    assert_eq!(
+        app.surfaces.toolrail.tool(),
+        Tool::Drawing(drawing_tool("text"))
+    );
+    assert_eq!(app.surfaces.drawing_chrome.inline_text_editing(), None);
     click_chart(&mut app, &ctx, egui::pos2(850.0, 420.0));
     run_frame(&mut app, &ctx);
     let items = app.active_tab().flow_pane.drawings.items();
@@ -57,7 +60,7 @@ fn text_properties_t_commits_and_rearms_without_copying_content() {
     assert!(second.text.is_empty());
     assert_eq!(second.size_px, 28.0);
     assert!(second.appearance.bold && second.appearance.italic);
-    assert_eq!(app.drawings.chrome.inline_text_editing(), Some(1));
+    assert_eq!(app.surfaces.drawing_chrome.inline_text_editing(), Some(1));
 }
 
 #[test]
@@ -95,5 +98,5 @@ fn inline_note_moves_out_of_the_chart_with_its_anchor_during_pan_and_zoom() {
         app.active_tab().flow_pane.drawings.items()[0].points[0],
         anchor
     );
-    assert_eq!(app.drawings.chrome.inline_text_editing(), Some(0));
+    assert_eq!(app.surfaces.drawing_chrome.inline_text_editing(), Some(0));
 }

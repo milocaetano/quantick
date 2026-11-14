@@ -705,7 +705,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     run_frame(&mut app, &ctx);
                     // Open canvas, on either side, opens no settings: the drag
                     // below reaches the chart.
-                    assert!(!app.surfaces.chart_settings.is_open());
+                    assert!(!app.surfaces.chart_settings.model_state.is_open());
                     run_frame(&mut app, &ctx);
                     let pane = &app.active_tab().flow_pane;
                     if on_tape {
