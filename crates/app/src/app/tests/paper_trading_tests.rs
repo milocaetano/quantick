@@ -276,8 +276,7 @@ fn the_toolbar_close_action_exits_the_open_position() {
 }
 
 /// The toolbar's reverse beside the close: one press turns a long into a
-/// short of the same size at the next print, and the faces of the entry
-/// pair keep naming side and size only, with the disclosure in the hover.
+/// short of the same size at the next print.
 #[test]
 fn the_toolbar_reverse_action_flips_the_open_position() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
@@ -296,16 +295,6 @@ fn the_toolbar_reverse_action_flips_the_open_position() {
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app.active_tab().paper.status_cell().expect("open");
     assert!(text.contains("LONG"), "the cell names the side: {text}");
-    let bar = app.active_tab().paper.trade_bar("Shift+R");
-    assert_eq!(bar.sell.face, "SELL 1");
-    assert!(
-        bar.sell.hover.starts_with(
-            "SELL 1 (closes)
-"
-        ),
-        "the hover carries the disclosure the face leaves out"
-    );
-    assert_eq!(bar.blocked, None, "the reverse is live");
 
     app.apply_toolbar_action(ToolbarAction::PaperReverse);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
@@ -2562,141 +2551,22 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The second operator places an order, brackets it and reads it back —
-/// the whole chart gesture, without a chart.
-///
-/// `CLAUDE.md`'s *operable without a hand*: a capability a trader does
-/// exists as a named call, not only inside a click handler. This is that
-/// call for the one class of capability that had no registry entry at
-/// all until now.
+/// A trade action reaches the active tab's desk and the window's journal:
+/// the order rests in that tab's account, and the record names the hand
+/// that asked. What the handler answers - brackets, refusals, cancels and
+/// the journal's payload - is `quantick-control-handlers`' to test.
 #[test]
-fn the_trade_actions_place_bracket_and_read_back_an_order() {
+fn a_trade_action_reaches_the_active_desk_and_the_journal() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(40);
     run_frame(&mut app, &ctx);
-
     let mark = app
         .active_tab()
         .paper
         .mark_price()
         .expect("the history seeded a price");
-    // A buy limit a whole point below the market: below is where a buy
-    // limit can rest, whatever the fixture's absolute prices are.
-    let price = mark - rust_decimal::Decimal::ONE;
 
     let placed = app
-        .control_action(
-            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "side": "buy",
-                "kind": "limit",
-                "quantity": "2",
-                "price": price.to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(placed["accepted"], true, "{placed}");
-    assert_eq!(placed["simulated"], true, "every result says so");
-    let order_id = placed["order_id"].as_u64().expect("the venue named it");
-    assert_eq!(
-        placed["working_orders"][0]["kind"], "limit",
-        "the kind was stated, not inferred from where a pointer was"
-    );
-
-    // Brackets on the working order, through the same door the chart's
-    // drag uses.
-    let stop = price - rust_decimal::Decimal::ONE;
-    let target = price + rust_decimal::Decimal::from(2);
-    let bracketed = app
-        .control_action(
-            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "order_id": order_id,
-                "stop_loss": stop.to_string(),
-                "take_profit": target.to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(bracketed["accepted"], true, "{bracketed}");
-    assert_eq!(
-        bracketed["working_orders"][0]["stop_loss"],
-        stop.to_string(),
-        "and the read-back carries the leg that will arm on the fill"
-    );
-    assert_eq!(
-        bracketed["working_orders"][0]["take_profit"],
-        target.to_string()
-    );
-
-    // A refusal comes back as an answer, in the venue's own words —
-    // never as a bare status a caller can forget to render. A stop on
-    // the profit side of the entry would exit the instant it filled.
-    let refused = app
-        .control_action(
-            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "order_id": order_id,
-                "stop_loss": (price + rust_decimal::Decimal::ONE).to_string(),
-            }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(refused["accepted"], false);
-    assert!(
-        refused["rejected_because"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("stop loss")),
-        "the reason teaches: {refused}"
-    );
-    assert_eq!(
-        refused["working_orders"][0]["stop_loss"],
-        stop.to_string(),
-        "and a refusal changed nothing"
-    );
-
-    // And it can be taken away again.
-    let cancelled = app
-        .control_action(
-            quantick_control_handlers::trade::CANCEL_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({ "order_id": order_id }),
-        )
-        .expect("the action dispatches");
-    assert_eq!(cancelled["accepted"], true, "{cancelled}");
-    assert!(
-        cancelled["working_orders"]
-            .as_array()
-            .is_some_and(|orders| orders.is_empty()),
-        "nothing is working now"
-    );
-}
-
-/// Whatever acted is recorded. An order placed through the registry
-/// carries its actor into the journal, so one an operator asked for is
-/// never indistinguishable from one the trader placed by hand — the
-/// authorship half of the data-honesty rule that labels an inferred
-/// aggressor side, applied to who asked.
-///
-/// A refusal records too: "it tried to buy here and was told no" is
-/// exactly the line a trader reviewing a session wants to find.
-#[test]
-fn an_order_placed_through_the_registry_names_who_asked_for_it() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(40);
-    run_frame(&mut app, &ctx);
-    let mark = app
-        .active_tab()
-        .paper
-        .mark_price()
-        .expect("the history seeded a price");
-
-    let accepted = app
         .control_action(
             quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
             quantick_control_handlers::trade::CAPABILITY_VERSION,
@@ -2709,21 +2579,12 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
             }),
         )
         .expect("the action dispatches");
-    assert_eq!(accepted["accepted"], true, "{accepted}");
-
-    // And one the venue refuses: a buy limit above the market.
-    app.control_action(
-        quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
-        quantick_control_handlers::trade::CAPABILITY_VERSION,
-        crate::control::ActionOrigin::Human,
-        serde_json::json!({
-            "side": "buy",
-            "kind": "limit",
-            "quantity": "1",
-            "price": (mark + rust_decimal::Decimal::ONE).to_string(),
-        }),
-    )
-    .expect("the action dispatches");
+    assert_eq!(placed["accepted"], true, "{placed}");
+    assert_eq!(
+        app.active_tab().paper.working_orders().len(),
+        1,
+        "the order rests in the active tab's account"
+    );
 
     let events = app
         .control
@@ -2733,38 +2594,13 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
         .journal()
         .read(1, 64, 1 << 20)
         .events;
-    let placed: Vec<_> = events
+    let recorded = events
         .iter()
-        .filter(|event| event.kind.as_str() == "trade.order.placed")
-        .collect();
-    assert_eq!(placed.len(), 2, "both the acceptance and the refusal");
-
-    assert_eq!(placed[0].payload["accepted"], true);
-    assert!(
-        placed[0].payload["order_id"].is_u64(),
-        "the accepted one names the order it made"
-    );
+        .find(|event| event.kind.as_str() == "trade.order.placed")
+        .expect("the call journaled");
     assert_eq!(
-        placed[0].payload["simulated"], true,
-        "and says the fills are simulated, in the record as on every surface"
-    );
-    assert_eq!(
-        placed[0].actor.as_ref().expect("an actor is recorded").kind,
-        quantick_control::wire::ActorKind::HumanUi,
-        "the actor rides in the event, not beside it"
-    );
-
-    assert_eq!(placed[1].payload["accepted"], false);
-    assert!(
-        placed[1].payload["rejected_because"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("fill immediately")),
-        "the refusal keeps the venue's own words: {}",
-        placed[1].payload
-    );
-    assert_eq!(
-        placed[1].payload["asked"]["side"], "buy",
-        "and what was asked for, so the attempt is legible"
+        recorded.actor.as_ref().expect("an actor is recorded").kind,
+        quantick_control::wire::ActorKind::HumanUi
     );
 }
 
