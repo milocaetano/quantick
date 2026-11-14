@@ -103,6 +103,18 @@ impl Desk {
         tabs: &[(u64, Vec<SavedIndicator>)],
         autosave: bool,
     ) -> Self {
+        Self::restored_with(name, stored, tabs, &[], autosave)
+    }
+
+    /// [`Self::restored`], the desk keeping a copy of its own for the tabs
+    /// in `kept`: tabs that held edits when the app closed.
+    fn restored_with(
+        name: &str,
+        stored: &WorkspaceRecipe,
+        tabs: &[(u64, Vec<SavedIndicator>)],
+        kept: &[(u64, WorkspaceRecipe)],
+        autosave: bool,
+    ) -> Self {
         let mut layouts = LayoutBook::starter(Vec::new());
         let force = layouts.active_id();
         let trend = layouts.create(Some("Trend")).unwrap();
@@ -129,7 +141,12 @@ impl Desk {
         book.set_autosave(autosave);
         let mut sync = TabRecipeSync::default();
         for (tab, _) in tabs {
-            sync.arrive(*tab, Some(name.to_owned()), None);
+            let copy = kept.iter().find(|(by, _)| by == tab);
+            sync.arrive(
+                *tab,
+                Some(name.to_owned()),
+                copy.map(|(_, copy)| copy.clone()),
+            );
         }
         let ids: Vec<u64> = tabs.iter().map(|(tab, _)| *tab).collect();
         let mut desk = Self {
@@ -197,6 +214,22 @@ impl Desk {
             show_recipe(self, *other, &recipe);
         }
         saved
+    }
+
+    /// Save as, as the control call does it.
+    fn save_as(&mut self, tab: u64, name: &str) {
+        take_shown_sets(&mut self.book, &self.sync, tab);
+        self.book.save_as(tab, name).unwrap();
+    }
+
+    /// Close `tab` without saving, as the strip's close does.
+    fn close(&mut self, tab: u64) {
+        self.book.close_tab(tab);
+        self.sync.forget(tab);
+        self.tabs.retain(|open| *open != tab);
+        for pane in panes(tab) {
+            self.session.remove_pane(pane);
+        }
     }
 
     /// The set pane `pane` shows.
@@ -353,8 +386,10 @@ fn a_tab_landing_on_a_held_workspace_takes_what_its_tabs_show() {
     desk.frames(2);
     assert_eq!(desk.set(11), shown, "the tab already there keeps it");
     assert_eq!(desk.set(21), shown);
-    assert!(desk.modified(10), "the held edit is Scalp's tab's");
-    assert!(!desk.modified(20), "a landing is no edit");
+    assert!(
+        desk.modified(10) && desk.modified(20),
+        "one held edit, on both"
+    );
 
     // Its save writes what both show, and both read clean: one edit, once.
     let saved = desk.save(20);
@@ -446,6 +481,144 @@ fn tabs_arriving_together_keep_the_fuller_set() {
     desk.book.set(10, "Pair").unwrap();
     desk.share();
     assert_eq!(desk.session.layout(11), desk.session.layout(21));
+    assert_eq!(
+        [11, 21].map(|pane| desk.set(pane)),
+        [(); 2].map(|()| vec![native("native.cvd")])
+    );
+}
+
+/// Scalp's tab holds an unsaved CVD and Swing's tab lands on Scalp, so both
+/// show it, marked. The CVD outlives a discard on one tab while the other
+/// still holds Scalp: switching away, or a close without saving. `on_scalp`
+/// is how tab 10 leaves.
+fn held_edit_outlives(leave: impl FnOnce(&mut Desk)) -> Desk {
+    let mut desk = Desk::open(&[10, 20]);
+    desk.on("Scalp", &[10]);
+    desk.on("Swing", &[20]);
+    desk.add(11, native("native.cvd"));
+    desk.frames(2);
+    let stored = desk.book.recipe("Scalp").cloned().unwrap();
+    desk.book.set(20, "Scalp").unwrap();
+    show_recipe(&mut desk, 20, &stored);
+    desk.frames(2);
+    assert!(desk.modified(10) && desk.modified(20));
+    leave(&mut desk);
+    desk.frames(2);
+    assert_eq!(desk.set(21), [native("native.cvd")], "still shown");
+    assert!(desk.modified(20), "and still held, on the tab left");
+    desk
+}
+
+#[test]
+fn a_held_edit_outlives_a_switch_away_from_one_tab() {
+    held_edit_outlives(|desk| {
+        let set = desk.book.set(10, "Swing").unwrap();
+        assert!(!set.dropped_edits, "another tab still holds them");
+    });
+}
+
+#[test]
+fn a_held_edit_outlives_a_close_without_saving() {
+    held_edit_outlives(|desk| desk.close(10));
+}
+
+/// Save as from the tab that holds an edit it shows writes what it shows.
+#[test]
+fn a_save_as_writes_the_held_edit_the_tab_shows() {
+    let mut desk = held_edit_outlives(|desk| desk.close(10));
+    desk.save_as(20, "Scalp 2");
+    let recipe = desk.book.recipe("Scalp 2").unwrap();
+    assert_eq!(recipe.flow_indicators, [native("native.cvd")]);
+}
+
+/// With autosave on, an edit a landing tab shows is still written once, by
+/// the tab that made it, and nothing else is written.
+#[test]
+fn with_autosave_on_a_landing_writes_nothing_of_its_own() {
+    let mut desk = Desk::open(&[10, 20]);
+    desk.on("Scalp", &[10]);
+    desk.on("Swing", &[20]);
+    desk.book.set_autosave(true);
+    desk.frames(4);
+    desk.add(11, native("native.cvd"));
+    let _ = desk.frame();
+    let stored = desk.book.recipe("Scalp").cloned().unwrap();
+    desk.book.set(20, "Scalp").unwrap();
+    show_recipe(&mut desk, 20, &stored);
+    let written = desk.frames(8);
+    assert_eq!(written, [10], "the tab that made the edit, once");
+    let recipe = desk.book.recipe("Scalp").unwrap();
+    assert_eq!(recipe.flow_indicators, [native("native.cvd")]);
+    assert!(!desk.modified(10) && !desk.modified(20));
+    assert!(desk.book.differing_tabs().is_empty());
+}
+
+/// The review's file: `Pair` stores an EMA on Force; tab 10, first in the
+/// strip, comes back clean; tab 20 comes back holding an unsaved CVD there.
+/// Both show EMA and CVD, both read held, and a save from either writes it.
+fn a_restore_keeps_a_held_add(autosave: bool) {
+    let ema = vec![native("native.ema")];
+    let both = vec![native("native.ema"), native("native.cvd")];
+    let stored = showing(ema.clone(), Vec::new());
+    let tabs = [(10, ema.clone()), (20, ema)];
+    let kept = [(20, showing(both.clone(), Vec::new()))];
+    let mut desk = Desk::restored_with("Pair", &stored, &tabs, &kept, autosave);
+    assert!(desk.frames(6).is_empty(), "nothing written unasked");
+    assert_eq!(
+        [11, 21].map(|pane| desk.set(pane)),
+        [(); 2].map(|()| both.clone())
+    );
+    assert!(
+        desk.modified(10) && desk.modified(20),
+        "one held edit, on both"
+    );
+    assert!(desk.save(20).changed);
+    assert_eq!(desk.book.recipe("Pair").unwrap().flow_indicators, both);
+    assert!(!desk.modified(10) && !desk.modified(20));
+}
+
+#[test]
+fn a_restore_keeps_a_held_add_with_autosave_off() {
+    a_restore_keeps_a_held_add(false);
+}
+
+#[test]
+fn a_restore_keeps_a_held_add_with_autosave_on() {
+    a_restore_keeps_a_held_add(true);
+}
+
+/// The mirror: the stored recipe holds more kinds than the copy tab 20 kept.
+/// The fuller recipe's set stays, and no tab reads held.
+#[test]
+fn a_restore_keeps_the_fuller_recipe_over_a_kept_copy() {
+    let ema = vec![native("native.ema")];
+    let both = vec![native("native.ema"), native("native.cvd")];
+    let stored = showing(both.clone(), Vec::new());
+    let tabs = [(10, both.clone()), (20, both.clone())];
+    let kept = [(20, showing(ema, Vec::new()))];
+    let mut desk = Desk::restored_with("Pair", &stored, &tabs, &kept, false);
+    desk.frames(4);
+    assert_eq!(
+        [11, 21].map(|pane| desk.set(pane)),
+        [(); 2].map(|()| both.clone())
+    );
+    assert!(!desk.modified(10) && !desk.modified(20));
+}
+
+/// Deleting a workspace whose tab holds an indicator edit, while a tab stands
+/// on `Default`: the copies meet as twins and the fuller stays, so the edit
+/// `WorkspaceBook::delete` promises to keep is still shown.
+#[test]
+fn a_deleted_workspace_keeps_its_tabs_indicator_edits() {
+    let mut desk = Desk::open(&[10, 20]);
+    desk.on("Scalp", &[20]);
+    desk.add(21, native("native.cvd"));
+    desk.frames(2);
+    assert!(desk.modified(20));
+    let deleted = desk.book.delete("Scalp").unwrap();
+    assert_eq!(deleted.kept_edits, [20]);
+    desk.share();
+    assert_eq!(desk.session.layout(21), desk.session.layout(11));
     assert_eq!(
         [11, 21].map(|pane| desk.set(pane)),
         [(); 2].map(|()| vec![native("native.cvd")])
