@@ -81,4 +81,23 @@ mod tests {
             assert!(heights.iter().sum::<f32>() <= 280.0);
         }
     }
+
+    /// A band too short for every pane folds one to its strip rather than
+    /// squeezing them all below the readable floor; a tall band opens them all.
+    #[test]
+    fn a_short_band_folds_a_pane_and_a_tall_one_opens_every_pane() {
+        let strip = super::super::COLLAPSED_PANE_HEIGHT_PX;
+        let auto = [PaneSizing::Auto; MAX_PANES];
+        let short = pane_heights(400.0, &auto, strip);
+        assert_eq!(short.len(), MAX_PANES);
+        assert!(short.contains(&strip), "something folds: {short:?}");
+        assert!(
+            short
+                .iter()
+                .all(|h| *h == strip || *h >= super::super::MIN_PANE_HEIGHT_PX),
+            "nothing open is below the floor: {short:?}"
+        );
+        let tall = pane_heights(1000.0, &auto, strip);
+        assert!(!tall.contains(&strip), "room for every pane: {tall:?}");
+    }
 }
