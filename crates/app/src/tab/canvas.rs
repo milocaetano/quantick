@@ -1169,12 +1169,8 @@ impl Tab {
 
 /// The hand on `r` this frame, along x (`row`) or y.
 pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
-    let (delta, primary) = (
-        r.drag_delta(),
-        r.drag_stopped_by(egui::PointerButton::Primary),
-    );
-    let reads = [r.drag_started(), r.dragged(), r.drag_stopped(), primary];
-    Hand::of(reads, [delta.y, delta.x][usize::from(row)])
+    let delta = [r.drag_delta().y, r.drag_delta().x][usize::from(row)];
+    Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
 }
 
 /// A folded side's rail, one look for every fold: chrome, the inner edge

@@ -321,9 +321,10 @@ pub enum CaptionFit {
     Whole,
     /// The caption cut short to this many points beside the whole name.
     Cut(f32),
-    /// No room for a caption: the name takes the row, cut short only when
-    /// it alone is wider.
+    /// No room for a caption: the name takes the row whole.
     Dropped,
+    /// The name alone is wider than the row: no caption, the name cut short.
+    NameCut,
 }
 
 /// Fit a row's `name_pt` wide name and `caption_pt` wide caption, `gap_pt`
@@ -334,8 +335,11 @@ pub enum CaptionFit {
 /// submenu alike.
 #[must_use]
 pub fn fit_caption(room_pt: Option<f32>, name_pt: f32, gap_pt: f32, caption_pt: f32) -> CaptionFit {
-    let left = room_pt.unwrap_or(f32::INFINITY) - name_pt - gap_pt;
-    if caption_pt <= 0.0 || caption_pt <= left {
+    let room = room_pt.unwrap_or(f32::INFINITY);
+    let left = room - name_pt - gap_pt;
+    if name_pt > room {
+        CaptionFit::NameCut
+    } else if caption_pt <= 0.0 || caption_pt <= left {
         CaptionFit::Whole
     } else if left >= CHIP_MENU_MIN_CAPTION_PT {
         CaptionFit::Cut(left)
@@ -788,7 +792,8 @@ mod tests {
         assert_eq!(list_cap(30, METRICS), twelve);
     }
     /// The caption gives way before the name: whole while both fit, then cut
-    /// to what the whole name leaves, then dropped; never bounded, whole.
+    /// to what the whole name leaves, then dropped; the name is cut only
+    /// when it alone is wider than the row; never bounded, whole.
     #[test]
     fn a_row_s_caption_gives_way_before_its_name() {
         assert_eq!(
@@ -813,10 +818,19 @@ mod tests {
             CaptionFit::Dropped
         );
         assert_eq!(
-            fit_caption(Some(80.0), 100.0, 8.0, 120.0),
-            CaptionFit::Dropped
+            fit_caption(Some(100.0), 100.0, 8.0, 120.0),
+            CaptionFit::Dropped,
+            "the name just fits alone"
         );
-        assert_eq!(fit_caption(Some(80.0), 100.0, 8.0, 0.0), CaptionFit::Whole);
+        assert_eq!(
+            fit_caption(Some(80.0), 100.0, 8.0, 120.0),
+            CaptionFit::NameCut
+        );
+        assert_eq!(
+            fit_caption(Some(80.0), 100.0, 8.0, 0.0),
+            CaptionFit::NameCut
+        );
+        assert_eq!(fit_caption(Some(100.0), 100.0, 8.0, 0.0), CaptionFit::Whole);
         let open = fit_caption(None, 900.0, 8.0, 900.0);
         assert_eq!(open, CaptionFit::Whole, "a row that extends");
     }

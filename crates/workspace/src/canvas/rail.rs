@@ -6,11 +6,8 @@
 //! [`COLLAPSED_PANE_WIDTH_PX`] rail a pointer finds over [`COLLAPSED_HIT_PX`],
 //! and open it again when dragged back past the threshold. The constants have
 //! their one owner in [`super::metrics`]; `canvas_layout` re-exports them.
-//! A press on a rail let go within [`RAIL_CLICK_PX`] is a click, and
-//! restores it as `canvas.pane.restore` does: the decision is [`Hand`]'s
-//! reading here, never the window's.
 
-use super::metrics::{COLLAPSE_AT_PX, RAIL_CLICK_PX};
+use super::metrics::COLLAPSE_AT_PX;
 #[cfg(doc)]
 use super::metrics::{COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX};
 use super::presets::PaneKind;
@@ -23,7 +20,8 @@ use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
 use serde::{Deserialize, Serialize};
 
 /// One frame of a hand on a seam, a divider or a rail, as the window reads
-/// its pointer: what the canvas decides a click or a drag from.
+/// its pointer's drag. A press let go without a move is no click here: only
+/// a drag folds or opens a rail.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Hand {
     /// The press landed this frame.
@@ -34,14 +32,25 @@ pub struct Hand {
     pub delta: f32,
     /// Let go this frame.
     pub released: bool,
-    /// Let go of the primary button: only it clicks.
-    pub primary: bool,
+}
+
+impl Hand {
+    /// A frame read off a toolkit's drag: pressed, held and let go, and the
+    /// move along the split.
+    #[must_use]
+    pub const fn of([pressed, held, released]: [bool; 3], delta: f32) -> Self {
+        Self {
+            pressed,
+            held,
+            delta,
+            released,
+        }
+    }
 }
 
 /// A seam drag in flight: the seam, where the first of its pair ended at the
-/// press, the pointer's travel since and the farthest it went, the split's
-/// shares then, the pair's shares before any fold of it (what a fold keeps
-/// for a restore) and the rail beside the seam at the press.
+/// press, the pointer's travel since, the split's shares then, and the
+/// pair's shares before any fold of it: what a fold keeps for a restore.
 ///
 /// Every step lays the pair out afresh from the press, so travel is never
 /// lost against a floor, and a drag that comes back to where it started puts
@@ -51,10 +60,8 @@ pub struct SeamDrag {
     seam: SeamAddress,
     origin: f32,
     travel: f32,
-    reach: f32,
     shares: Vec<f32>,
     open: [f32; 2],
-    rail: Option<PaneSlot>,
 }
 
 /// What a seam fold took from its open partner: the folded node's first
@@ -69,27 +76,11 @@ pub(crate) struct Reopen {
     shares: [f32; 2],
 }
 
-impl Hand {
-    /// A frame read off a toolkit's drag: pressed, held, let go, let go of
-    /// the primary button, and the move along the split.
-    #[must_use]
-    pub const fn of([pressed, held, released, primary]: [bool; 4], delta: f32) -> Self {
-        Self {
-            pressed,
-            held,
-            delta,
-            released,
-            primary,
-        }
-    }
-}
-
 impl SeamDrag {
     /// Add the pointer's `delta` points along the split to the travel.
     pub fn travel_by(&mut self, delta: f32) {
         if delta.is_finite() {
             self.travel += delta;
-            self.reach = self.reach.max(self.travel.abs());
         }
     }
 }
@@ -116,9 +107,6 @@ impl CanvasState {
         let (axis, at, [first, second], shares) = self.drag_pair(seam)?;
         let origin = extent(bounds(&first, &self.rects(area)), axis);
         let (one, two) = (slots(&first)[0], slots(&second)[0]);
-        let rail = [(&first, one), (&second, two)]
-            .into_iter()
-            .find_map(|(node, slot)| railed(self, node).then_some(slot));
         // A pair already folded opens, and folds again, at its pre-fold shares.
         let kept = (self.reopen.iter()).find_map(|kept| match (kept.folded, kept.partner) {
             pair if pair == (one, two) => Some(kept.shares),
@@ -129,16 +117,14 @@ impl CanvasState {
             seam: seam.clone(),
             origin,
             travel: 0.0,
-            reach: 0.0,
             open: kept.unwrap_or([shares[at[0]], shares[at[1]]]),
             shares,
-            rail,
         })
     }
 
     /// The hand on `seam`, one frame: [`Self::step_seam_drag`] while it is
-    /// held, and on letting go [`Self::release_seam_drag`]. Answers whether
-    /// anything changed; a refused step changes nothing.
+    /// held, and the drag dropped when it lets go. Answers whether anything
+    /// moved; a refused step moves nothing.
     pub fn seam_hand(
         &mut self,
         drag: &mut Option<SeamDrag>,
@@ -147,18 +133,8 @@ impl CanvasState {
     ) -> bool {
         let step = (seam, hand.delta, hand.pressed);
         let moved = hand.held && self.step_seam_drag(drag, step, area).unwrap_or(false);
-        let restored = hand.released && self.release_seam_drag(drag.take(), hand.primary);
-        moved || restored
-    }
-
-    /// Let go of `drag`: a press of the `primary` button beside a rail that
-    /// never travelled [`RAIL_CLICK_PX`] was a click, and restores the rail
-    /// as `canvas.pane.restore` does ([`Self::restore`]). Answers whether it
-    /// did.
-    pub fn release_seam_drag(&mut self, drag: Option<SeamDrag>, primary: bool) -> bool {
-        let click = drag.filter(|held| primary && held.reach < RAIL_CLICK_PX);
-        let rail = click.and_then(|held| held.rail);
-        rail.is_some_and(|slot| self.restore(slot).unwrap_or(false))
+        drag.take_if(|_| hand.released);
+        moved
     }
 
     /// The hand's drag of a seam, one frame: `drag` taken afresh on the
@@ -301,9 +277,8 @@ impl CanvasState {
     }
 
     /// Open the rail `slot` folded to, every pane of it, giving the pair a
-    /// fold traded between the shares it had before, or, when nothing
-    /// remembers them (a fold an old save kept), the preset's
-    /// ([`Self::preset_pair`]); answers whether it was folded to one.
+    /// seam fold traded between the shares it had before; answers whether
+    /// it was folded to one.
     pub(super) fn unrail(&mut self, slot: PaneSlot) -> bool {
         let (mut node, mut path) = (self.tree(), Vec::new());
         while let PaneTree::Split { children, .. } = node {
@@ -313,15 +288,12 @@ impl CanvasState {
             if railed(self, &children[index]) {
                 let folded = slots(&children[index]);
                 let kept = self.reopen.iter().find(|kept| kept.folded == folded[0]);
-                let back = kept.map_or_else(
-                    || self.preset_pair(&path, index),
-                    |kept| {
-                        let partner = children
-                            .iter()
-                            .position(|child| child.holds(kept.partner))?;
-                        (!pinned(self, &children[partner])).then_some((partner, kept.shares))
-                    },
-                );
+                let back = kept.and_then(|kept| {
+                    let partner = children
+                        .iter()
+                        .position(|child| child.holds(kept.partner))?;
+                    (!pinned(self, &children[partner])).then_some((partner, kept.shares))
+                });
                 if let Some((partner, [one, two])) = back {
                     self.set_pair_shares(&path, [index, partner], (one, two));
                 }
@@ -331,31 +303,6 @@ impl CanvasState {
             node = &children[index];
         }
         false
-    }
-
-    /// The pair a rail at child `index` of the split at `path` opens with
-    /// when no fold remembers its shares: its nearest open sibling, after it
-    /// else before, the two splitting their shares' sum as the tree's preset
-    /// lays them, so the split's other children stay where they are. `None`
-    /// for a tree that is no preset, or no open sibling.
-    fn preset_pair(&self, path: &[usize], index: usize) -> Option<(usize, [f32; 2])> {
-        let Some(PaneTree::Split {
-            children, shares, ..
-        }) = node_at(self.tree(), path)
-        else {
-            return None;
-        };
-        let open = |at: &usize| !pinned(self, &children[*at]);
-        let partner = (index + 1..children.len())
-            .find(open)
-            .or_else(|| (0..index).rev().find(open))?;
-        let Some(PaneTree::Split { shares: laid, .. }) = node_at(self.preset()?.tree, path) else {
-            return None;
-        };
-        let (one, two) = (laid.get(index)?.max(0.0), laid.get(partner)?.max(0.0));
-        let sum = shares.get(index)?.max(0.0) + shares.get(partner)?.max(0.0);
-        let one = sum * one / (one + two);
-        (one.is_finite() && sum > f32::EPSILON).then_some((partner, [one, sum - one]))
     }
 
     /// Where the flow pane sits: the path of the split holding it and its
@@ -407,54 +354,10 @@ impl CanvasState {
         if other.iter().all(|slot| next.folded(*slot)) {
             return false;
         }
-        if !fold.iter().all(|slot| next.railed().contains(slot)) {
-            next.remember_flow_fold(flow);
-        }
         next.set_railed(&fold, true);
         let changed = next != *self;
         *self = next;
         changed
-    }
-
-    /// Before the flow pane (`flow`) or the charts beside it fold, what each
-    /// folding child of the flow's split and its open partner hold now,
-    /// which a restore gives back: the flow pane's partner is the child
-    /// before it, else after it; a chart's is the flow pane.
-    fn remember_flow_fold(&mut self, flow: bool) {
-        let Some((path, index)) = self.flow_place() else {
-            return;
-        };
-        let Some(PaneTree::Split {
-            children, shares, ..
-        }) = node_at(self.tree(), &path)
-        else {
-            return;
-        };
-        let partner = index.checked_sub(1).unwrap_or(index + 1);
-        let folding: Vec<usize> = if flow {
-            vec![index]
-        } else {
-            (0..children.len()).filter(|at| *at != index).collect()
-        };
-        let mut kept = Vec::new();
-        for at in folding {
-            let with = if flow { partner } else { index };
-            let pair = (children.get(at), children.get(with));
-            let (Some(folded), Some(open)) = pair else {
-                continue;
-            };
-            let (Some(&one), Some(&two)) = (shares.get(at), shares.get(with)) else {
-                continue;
-            };
-            kept.push(Reopen {
-                folded: slots(folded)[0],
-                partner: slots(open)[0],
-                shares: [one, two],
-            });
-        }
-        self.reopen
-            .retain(|old| !kept.iter().any(|new| new.folded == old.folded));
-        self.reopen.extend(kept);
     }
 
     /// The split holding the docked flow pane and its index there, found
@@ -518,15 +421,9 @@ impl CanvasState {
 
     /// The scene's name for the rail of one side of the flow pane, the flow
     /// pane's own (`flow`) or the charts beside it, while it is folded.
+    /// Walks the tree without allocating: only the name is built.
     #[must_use]
     pub fn side_rail_id(&self, flow: bool) -> Option<String> {
-        Some(format!("pane_menu.{}.rail", self.side_rail(flow)?))
-    }
-
-    /// The first railed pane of one side of the flow pane, the flow pane's
-    /// own (`flow`) or the charts beside it: what a click on that side's
-    /// rail restores. Walks the tree without allocating.
-    pub(super) fn side_rail(&self, flow: bool) -> Option<PaneSlot> {
         fn first(node: &PaneTree, railed: &dyn Fn(PaneSlot) -> bool) -> Option<PaneSlot> {
             match node {
                 PaneTree::Pane { slot, .. } => railed(*slot).then_some(*slot),
@@ -538,7 +435,8 @@ impl CanvasState {
         let (children, index) = self.flow_split()?;
         let railed = |slot: PaneSlot| self.railed().contains(&slot);
         let mut side = (children.iter().enumerate()).filter(|(at, _)| (*at == index) == flow);
-        side.find_map(|(_, child)| first(child, &railed))
+        let slot = side.find_map(|(_, child)| first(child, &railed))?;
+        Some(format!("pane_menu.{slot}.rail"))
     }
 
     /// This canvas with the column painter's two flags folded in: what a

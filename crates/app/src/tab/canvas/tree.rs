@@ -159,7 +159,9 @@ impl Tab {
                 ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
                 hot = hot.or(seam.rail.map(|rail| rail.slot));
             }
-            // Every step since the press adds up, and a click on a rail opens it.
+            // Every step the pointer took since the press, as the column
+            // divider adds them up: an off-centre grab never jumps the seam,
+            // and travel past a floor still reaches the fold.
             let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
             state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
         }

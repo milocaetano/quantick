@@ -48,8 +48,7 @@ pub use menu::{
     add_menu, menu_hook, pane_menu, remove_prompt, strip_label,
 };
 pub use metrics::{
-    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX,
-    MIN_PANE_WIDTH_PX, RAIL_CLICK_PX,
+    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
