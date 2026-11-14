@@ -147,6 +147,7 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) active: usize,
     pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
     pub(super) store: &'a mut crate::workspace_store::LayoutStore,
+    pub(super) book: &'a quantick_stores::workspaces::WorkspaceBookStore,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
     pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
@@ -359,24 +360,17 @@ impl LayoutAdapter<'_> {
             .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
     }
 
-    /// Every seeded pane on its tab's copy of its strip layout; see
+    /// Every seeded pane on its workspace's copy of its strip layout; see
     /// [`quantick_workspace::session::LayoutSession::own_copies`].
     pub(in crate::app) fn own_indicator_copies(&mut self) {
+        let held = self.book.tab_holdings();
+        self.store.session_mut().hold_workspaces(held);
         let panes = self
             .tabs
             .iter_with_ids()
             .flat_map(|(id, tab)| tab.panes().map(move |(pane, _)| (id, pane.id)));
         let owned = self.store.session_mut().own_copies(panes);
-        let reshow: Vec<_> = owned
-            .reshow
-            .iter()
-            .filter_map(|id| self.pane_address(*id))
-            .collect();
-        for (tab, side) in reshow {
-            let layout = self.layouts().get(self.pane_own_layout(tab, side));
-            let set = layout.map(|layout| layout.indicators.clone());
-            self.show_pane_indicators(tab, side, &set.unwrap_or_default());
-        }
+        self.show_sets(self.store.session().sets_of(owned.reshow));
         if owned.changed {
             self.mark_layouts_dirty();
         }

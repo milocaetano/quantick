@@ -87,6 +87,18 @@ impl TabRecipeSync {
         }
     }
 
+    /// The tabs a desk's word puts on a workspace, still to be read, by id.
+    pub fn arriving(&self) -> impl Iterator<Item = (u64, &str)> + Clone {
+        (self.arrivals.iter())
+            .filter_map(|(tab, (workspace, _))| Some((*tab, workspace.as_deref()?)))
+    }
+
+    /// What the tab showed when it was last read.
+    #[must_use]
+    pub fn shown(&self, tab: u64) -> Option<&WorkspaceRecipe> {
+        self.seen.get(&tab).map(|seen| &seen.last)
+    }
+
     /// Whether a desk's word on this tab is still to be read.
     #[must_use]
     pub fn has_arrival(&self, tab: u64) -> bool {

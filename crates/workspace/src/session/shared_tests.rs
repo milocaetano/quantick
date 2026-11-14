@@ -353,10 +353,8 @@ fn a_tab_landing_on_a_held_workspace_takes_what_its_tabs_show() {
     desk.frames(2);
     assert_eq!(desk.set(11), shown, "the tab already there keeps it");
     assert_eq!(desk.set(21), shown);
-    assert!(
-        desk.modified(10) && desk.modified(20),
-        "one held edit, on both"
-    );
+    assert!(desk.modified(10), "the held edit is Scalp's tab's");
+    assert!(!desk.modified(20), "a landing is no edit");
 
     // Its save writes what both show, and both read clean: one edit, once.
     let saved = desk.save(20);
@@ -431,4 +429,25 @@ fn tabs_restored_apart_heal_to_the_fullest_set() {
         [fuller.clone(), fuller]
     );
     assert!(!desk.modified(10) && !desk.modified(20));
+}
+
+/// Two tabs onto one workspace in one pass, as a save and a switch with no
+/// frame between them: the copies they bring are twins, and the fuller
+/// stays, wherever its tab stands in the strip.
+#[test]
+fn tabs_arriving_together_keep_the_fuller_set() {
+    let mut desk = Desk::open(&[10, 20]);
+    desk.on("Scalp", &[10]);
+    desk.on("Swing", &[20]);
+    desk.add(21, native("native.cvd"));
+    let live = desk.live_recipe(20).unwrap();
+    desk.book.observe(20, &live).unwrap();
+    desk.book.save_as(20, "Pair").unwrap();
+    desk.book.set(10, "Pair").unwrap();
+    desk.share();
+    assert_eq!(desk.session.layout(11), desk.session.layout(21));
+    assert_eq!(
+        [11, 21].map(|pane| desk.set(pane)),
+        [(); 2].map(|()| vec![native("native.cvd")])
+    );
 }

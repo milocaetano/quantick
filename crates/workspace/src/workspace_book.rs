@@ -2,7 +2,9 @@
 //!
 //! Every tab is one market and uses one workspace, and holds its own copy of
 //! that recipe. An edit changes only the copy, so it reaches no other tab until
-//! [`WorkspaceBook::save_to`]. Whether a copy differs is derived by comparing it
+//! [`WorkspaceBook::save_to`]; the indicators are the exception: every tab on
+//! one workspace shows one set per strip layout (`session::LayoutSession`), so
+//! an indicator edit is on each of them at once, and each copy reads it. Whether a copy differs is derived by comparing it
 //! to the recipe, never stored, so a flag and the truth cannot disagree.
 //!
 //! With [`WorkspaceBook::autosave`] on (the default) the window writes every
@@ -424,6 +426,24 @@ impl WorkspaceBook {
             .filter(|(_, state)| state.workspace == name)
             .map(|(tab, _)| *tab)
             .collect()
+    }
+
+    /// Each tab the book holds and its workspace, by tab id.
+    pub fn tab_workspaces(&self) -> impl Iterator<Item = (u64, &str)> + Clone {
+        (self.tabs.iter()).map(|(tab, state)| (*tab, state.workspace.as_str()))
+    }
+
+    /// The indicator sets `shown` names become the tab's copy's, pane by
+    /// pane; nothing else of it moves. See `book_upkeep::take_shown_sets`.
+    pub fn take_sets(&mut self, tab: u64, shown: &WorkspaceRecipe) {
+        let Some(state) = self.tabs.get_mut(&tab) else {
+            return;
+        };
+        let copy = &mut state.copy;
+        copy.flow_indicators.clone_from(&shown.flow_indicators);
+        for (pane, seen) in copy.context_panes.iter_mut().zip(&shown.context_panes) {
+            pane.indicators.clone_from(&seen.indicators);
+        }
     }
 
     /// The tab's workspace and whether it holds unsaved edits. With autosave

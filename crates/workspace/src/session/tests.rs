@@ -226,7 +226,7 @@ fn a_kept_twin_follows_the_copy_it_merged_into() {
         session.register_in(10, pane, Some(layout));
         session.seed(pane, None, None);
     }
-    session.owner.insert(twin, 10);
+    session.owner.insert(twin, Holder::Tab(10));
     session.kept.insert((2, origin), twin);
     assert!(session.own_copies([(10, 1), (10, 2)]).changed);
     assert_eq!(session.kept.get(&(2, origin)), Some(&shared));
