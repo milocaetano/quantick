@@ -80,3 +80,26 @@ fn an_epoch_keeps_the_sources_opening_facts_and_a_source_reset_drops_them() {
     tape.pending_mut().clear_opening_bursts();
     assert!(tape.opening_bursts(None).is_empty());
 }
+
+/// A stalled worker never grows the held prints past the configured cap, and
+/// the time retention retires the oldest held print.
+#[test]
+fn held_prints_obey_the_aggression_cap_and_the_time_retention() {
+    let held = |config: HeatmapConfig, times: &[i64]| {
+        let mut tape = PaneTape::default();
+        for (agg_id, at) in (1..).zip(times) {
+            tape.record(&print(agg_id, *at), &config);
+        }
+        tape.pending().len()
+    };
+    let capped = HeatmapConfig {
+        max_aggressions: 2,
+        ..HeatmapConfig::default()
+    };
+    assert_eq!(held(capped, &[1_001, 1_101, 1_201]), 2);
+    let short = HeatmapConfig {
+        retention_ms: 1_000,
+        ..HeatmapConfig::default()
+    };
+    assert_eq!(held(short, &[1_001, 2_101]), 1);
+}

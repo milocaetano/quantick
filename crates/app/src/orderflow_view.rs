@@ -31,9 +31,6 @@ use crate::viewport::Viewport;
 #[cfg(test)]
 #[path = "orderflow_view/tests/asset_look_tests.rs"]
 mod asset_look_tests;
-#[cfg(test)]
-#[path = "orderflow_view/tests/bubble_scale_tests.rs"]
-mod bubble_scale_tests;
 mod constants;
 pub(crate) mod flow_execution;
 mod frame;
