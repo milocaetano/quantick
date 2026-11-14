@@ -213,6 +213,10 @@ fn seam_drag(state: &mut CanvasState, path: &[usize], index: usize, by: f32) {
         .unwrap_or_else(|refused| panic!("{seam:?}: {refused}"));
 }
 
+/// One expand case: its name, whether the flow side folds, and the seam
+/// drags (seam index, points) that fold it.
+type Case = (&'static str, bool, Vec<(usize, f32)>);
+
 /// Every layout with a flow side, its shares first moved off the preset's:
 /// the flow pane dragged shut, the chart beside it dragged shut, and every
 /// chart beside it dragged shut one rail at a time, each reopened by the
@@ -236,7 +240,7 @@ fn an_expand_after_a_drag_fold_reopens_at_the_pre_fold_shares() {
         // A chart folds when its seam with the next child toward the flow
         // pane is dragged away from the flow; the flow pane, the other way.
         let shut = |at: usize| if at < flow { -whole } else { whole };
-        let mut cases: Vec<(&str, bool, Vec<(usize, f32)>)> = vec![
+        let mut cases: Vec<Case> = vec![
             ("flow", true, vec![(flow.min(neighbour), -shut(neighbour))]),
             (
                 "one chart",

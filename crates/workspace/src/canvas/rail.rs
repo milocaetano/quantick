@@ -337,17 +337,19 @@ impl CanvasState {
     }
 
     /// Fold the order-flow pane to its rail (`flow`) or the charts beside it
-    /// in its split, or open them (`folded` false): what the column painter's
-    /// collapse calls do on a canvas the tree paints. The two sides never
-    /// fold together, so folding one opens the other; a fold that would
-    /// leave no chart open does nothing. Answers whether anything changed.
+    /// in its split, or open them (`folded` false), a side a drag folded at
+    /// the shares it had before ([`Self::open_side`]): what the column
+    /// painter's collapse calls do on a canvas the tree paints. The two
+    /// sides never fold together, so folding one opens the other; a fold
+    /// that would leave no chart open does nothing. Answers whether anything
+    /// changed.
     pub fn fold_flow_side(&mut self, flow: bool, folded: bool) -> bool {
         let Some((own, context)) = self.flow_sides() else {
             return false;
         };
         let (fold, other) = if flow { (own, context) } else { (context, own) };
         if !folded {
-            return self.set_railed(&fold, false);
+            return self.open_side(&fold);
         }
         let mut next = self.clone();
         next.set_railed(&other, false);
@@ -358,6 +360,22 @@ impl CanvasState {
         let changed = next != *self;
         *self = next;
         changed
+    }
+
+    /// Open every rail among `side`, the last folded first, each through
+    /// [`Self::unrail`] as a restore does, so a pair a drag folded gets back
+    /// the shares it had before; a rail no fold remembers just opens.
+    /// Answers whether anything changed.
+    fn open_side(&mut self, side: &[PaneSlot]) -> bool {
+        let remembered: Vec<PaneSlot> = (self.reopen.iter().rev())
+            .map(|kept| kept.folded)
+            .filter(|slot| side.contains(slot))
+            .collect();
+        let mut changed = false;
+        for slot in remembered {
+            changed |= self.railed().contains(&slot) && self.unrail(slot);
+        }
+        self.set_railed(side, false) || changed
     }
 
     /// The split holding the docked flow pane and its index there, found
