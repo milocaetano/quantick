@@ -486,6 +486,7 @@ fn painted_buttons_match_the_scene_controls_at_every_stage() {
     let ctx = egui::Context::default();
     let mut rail = ToolRail::new_rail();
     rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
+    assert!(!rail.magnet_painted(), "undrawn rail has no magnet");
     let mut drawings = Drawings::default();
     // Along the top 400 px is Compact, 250 px Minimal, 900 px Full; down the
     // left 700 px is Full.
@@ -519,7 +520,14 @@ fn painted_buttons_match_the_scene_controls_at_every_stage() {
         assert_eq!(rail.view.hide_all_rect.is_some(), globals, "{width}");
         assert_eq!(rail.view.lock_all_rect.is_some(), globals, "{width}");
         assert_eq!(rail.view.more_rect.is_some(), more, "{width} More");
+        assert_eq!(rail.magnet_painted(), globals, "{width} magnet");
+        if dock == ToolboxDock::Left {
+            let retracement = DrawingTool::by_id("fib-retracement").unwrap();
+            assert!(rail.button_rect(Tool::Drawing(retracement)).is_some());
+        }
     }
+    rail.set_visible(false);
+    assert!(!rail.magnet_painted(), "hidden rail has no magnet");
 }
 
 #[test]

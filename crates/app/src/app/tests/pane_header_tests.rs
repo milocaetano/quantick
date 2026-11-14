@@ -568,6 +568,15 @@ fn a_glyph_the_data_blocks_is_not_painted_and_returns_with_the_data() {
     let ids = scene_control_ids(&observer_scene(&app));
     assert!(!ids.contains(&format!("pane.{pane_id}.header.layer.heatmap")));
 
+    set_capabilities(&mut app, no_volume);
+    run_frame(&mut app, &ctx);
+    assert!(!painted(&app, bubbles));
+    assert!(!painted(&app, candle));
+    assert!(
+        painted(&app, heatmap),
+        "book data remains available without volume"
+    );
+
     no_volume.book_capture = false;
     set_capabilities(&mut app, no_volume);
     run_frame(&mut app, &ctx);
