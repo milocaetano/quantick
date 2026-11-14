@@ -237,7 +237,8 @@ fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &Wor
     let panes = layouts.tabs.by_id(id).map(|tab| tab.panes());
     let sets = panes.into_iter().flatten();
     let sets = sets.map(|(pane, side)| (pane.id, recipe.for_pane(side.index()).0));
-    layouts.show_sets(layouts.store.session_mut().landing_sets(sets));
+    let shown = layouts.store.session_mut().landing_sets(sets);
+    layouts.show_sets(shown);
 }
 
 /// Carry out what a workspace row or the toolbar asked for, on what the active
