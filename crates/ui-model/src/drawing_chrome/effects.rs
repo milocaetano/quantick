@@ -8,8 +8,6 @@ use super::{Drawing, DrawingEdit, PresetWrite, SavedDefault, quick_range};
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub struct DrawingChromeAsk {
-    /// Open the alert editor on this drawing.
-    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
     /// Synchronous host continuations, absent on idle frames.
     pub readbacks: Option<Box<Readbacks>>,
     pub clipboard_paste: Option<(Box<Drawing>, u32)>,
@@ -108,6 +106,7 @@ impl DrawingChromeAsk {
             let own = self.readbacks.get_or_insert_with(Default::default);
             own.scenario = own.scenario.take().or(other.scenario);
             own.quick_range = own.quick_range.take().or(other.quick_range);
+            own.alert_target = own.alert_target.take().or(other.alert_target);
         }
         self.clipboard_paste = self.clipboard_paste.take().or(other.clipboard_paste);
         self.inspector_position_dirty |= other.inspector_position_dirty;
@@ -119,7 +118,6 @@ impl DrawingChromeAsk {
         );
         self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
-        self.alert_target = self.alert_target.take().or(other.alert_target);
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
             .commit_edit_gesture
@@ -156,6 +154,8 @@ pub struct Readbacks {
     pub scenario: Option<super::scenario::Effect>,
     pub quick_range:
         Option<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback>,
+    /// Open the alert editor on this drawing, once the host resolves it.
+    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
 }
 impl DrawingChromeAsk {
     pub fn scenario(effect: Option<super::scenario::Effect>) -> Self {

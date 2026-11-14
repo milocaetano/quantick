@@ -264,8 +264,44 @@ pub(super) fn apply_alert_request(
     let _ = (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Apply(request));
 }
 
+/// After the dock: its bell opens the manager, another open dock tab closes
+/// it, and the manager takes its space before chart layout.
+pub(super) fn after_dock(app: &mut super::QuantickApp, ctx: &eframe::egui::Context, bell: bool) {
+    if bell {
+        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+    }
+    if app.surfaces.dock.tab().is_some() {
+        app.surfaces.alerts.close_manager();
+    }
+    draw_manager_panel(app, ctx);
+}
+
+/// The context bar's Create alert: open the editor on the resolved drawing.
+pub(super) fn open_drawing_target(
+    app: &mut super::QuantickApp,
+    ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+    now: std::time::Instant,
+) {
+    use super::LayoutPort;
+    let Some(selector) = ask
+        .readbacks
+        .as_mut()
+        .and_then(|back| back.alert_target.take())
+    else {
+        return;
+    };
+    match app.layout_adapter().resolve_alert_target(selector) {
+        Ok(target) => app.surfaces.alerts.open_drawing(Some(target)),
+        Err(error) => crate::surfaces::toast::note(
+            &mut app.surfaces.toast,
+            format!("Alert target unavailable: {error:?}"),
+            now,
+        ),
+    }
+}
+
 /// Reserve manager space after the permanent right rail, before chart layout.
-pub(super) fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egui::Context) {
+fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egui::Context) {
     if !app.surfaces.alerts.is_open() {
         return;
     }

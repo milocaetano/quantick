@@ -658,13 +658,7 @@ impl QuantickApp {
             Ok(response) => response,
             Err(response) => return Some(*response),
         };
-        if response.open_alerts {
-            self.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
-        }
-        if self.surfaces.dock.tab().is_some() {
-            self.surfaces.alerts.close_manager();
-        }
-        super::alerts_runtime::draw_manager_panel(self, ctx);
+        super::alerts_runtime::after_dock(self, ctx, response.open_alerts);
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
@@ -987,16 +981,7 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        if let Some(selector) = ask.alert_target.take() {
-            match self.layout_adapter().resolve_alert_target(selector) {
-                Ok(target) => self.surfaces.alerts.open_drawing(Some(target)),
-                Err(error) => crate::surfaces::toast::note(
-                    &mut self.surfaces.toast,
-                    format!("Alert target unavailable: {error:?}"),
-                    now,
-                ),
-            }
-        }
+        super::alerts_runtime::open_drawing_target(self, &mut ask, now);
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
         if let Some(action) = drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;

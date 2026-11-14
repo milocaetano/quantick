@@ -6,12 +6,9 @@ use quantick_alerts::{AlertBook, AlertError};
 pub(crate) use quantick_ui_model::alerts::{Context, DrawingChoice, Request};
 use quantick_ui_model::alerts::{Draft, Effects, Intent, Model, State, Subview};
 use quantick_ui_model::UpdateSession;
-#[path = "alerts/editor.rs"]
 mod editor;
-#[path = "alerts/manager.rs"]
 mod manager;
 #[cfg(test)]
-#[path = "alerts/tests.rs"]
 mod tests;
 
 /// The catalog's alert surface: manager panel and editor window.
