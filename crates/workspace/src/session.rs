@@ -1,4 +1,5 @@
 //! Layout-session decisions and read-only pane membership.
+use crate::indicator_document::{SavedIndicator, SavedKind};
 use crate::layout_document::{LayoutBook, LayoutError, LayoutId};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
@@ -125,8 +126,8 @@ pub struct LayoutSession {
     /// The tab each private copy belongs to. Not saved: a desk read back
     /// hands each copy to the tab whose pane holds it.
     owner: BTreeMap<LayoutId, u64>,
-    /// `(pane, strip layout)` to the copy of it the pane last left: a copy a
-    /// recipe parted for that pane, kept so a switch back finds its set.
+    /// `(pane, strip layout)` to the copy of it the pane last left, kept so a
+    /// switch back finds its tab's set.
     kept: BTreeMap<(u64, LayoutId), LayoutId>,
 }
 impl LayoutSession {
@@ -334,10 +335,11 @@ impl LayoutSession {
         Some(copy)
     }
     /// Put every seeded pane, given as `(tab, pane)` for every pane there is,
-    /// on its tab's copy of its strip layout: the panes of one tab on one strip
-    /// layout share that copy, so an edit mirrors across them, and no copy is
-    /// ever another tab's. A pane put back on a strip layout its tab holds a
-    /// copy of rejoins that copy. Slots and entries keep their positions.
+    /// in pane order, on its tab's copy of its strip layout: the panes of one
+    /// tab on one strip layout share that copy, so an edit mirrors across
+    /// them, and no copy is ever another tab's. A pane put back on a strip
+    /// layout its tab holds a copy of rejoins that copy; twin copies merge,
+    /// see [`Self::merge_twins`]. Slots and entries keep their positions.
     pub fn own_copies(&mut self, panes: impl IntoIterator<Item = (u64, u64)>) -> OwnedCopies {
         self.tab_of.clear();
         let mut seeded = Vec::new();
@@ -354,8 +356,11 @@ impl LayoutSession {
                 self.owner.entry(layout).or_insert(tab);
             }
         }
-        let mut owned = OwnedCopies::default();
-        for (tab, pane, layout) in seeded {
+        let mut owned = self.merge_twins(&seeded);
+        for (tab, pane, _) in seeded {
+            let Some(layout) = self.held(pane) else {
+                continue;
+            };
             if self.owner.get(&layout) == Some(&tab) {
                 continue;
             }
@@ -374,44 +379,173 @@ impl LayoutSession {
         }
         owned
     }
-    /// Before a recipe lands on one tab's panes, given as `(pane, set)`: the
-    /// panes it gives one set share a copy of their strip layout, and a pane
-    /// given another set than a pane it shares a copy with moves to a copy of
-    /// its own. Call after [`Self::own_copies`]. Answers whether any pane moved.
-    pub fn part_copies<'a>(
-        &mut self,
-        wanted: impl IntoIterator<Item = (u64, &'a [crate::indicator_document::SavedIndicator])>,
-    ) -> bool {
-        let mut given: Vec<(LayoutId, &[_])> = Vec::new();
-        let mut changed = false;
-        for (pane, set) in wanted {
-            let (Some(layout), Some(tab)) = (self.held(pane), self.tab_of.get(&pane).copied())
-            else {
+    /// Twin copies of one strip layout that one tab owns, as a stored file can
+    /// bring back, merge into one: one set per strip layout per tab. The copy
+    /// holding the most kinds of indicator survives, see [`fullness`]; a tie
+    /// goes to the one the first pane in order holds, held copies before ones
+    /// a pane left. Panes on a twin move to the survivor and are told to show
+    /// its set; a pane that left a twin finds the survivor on its way back.
+    /// The twins leave, each logged with what the survivor does not show.
+    fn merge_twins(&mut self, seeded: &[(u64, u64, LayoutId)]) -> OwnedCopies {
+        let own = |tab: u64, copy: LayoutId| (self.owner.get(&copy) == Some(&tab)).then_some(copy);
+        let held = seeded
+            .iter()
+            .filter_map(|&(tab, _, layout)| Some((tab, own(tab, layout)?)));
+        let left = seeded.iter().flat_map(|&(tab, pane, _)| {
+            (self.kept.iter())
+                .filter(move |((by, _), _)| *by == pane)
+                .filter_map(move |(_, copy)| Some((tab, own(tab, *copy)?)))
+        });
+        let size = |id| {
+            self.book
+                .get(id)
+                .map_or(0, |layout| fullness(&layout.indicators))
+        };
+        let mut seen: Vec<((u64, LayoutId), LayoutId)> = Vec::new();
+        let mut best: BTreeMap<(u64, LayoutId), LayoutId> = BTreeMap::new();
+        for (tab, copy) in held.chain(left) {
+            let key = (tab, self.book.origin_of(copy));
+            if seen.contains(&(key, copy)) {
                 continue;
-            };
-            let origin = self.book.origin_of(layout);
-            let shared = given
-                .iter()
-                .find(|(copy, given)| self.book.origin_of(*copy) == origin && *given == set);
-            let copy = match shared {
-                Some((copy, _)) => *copy,
-                None if self.book.is_private(layout)
-                    && !given.iter().any(|(copy, _)| *copy == layout) =>
-                {
-                    layout
-                }
-                None => match self.copy_for(tab, layout) {
-                    Some(copy) => copy,
-                    None => continue,
-                },
-            };
-            given.push((copy, set));
-            if copy != layout {
-                self.repoint(pane, copy);
-                changed = true;
+            }
+            seen.push((key, copy));
+            let winner = best.entry(key).or_insert(copy);
+            if size(copy) > size(*winner) {
+                *winner = copy;
             }
         }
-        changed
+        let merged: BTreeMap<LayoutId, (u64, LayoutId)> = seen
+            .into_iter()
+            .filter_map(|(key, copy)| {
+                let survivor = best[&key];
+                (survivor != copy).then_some((copy, (key.0, survivor)))
+            })
+            .collect();
+        let mut owned = OwnedCopies::default();
+        if merged.is_empty() {
+            return owned;
+        }
+        for (twin, (tab, survivor)) in &merged {
+            self.log_discarded(*tab, *twin, *survivor);
+        }
+        for copy in self.kept.values_mut() {
+            if let Some((_, survivor)) = merged.get(copy) {
+                *copy = *survivor;
+            }
+        }
+        for &(tab, pane, layout) in seeded {
+            let Some((_, survivor)) = merged.get(&layout).copied() else {
+                continue;
+            };
+            if self.owner.get(&layout) != Some(&tab) {
+                continue;
+            }
+            let set = |id| self.book.get(id).map(|layout| &layout.indicators);
+            if set(layout) != set(survivor) {
+                owned.reshow.push(pane);
+            }
+            self.repoint(pane, survivor);
+        }
+        for twin in merged.into_keys() {
+            self.drop_if_unheld(twin);
+        }
+        owned.changed = true;
+        owned
+    }
+    /// Say what a twin merged into `survivor` held that the survivor does not
+    /// show: nothing a merge drops goes unsaid.
+    fn log_discarded(&self, tab: u64, twin: LayoutId, survivor: LayoutId) {
+        let set = |id| {
+            self.book
+                .get(id)
+                .map_or(&[][..], |layout| &layout.indicators)
+        };
+        let (lacked, other_settings) = unshown(set(survivor), [set(twin)]);
+        tracing::warn!(
+            target: "quantick::workspace",
+            schema_version = 1_u8,
+            event_code = "LAYOUT_TWIN_MERGED",
+            tab,
+            layout = self.book.origin_of(twin).0,
+            survivor = survivor.0,
+            discarded = twin.0,
+            lacked = ?lacked,
+            other_settings = ?other_settings,
+            action = "survivor_set_shown",
+            "one tab held two copies of a layout; the fuller one stays"
+        );
+    }
+    /// Before a recipe lands on one tab's panes, given as `(pane, set)` in
+    /// pane order: the set each pane shows. The panes on one copy show one
+    /// set: the fullest they are given, see [`fullness`], a tie going to the
+    /// first of them. A recipe never parts a copy; where its sets for one
+    /// copy differ, what is not shown is logged. Call after
+    /// [`Self::own_copies`], once per landing.
+    #[must_use]
+    pub fn shared_sets<'a>(
+        &self,
+        wanted: impl IntoIterator<Item = (u64, &'a [SavedIndicator])>,
+    ) -> Vec<(u64, &'a [SavedIndicator])> {
+        let wanted: Vec<_> = wanted
+            .into_iter()
+            .map(|(pane, set)| (pane, self.held(pane), set))
+            .collect();
+        let mut best: Vec<(LayoutId, &'a [_])> = Vec::new();
+        for &(_, copy, set) in &wanted {
+            let Some(copy) = copy else {
+                continue;
+            };
+            match best.iter_mut().find(|(held, _)| *held == copy) {
+                Some((_, winner)) if fullness(set) > fullness(winner) => *winner = set,
+                Some(_) => {}
+                None => best.push((copy, set)),
+            }
+        }
+        for &(copy, shown) in &best {
+            let given = wanted
+                .iter()
+                .filter(|(_, held, _)| *held == Some(copy))
+                .map(|&(_, _, set)| set);
+            self.log_joined(&wanted, copy, shown, given);
+        }
+        let shown = |copy: Option<LayoutId>| {
+            let copy = copy?;
+            best.iter()
+                .find(|(held, _)| *held == copy)
+                .map(|(_, set)| *set)
+        };
+        wanted
+            .iter()
+            .map(|&(pane, copy, set)| (pane, shown(copy).unwrap_or(set)))
+            .collect()
+    }
+    /// Say what a landing recipe gave the panes on `copy` that `shown` leaves
+    /// out, when it gave them more than one set.
+    fn log_joined<'a>(
+        &self,
+        wanted: &[(u64, Option<LayoutId>, &[SavedIndicator])],
+        copy: LayoutId,
+        shown: &[SavedIndicator],
+        given: impl Iterator<Item = &'a [SavedIndicator]>,
+    ) {
+        let (lacked, other_settings) = unshown(shown, given);
+        if lacked.is_empty() && other_settings.is_empty() {
+            return;
+        }
+        let pane = wanted.iter().find(|(_, held, _)| *held == Some(copy));
+        let tab = pane.and_then(|(pane, _, _)| self.tab_of.get(pane).copied());
+        tracing::warn!(
+            target: "quantick::workspace",
+            schema_version = 1_u8,
+            event_code = "LAYOUT_RECIPE_SETS_JOINED",
+            tab = ?tab,
+            layout = self.book.origin_of(copy).0,
+            copy = copy.0,
+            lacked = ?lacked,
+            other_settings = ?other_settings,
+            action = "fullest_set_shown",
+            "a recipe gave the panes of one layout different sets; the fullest is shown"
+        );
     }
     pub fn replace_book(&mut self, book: LayoutBook) {
         let panes = std::mem::take(&mut self.panes);
@@ -662,6 +796,43 @@ impl LayoutSession {
         }
         Ok(())
     }
+}
+
+/// How full a set is: the kinds of indicator it shows. Three CVDs are one
+/// kind, so they never outweigh a bar study and a CVD.
+fn fullness(set: &[SavedIndicator]) -> usize {
+    let mut kinds: Vec<&SavedKind> = Vec::new();
+    for entry in set {
+        if !kinds.contains(&&entry.kind) {
+            kinds.push(&entry.kind);
+        }
+    }
+    kinds.len()
+}
+
+/// What `others` hold that `shown` does not show, by stable name, once each:
+/// the kinds it lacks, and the kinds it has whose inputs, style or visibility
+/// differ from every one of its entries of that kind.
+fn unshown<'a>(
+    shown: &[SavedIndicator],
+    others: impl IntoIterator<Item = &'a [SavedIndicator]>,
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    let (mut lacked, mut other_settings) = (Vec::new(), Vec::new());
+    for entry in others.into_iter().flatten() {
+        if shown.contains(entry) {
+            continue;
+        }
+        let name = entry.kind.stable_name();
+        let list = if shown.iter().any(|kept| kept.kind == entry.kind) {
+            &mut other_settings
+        } else {
+            &mut lacked
+        };
+        if !list.contains(&name) {
+            list.push(name);
+        }
+    }
+    (lacked, other_settings)
 }
 
 #[cfg(test)]

@@ -100,7 +100,8 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
 }
 
 /// A recipe of two context panes reaches the second pane too, which is built a
-/// frame after the first.
+/// frame after the first. Its panes share one strip layout, so the fuller set
+/// lands on all three; that heal is no edit, so the tab reads clean.
 #[test]
 fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let layouts = crate::scratch::ScratchFile::new("workspace-two-context-switch", "layouts.toml");
@@ -111,6 +112,8 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     let (layer, on) = some_layer(&app, first, 2);
     let mut two = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(two.context_panes.len(), 2);
+    two.flow_indicators = Vec::new();
+    two.context_panes[0].indicators = Vec::new();
     two.context_panes[1].indicators = vec![ema()];
     two.context_panes[1]
         .layers
@@ -121,13 +124,26 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
 
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id_mut(second).expect("an open tab");
+    for pane in tab.panes_mut() {
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+    }
+    let built = tab.pane(PaneSide::Time(1)).indicators.all().len();
+    assert_eq!(built, 1, "the pane built a frame later shows its indicator");
     let live = live_recipe(&app.runtime, second).expect("an open tab");
     assert_eq!(live.context_panes.len(), 2);
     assert_eq!(live.context_panes[1].indicators, [ema()], "the second pane");
+    assert_eq!(
+        live.flow_indicators,
+        [ema()],
+        "one set for the strip layout"
+    );
     assert_eq!(live.context_panes[1].layers.get(layer.id()), Some(&!on));
     assert_eq!(
         app.runtime.workspace.book.tab_row(second),
-        ("Two".to_owned(), false)
+        ("Two".to_owned(), false),
+        "a heal on landing is no edit"
     );
 }
 
@@ -563,6 +579,224 @@ fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(a).1, "the edit marks its tab");
     assert!(!store.tab_row(b).1, "and no other");
+}
+
+const THREE_PANES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(1)];
+
+/// How many indicators each of the active tab's three panes shows.
+fn three_counts(app: &mut QuantickApp) -> [usize; 3] {
+    settle_indicators(app);
+    THREE_PANES.map(|side| app.active_tab().pane(side).indicators.all().len())
+}
+
+/// The copy every one of the active tab's three panes holds: one, or a panic.
+fn one_copy(app: &QuantickApp) -> quantick_workspace::layout_document::LayoutId {
+    let held = THREE_PANES.map(|side| app.active_tab().pane(side).layout_id().expect("seeded"));
+    assert!(held.iter().all(|id| *id == held[0]), "one copy: {held:?}");
+    held[0]
+}
+
+/// The trader's Force report: inside one tab, the panes on one strip layout
+/// show one set. A recipe giving three panes three sets lands the fullest on
+/// all of them; the tab reads clean and autosave owes the stored recipe
+/// nothing. An add or a removal on a context pane then reaches the flow pane
+/// and the other context pane.
+#[test]
+fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-one-set-a-tab", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    let tab = app.runtime.tabs.by_id_mut(b).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let mut three = live_recipe(&app.runtime, b).expect("an open tab");
+    assert_eq!(three.context_panes.len(), 2);
+    three.flow_indicators = vec![ema()];
+    three.context_panes[0].indicators = Vec::new();
+    let cvd = quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native("native.cvd"),
+        ..ema()
+    };
+    three.context_panes[1].indicators = vec![ema(), cvd.clone()];
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(b, &three).expect("held");
+    book.save_as(b, "Three").expect("a free name");
+    book.set_autosave(true);
+    let stored = book.recipe("Three").cloned();
+
+    // Edits made while autosave was off are behind us: what is due from here
+    // on is the landing's alone.
+    let quiet = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    app.runtime.workspace.book.sync_mut().take_due(quiet);
+    set_tab_workspace(&mut app, a, "Three").expect("a known workspace");
+    frames(&mut app, 5);
+    let store = &mut app.runtime.workspace.book;
+    assert_eq!(store.tab_row(a), ("Three".to_owned(), false), "no edit");
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = store.sync_mut().take_due(later);
+    assert!(due.is_empty(), "nothing of the landing to write: {due:?}");
+    assert_eq!(store.book().recipe("Three").cloned(), stored, "as saved");
+    let copy = one_copy(&app);
+    assert_eq!(three_counts(&mut app), [2; 3], "the fullest set");
+    let set = &app
+        .layout_state()
+        .layouts()
+        .get(copy)
+        .expect("held")
+        .indicators;
+    assert_eq!(set, &[ema(), cvd]);
+
+    app.active_tab_mut().focus = PaneSide::Time(1);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [3; 3], "an add reaches every pane");
+    let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    app.apply_toolbar_action(ToolbarAction::RemoveIndicator(slot.0));
+    frames(&mut app, 2);
+    assert_eq!(three_counts(&mut app), [2; 3], "and so does a removal");
+    assert_eq!(one_copy(&app), copy);
+}
+
+/// Bring `saved` back as the whole desk, as a launch reads it: on a market no
+/// open tab shows, so its panes open fresh on the layouts it names.
+fn restore_desk(
+    app: &mut QuantickApp,
+    mut saved: quantick_workspace::arrangement_document::SavedTab,
+    symbol: &str,
+) {
+    symbol.clone_into(&mut saved.symbol);
+    let config = app.config.clone();
+    let desk = ui_state::Workspace::new(true, None, 0, vec![saved], None);
+    app.arrangement_adapter()
+        .restore_workspace(desk.restore(&config));
+    frames(app, 4);
+}
+
+/// A stored file like the trader's: the flow pane and two context panes of one
+/// tab on three copies of one strip layout, each with another set. Brought
+/// back, all three show the fullest set, a context pane's, on one copy, and
+/// the file saved from that reads back the same.
+#[test]
+fn a_desk_on_twin_copies_comes_back_on_the_fullest_set() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-twin-copies", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let flow = app.active_tab().flow_pane.layout_id().expect("seeded");
+    let mut book = app.layout_state().layouts().clone();
+    let native = |id: &str| quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native(id),
+        ..ema()
+    };
+    let fullest = vec![ema(), native("native.cvd"), native("native.volume")];
+    let sets = [
+        vec![ema()],
+        fullest.clone(),
+        vec![ema(), native("native.cvd")],
+    ];
+    let copies = sets.map(|set| {
+        let copy = book.make_private_copy(flow).expect("a known layout");
+        book.get_mut(copy).expect("just made").indicators = set;
+        copy
+    });
+    let mut saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    saved.flow_layout = Some(copies[0].0);
+    saved.context_layouts = vec![copies[1].0, copies[2].0];
+    app.runtime.workspace.layouts_mut().set_book(book);
+
+    restore_desk(&mut app, saved, "ETHUSDT");
+    assert_eq!(one_copy(&app), copies[1], "the fullest copy");
+    assert_eq!(three_counts(&mut app), [3; 3]);
+    let book = app.layout_state().layouts();
+    assert_eq!(book.get(copies[1]).expect("held").indicators, fullest);
+    assert!(book.get(copies[0]).is_none() && book.get(copies[2]).is_none());
+
+    let saved = crate::app::arrangement_adapter::saved_tab_of(app.active_tab());
+    assert_eq!(
+        saved.context_layouts, [copies[1].0; 2],
+        "the desk names one copy"
+    );
+    let text = toml::to_string(app.layout_state().layouts()).expect("a book writes");
+    let reread = quantick_workspace::layout_document::parse(&text).expect("and reads back");
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let relaunch = crate::scratch::ScratchFile::new("workspace-twin-relaunch", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(relaunch.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_book(reread);
+    restore_desk(&mut app, saved, "ETHUSDT");
+    assert_eq!(one_copy(&app), copies[1], "after a relaunch too");
+    assert_eq!(three_counts(&mut app), [3; 3]);
+}
+
+/// The review's case: workspace W saved from tab A, whose flow pane is on the
+/// strip layout tab B shows everywhere and whose context pane is on Levels on
+/// purpose. B lands W healed, and autosave on rewrites nothing: W stays as
+/// saved and A's Levels pane keeps its own set.
+#[test]
+fn a_heal_on_one_tab_never_reaches_another_through_autosave() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-heal-stays", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    for tab in [a, b] {
+        let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+    }
+    frames(&mut app, 3);
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    let levels = session.create(Some("Levels")).expect("a free name");
+    app.layout_adapter()
+        .switch_pane_layout(a, PaneSide::Time(0), levels)
+        .expect("a known layout");
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    settle_indicators(&mut app);
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(a, "W").expect("a free name");
+    book.set_autosave(true);
+    let w = book.recipe("W").cloned().expect("saved");
+    assert_eq!(w.flow_indicators.len(), 2);
+    assert!(
+        w.context_panes[0].indicators.is_empty(),
+        "Levels holds none"
+    );
+
+    // Edits made while autosave was off are behind us: what is due from here
+    // on is the landing's alone.
+    let quiet = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    app.runtime.workspace.book.sync_mut().take_due(quiet);
+    set_tab_workspace(&mut app, b, "W").expect("a known workspace");
+    frames(&mut app, 5);
+    let strip = |app: &QuantickApp, tab, side| app.layout_state().pane_layout(tab, side);
+    assert_eq!(
+        strip(&app, b, PaneSide::Flow),
+        strip(&app, b, PaneSide::Time(0))
+    );
+    assert_eq!(strip(&app, a, PaneSide::Time(0)), levels);
+    let shows = |app: &mut QuantickApp, tab: u64, side| {
+        let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
+        for pane in tab.panes_mut() {
+            pane.indicator_worker.flush();
+            pane.apply_indicator_events();
+        }
+        tab.pane(side).indicators.all().len()
+    };
+    assert_eq!(shows(&mut app, b, PaneSide::Time(0)), 2, "B healed");
+    let store = &mut app.runtime.workspace.book;
+    assert_eq!(store.tab_row(b), ("W".to_owned(), false), "no edit");
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = store.sync_mut().take_due(later);
+    assert!(due.is_empty(), "nothing of the landing to write: {due:?}");
+    frames(&mut app, 2);
+    assert_eq!(app.runtime.workspace.book.book().recipe("W"), Some(&w));
+    assert_eq!(shows(&mut app, a, PaneSide::Time(0)), 0, "A's Levels pane");
 }
 
 /// `layout.tab.switch` as a script calls it, answered as the wire answers.
