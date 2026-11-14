@@ -1275,3 +1275,251 @@ fn the_close_toast_reads_in_the_chosen_figure() {
         "SIM closed: LONG 2 for +2.00 BRL · +5 pts × 2 (manual)"
     );
 }
+
+/// An account with a scratch folder and no symbol named: the state a host
+/// is in before its tab says which market it shows.
+fn unnamed(dir: &ScratchDir) -> PaperAccount {
+    PaperAccount::with_trades_dir(dir.path().to_path_buf())
+}
+
+fn decimal_print(agg_id: u64, price: Decimal) -> Trade {
+    Trade {
+        price,
+        ..print(agg_id, 0)
+    }
+}
+
+/// A leg on a working order is judged against the order's own price, not
+/// the market's: a buy limit at 95 takes no stop at 96, and the refusal
+/// names the leg.
+#[test]
+fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
+    let dir = ScratchDir::new("account-order-leg");
+    let mut account = account(&dir, "LEGX");
+    account.seed(&print(0, 100));
+    let id = rest_limit(&mut account, 95);
+
+    account.amend_leg(
+        quantick_trading::BracketTarget::Order(id),
+        Leg::StopLoss,
+        Some(Decimal::from(96)),
+    );
+    assert_eq!(account.working_orders()[0].bracket.stop_loss(), None);
+    let toast = account.peek_toast().expect("the refusal teaches");
+    assert!(toast.contains("stop loss"), "{toast}");
+}
+
+/// A selection naming a strategy the list no longer carries arms nothing
+/// rather than a different ladder.
+#[test]
+fn a_selection_naming_a_missing_strategy_selects_nothing() {
+    let dir = ScratchDir::new("account-missing-strategy");
+    let mut account = account(&dir, "STRATX");
+    account.set_order_strategies(
+        vec![OrderStrategy::starter(0)],
+        Some("a strategy that was deleted"),
+    );
+    assert!(account.selected_order_strategy().is_none());
+    assert_eq!(account.order_strategies().len(), 1, "the list is intact");
+}
+
+/// The tick is the finest step the tape has shown: trailing zeros are
+/// decoration, a rounder print never coarsens it, and a symbol switch
+/// forgets it until the new market prints.
+#[test]
+fn the_tick_is_the_finest_step_the_tape_has_shown() {
+    let dir = ScratchDir::new("account-tick");
+    let mut account = account(&dir, "BTCUSDT");
+    account.seed(&decimal_print(0, Decimal::new(7_811_257_000_000, 8)));
+    assert_eq!(account.tick(), Decimal::new(1, 2), "two places, not eight");
+    account.on_trade(&print(1, 78_100));
+    assert_eq!(account.tick(), Decimal::new(1, 2), "never coarser");
+    account.on_trade(&decimal_print(2, Decimal::new(78_100_123, 3)));
+    assert_eq!(
+        account.tick(),
+        Decimal::new(1, 3),
+        "a finer print refines it"
+    );
+
+    account.set_symbol("WIN$N");
+    assert_eq!(
+        account.tick(),
+        Decimal::ONE,
+        "the old precision stays behind"
+    );
+    account.on_trade(&decimal_print(9, Decimal::new(1_380_055, 1)));
+    assert_eq!(account.tick(), Decimal::new(1, 1));
+}
+
+/// Prices snap to the precision the instrument has shown, and a round
+/// print does not take cents away.
+#[test]
+fn snapping_uses_the_instruments_learned_precision() {
+    let dir = ScratchDir::new("account-snap");
+    let mut cents = unnamed(&dir);
+    cents.seed(&decimal_print(1, Decimal::new(10_325, 2)));
+    assert_eq!(cents.snap(101.234_56), Decimal::new(10_123, 2));
+    cents.on_trade(&print(2, 103));
+    assert_eq!(cents.snap(101.234_56), Decimal::new(10_123, 2));
+
+    let mut whole = unnamed(&dir);
+    whole.seed(&print(1, 182_035));
+    assert_eq!(whole.snap(182_036.7), Decimal::from(182_037));
+}
+
+/// The ruler's default notch scales with the instrument, so the first
+/// roll feels right with nothing configured.
+#[test]
+fn the_default_ruler_step_scales_with_the_instrument() {
+    let dir = ScratchDir::new("account-ruler-step");
+    let mut btc = unnamed(&dir);
+    btc.seed(&decimal_print(0, Decimal::new(7_800_057, 2)));
+    assert_eq!(btc.tick(), Decimal::new(1, 2));
+    assert_eq!(btc.derived_ruler_step(), Decimal::from(5));
+
+    let mut win = unnamed(&dir);
+    win.seed(&print(0, 138_000));
+    win.on_trade(&print(1, 138_005));
+    assert_eq!(win.derived_ruler_step(), Decimal::from(10), "two ticks");
+}
+
+/// The ticket's offsets become a bracket around the reference, mirrored
+/// for a sell, and one unreadable box stands the whole armed bracket down
+/// rather than projecting the other leg alone.
+#[test]
+fn one_unreadable_offset_stands_the_whole_bracket_down() {
+    let dir = ScratchDir::new("account-offsets");
+    let mut account = unnamed(&dir);
+    account.seed(&print(0, 100));
+    let reference = Decimal::from(100);
+    let mut ticket = crate::desk::Ticket {
+        stop_offset_text: "2".to_owned(),
+        profit_offset_text: "5".to_owned(),
+        ..crate::desk::Ticket::default()
+    };
+    let sell = ticket.parse_bracket(Side::Sell, reference).expect("read");
+    assert_eq!(sell.stop_loss(), Some(Decimal::from(102)));
+    assert_eq!(sell.take_profit(), Some(Decimal::from(95)));
+    let env = |ticket: &crate::desk::Ticket| AccountEnv {
+        ruler_levels: None,
+        form: ticket.form(),
+    };
+    let both = account.armed_bracket(Side::Buy, reference, Decimal::ONE, &env(&ticket));
+    assert_eq!(both.stop_loss(), Some(Decimal::from(98)));
+    assert_eq!(both.take_profit(), Some(Decimal::from(105)));
+
+    ticket.stop_offset_text = "abc".to_owned();
+    let spoiled = account.armed_bracket(Side::Buy, reference, Decimal::ONE, &env(&ticket));
+    assert_eq!(spoiled.stop_loss(), None);
+    assert_eq!(spoiled.take_profit(), None, "the readable target goes too");
+}
+
+/// The status cell answers "am I in a trade?", and the close button names
+/// the position it exits.
+#[test]
+fn the_status_cell_and_the_close_button_name_the_position() {
+    let dir = ScratchDir::new("account-status");
+    let mut account = unnamed(&dir);
+    assert!(account.status_cell().is_none(), "untouched owes no line");
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    let (text, _) = account.status_cell().expect("open");
+    assert_eq!(text, "SIM LONG 1 · 0 pts × 1 · — set pt value");
+    account.on_trade(&print(2, 105));
+    let (text, sign) = account.status_cell().expect("open");
+    assert_eq!(text, "SIM LONG 1 · +5 pts × 1 · — set pt value");
+    assert_eq!(sign, std::cmp::Ordering::Greater);
+
+    account.close_position();
+    account.on_trade(&print(3, 107));
+    let (text, sign) = account.status_cell().expect("history keeps it");
+    assert_eq!(text, "SIM flat · +7 pts/ct · — set pt value");
+    assert_eq!(sign, std::cmp::Ordering::Greater);
+    assert!(account.close_button_label().is_none(), "flat has no close");
+
+    let three = TicketForm {
+        quantity: Ok(Decimal::from(3)),
+        offsets: Some((None, None)),
+    };
+    ticket_market(&mut account, Side::Sell, &three);
+    account.on_trade(&print(4, 100));
+    assert_eq!(
+        account.close_button_label().as_deref(),
+        Some("Close 3 SHORT")
+    );
+    let summary = account.position_summary().expect("open");
+    assert_eq!(summary.side, Side::Sell);
+    assert_eq!(summary.quantity, Decimal::from(3));
+    assert_eq!(summary.avg_price, Decimal::from(100));
+}
+
+/// A fresh account - a restart - opens its own file beside every earlier
+/// one and never touches them: the same replayed tape takes a rerun name,
+/// a later session its own stamp.
+#[test]
+fn a_fresh_account_never_writes_into_an_earlier_sessions_file() {
+    let dir = ScratchDir::new("account-fresh-hosts");
+    let round_trip = |first: u64, price: i64| {
+        let mut account = account(&dir, "FRESH");
+        account.set_session_source(history::SessionSource::Replay);
+        account.seed(&print(first, price));
+        ticket_market(&mut account, Side::Buy, &plain_form());
+        account.on_trade(&print(first + 1, price));
+        let events = account.dispatch(Command::ClosePosition);
+        account.handle_events(events);
+        account.on_trade(&print(first + 2, price + 3));
+    };
+    let names = || {
+        let mut names: Vec<String> = std::fs::read_dir(dir.path().join("FRESH"))
+            .expect("the symbol folder exists")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        names
+    };
+
+    round_trip(0, 100);
+    let first = dir.path().join("FRESH").join(&names()[0]);
+    let first_bytes = std::fs::read(&first).expect("readable");
+    round_trip(0, 100);
+    assert!(names()[1].contains(".rerun-1."), "{:?}", names());
+    round_trip(10_000, 200);
+    assert_eq!(names().len(), 3, "{:?}", names());
+    assert_eq!(std::fs::read(&first).expect("readable"), first_bytes);
+    let loaded = crate::report::load_history(dir.path(), Some("FRESH"), &[]);
+    assert_eq!(loaded.rows.len(), 3);
+    assert!(
+        loaded
+            .rows
+            .iter()
+            .all(|row| row.source == Some(history::SessionSource::Replay))
+    );
+}
+
+/// The saved history is scoped by the symbol folders on disk: the combo
+/// lists every traded symbol, and a scope reads only its own folder.
+#[test]
+fn the_saved_history_scopes_by_symbol_folder() {
+    let dir = ScratchDir::new("account-symbol-folders");
+    for (symbol, first, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
+        let mut account = account(&dir, symbol);
+        account.seed(&print(first, price));
+        ticket_market(&mut account, Side::Buy, &plain_form());
+        account.on_trade(&print(first + 1, price));
+        let events = account.dispatch(Command::ClosePosition);
+        account.handle_events(events);
+        account.on_trade(&print(first + 2, price + 5));
+    }
+    assert_eq!(
+        crate::report::list_symbol_folders(dir.path()),
+        vec!["AAAUSDT".to_owned(), "BBBUSDT".to_owned()]
+    );
+    let all = crate::report::load_history(dir.path(), None, &[]);
+    let symbols: Vec<&str> = all.rows.iter().map(|row| row.symbol.as_str()).collect();
+    assert_eq!(symbols, vec!["AAAUSDT", "BBBUSDT"]);
+    let one = crate::report::load_history(dir.path(), Some("BBBUSDT"), &[]);
+    assert_eq!(one.rows.len(), 1);
+    assert_eq!(one.rows[0].symbol, "BBBUSDT");
+}
