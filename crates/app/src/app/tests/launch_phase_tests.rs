@@ -14,7 +14,7 @@ fn captured_scenario_inputs_reach_the_launch_phase() {
     };
     let (app, _evt, _cmd, _book) = test_app_with_launch(launch);
     assert!(app.active_tab().flow_pane.price_view.is_inverted());
-    assert_eq!(app.dock.tab(), Some(crate::dock::DockTab::Trades));
+    assert_eq!(app.surfaces.dock.tab(), Some(crate::dock::DockTab::Trades));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn two_pane_launch_hooks_reach_both_horizontal_rails() {
 fn an_app_without_scenario_inputs_applies_no_scenario() {
     let (app, _evt, _cmd, _book) = test_app();
     assert!(!app.active_tab().flow_pane.price_view.is_inverted());
-    assert_ne!(app.dock.tab(), Some(crate::dock::DockTab::Trades));
+    assert_ne!(app.surfaces.dock.tab(), Some(crate::dock::DockTab::Trades));
 }
 
 /// Holds a per-thread write refusal for one test and lifts it on drop.

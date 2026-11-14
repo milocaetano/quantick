@@ -1,0 +1,4 @@
+# #979 reviewed local ratchet amendment; original #920 acceptance remains unchanged.
+# Parsed launch-hook delivery to registered model owners requires app host state.
+crates/app +4
+!budget +4

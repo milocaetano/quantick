@@ -12,6 +12,7 @@ use quantick_stores::script_library::{
 use serde_json::Value;
 
 use crate::surfaces::{Surface, SurfaceEnv, SurfaceResponse};
+use quantick_ui_model::script_editor::{Effect, Intent, Model, State};
 
 struct FakeLibrary {
     entries: Vec<ScriptEntry>,
@@ -61,42 +62,47 @@ impl ScriptLibraryPort for FakeLibrary {
 }
 struct FakeEditor {
     library: FakeLibrary,
-    document: Option<ScriptDocument>,
+    state: State,
 }
 impl ScriptEditorPort for FakeEditor {
     fn script_editor(
         &mut self,
         action: ScriptEditorAction,
     ) -> Result<Option<ScriptDocument>, String> {
-        match action {
-            ScriptEditorAction::Open { id } => self.document = Some(self.library.read(&id)?),
-            ScriptEditorAction::Copy { id, new_id } => {
-                self.document = Some(self.library.copy(&id, &new_id)?);
-            }
-            ScriptEditorAction::ReplaceSource { source } => {
-                self.document.as_mut().ok_or("no document")?.source = source;
-            }
-            ScriptEditorAction::Save => self
-                .library
-                .save(self.document.as_ref().ok_or("no document")?)?,
-            ScriptEditorAction::Close => self.document = None,
-            ScriptEditorAction::Inspect => (),
-        }
-        Ok(self.document.clone())
+        use quantick_ui_model::Model as _;
+        let Effect::Dispatch { mut editor, action } =
+            Model::update(&mut self.state, Intent::Action(action))
+                .pop()
+                .unwrap()
+        else {
+            panic!("dispatch")
+        };
+        let result = editor.dispatch(&mut self.library, action);
+        let effects = Model::update(&mut self.state, Intent::ActionSettled { editor, result });
+        let Effect::ActionResult(result) = effects.into_iter().last().unwrap() else {
+            panic!("result")
+        };
+        result
     }
 }
-struct FakeSurface {
+struct FakeView {
     actions: Vec<ScriptEditorAction>,
 }
-impl Surface for FakeSurface {
+impl crate::surfaces::View<Model> for FakeView {
     fn id(&self) -> &'static str {
         "fake-script-editor"
     }
-    fn draw(&mut self, _ctx: &egui::Context, _env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        SurfaceResponse {
-            script_editor_actions: std::mem::take(&mut self.actions),
-            ..Default::default()
-        }
+    fn paint(
+        &mut self,
+        _: &State,
+        _: &mut crate::surfaces::ViewContext<'_>,
+        _: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        Some(Intent::Requests {
+            actions: std::mem::take(&mut self.actions),
+            add_to_chart: None,
+            copy_name: String::new(),
+        })
     }
 }
 fn control_dispatch(
@@ -138,10 +144,10 @@ fn script_library_extension_contract() {
     let registered = registry.lookup("indicator.fake_editor", 1).unwrap();
     let mut editor = FakeEditor {
         library: FakeLibrary::new(),
-        document: None,
+        state: State::default(),
     };
     assert_eq!(editor.library.list()[0].name, "starter.pine");
-    let mut surface = FakeSurface {
+    let view = FakeView {
         actions: vec![
             ScriptEditorAction::Open {
                 id: "starter.pine".into(),
@@ -156,8 +162,9 @@ fn script_library_extension_contract() {
             ScriptEditorAction::Save,
         ],
     };
-    let response = crate::surfaces::script_editor::draw(
-        &mut surface,
+    let mut surface =
+        crate::surfaces::Adapter::<Model, _>::new(view, crate::surfaces::script_editor::effects);
+    let response = surface.draw(
         &egui::Context::default(),
         &SurfaceEnv::quiet(Instant::now()),
     );
@@ -179,6 +186,18 @@ fn script_library_extension_contract() {
         "plot(close)"
     );
     assert!(editor.library.read("starter.pine").unwrap().read_only);
+    use quantick_ui_model::Model as _;
+    let document = editor.state.editor().document.clone().unwrap();
+    let revision = editor.state.editor().revision;
+    Model::update(
+        &mut editor.state,
+        Intent::Completed {
+            revision,
+            document,
+            error: None,
+            inputs: vec![],
+        },
+    );
     dispatch(&mut editor, ScriptEditorAction::Close).unwrap();
     assert!(
         dispatch(&mut editor, ScriptEditorAction::Inspect)
@@ -198,19 +217,37 @@ fn script_library_extension_contract_preserves_existing_behavior() {
     assert!(ScriptLibraryPort::read(&library, "missing.pine").is_err());
     assert!(!library.copy(&id, "copy.pine").unwrap().read_only);
     assert!(library.save(&original).is_err());
-    let mut surface = crate::surfaces::script_editor::ScriptEditorSurface::default();
+    let mut surfaces = crate::surfaces::Surfaces::default();
+    assert!(
+        surfaces
+            .script_editor
+            .supports_pass(quantick_ui_model::Slot::Overlay)
+    );
     assert_eq!(
-        crate::surfaces::script_editor::draw(
-            &mut surface,
+        surfaces.script_editor.draw(
             &egui::Context::default(),
-            &SurfaceEnv::quiet(Instant::now()),
+            &SurfaceEnv::quiet(Instant::now())
         ),
         SurfaceResponse::default()
     );
-    surface
-        .state
-        .dispatch(&mut library, ScriptEditorAction::Open { id })
-        .unwrap();
-    assert_eq!(surface.state.document, Some(original));
+    let response = surfaces
+        .script_editor
+        .update(Intent::Action(ScriptEditorAction::Open { id }));
+    let quantick_ui_model::HostEffect::ScriptEditor(mut effects) =
+        response.model_effects.into_iter().next().unwrap()
+    else {
+        panic!("catalog effect")
+    };
+    let Effect::Dispatch { mut editor, action } = effects.pop().unwrap() else {
+        panic!("dispatch")
+    };
+    let result = editor.dispatch(&mut library, action);
+    surfaces
+        .script_editor
+        .update(Intent::ActionSettled { editor, result });
+    assert_eq!(
+        surfaces.script_editor.model_state.editor().document,
+        Some(original)
+    );
     assert!(dir.join("copy.pine").exists());
 }

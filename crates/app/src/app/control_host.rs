@@ -22,18 +22,22 @@
 //! as code that belongs below `app` — which code reading `QuantickApp`'s
 //! fields cannot be.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+use crate::toolrail::ToolRailExt as _;
 use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
+use quantick_control_handlers::market_switch;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
+use quantick_ui_model::market_palette::Intent;
 use quantick_workspace::market_list::{self as list, OpenChoice};
 
 use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
-use crate::dock::Dock;
 use crate::drawings;
 use crate::pane::ChartPane;
 use crate::style::ChartStyle;
@@ -41,6 +45,7 @@ use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use quantick_control_schema::widget::WidgetRead;
+use quantick_ui_model::dock::State as Dock;
 
 use quantick_feed::history_reach;
 
@@ -643,7 +648,7 @@ impl<'a> ChromeReads<'a> {
             crate::surfaces::drawing_chrome::QUICK_RANGE_ACTION_COUNT],
     > {
         self.drawing_chrome
-            .quick_range
+            .quick_range_read()
             .controls(self.tabs.id_at(self.tabs.active_index()))
     }
 }
@@ -726,14 +731,17 @@ impl<'a> Alerts<'a> {
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
     pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
-        self.surfaces.agent_popup.show(popup);
+        self.surfaces
+            .update(crate::surfaces::HostIntent::AgentPopup(Box::new(
+                quantick_ui_model::agent_popup::Intent::Show(popup),
+            )));
     }
 
     /// Post one line to the window's own acknowledgement lane — the same
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
     pub(crate) fn show_toast(self, message: String) {
-        self.surfaces.toast.note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(&mut self.surfaces.toast, message, std::time::Instant::now());
     }
 
     /// Ask for the platform's attention sound, through the same sink the
@@ -848,14 +856,13 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
                 trades_per_s: None,
             })
             .collect();
-        let workspaces = book.book().list().into_iter().map(|row| row.name);
         list::MarketSnapshot {
             venues,
             markets,
             open,
-            recent: self.surfaces.market_palette.recent.clone(),
+            recent: self.surfaces.market_palette.model_state.recent.clone(),
             starter_feed: self.config.default_feed.clone(),
-            workspaces: workspaces.collect(),
+            workspaces: book.book().list().into_iter().map(|row| row.name).collect(),
             inherited_bar: Some(self.active_tab().flow_pane.state.spec().to_config_string()),
         }
     }
@@ -886,10 +893,10 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
     }
     /// Show the palette; `switch` puts it in switch mode on the active tab.
     fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
-        let port = self as &dyn ControlPort;
-        let target = switch.then(|| quantick_control_handlers::market_switch::target(port));
+        let target = switch.then(|| market_switch::target(self as &dyn ControlPort));
         let target = target.transpose().map_err(ControlError::invalid_request)?;
-        self.surfaces.market_palette.open(query, target);
+        let intent = Intent::open(query, target);
+        self.surfaces.market_palette.update(intent);
         Ok(())
     }
     fn set_flow_bar(&mut self, tab: u64, bar: Bars) -> Result<(), String> {
@@ -942,15 +949,15 @@ impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
-            feed_popup_tab: self.chrome.feed_popup_tab,
-            replay_day_before: self.replay_view.day_before(),
+            feed_popup_tab: self.surfaces.feed_notice.model_state.open(),
+            replay_day_before: self.surfaces.replay_browser.day_before(),
         };
-        let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
+        let (rail, chrome) = (&self.surfaces.toolrail, &self.surfaces.drawing_chrome);
         let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
             rail,
-            &self.dock,
+            &self.surfaces.dock.model_state,
             self.runtime.tz,
             chrome,
             drawn,
@@ -1009,7 +1016,7 @@ impl LayersPort for QuantickApp {
             style: &mut self.runtime.style,
             style_revision: &mut self.runtime.style_revision,
             footprint_config: &mut self.runtime.footprint_config,
-            chart_settings: &mut self.surfaces.chart_settings,
+            chart_settings: &mut self.surfaces.chart_settings.model_state,
             appearance: &self.runtime.appearance,
         }
     }
@@ -1021,10 +1028,10 @@ impl IndicatorPickerPort for QuantickApp {
         input: quantick_control_schema::indicator_picker::PickerInput,
     ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String> {
         let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
-        quantick_control_schema::indicator_picker::apply(
-            &mut self.surfaces.indicator_picker.state,
-            self.runtime.indicators.script_library.entries(),
+        quantick_ui_model::indicator_picker::Model::control(
+            &mut self.surfaces.indicator_picker.model_state,
             target,
+            self.runtime.indicators.script_library.entries(),
             input,
         )
     }
@@ -1107,7 +1114,7 @@ impl RecordingPort for QuantickApp {
 
 impl ToolRailPort for QuantickApp {
     fn set_drawing_magnet(&mut self, enabled: bool) -> bool {
-        self.toolrail.set_magnet(enabled)
+        self.surfaces.toolrail.set_magnet(enabled)
     }
 }
 
@@ -1139,9 +1146,9 @@ pub(super) struct ControlState {
 pub(crate) fn control_quick_range(
     app: &QuantickApp,
 ) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
-    app.drawings
-        .chrome
-        .quick_range
+    app.surfaces
+        .drawing_chrome
+        .quick_range_read()
         .control(app.runtime.tabs.id_at(app.runtime.tabs.active_index()))
 }
 
@@ -1183,11 +1190,13 @@ impl ControlLaunch {
 
 #[cfg(any(feature = "control-harness", test))]
 impl ControlState {
-    pub(super) fn apply_launch(&mut self, launch: ControlLaunch) {
-        if launch.panel
-            && let Some(access) = self.control_access.as_mut()
-        {
-            access.open_panel();
+    pub(super) fn apply_launch(
+        &mut self,
+        launch: ControlLaunch,
+        panel: &mut crate::surfaces::access_panel::AccessPanelSurface,
+    ) {
+        if launch.panel && self.control_access.is_some() {
+            panel.update(quantick_ui_model::access_panel::Intent::Open);
         }
         if let Some(scopes) = launch.scopes
             && let Some(access) = self.control_access.as_mut()

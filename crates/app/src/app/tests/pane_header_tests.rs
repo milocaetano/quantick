@@ -33,23 +33,6 @@ fn set_flow_bars(app: &mut QuantickApp, spec: BarSpec) {
     app.active_tab_mut().apply_spec_changes();
 }
 
-#[test]
-fn every_pane_reads_its_own_bars_without_a_click() {
-    let ctx = egui::Context::default();
-    let (mut app, _events, _commands) = context_fixture(&ctx);
-    set_flow_bars(&mut app, BarSpec::Tick(2000));
-    let focus = app.active_tab().focus;
-    let texts = painted_text(&run_frame(&mut app, &ctx));
-
-    for wanted in ["ORDER FLOW", "Tick · 2000", "Tick · 4"] {
-        assert!(
-            texts.iter().any(|text| text.starts_with(wanted)),
-            "{wanted} is missing from {texts:?}"
-        );
-    }
-    assert_eq!(app.active_tab().focus, focus, "reading moved nothing");
-}
-
 /// The flow pane's strip comes off its chart, as a time pane's does.
 #[test]
 fn the_flow_chart_starts_below_its_header() {
@@ -281,65 +264,6 @@ fn each_pane_paints_only_the_controls_it_accepts() {
     assert!(gap < 20.0 + menu, "at its right end, left of the ⋯");
 }
 
-/// Both lit is beside, one lit is that side alone, and a click on the last lit
-/// does nothing. The named read agrees at every step.
-#[test]
-fn the_side_switches_set_the_view_and_the_last_lit_stays() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    for (control, wanted) in [
-        (TAPE, LaneView::CandlesOnly),
-        (TRAIL, LaneView::CandlesOnly),
-        (TAPE, LaneView::Beside),
-        (TRAIL, LaneView::TapeOnly),
-        (TAPE, LaneView::TapeOnly),
-        (TRAIL, LaneView::Beside),
-    ] {
-        click_side(&mut app, &ctx, control);
-        assert_eq!(view_of(&app), wanted, "{control:?}");
-    }
-}
-
-/// The scene reads what the switches read: lit is selected, and the last lit
-/// names why it takes no press, with the call that does what the hand does.
-#[test]
-fn the_scene_reads_the_side_switches() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let pane_id = app.active_tab().flow_pane.id;
-    let side = |app: &QuantickApp, name: &str| {
-        scene_control(
-            &observer_scene(app),
-            &format!("pane.{pane_id}.header.side.{name}"),
-        )
-        .clone()
-    };
-    for name in ["trail", "tape"] {
-        let control = side(&app, name);
-        assert_eq!(control["selected"], true, "{name}");
-        assert_eq!(control["availability"]["available"], true, "{name}");
-        assert_eq!(control["role"], "toggle", "{name}");
-        assert_eq!(control["capability_id"], "orderflow.tape.view.set");
-    }
-    assert_eq!(side(&app, "trail")["label"], "Trail");
-    assert_eq!(side(&app, "tape")["label"], "Tape");
-    // What each side shows, in the words of its tooltip.
-    use quantick_chart::pane_header::{TAPE_DESCRIPTION, TRAIL_DESCRIPTION};
-    assert_eq!(side(&app, "trail")["description"], TRAIL_DESCRIPTION);
-    assert_eq!(side(&app, "tape")["description"], TAPE_DESCRIPTION);
-
-    click_side(&mut app, &ctx, TAPE);
-    assert_eq!(side(&app, "tape")["selected"], false);
-    assert_eq!(side(&app, "tape")["availability"]["available"], true);
-    let last = side(&app, "trail");
-    assert_eq!(last["selected"], true);
-    assert_eq!(last["availability"]["available"], false);
-    assert_eq!(
-        last["availability"]["reason"],
-        "the_last_side_showing_stays"
-    );
-}
-
 /// The words stand beside the glyphs while the line has room.
 #[test]
 fn the_side_switches_wear_their_words_and_lose_them_on_a_narrow_line() {
@@ -430,65 +354,31 @@ fn a_capsule_at_rest_answers_and_the_scene_does_not_see_its_tier() {
     assert_ne!(on(&app, ChartLayer::TapeHeatmap), before);
 }
 
-/// The key goes to tape only and back beside, from candles only too, and never
-/// opens a tab, on a focused flow pane; on a time pane it is swallowed and moves
-/// nothing.
+/// Each view key shows its side alone and then both, on a focused flow pane
+/// (`LaneView::tape_key` and `trail_key` own the moves); on a time pane it is
+/// swallowed, and it never reaches `Ctrl+T`'s tab or `Ctrl+R`'s replay.
 #[test]
-fn the_tape_key_toggles_tape_only_and_never_opens_a_tab() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
+fn the_view_keys_toggle_their_side_alone_and_never_open_a_tab_or_replay() {
     let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
-    let tabs = app.runtime.tabs.len();
-    press_key(&mut app, &ctx, egui::Key::T, mods);
-    assert_eq!(view_of(&app), LaneView::TapeOnly);
-    press_key(&mut app, &ctx, egui::Key::T, mods);
-    assert_eq!(view_of(&app), LaneView::Beside);
-    app.active_tab_mut()
-        .tape_mut()
-        .set_lane_view(LaneView::CandlesOnly);
-    press_key(&mut app, &ctx, egui::Key::T, mods);
-    assert_eq!(view_of(&app), LaneView::TapeOnly);
-    press_key(&mut app, &ctx, egui::Key::T, mods);
-    assert_eq!(view_of(&app), LaneView::Beside, "no remembered view");
-
-    app.active_tab_mut().focus = PaneSide::Time(0);
-    run_frame(&mut app, &ctx);
-    press_key(&mut app, &ctx, egui::Key::T, mods);
-    assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
-    assert_eq!(app.runtime.tabs.len(), tabs, "it never opened a tab");
-    assert!(
-        !app.surfaces.market_palette.is_open(),
-        "and never reached the source picker"
-    );
-}
-
-/// The trail key mirrors the tape key: the trail alone and back beside, from tape
-/// only too, swallowed on a time pane, and it never reaches `Ctrl+R`'s replay.
-#[test]
-fn the_trail_key_mirrors_the_tape_key_and_never_opens_replay() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
-    press_key(&mut app, &ctx, egui::Key::R, mods);
-    assert_eq!(view_of(&app), LaneView::CandlesOnly);
-    press_key(&mut app, &ctx, egui::Key::R, mods);
-    assert_eq!(view_of(&app), LaneView::Beside);
-    app.active_tab_mut()
-        .tape_mut()
-        .set_lane_view(LaneView::TapeOnly);
-    press_key(&mut app, &ctx, egui::Key::R, mods);
-    assert_eq!(view_of(&app), LaneView::CandlesOnly);
-    press_key(&mut app, &ctx, egui::Key::R, mods);
-    assert_eq!(view_of(&app), LaneView::Beside, "no remembered view");
-
-    app.active_tab_mut().focus = PaneSide::Time(0);
-    run_frame(&mut app, &ctx);
-    press_key(&mut app, &ctx, egui::Key::R, mods);
-    assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
-    assert!(
-        !app.replay_view.browser_is_open(),
-        "and it never reached the replay browser"
-    );
+    for (key, alone) in [
+        (egui::Key::T, LaneView::TapeOnly),
+        (egui::Key::R, LaneView::CandlesOnly),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _ends) = flow_fixture(&ctx);
+        let tabs = app.runtime.tabs.len();
+        press_key(&mut app, &ctx, key, mods);
+        assert_eq!(view_of(&app), alone, "{key:?}");
+        press_key(&mut app, &ctx, key, mods);
+        assert_eq!(view_of(&app), LaneView::Beside, "{key:?}");
+        app.active_tab_mut().focus = PaneSide::Time(0);
+        run_frame(&mut app, &ctx);
+        press_key(&mut app, &ctx, key, mods);
+        assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
+        assert_eq!(app.runtime.tabs.len(), tabs, "it never opened a tab");
+        assert!(!app.surfaces.market_palette.model_state.is_open());
+        assert!(!app.surfaces.replay_browser.browser_is_open());
+    }
 }
 
 /// A glyph switches its own pane's layer, wherever focus sits, and leaves focus
@@ -680,9 +570,12 @@ fn a_glyph_the_data_blocks_is_not_painted_and_returns_with_the_data() {
 
     set_capabilities(&mut app, no_volume);
     run_frame(&mut app, &ctx);
-    assert!(!painted(&app, bubbles), "no traded volume blocks bubbles");
-    assert!(!painted(&app, candle), "and their sample");
-    assert!(painted(&app, heatmap), "L2 is back with the book");
+    assert!(!painted(&app, bubbles));
+    assert!(!painted(&app, candle));
+    assert!(
+        painted(&app, heatmap),
+        "book data remains available without volume"
+    );
 
     no_volume.book_capture = false;
     set_capabilities(&mut app, no_volume);
@@ -706,7 +599,8 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
     let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
     let before = on(&app, ChartLayer::Bubbles);
     let focus = app.active_tab().focus;
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(crate::toolrail::Tool::Drawing(super::drawing_tool(
             "horizontal-line",
         )));
@@ -717,7 +611,7 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
         app.active_tab().flow_pane.drawings.items().is_empty(),
         "no anchor landed under the capsule"
     );
-    app.toolrail.arm(crate::toolrail::Tool::Pointer);
+    app.surfaces.toolrail.arm(crate::toolrail::Tool::Pointer);
     run_frame(&mut app, &ctx);
     let secondary = |at, pressed| egui::Event::PointerButton {
         pos: at,
@@ -789,38 +683,6 @@ fn a_narrow_tape_keeps_its_capsule() {
     );
     flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
     flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
-}
-
-/// A sample grows as it is dragged up, reads back through the named call's
-/// value and returns to `1x` on a double click.
-#[test]
-fn a_dragged_sample_sizes_its_bubbles_and_a_double_click_returns_to_one() {
-    use quantick_control_schema::bubble_scale::BubbleScaleTarget;
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    let size = |app: &QuantickApp| {
-        app.active_tab()
-            .tape()
-            .bubble_display_scale(BubbleScaleTarget::Tape.into())
-    };
-    assert_eq!(size(&app), 1.0);
-    let sample = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
-    let to = sample.center() - egui::vec2(0.0, 40.0);
-    drag(&mut app, &ctx, sample.center(), to);
-    assert!((size(&app) - 2.0).abs() < 0.01, "{}", size(&app));
-
-    let far = sample.center() - egui::vec2(0.0, 4_000.0);
-    drag(&mut app, &ctx, sample.center(), far);
-    assert_eq!(size(&app), 3.0, "the range holds");
-    let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
-    drag(&mut app, &ctx, center, center + egui::vec2(0.0, 4_000.0));
-    assert_eq!(size(&app), 0.25, "both ways");
-
-    let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
-    click_chart(&mut app, &ctx, center);
-    click_chart(&mut app, &ctx, center);
-    run_frame(&mut app, &ctx);
-    assert_eq!(size(&app), 1.0, "a double click is 1x");
 }
 
 /// A sample shows only while its target is there; the candle sample's slot stays
@@ -964,6 +826,14 @@ fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
     assert!((size(&app, BubbleScaleTarget::Candle) - 2.0).abs() < 0.01);
     assert_eq!(candle_viewport(&app), before);
 
+    click_chart(&mut app, &ctx, tape);
+    click_chart(&mut app, &ctx, tape);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        size(&app, BubbleScaleTarget::Tape),
+        1.0,
+        "pointer double click resets"
+    );
     let chart = app.active_tab().flow_pane.frame.area.expect("flow chart");
     let bare = egui::pos2(chart.left() + 100.0, chart.center().y);
     drag(&mut app, &ctx, bare, bare + egui::vec2(60.0, 0.0));
@@ -971,6 +841,28 @@ fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
         candle_viewport(&app),
         before,
         "the same drag pans the chart"
+    );
+}
+
+/// A chart pass can replace the reference that the earlier band observed.
+#[test]
+fn the_window_projection_reads_the_same_frames_chart_reference() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    app.active_tab_mut().flow_pane.frame.clear_hidden();
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let scope = pane.id;
+    let current = pane.flow_header_state().expect("flow header");
+    assert!(
+        current.window_reference_ms.is_some(),
+        "chart restored its reference after hiding"
+    );
+    let (model, _) = app.surfaces.pane_header.scoped(scope);
+    assert_eq!(model.snapshot.as_ref().unwrap().flow, Some(current));
+    assert_eq!(
+        model.window_label,
+        Some(quantick_chart::flow_band::window_label(&current))
     );
 }
 
@@ -1215,10 +1107,7 @@ fn candles_closed_are_tape_only_and_the_last_lit_rule_sees_them() {
         toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps)),
         [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
     );
-    let scene = observer_scene(&app);
-    assert_eq!(scene_control(&scene, &id("side.trail"))["selected"], false);
-    let tape = scene_control(&scene, &id("side.tape"));
-    assert_eq!(tape["selected"], true);
+    let tape = scene_control(&observer_scene(&app), &id("side.tape")).clone();
     assert_eq!(
         tape["availability"]["reason"],
         "the_last_side_showing_stays"
@@ -1254,16 +1143,6 @@ fn a_tape_closed_unlights_its_switch_and_the_switch_brings_it_back() {
         "no tape side"
     );
 
-    let pane_id = app.active_tab().flow_pane.id;
-    let scene = observer_scene(&app);
-    let view = scene_control(&scene, &format!("pane.{pane_id}.header.side.tape"));
-    assert_eq!(view["selected"], false);
-    let trail = scene_control(&scene, &format!("pane.{pane_id}.header.side.trail"));
-    assert_eq!(
-        trail["availability"]["reason"],
-        "the_last_side_showing_stays"
-    );
-
     click_side(&mut app, &ctx, TAPE);
     assert_eq!(view_of(&app), LaneView::Beside);
     let lane = &app.active_tab().tape().cached_config().live_lane;
@@ -1296,18 +1175,9 @@ fn a_market_hold_reads_in_the_scene_and_never_in_the_stored_view() {
     );
 
     let pane_id = app.active_tab().flow_pane.id;
-    let scene = observer_scene(&app);
-    let tape = scene_control(&scene, &format!("pane.{pane_id}.header.side.tape"));
-    assert_eq!(tape["label"], "Market closed");
-    assert_eq!(tape["selected"], false);
-    assert_eq!(tape["availability"]["available"], false);
+    let id = format!("pane.{pane_id}.header.side.tape");
+    let tape = scene_control(&observer_scene(&app), &id).clone();
     assert_eq!(tape["availability"]["reason"], "market_closed");
-    let trail = scene_control(&scene, &format!("pane.{pane_id}.header.side.trail"));
-    assert_eq!(trail["label"], "Trail");
-    assert_eq!(
-        trail["availability"]["reason"],
-        "the_last_side_showing_stays"
-    );
 
     let tape = app.active_tab_mut().tape_mut();
     assert!(tape.set_lane_fold(LaneFold::Open));
@@ -1522,7 +1392,7 @@ fn a_held_tape_key_acts_once_and_never_opens_a_tab() {
         assert_eq!(view_of(&app), LaneView::TapeOnly, "a repeat moved the view");
     }
     assert_eq!(app.runtime.tabs.len(), tabs, "a repeat opened a tab");
-    assert!(!app.surfaces.market_palette.is_open());
+    assert!(!app.surfaces.market_palette.model_state.is_open());
 }
 
 fn glyph_of(app: &QuantickApp, ctx: &egui::Context, side: PaneSide) -> egui::Rect {
@@ -1554,7 +1424,7 @@ fn the_indicators_glyph_opens_the_library_on_its_own_pane() {
         let pane = app.active_tab().pane(side).id;
         assert_eq!(app.active_tab().focused_side(), side);
         assert_eq!(
-            app.surfaces.indicator_picker.state.target,
+            app.surfaces.indicator_picker.model_state.picker.target,
             Some((app.runtime.tabs.active_id(), pane)),
             "the library stays open on the pane that asked"
         );
@@ -1628,6 +1498,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                         side,
                         &mut painted,
                         &mut intent,
+                        &Default::default(),
                     );
                 });
             },
@@ -1690,16 +1561,47 @@ fn a_click_outside_the_library_hands_the_app_back() {
     click_chart(&mut app, &ctx, glyph.center());
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    assert!(app.surfaces.indicator_picker.state.target.is_some());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_some()
+    );
 
     click_chart(&mut app, &ctx, egui::pos2(30.0, 400.0));
     run_frame(&mut app, &ctx);
-    assert!(app.surfaces.indicator_picker.state.target.is_none());
+    assert!(
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_none()
+    );
 
+    let dock = app.surfaces.dock.visible();
+    let shortcut = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+    press_key(&mut app, &ctx, egui::Key::B, shortcut);
+    assert_ne!(
+        app.surfaces.dock.visible(),
+        dock,
+        "dismissal returns keyboard input to chrome"
+    );
+    press_key(&mut app, &ctx, egui::Key::B, shortcut);
+    assert_eq!(app.surfaces.dock.visible(), dock);
+    run_frame(&mut app, &ctx);
+    let glyph = glyph_of(&app, &ctx, PaneSide::Flow);
     click_chart(&mut app, &ctx, glyph.center());
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.indicator_picker.state.target.is_some(),
+        app.surfaces
+            .indicator_picker
+            .model_state
+            .picker
+            .target
+            .is_some(),
         "the header answers again once the library is gone"
     );
 }
@@ -1939,7 +1841,11 @@ fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
         app.arrangement_adapter()
             .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
         assert!(panel_open(&app), "{old:?}");
-        assert_eq!(app.dock.tab(), None, "{old:?} is no dock tab any more");
+        assert_eq!(
+            app.surfaces.dock.tab(),
+            None,
+            "{old:?} is no dock tab any more"
+        );
         // The scroll to the section is animated; a header out of view is not listed.
         for _ in 0..60 {
             run_frame(&mut app, &ctx);

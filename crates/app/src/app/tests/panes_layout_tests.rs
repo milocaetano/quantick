@@ -980,19 +980,22 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         "horizontal-line",
         &[egui::pos2(700.0, 300.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
 
     // Parked far to the right of what either pane of a split will offer.
     let parked = egui::pos2(1200.0, 780.0);
-    app.drawings.chrome.context_bar_mut().set_manual(parked);
+    app.surfaces
+        .drawing_chrome
+        .context_bar_mut()
+        .set_manual(parked);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     // Blank the mirror first: it is written only when the bar reaches
     // `show`, and every early return leaves the previous frame's value —
     // here the full-width rect, which would satisfy the assertion below
     // with the repair never having run.
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -1003,8 +1006,8 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         .chart_area
         .expect("the pane holding the selection drew");
     let bar = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("the bar is still up");
     assert!(
@@ -1012,7 +1015,7 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         "the parked bar is repaired into {chart:?}, drawn at {bar:?}"
     );
     assert_eq!(
-        app.drawings.chrome.context_bar().manual_position(),
+        app.surfaces.drawing_chrome.context_bar().manual_position(),
         Some(parked),
         "and the point the hand chose survives the repair"
     );
@@ -1691,7 +1694,7 @@ fn the_watched_market_wins_the_slot() {
         Instant::now(),
     );
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some(format!("message from tab {watched}").as_str()),
         "the chart on screen is the one whose acknowledgement stays"
     );
@@ -2312,7 +2315,8 @@ fn the_keyboard_deletes_from_the_focused_pane() {
     let (mut app, _commands) = split_app(&ctx, 200);
 
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
@@ -2626,7 +2630,12 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         PaneSide::Time(0),
         crate::layout_strip::StripAction::BeginRename(second),
     );
-    let rename = app.chrome.layout_rename.as_ref().expect("rename editor");
+    let rename = app
+        .surfaces
+        .layout_dialogs
+        .model_state
+        .rename()
+        .expect("rename editor");
     assert_eq!(
         (rename.tab, rename.pane, rename.layout),
         (tab, PaneSide::Time(0), second)
@@ -2682,7 +2691,26 @@ fn per_pane_layouts_are_recorded_and_restored() {
         .active_tab_mut()
         .pane_mut(PaneSide::Time(0))
         .request_opening_layout(Some(context));
+    let editing = again.layout_state().layouts().active_id();
+    again.layout_adapter().begin_layout_rename(editing);
+    again
+        .layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(editing));
+    assert!(again.surfaces.layout_dialogs.model_state.rename().is_some());
+    assert_eq!(
+        again.surfaces.layout_dialogs.model_state.pending_delete(),
+        Some(editing)
+    );
     again.layout_adapter().reload_layouts(&[]);
+    assert!(again.surfaces.layout_dialogs.model_state.rename().is_none());
+    assert!(
+        again
+            .surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
     settle_indicators(&mut again);
     assert_eq!(
         again
@@ -2854,25 +2882,35 @@ fn a_previewed_input_never_reaches_the_layout() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    app.runtime
-        .indicators
+    app.surfaces
         .indicator_settings
-        .as_mut()
-        .expect("dialog")
-        .draft = vec![
+        .model_state
+        .dialog()
+        .expect("dialog");
+    for (index, value) in [
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
-    ];
-    let change = app.runtime.indicators.preview_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::EditInput { index, value },
+        );
+    }
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Preview,
+    );
     assert!(
         pane_set(&app, PaneSide::Flow)[0].inputs.is_empty(),
         "a preview is not a commit"
     );
-    let change = app.runtime.indicators.apply_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Apply,
+    );
     assert_eq!(
         pane_set(&app, PaneSide::Flow)[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),
@@ -2897,8 +2935,15 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         2,
         "nothing is deleted yet"
     );
-    assert_eq!(app.chrome.layout_delete_confirm, Some(second));
-    app.chrome.layout_delete_confirm = None;
+    assert_eq!(
+        app.surfaces.layout_dialogs.model_state.pending_delete(),
+        Some(second)
+    );
+    app.surfaces
+        .layout_dialogs
+        .update(quantick_ui_model::layout_dialogs::Intent::AnswerDelete(
+            false,
+        ));
     assert_eq!(
         app.layout_state().layouts().layouts().len(),
         2,
@@ -2918,7 +2963,13 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         second,
         "and the neighbour is active"
     );
-    assert!(app.chrome.layout_delete_confirm.is_none());
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
 }
 
 /// A pane on its tab's copy of a layout shows that layout: the delete dialog
@@ -2964,7 +3015,8 @@ fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() 
 fn leaving_the_split_keeps_the_time_panes_work_and_its_bars() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -3059,7 +3111,8 @@ fn a_press_on_a_floating_window_does_not_move_pane_focus() {
 
     // A mark on the time pane, then delete it: the toast comes up with an
     // Undo that acts on whatever pane has focus.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -3087,6 +3140,7 @@ fn a_press_on_a_floating_window_does_not_move_pane_focus() {
     let undo = app
         .surfaces
         .toast
+        .view
         .undo_rect()
         .expect("the toast offers Undo");
     let divider = app
@@ -3794,7 +3848,7 @@ fn the_tab_shortcuts_open_and_close() {
         egui::Modifiers::CTRL,
     );
     assert!(
-        app.surfaces.market_palette.is_open(),
+        app.surfaces.market_palette.model_state.is_open(),
         "Ctrl+T opens the picker"
     );
 }
@@ -3812,4 +3866,202 @@ fn the_status_bar_follows_the_active_tab() {
 
     app.apply_tab_action(TabAction::Activate(0));
     assert_eq!(app.status_model().symbol, "TESTUSDT");
+}
+
+#[test]
+fn layout_rename_text_and_finish_keys_reach_the_same_owner() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let id = app.layout_state().layouts().active_id();
+    let original = app.layout_state().layouts().get(id).unwrap().name.clone();
+    let edited = format!("{original}Edited footer");
+    for cancel in [true, false] {
+        app.active_tab_mut().focus = PaneSide::Flow;
+        app.layout_adapter().begin_layout_rename(id);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            vec![egui::Event::Text("Edited footer".into())],
+        );
+        assert_eq!(
+            app.surfaces
+                .layout_dialogs
+                .model_state
+                .rename()
+                .unwrap()
+                .draft,
+            edited
+        );
+        app.active_tab_mut().focus = PaneSide::Time(0);
+        let mut events = vec![key_press(egui::Key::Enter)];
+        if cancel {
+            events.push(key_press(egui::Key::Escape));
+        }
+        run_sized_frame(&mut app, &ctx, TEST_WINDOW, events);
+        assert!(app.surfaces.layout_dialogs.model_state.rename().is_none());
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Flow,
+            "finish restores the original footer address"
+        );
+        assert_eq!(
+            &app.layout_state().layouts().get(id).unwrap().name,
+            if cancel { &original } else { &edited }
+        );
+        assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+        if !cancel {
+            assert!(!ctx.input(|input| input.key_pressed(egui::Key::Enter)));
+        }
+    }
+}
+
+#[test]
+fn layout_delete_prompt_preserves_keyboard_choice_precedence() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let id = app
+        .layout_adapter()
+        .create_layout(Some("Prompt fixture"))
+        .unwrap();
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(id));
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, "Delete layout").is_some());
+    assert!(painted_text_center(&output, "Delete \"Prompt fixture\"?").is_some());
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![key_press(egui::Key::Enter), key_press(egui::Key::Escape)],
+    );
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
+    assert!(
+        app.layout_state().layouts().get(id).is_some(),
+        "Escape wins Enter"
+    );
+    assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(id));
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let cancel = painted_text_center(&output, "Cancel").expect("actual cancel button");
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(cancel),
+            egui::Event::PointerButton {
+                pos: cancel,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerButton {
+                pos: cancel,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            key_press(egui::Key::Enter),
+        ],
+    );
+    assert!(
+        app.layout_state().layouts().get(id).is_none(),
+        "Enter wins pointer Cancel"
+    );
+    assert!(
+        app.surfaces
+            .layout_dialogs
+            .model_state
+            .pending_delete()
+            .is_none()
+    );
+    assert!(!ctx.input(|input| input.key_pressed(egui::Key::Enter)));
+}
+
+/// The registered loader result reaches the active host tab, then the frame
+/// clears the mirrored wait without publishing that payload a second time.
+#[test]
+fn replay_loaded_payload_opens_active_tab_and_clears_host_wait() {
+    use quantick_ui_model::replay_browser::Intent;
+    let root = crate::scratch::ScratchDir::new("replay-browser-host");
+    let instrument = root.join("WINJ26");
+    std::fs::create_dir_all(&instrument).unwrap();
+    std::fs::write(instrument.join("20260316.csv"),
+        "# quantick-replay 1\n# symbol=WINJ26\n# timezone=+00:00\nDate,Time,Price,Volume,Side\n2026-03-16,10:00:00.000,100,1,B\n").unwrap();
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    app.surfaces
+        .replay_browser
+        .dispatch(Intent::SetFolderDraft(root.display().to_string()));
+    app.surfaces
+        .replay_browser
+        .dispatch(Intent::StageDayBefore(false));
+    app.surfaces.replay_browser.open_browser();
+    app.surfaces.replay_browser.dispatch(Intent::LoadSelected);
+    assert!(app.surfaces.replay_browser.is_loading());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.active_tab().link.replay.is_none() {
+        run_frame(&mut app, &ctx);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "host receives real CSV completion"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let session = app
+        .active_tab()
+        .link
+        .replay
+        .as_ref()
+        .unwrap()
+        .session
+        .clone();
+    assert_eq!(session.symbol, "WINJ26");
+    assert!(
+        app.runtime.tabs[0].link.replay.is_none(),
+        "background tab receives no Open"
+    );
+    assert!(!app.surfaces.replay_browser.is_loading());
+    assert!(
+        app.active_tab()
+            .loading
+            .is_active(LoadingTask::ReplaySession),
+        "MirrorLoadingWaits precedes ReplayBrowser and sampled the pending load"
+    );
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::ReplaySession),
+            "the next frame mirrors the completed load and keeps the wait clear"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &session,
+                &app.active_tab().link.replay.as_ref().unwrap().session
+            ),
+            "completed payload is not reopened"
+        );
+    }
 }

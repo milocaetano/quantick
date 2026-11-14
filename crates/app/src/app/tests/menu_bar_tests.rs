@@ -93,7 +93,7 @@ fn a_submenu_opens_to_the_left_of_its_row() {
 fn a_row_carries_out_its_command_and_closes_the_menu() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
-    let visible = app.dock.visible();
+    let visible = app.surfaces.dock.visible();
     let output = open_menu(&mut app, &ctx);
     let label = if visible {
         "Hide panels"
@@ -101,7 +101,7 @@ fn a_row_carries_out_its_command_and_closes_the_menu() {
         "Show panels"
     };
     click_entry(&mut app, &ctx, &output, label);
-    assert_eq!(app.dock.visible(), !visible);
+    assert_eq!(app.surfaces.dock.visible(), !visible);
     assert!(!app.chrome.window_menu.open);
 }
 
@@ -308,7 +308,7 @@ fn the_toolbar_market_button_switches_the_symbol_inside_the_same_tab() {
         &format!("TESTUSDT \u{b7} Binance{caret}"),
     );
     run_frame(&mut app, &ctx);
-    let palette = app.surfaces.market_palette.open.as_ref();
+    let palette = app.surfaces.market_palette.model_state.open.as_ref();
     assert!(
         palette
             .and_then(|palette| palette.switch_target())
@@ -467,4 +467,76 @@ fn list_door_opens_window_menu_below_itself() {
     run_sized_frame(&mut app, &ctx, TEST_WINDOW, press);
     run_frame(&mut app, &ctx);
     assert!(app.chrome.title_bar.kebab_pressed, "F10 opens it at ⋮");
+}
+
+#[test]
+fn local_agent_menu_opens_registered_panel_in_the_same_frame() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    app.control.control_access = None;
+    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAgentAccess);
+    assert!(!app.surfaces.access_panel.model_state.open);
+    app.control.control_access = Some(crate::control::ControlAccess::new());
+    app.chrome
+        .window_menu
+        .open_settings(ctx.viewport_id(), SettingsSection::AgentAccess);
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    fn button_center(shape: &egui::Shape) -> Option<egui::Pos2> {
+        use quantick_control_schema::settings_sections::SettingRow;
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == SettingRow::ManageClients.label() => {
+                Some(text.visual_bounding_rect().center())
+            }
+            egui::Shape::Vec(shapes) => shapes
+                .iter()
+                .filter_map(button_center)
+                .max_by(|a, b| a.x.total_cmp(&b.x)),
+            _ => None,
+        }
+    }
+    // The row caption shares the button label; the button is on the right.
+    let manage = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| button_center(&clipped.shape))
+        .max_by(|a, b| a.x.total_cmp(&b.x))
+        .expect("Agent access settings paints Manage clients");
+    assert!(!app.surfaces.access_panel.model_state.open);
+    assert!(ctx.memory(|memory| {
+        memory
+            .area_rect(egui::Id::new("control_access_panel"))
+            .is_none()
+    }));
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(manage),
+            pointer_button(manage, true),
+        ],
+    );
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(manage),
+            pointer_button(manage, false),
+        ],
+    );
+    assert!(app.surfaces.access_panel.model_state.open);
+    assert!(ctx.memory(|memory| {
+        memory
+            .area_rect(egui::Id::new("control_access_panel"))
+            .is_some()
+    }));
+    assert!(
+        !app.control
+            .control_access
+            .as_ref()
+            .unwrap()
+            .needs_frame_service()
+    );
 }

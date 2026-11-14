@@ -8,9 +8,7 @@
 
 use eframe::egui;
 
-use super::{
-    DrawingChromeAsk, DrawingChromeSurface, DrawingEnv, InspectorActions, clamp_into_chart,
-};
+use super::{Chrome, DrawingChromeAsk, DrawingEnv, InspectorActions, clamp_into_chart};
 use crate::drawings::{self, DrawingAuthor};
 
 /// The bar's own state: the widget's, plus the rectangle a test reads back.
@@ -92,24 +90,14 @@ fn avoid_panels(
 
 /// Draw this frame.
 pub(crate) fn draw(
-    chrome: &mut DrawingChromeSurface,
+    chrome: &mut Chrome,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
     let mut ask = DrawingChromeAsk::default();
     let selection = env.selected_index();
-    if chrome.bar.bar.note_selection(selection) {
-        // A new object is a new question: the panel the last one opened does
-        // not follow the selection around.
-        chrome.shared.open = false;
-    }
-    // …except when the object just placed asked for it. Applied after the
-    // reset above, because the placement that made the request also made the
-    // selection change that clears it.
-    if std::mem::take(&mut chrome.pending_open_settings) {
-        chrome.shared.open = true;
-        chrome.shared.last_selection = None;
-    }
+    let changed = chrome.view.bar.bar.note_selection(selection);
+    chrome.emit(super::Intent::SelectionChanged { changed });
     let Some(selected) = env.selected.as_ref() else {
         return ask;
     };
@@ -141,10 +129,10 @@ pub(crate) fn draw(
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if GestureInput::read(ctx).suppresses(&mut chrome.bar.bar) {
+    if GestureInput::read(ctx).suppresses(&mut chrome.view.bar.bar) {
         return ask;
     }
-    let chart_area = if chrome.bar.bar.manual_position().is_none() {
+    let chart_area = if chrome.view.bar.bar.manual_position().is_none() {
         env.automatic_bar_area.or(env.chart_area)
     } else {
         env.chart_area
@@ -201,7 +189,7 @@ pub(crate) fn draw(
     let inspector = (chrome.shared.open && !chrome.shared.pinned)
         .then(|| ctx.memory(|memory| memory.area_rect(egui::Id::new(super::INSPECTOR_AREA_ID))))
         .flatten();
-    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, occupied, inspector);
+    let placement = Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, occupied, inspector);
     if inspector.is_some_and(|rect| {
         rect.intersects(egui::Rect::from_min_size(placement.position, occupied))
     }) {
@@ -219,7 +207,7 @@ pub(crate) fn draw(
                     .size()
             }) + egui::vec2(2.0 * style.spacing.button_padding.x, 0.0);
             let compact =
-                Placement::resolve(&chrome.bar.bar, env, chart, bbox, compact_size, inspector);
+                Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, compact_size, inspector);
             let compact_rect = egui::Rect::from_min_size(compact.position, compact_size);
             if chart.contains_rect(compact_rect)
                 && inspector.is_none_or(|rect| !rect.intersects(compact_rect))
@@ -233,7 +221,7 @@ pub(crate) fn draw(
         return ask;
     }
     let intent = drawings::context_bar::show(
-        &mut chrome.bar.bar,
+        &mut chrome.view.bar.bar,
         ctx,
         placement.position,
         placement.popover_bounds,
@@ -251,13 +239,14 @@ pub(crate) fn draw(
     let glyph_after = object.glyph_size;
     #[cfg(test)]
     {
-        chrome.bar.last_drawn_rect = chrome.bar.bar.last_rect();
+        chrome.view.bar.last_drawn_rect = chrome.view.bar.bar.last_rect();
     }
 
     if intent.reset_position {
-        chrome.bar.bar.clear_manual();
+        chrome.view.bar.bar.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
         chrome
+            .view
             .bar
             .bar
             .set_manual(placement.position + intent.drag_delta);
@@ -276,15 +265,14 @@ pub(crate) fn draw(
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
     }
     if intent.open_settings {
-        chrome.shared.open = true;
+        chrome.emit(super::Intent::OpenSettings);
         // Place against the object the way a fresh selection would.
-        chrome.shared.last_selection = None;
+        chrome.emit(super::Intent::SelectionChanged { changed: false });
     }
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {
         ask.draw_again = Some(tool);
-        ask.record_inline_edit = chrome.inline.end().map(Box::new);
-        ask.content_editing_changed = ask.record_inline_edit.is_some();
+        ask.merge(chrome.emit(super::Intent::RepeatEndsInline));
     }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
@@ -315,7 +303,8 @@ fn alert_action(
                 )
                 .clicked()
             {
-                ask.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
+                let readbacks = ask.readbacks.get_or_insert_with(Default::default);
+                readbacks.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
                     tab_id: env.tab,
                     pane_id: env.pane_id,
                     drawing_id,

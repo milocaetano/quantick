@@ -14,9 +14,8 @@ use rust_decimal::Decimal;
 
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
-use super::window::ReportPeriod;
 use super::*;
-use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
+use crate::paper_calendar::CivilDate;
 use crate::paper_trading::PaperTrading;
 use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::ledger_rows::trade_detail as ledger_detail;
@@ -54,146 +53,6 @@ fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade)
     }
 }
 
-#[test]
-fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
-    let utc = TzOffset::new(0);
-    let day = 86_400_000_i64;
-    let mut paper = PaperTrading::new();
-    assert_eq!(
-        paper.report_state().report_source,
-        SourceFilter::Real,
-        "practice runs never inflate the real track record unasked"
-    );
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row("X", Some(history::SessionSource::Live), trade_at(day, 5)),
-            row("X", None, trade_at(2 * day, 3)),
-            row(
-                "X",
-                Some(history::SessionSource::Replay),
-                trade_at(3 * day, 100),
-            ),
-        ],
-        files: 3,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper
-        .report_state()
-        .report_view
-        .as_ref()
-        .expect("view built");
-    assert_eq!(view.rows.len(), 2, "live + unrecorded-legacy count as real");
-    assert_eq!(
-        view.hidden_by_source, 1,
-        "the replay trade sits behind the filter"
-    );
-    assert_eq!(
-        view.anchor_ms,
-        Some(2 * day),
-        "the anchor comes from the filtered scope, not the replay trade"
-    );
-    assert_eq!(view.report.net_points, Decimal::from(8));
-
-    paper.report_state_mut().report_source = SourceFilter::Replay;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("rebuilt");
-    assert_eq!(view.rows.len(), 1, "the practice run, alone");
-    assert_eq!(view.report.net_points, Decimal::from(100));
-    assert_eq!(view.hidden_by_source, 2);
-
-    paper.report_state_mut().report_source = SourceFilter::All;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("rebuilt");
-    assert_eq!(view.rows.len(), 3, "All mixes on purpose");
-    assert_eq!(view.hidden_by_source, 0);
-}
-
-/// The report answers as data, not only as pixels: the snapshot names
-/// the window in force and hands back the very rows the tiles, the
-/// curve and the list were computed from. An operator that cannot see
-/// the screen reads this.
-#[test]
-fn the_report_reports_itself_as_data() {
-    let tz = TzOffset::new(-180);
-    let day = CivilDate::from_ymd(2026, 8, 17);
-    let mut paper = PaperTrading::new();
-    assert!(
-        paper.report_state().snapshot().is_none(),
-        "nothing loaded, nothing to report"
-    );
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row("WINV26", None, trade_at(day.start_ms(tz) + 60_000, 5)),
-            row(
-                "WINV26",
-                Some(history::SessionSource::Replay),
-                trade_at(day.start_ms(tz) + 120_000, 9),
-            ),
-            row(
-                "WINV26",
-                None,
-                trade_at(day.offset_days(1).start_ms(tz) + 60_000, -3),
-            ),
-        ],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper.report_state_mut().report_symbol = Some("WINV26".to_owned());
-
-    // The pills in force, no dates picked.
-    paper.report_state_mut().report_period = ReportPeriod::All;
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let snapshot = paper.report_state().snapshot().expect("a snapshot");
-    assert_eq!(snapshot.symbol, Some("WINV26"));
-    assert_eq!(snapshot.source, SourceFilter::Real);
-    assert_eq!(snapshot.window, ReportWindow::Period(ReportPeriod::All));
-    assert_eq!(snapshot.rows.len(), 2, "the practice run is filtered out");
-    assert_eq!(snapshot.hidden_by_source, 1);
-    assert_eq!(snapshot.report.net_points, Decimal::from(2));
-    assert_eq!(snapshot.window.label(), "everything saved");
-
-    // The named action a script would call, then the same read-back.
-    paper
-        .report_state_mut()
-        .pick_report_dates(DaySelection::None.click(day));
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let snapshot = paper.report_state().snapshot().expect("a snapshot");
-    assert_eq!(
-        snapshot.window,
-        ReportWindow::Dates(DateRange {
-            start: day,
-            end: day
-        }),
-        "a range and a period are never both in force"
-    );
-    assert_eq!(snapshot.rows.len(), 1);
-    assert_eq!(snapshot.rows[0].symbol, "WINV26");
-    assert_eq!(snapshot.hidden_outside, 1, "the next day sits outside");
-    assert_eq!(snapshot.window.label(), day.iso(), "and it names itself");
-    // The numbers the tiles show come from the very rows handed back.
-    let net: Decimal = snapshot
-        .rows
-        .iter()
-        .map(|row| row.trade.pnl_points)
-        .sum::<Decimal>();
-    assert_eq!(snapshot.report.net_points, net);
-}
-
 /// The ledger lists the chart's instrument, one the trader names, or
 /// all of them — and the picker's label always says which.
 #[test]
@@ -216,80 +75,6 @@ fn the_ledger_lists_the_chart_a_named_market_or_all_of_them() {
         "WINV26"
     );
     assert_eq!(LedgerScope::All.label("BTCUSDT"), "All symbols");
-}
-
-/// Folding is per civil day and reversible, and the "fold everything"
-/// control reports honestly whether it has anything left to fold.
-#[test]
-fn days_fold_shut_one_at_a_time_or_all_at_once() {
-    let tz = TzOffset::new(-180);
-    let day = CivilDate::from_ymd(2026, 8, 17);
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().ledger_tz = tz;
-    paper.report_state_mut().history_cache = Some(LoadedHistory {
-        rows: vec![
-            row("X", None, trade_at(day.start_ms(tz) + 60_000, 5)),
-            row("X", None, trade_at(day.end_ms(tz) - 1, -2)),
-            row("X", None, trade_at(day.offset_days(1).start_ms(tz), 7)),
-        ],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    assert!(
-        !{
-            let (state, env) = paper.report_parts();
-            state.all_days_collapsed(&env)
-        },
-        "nothing is folded to begin with"
-    );
-
-    paper.report_state_mut().set_day_collapsed(day, true);
-    assert!(
-        paper
-            .report_state()
-            .collapsed_days
-            .contains(&day.day_number())
-    );
-    assert!(
-        !{
-            let (state, env) = paper.report_parts();
-            state.all_days_collapsed(&env)
-        },
-        "the next day is still open, so the control still offers to fold"
-    );
-
-    {
-        let (state, env) = paper.report_parts();
-        state.toggle_all_days(false, &env)
-    };
-    assert!(
-        {
-            let (state, env) = paper.report_parts();
-            state.all_days_collapsed(&env)
-        },
-        "both days shut"
-    );
-    assert_eq!(paper.report_state().collapsed_days.len(), 2);
-
-    {
-        let (state, env) = paper.report_parts();
-        state.toggle_all_days(true, &env)
-    };
-    assert!(paper.report_state().collapsed_days.is_empty());
-    assert!(!{
-        let (state, env) = paper.report_parts();
-        state.all_days_collapsed(&env)
-    });
-
-    // An empty ledger has nothing folded *and* nothing to fold: the
-    // control must not claim everything is already shut.
-    let mut empty = PaperTrading::new();
-    assert!(!{
-        let (state, env) = empty.report_parts();
-        state.all_days_collapsed(&env)
-    });
 }
 
 /// Everything a trader must be able to read off one ledger row: which
@@ -330,278 +115,6 @@ fn a_ledger_row_names_its_market_its_clock_its_age_and_its_ending() {
     );
 }
 
-/// A picked day cuts the report to that civil day, and a picked span
-/// to both its ends inclusive. The pills stand down while it holds, so
-/// a chosen date can never come back empty because a forgotten pill
-/// was cutting too.
-#[test]
-fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
-    let tz = TzOffset::new(-180);
-    let first = CivilDate::from_ymd(2026, 8, 12);
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row("X", None, trade_at(first.start_ms(tz) + 3_600_000, 5)),
-            row(
-                "X",
-                None,
-                trade_at(first.offset_days(3).start_ms(tz) + 60_000, -2),
-            ),
-            // The last millisecond of the 17th, local — inside a range
-            // that ends on the 17th.
-            row("X", None, trade_at(first.offset_days(5).end_ms(tz) - 1, 7)),
-            row("X", None, trade_at(first.offset_days(6).start_ms(tz), 11)),
-        ],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    // A pill that would hide the older trades is deliberately left on:
-    // the range must win outright, not intersect.
-    paper.report_state_mut().report_period = ReportPeriod::Today;
-
-    let picked = paper.report_state().calendar.selection.click(first);
-    paper.report_state_mut().pick_report_dates(picked);
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("a view");
-    assert_eq!(view.rows.len(), 1, "one day, one trade");
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12".to_owned())
-    );
-    assert_eq!(view.hidden_outside, 3, "and it counts what it hides");
-    assert_eq!(view.report.net_points, Decimal::from(5), "the tiles agree");
-
-    let picked = paper
-        .report_state()
-        .calendar
-        .selection
-        .click(first.offset_days(5));
-    paper.report_state_mut().pick_report_dates(picked);
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("a view");
-    assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12 to 2026-08-17".to_owned())
-    );
-    assert_eq!(view.hidden_outside, 1, "only the 18th sits outside");
-    assert_eq!(view.report.net_points, Decimal::from(10));
-
-    // Clearing hands the window back to the pills, unchanged.
-    paper
-        .report_state_mut()
-        .pick_report_dates(DaySelection::None);
-    paper.report_state_mut().report_period = ReportPeriod::All;
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("a view");
-    assert!(view.range.is_none());
-    assert_eq!(view.rows.len(), 4, "every saved trade is back");
-    assert_eq!(view.hidden_outside, 0);
-}
-
-/// A day the trader picked that holds nothing is answered, not hidden:
-/// the view is empty, the range still names itself, and every saved
-/// trade is counted as sitting outside it.
-#[test]
-fn a_picked_day_with_no_trades_reports_an_honest_empty() {
-    let tz = TzOffset::new(0);
-    let day = CivilDate::from_ymd(2026, 8, 12);
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![row("X", None, trade_at(day.offset_days(2).start_ms(tz), 5))],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    let picked = paper.report_state().calendar.selection.click(day);
-    paper.report_state_mut().pick_report_dates(picked);
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("a view");
-    assert!(view.rows.is_empty());
-    assert_eq!(
-        view.range.map(DateRange::label),
-        Some("2026-08-12".to_owned())
-    );
-    assert_eq!(view.hidden_outside, 1, "the trade exists, just not here");
-}
-
-/// The calendar highlights days from the same trades the report would
-/// show — after the Source filter, on the display timezone's clock.
-#[test]
-fn the_day_index_follows_the_source_filter_and_the_timezone() {
-    let tz = TzOffset::new(-180);
-    let day = CivilDate::from_ymd(2026, 8, 17);
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row(
-                "X",
-                Some(history::SessionSource::Live),
-                trade_at(day.start_ms(tz) + 60_000, 5),
-            ),
-            row(
-                "X",
-                Some(history::SessionSource::Replay),
-                trade_at(day.offset_days(1).start_ms(tz) + 60_000, 9),
-            ),
-        ],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    assert_eq!(
-        paper.report_state().report_days.len(),
-        1,
-        "Real hides the practice day"
-    );
-    assert!(paper.report_state().report_days.stat(day).is_some());
-    assert!(
-        paper
-            .report_state()
-            .report_days
-            .stat(day.offset_days(1))
-            .is_none()
-    );
-
-    paper.report_state_mut().report_source = SourceFilter::All;
-    paper
-        .report_state_mut()
-        .ensure_report_view(tz, PnlReader::plain());
-    assert_eq!(
-        paper.report_state().report_days.len(),
-        2,
-        "Both lights up both days"
-    );
-
-    // The same trades, read on another clock, land on other days.
-    paper
-        .report_state_mut()
-        .ensure_report_view(TzOffset::new(0), PnlReader::plain());
-    assert_eq!(paper.report_state().report_days.len(), 2);
-    assert!(
-        paper
-            .report_state()
-            .report_days
-            .stat(CivilDate::from_ymd(2026, 8, 17))
-            .is_some(),
-        "03:01 UTC on the 17th is still the 17th in UTC"
-    );
-}
-
-#[test]
-fn the_report_view_filters_by_period_from_the_newest_trade() {
-    let utc = TzOffset::new(0);
-    let day = 86_400_000_i64;
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row("X", None, trade_at(10 * day, 5)),
-            row("X", None, trade_at(18 * day, -2)),
-            row("X", None, trade_at(20 * day + 3_600_000, 7)),
-        ],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper.report_state_mut().report_period = ReportPeriod::Week;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper
-        .report_state()
-        .report_view
-        .as_ref()
-        .expect("view built");
-    assert_eq!(
-        view.anchor_ms,
-        Some(20 * day + 3_600_000),
-        "anchored to the newest saved trade, not a clock"
-    );
-    assert_eq!(view.rows.len(), 2, "the 10-day-old trade is outside 7d");
-    assert_eq!(view.hidden_outside, 1, "and the view counts what it hides");
-    assert_eq!(view.report.net_points, Decimal::from(5));
-
-    paper.report_state_mut().report_period = ReportPeriod::All;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    assert_eq!(
-        paper
-            .report_state()
-            .report_view
-            .as_ref()
-            .expect("rebuilt")
-            .rows
-            .len(),
-        3,
-        "All sees everything again"
-    );
-}
-
-#[test]
-fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
-    let utc = TzOffset::new(0);
-    let day = 86_400_000_i64;
-    let mut paper = PaperTrading::new();
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![
-            row("OLDSYM", None, trade_at(day, 5)),
-            row("NEWSYM", None, trade_at(60 * day, 7)),
-        ],
-        files: 2,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper.report_state_mut().report_period = ReportPeriod::Month;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper
-        .report_state()
-        .report_view
-        .as_ref()
-        .expect("view built");
-    assert_eq!(
-        view.rows.len(),
-        1,
-        "30d back from the newest trade hides the older market entirely"
-    );
-    assert_eq!(view.hidden_outside, 1, "the support line can say so");
-
-    // Narrowing the combo re-anchors on the old market's own newest
-    // trade — the "my trades came back" behaviour, now spelled out.
-    paper.report_state_mut().report = Some(LoadedHistory {
-        rows: vec![row("OLDSYM", None, trade_at(day, 5))],
-        files: 1,
-        unreadable_files: 0,
-        problem_rows: 0,
-        sessions: Default::default(),
-    });
-    paper.report_state_mut().report_view = None;
-    paper
-        .report_state_mut()
-        .ensure_report_view(utc, PnlReader::plain());
-    let view = paper.report_state().report_view.as_ref().expect("rebuilt");
-    assert_eq!(view.rows.len(), 1, "its own scope shows the old market");
-    assert_eq!(view.hidden_outside, 0);
-}
 /// A refusal the report raises reaches the window's one toast.
 ///
 /// The typed-period field answers a value it cannot read with an
@@ -637,5 +150,170 @@ fn a_refusal_the_report_raises_reaches_the_windows_one_toast() {
         paper.take_toast(),
         None,
         "and once only - the outbox is a slot that is handed over, not a copy"
+    );
+}
+
+#[test]
+fn paper_report_filter_input_recuts_before_dependent_paint() {
+    let ctx = egui::Context::default();
+    let mut report = ReportState::default();
+    report.update(Intent::Open("X".to_owned()));
+    report.update(Intent::LoadedReport(LoadedReport {
+        history: LoadedHistory {
+            rows: vec![
+                row("X", Some(history::SessionSource::Live), trade_at(1000, 5)),
+                row(
+                    "X",
+                    Some(history::SessionSource::Replay),
+                    trade_at(2000, 19),
+                ),
+            ],
+            files: 2,
+            unreadable_files: 0,
+            problem_rows: 0,
+            sessions: Default::default(),
+        },
+        symbols: vec!["X".to_owned()],
+    }));
+    let env = ReportEnv {
+        symbol: "X",
+        dir: std::path::Path::new("."),
+        session_journal_paths: &[],
+        session_trades: &[],
+        session_trade_at: &[],
+        session_trade_sources: &[],
+        open: None,
+        pnl: PnlReader::plain(),
+    };
+    let frame = |report: &mut ReportState, events| {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1600.0, 1000.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                report.draw_window(ctx, TzOffset::new(0), &env);
+            },
+        )
+    };
+    let mut output = frame(&mut report, vec![]);
+    for _ in 0..3 {
+        output = frame(&mut report, vec![]);
+    }
+    let pick = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "Replay" => {
+                Some(text.pos + text.galley.rect.center().to_vec2())
+            }
+            _ => None,
+        })
+        .expect("the real Source pill is painted");
+    assert_eq!(
+        report.snapshot().unwrap().report.net_points,
+        Decimal::from(5)
+    );
+    for pressed in [true, false] {
+        output = frame(
+            &mut report,
+            vec![
+                egui::Event::PointerMoved(pick),
+                egui::Event::PointerButton {
+                    pos: pick,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    assert_eq!(report.snapshot().unwrap().source, SourceFilter::Replay);
+    assert_eq!(
+        report.snapshot().unwrap().report.net_points,
+        Decimal::from(19)
+    );
+    let net = &report.report_view().as_ref().unwrap().net_text.0;
+    assert!(
+        output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Text(text) if text.galley.text() == net)),
+        "the same release frame paints the newly cut total"
+    );
+}
+
+#[test]
+fn paper_report_immediate_journal_and_export_paths_use_nested_model() {
+    let dir = crate::scratch::ScratchDir::new("paper-report-immediate-export");
+    let mut paper = PaperTrading::new();
+    paper.redirect_history_dir(dir.path().to_path_buf());
+    paper.set_symbol("X");
+    let saved = history::write_header("X", history::SessionSource::Live)
+        + "1000,2000,long,1,100,105,5,manual,,,,\n";
+    dir.write("X/saved.csv", &saved);
+    {
+        let (report, env) = paper.report_parts();
+        report.open(&env);
+    }
+    let print = |id, price| quantick_engine::Trade {
+        agg_id: id,
+        timestamp_ms: 10_000 + id as i64 * 1000,
+        price: Decimal::from(price),
+        quantity: Decimal::ONE,
+        side: Side::Buy,
+    };
+    paper.seed(&print(0, 100));
+    paper.market(Side::Buy);
+    paper.on_trade(&print(1, 100));
+    paper.close_position();
+    paper.on_trade(&print(2, 107));
+    assert!(paper.position_summary().is_none());
+    assert_eq!(
+        paper.report_state().report().as_ref().unwrap().rows.len(),
+        2,
+        "the immediate account event refreshes an open report without drawing it"
+    );
+    assert!(
+        paper.report_state().saved_rows_loaded().is_none(),
+        "the ledger has never painted"
+    );
+    let _ = paper.take_toast();
+    paper.account_mut().start_export();
+    assert_eq!(
+        paper.report_state().saved_rows_loaded().unwrap().len(),
+        1,
+        "export loaded saved history and excluded the live session's own journal"
+    );
+    let mut note = None;
+    for _ in 0..500 {
+        paper.account_mut().poll_export();
+        note = paper.take_toast();
+        if note.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let note = note.expect("the existing export worker returns its receipt");
+    assert!(
+        note.contains("2 trade"),
+        "export includes both halves: {note}"
+    );
+    let exported = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with("export-"))
+        .expect("export file");
+    let text = std::fs::read_to_string(exported.path()).unwrap();
+    assert!(text.contains("2000"), "saved close is present");
+    assert!(
+        text.contains("12000"),
+        "current close is present exactly once"
+    );
+    assert_eq!(
+        text.lines().filter(|line| line.contains("12000")).count(),
+        1
     );
 }

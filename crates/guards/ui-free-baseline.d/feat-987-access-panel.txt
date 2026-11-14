@@ -1,0 +1,4 @@
+# Issue #987 reviewed composition amendment; original #920 targets are unchanged.
+# Pass the registered adapter through the existing same-phase local launch hook.
+crates/app +1
+!budget +1

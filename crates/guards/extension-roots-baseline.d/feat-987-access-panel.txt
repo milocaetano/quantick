@@ -1,0 +1,4 @@
+# Issue #987 reviewed composition amendment; original #920 targets are unchanged.
+# Replace the direct panel draw with the required generic borrowed MenuDialogs pass.
+QuantickApp +4
+!budget +4

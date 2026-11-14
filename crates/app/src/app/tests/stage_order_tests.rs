@@ -13,6 +13,265 @@ fn dense_prints(start: u64, end: u64) -> Vec<quantick_engine::Trade> {
 
 const WINDOW: egui::Vec2 = egui::vec2(1600.0, 1000.0);
 
+#[test]
+fn indicator_settings_preset_and_preview_effects_settle_once_before_legends() {
+    use crate::indicators::state_file::SavedInput;
+    use quantick_indicators::{InputValue, SourceId};
+
+    fn phase(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)),
+                events,
+                ..Default::default()
+            },
+            |ctx| app.indicator_wiring().draw_indicator_surfaces(ctx),
+        )
+    }
+
+    fn click(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        point: egui::Pos2,
+        escape: bool,
+    ) -> egui::FullOutput {
+        let _ = phase(app, ctx, vec![egui::Event::PointerMoved(point)]);
+        let _ = phase(
+            app,
+            ctx,
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let mut events = vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        if escape {
+            events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        phase(app, ctx, events)
+    }
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+    let side = PaneSide::Time(0);
+    let slot = app.active_tab().pane(side).indicators.all()[0].slot;
+    let tab = app.runtime.tabs.active_id();
+    app.indicator_wiring().apply_indicator_legend_action(
+        tab,
+        side,
+        crate::indicator_legend::LegendAction::OpenSettings(slot),
+    );
+    let target = app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .target()
+        .unwrap();
+    let kind = app
+        .runtime
+        .indicators
+        .registry
+        .kind(target)
+        .unwrap()
+        .clone();
+    assert!(app.runtime.indicators.indicator_presets.insert(
+        &kind,
+        "Length thirty-seven",
+        vec![
+            SavedInput::Int(37),
+            SavedInput::Source("removed-source".to_owned())
+        ],
+    ));
+    let before_values = app.active_tab().pane(side).indicators.all()[0]
+        .input_values
+        .clone();
+    let _ = phase(&mut app, &ctx, Vec::new());
+    let _ = phase(&mut app, &ctx, Vec::new());
+    let painted = phase(&mut app, &ctx, Vec::new());
+    let combo = painted_text_center(&painted, "custom").expect("real preset picker");
+    let _ = click(&mut app, &ctx, combo, false);
+    let popup = phase(&mut app, &ctx, Vec::new());
+    let preset = painted_text_center(&popup, "Length thirty-seven").expect("real store preset row");
+    let accepted = app
+        .active_tab()
+        .pane(side)
+        .indicator_worker
+        .progress()
+        .counts
+        .accepted;
+    let selected = click(&mut app, &ctx, preset, false);
+    assert_eq!(
+        app.active_tab()
+            .pane(side)
+            .indicator_worker
+            .progress()
+            .counts
+            .accepted,
+        accepted + 1,
+        "one winning preset receipt submits exactly one preview to the actual worker"
+    );
+    let dialog = app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .dialog()
+        .unwrap();
+    assert_eq!(dialog.target, target);
+    assert_eq!(dialog.preset_label.as_deref(), Some("Length thirty-seven"));
+    assert_eq!(
+        dialog.draft,
+        vec![InputValue::Int(37), InputValue::Source(SourceId::Close)],
+        "the actual binder retains length and replaces the unreadable source with its declared default"
+    );
+    assert_eq!(dialog.committed, before_values);
+    assert!(dialog.previewed);
+    assert_eq!(
+        painted_text(&selected)
+            .iter()
+            .filter(|text| text.as_str() == "preview")
+            .count(),
+        1,
+        "the legend paints the newly settled addressed preview in the very same phase"
+    );
+    let _ = phase(&mut app, &ctx, Vec::new());
+    assert_eq!(
+        app.active_tab()
+            .pane(side)
+            .indicator_worker
+            .progress()
+            .counts
+            .accepted,
+        accepted + 1,
+        "an unchanged following pass executes no duplicate request"
+    );
+    settle_indicators(&mut app);
+    assert_eq!(
+        app.active_tab().pane(side).indicators.all()[0].input_values,
+        vec![InputValue::Int(37), InputValue::Source(SourceId::Close)],
+        "the addressed worker replays the preset values into the real view"
+    );
+    assert!(
+        pane_set(&app, side)[0].inputs.is_empty(),
+        "a preset preview is not persisted as an Apply"
+    );
+
+    // Positive control: the real Save button reaches the real preset store.
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::EditPresetName("Saved by click".into()),
+    );
+    let painted = phase(&mut app, &ctx, Vec::new());
+    let save = painted_text_center(&painted, "save").expect("enabled native Save button");
+    let before_save = app
+        .active_tab()
+        .pane(side)
+        .indicator_worker
+        .progress()
+        .counts
+        .accepted;
+    let _ = click(&mut app, &ctx, save, false);
+    assert_eq!(
+        app.active_tab()
+            .pane(side)
+            .indicator_worker
+            .progress()
+            .counts
+            .accepted,
+        before_save,
+        "saving a preset does not submit a worker request"
+    );
+    assert!(
+        app.runtime
+            .indicators
+            .indicator_presets
+            .get(&kind, "Saved by click")
+            .is_some()
+    );
+    let path = app.runtime.workspace.indicator_presets_path().to_path_buf();
+    let saved_bytes = std::fs::read(&path).expect("native Save writes the preset file");
+
+    // Escape arrives on the same release frame that clicks Save, after the
+    // field has lost focus to the button. The final Close must suppress IO.
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::EditPresetName("Must not save".into()),
+    );
+    let painted = phase(&mut app, &ctx, Vec::new());
+    let save = painted_text_center(&painted, "save").expect("second native Save button");
+    let before_close = app
+        .active_tab()
+        .pane(side)
+        .indicator_worker
+        .progress()
+        .counts
+        .accepted;
+    let _ = click(&mut app, &ctx, save, true);
+    assert!(
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .target()
+            .is_none()
+    );
+    assert!(
+        app.runtime
+            .indicators
+            .indicator_presets
+            .get(&kind, "Must not save")
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        saved_bytes,
+        "losing native Save performs no file write"
+    );
+    assert_eq!(
+        app.active_tab()
+            .pane(side)
+            .indicator_worker
+            .progress()
+            .counts
+            .accepted,
+        before_close + 1,
+        "Close submits only the one addressed discard after the earlier preset preview"
+    );
+    let _ = phase(&mut app, &ctx, Vec::new());
+    assert_eq!(
+        app.active_tab()
+            .pane(side)
+            .indicator_worker
+            .progress()
+            .counts
+            .accepted,
+        before_close + 1,
+        "closed editor cannot repeat either the losing Save or the discard"
+    );
+    settle_indicators(&mut app);
+    assert_eq!(
+        app.active_tab().pane(side).indicators.all()[0].input_values,
+        before_values
+    );
+}
+
 fn position<S: PartialEq>(order: &[S], stage: S) -> usize {
     order
         .iter()
@@ -187,20 +446,21 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
         app.runtime
             .workspace
             .set_ui_state_path(scratch_ui_state("stage-order-demo-inspector"));
-        app.drawings.chrome.set_inspector_pinned(true);
-        app.drawings.chrome.set_inspector_pin_touched(true);
-        app.drawings
-            .chrome
-            .demos_mut()
-            .arm_drawings_demo(DrawingsDemo::default());
+        app.surfaces.drawing_chrome.set_inspector_pinned(true);
+        app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
+        app.surfaces.drawing_chrome.scenario(
+            quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(
+                DrawingsDemo::default(),
+            ),
+        );
         for _ in 0..8 {
             staged_frame(&mut app, &ctx, order);
-            if !app.drawings.chrome.demos().gallery_requested() {
+            if !app.surfaces.drawing_chrome.demos().gallery_requested() {
                 break;
             }
         }
         assert!(
-            !app.drawings.chrome.demos().gallery_requested(),
+            !app.surfaces.drawing_chrome.demos().gallery_requested(),
             "the demo ran"
         );
         assert!(
@@ -423,15 +683,22 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
             side,
             crate::indicator_legend::LegendAction::OpenSettings(slot),
         );
-        app.runtime
-            .indicators
+        app.surfaces
             .indicator_settings
-            .as_mut()
-            .unwrap()
-            .draft[0] = InputValue::Int(37);
-        let change = app.runtime.indicators.preview_settings();
-        app.indicator_wiring()
-            .apply_indicator_settings_change(change);
+            .model_state
+            .dialog()
+            .unwrap();
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::EditInput {
+                index: 0,
+                value: InputValue::Int(37),
+            },
+        );
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::Preview,
+        );
         settle_indicators(&mut app);
         assert!(
             painted_preview_watermark(&staged_frame_at(
@@ -521,4 +788,141 @@ fn the_report_before_the_seek_drains_misses_the_round_trip_it_closed() {
         0,
         "projected before the drain, the report misses it for the frame"
     );
+}
+
+#[test]
+fn paper_panel_recipient_order_surrounds_editor_and_polls_only_in_dock() {
+    use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+    use quantick_chart_interaction::frame_tail_plan::FrameTailStage::DrawPaperReport;
+    use quantick_ui_model::paper_tail_probe::Intent;
+    use quantick_workspace::dock::DockTab;
+
+    fn dock_frame(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                app.draw_frame_stage_test_order(
+                    ctx,
+                    Instant::now(),
+                    &mut |_, _, _, _| panic!("Dock does not spawn a feed"),
+                    [FrameStage::Dock],
+                );
+            },
+        )
+    }
+
+    // Completed cancelled choices exercise both real pollers without OS dialogs.
+    fn ready_pickers(app: &mut QuantickApp) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(None).unwrap();
+        app.runtime.workspace.open_trades_dir_picker(receiver);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(None).unwrap();
+        app.runtime
+            .workspace
+            .picker_mut()
+            .set_pending_for_test(crate::workspace_picker::WorkspacePick::Import, receiver);
+    }
+
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands, _book) = test_app();
+    app.surfaces.dock.open_tab(DockTab::Session);
+    for _ in 0..3 {
+        let _ = dock_frame(&mut app, &ctx, Vec::new());
+    }
+    let painted = dock_frame(&mut app, &ctx, Vec::new());
+    let browser_text = painted_text(&painted)
+        .into_iter()
+        .find(|text| text.contains("Open session browser"))
+        .expect("the actual registered Paper body paints its browser button");
+    let browser = painted_text_center(&painted, &browser_text).unwrap();
+    let _ = dock_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(browser),
+            egui::Event::PointerButton {
+                pos: browser,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert!(!app.surfaces.replay_browser.browser_is_open());
+    ready_pickers(&mut app);
+    let (_, dock_steps) = super::frame::paper_panel_steps::observe(|| {
+        dock_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: browser,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        )
+    });
+    assert_eq!(
+        dock_steps,
+        [
+            "journal-fanout",
+            "replay-browser",
+            "strategy-editor",
+            "strategy-editor-settled",
+            "close-replay",
+            "navigation",
+            "trades-picker-open",
+            "order-settings",
+            "command-settings",
+            "risk-settings",
+            "trades-picker-poll",
+            "bundle-picker-poll",
+        ],
+        "the actual Dock recipient surrounds its editor/persistence section and polls once"
+    );
+    assert!(app.surfaces.replay_browser.browser_is_open());
+    assert!(!app.runtime.workspace.trades_dir_picker_open());
+    assert!(!app.runtime.workspace.picker_open());
+
+    ready_pickers(&mut app);
+    app.surfaces.dock.restore(false, None);
+    app.surfaces.paper_tail_probe.update(Intent::Arm {
+        opened: -20_000,
+        closed: -10_000,
+        mixed: false,
+    });
+    let (_, tail_steps) = super::frame::paper_panel_steps::observe(|| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(app.run_report_tail_test(ctx, [DrawPaperReport]).is_empty());
+        });
+    });
+    assert_eq!(
+        tail_steps,
+        [
+            "journal-fanout",
+            "replay-browser",
+            "close-replay",
+            "navigation",
+            "trades-picker-open",
+            "order-settings",
+            "command-settings",
+            "risk-settings",
+        ],
+        "the real tail recipient has the same prefix/suffix and no editor or extra polling"
+    );
+    assert_eq!(
+        app.active_tab_mut().paper.take_toast().as_deref(),
+        Some("This trade is outside the bars on the flow chart - nothing to centre on.")
+    );
+    assert!(app.runtime.workspace.trades_dir_picker_open());
+    assert!(app.runtime.workspace.picker_open());
 }

@@ -14,7 +14,6 @@ use eframe::egui;
 use quantick_indicators::{InputSpec, InputValue, PlotSpec, Rgba8, SourceId};
 
 use crate::indicator_style::{MAX_PLOT_WIDTH_PX, MIN_PLOT_WIDTH_PX, ResolvedPlot, StyleOverride};
-use crate::indicator_worker::SlotId;
 use crate::theme;
 
 /// Drag sensitivity of a float input that declares no `step`.
@@ -39,107 +38,33 @@ const PLOT_WIDTH_DRAG_SPEED: f64 = 0.02;
 /// name without pushing the save button off the row.
 const PRESET_NAME_FIELD_WIDTH_PX: f32 = 110.0;
 
-/// Which half of the dialog is showing.
-///
-/// The two are mutually exclusive on purpose, and that is load-bearing: an
-/// input edit and a style edit can never happen in the same frame, so the
-/// dialog's single outcome can speak for either without ambiguity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum SettingsTab {
-    /// The declared inputs — periods, sources, thresholds.
-    #[default]
-    Inputs,
-    /// Per-plot colour, width and visibility.
-    Style,
-}
+use quantick_ui_model::UpdateSession;
+use quantick_ui_model::indicator_settings::{
+    DEFAULT_PRESET, Intent, Model, SettingsOutcome, row_order,
+};
+pub(crate) use quantick_ui_model::indicator_settings::{
+    DISPLAY_SECTION, SettingsTab, split_section,
+};
 
-/// An open settings dialog: which slot, and the in-flight draft values.
-pub(crate) struct SettingsDialog {
-    /// The slot being edited.
-    pub slot: SlotId,
-    /// Dialog title (the indicator's label at open time).
-    pub title: String,
-    /// Which tab is showing.
-    pub tab: SettingsTab,
-    /// One draft value per declared input, edited in place.
-    pub draft: Vec<InputValue>,
-    /// The values last committed through Apply (seeded from the running
-    /// instance at open time) — what Close must put back on the chart.
-    pub committed: Vec<InputValue>,
-    /// Whether a preview has been sent since the last commit: the chart may
-    /// be showing values the state file does not hold.
-    pub previewed: bool,
-    /// Whether the widgets have had their first frame. A slider with a
-    /// `step` snaps a not-quite-aligned value (0.1 is not a binary multiple
-    /// of 0.01) the moment it first draws, and that snap reports `changed` —
-    /// widget normalization, not a user edit. The first frame adopts it as
-    /// the baseline instead of announcing a preview nobody asked for.
-    pub settled: bool,
-    /// What the preset picker shows: a preset name, [`DEFAULT_PRESET`], or
-    /// `None` for "custom" — any hand-edit diverges from whatever was
-    /// picked, and claiming the name would be the picker lying.
-    pub preset_label: Option<String>,
-    /// The name typed into the save-preset field.
-    pub preset_name_draft: String,
-}
-
-/// The built-in preset every indicator has: its declared defaults. Not
-/// stored anywhere — the script is its own source of truth.
-pub(crate) const DEFAULT_PRESET: &str = "Default";
-
-/// What the dialog asked for this frame.
-pub(crate) enum SettingsOutcome {
-    /// Keep showing the dialog.
-    Open,
-    /// Close the dialog, dropping any un-applied edits.
-    Close,
-    /// Send the draft to the worker; the dialog stays open.
-    Apply,
-    /// A widget changed this frame: show the draft on the chart without
-    /// committing it (no state-file write; Close still reverts).
-    Preview,
-    /// Replace the draft with a saved preset's values (`None` = the
-    /// declared defaults) and preview them. Apply still commits.
-    LoadPreset(Option<String>),
-    /// Save the current draft under this name.
-    SavePreset(String),
-    /// Forget the preset of this name.
-    DeletePreset(String),
-    /// A plot's style moved on the Style tab. Render-side and already on the
-    /// chart — all the caller owes is the state file.
-    ///
-    /// Its own outcome rather than a flag beside `Preview`, because the tabs
-    /// are mutually exclusive: a frame edits an input or a plot's style, never
-    /// both, so one outcome can carry either without lying about the other.
-    StyleChanged,
-}
-
-/// Draw the dialog; the caller owns the state and executes the outcome.
-/// `presets` is the saved-setup list for this indicator's kind — `None`
-/// hides the picker entirely (a slot whose kind was never registered has
-/// no shelf to save to).
+/// Paint native widgets against the registered owner's readonly projection.
+/// The caller settles the final outcome after all native precedence is known.
 pub(crate) fn draw(
     ctx: &egui::Context,
-    dialog: &mut SettingsDialog,
+    session: &mut UpdateSession<'_, Model>,
     specs: &[InputSpec],
     plots: &[PlotSpec],
     style: &mut StyleOverride,
     presets: Option<&[String]>,
-) -> SettingsOutcome {
+) -> Intent {
     let palette = theme::get(ctx);
     let mut outcome = SettingsOutcome::Open;
     let mut open = true;
     let mut changed = false;
     let mut style_changed = false;
+    let dialog = session.state().dialog().expect("resolved editor");
     let previewed = dialog.previewed;
-    let slot_id = dialog.slot.0;
-    // An indicator that declares no plots gets no Style tab rather than an
-    // empty one — a tab that opens onto nothing is a promise the dialog cannot
-    // keep.
+    let slot_id = dialog.target.slot.0;
     let has_style = !plots.is_empty();
-    if dialog.tab == SettingsTab::Style && !has_style {
-        dialog.tab = SettingsTab::Inputs;
-    }
     let window = egui::Window::new(format!("Settings — {}", dialog.title));
     crate::popup::centred(window, egui::Id::new(("indicator-settings", slot_id)), ctx)
         .open(&mut open)
@@ -148,32 +73,40 @@ pub(crate) fn draw(
         .show(ctx, |ui| {
             if has_style {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut dialog.tab, SettingsTab::Inputs, "Inputs");
-                    ui.selectable_value(&mut dialog.tab, SettingsTab::Style, "Style");
+                    for tab in [SettingsTab::Inputs, SettingsTab::Style] {
+                        let label = match tab {
+                            SettingsTab::Inputs => "Inputs",
+                            SettingsTab::Style => "Style",
+                        };
+                        if ui
+                            .selectable_label(session.state().dialog().unwrap().tab == tab, label)
+                            .clicked()
+                        {
+                            session.update(Intent::SelectTab(tab));
+                        }
+                    }
                 });
                 ui.separator();
             }
-            if dialog.tab == SettingsTab::Style {
+            if session.state().dialog().unwrap().tab == SettingsTab::Style {
                 style_changed = draw_style(ui, plots, style);
                 draw_buttons(ui, previewed, &mut outcome);
                 return;
             }
-            let SettingsDialog {
-                draft,
-                committed,
-                preset_label,
-                preset_name_draft,
-                ..
-            } = dialog;
             if let Some(names) = presets {
+                let dialog = session.state().dialog().unwrap();
+                let mut name = dialog.preset_name_draft.clone();
                 preset_row(
                     ui,
                     slot_id,
                     names,
-                    preset_label,
-                    preset_name_draft,
+                    &dialog.preset_label,
+                    &mut name,
                     &mut outcome,
                 );
+                if name != session.state().dialog().unwrap().preset_name_draft {
+                    session.update(Intent::EditPresetName(name));
+                }
                 ui.separator();
             }
             let order = row_order(specs);
@@ -195,7 +128,12 @@ pub(crate) fn draw(
                             ui.label("");
                             ui.end_row();
                         }
-                        changed |= input_row(ui, spec, &mut draft[index], &committed[index], label);
+                        let dialog = session.state().dialog().unwrap();
+                        let mut value = dialog.draft[index].clone();
+                        changed |= input_row(ui, spec, &mut value, &dialog.committed[index], label);
+                        if value != session.state().dialog().unwrap().draft[index] {
+                            session.update(Intent::EditInput { index, value });
+                        }
                         ui.end_row();
                     }
                 });
@@ -207,43 +145,14 @@ pub(crate) fn draw(
             }
             draw_buttons(ui, previewed, &mut outcome);
         });
-    // First-frame settle: adopt widget normalization as the baseline (see
-    // `SettingsDialog::settled`) instead of reporting it as an edit.
-    if !dialog.settled {
-        dialog.settled = true;
-        if changed {
-            dialog.committed = dialog.draft.clone();
-            changed = false;
-        }
+    Intent::FinishPaint {
+        changed,
+        style_changed,
+        outcome,
+        window_closed: !open,
+        // Read after fields have consumed Escape to cancel their own edits.
+        escape: ctx.input(|input| input.key_pressed(egui::Key::Escape)),
     }
-    if changed && matches!(outcome, SettingsOutcome::Open) {
-        // A hand-edit diverges from whatever preset was picked: the picker
-        // says "custom" from here on instead of wearing a stale name.
-        dialog.preset_label = None;
-        outcome = SettingsOutcome::Preview;
-    }
-    if style_changed && matches!(outcome, SettingsOutcome::Open) {
-        outcome = SettingsOutcome::StyleChanged;
-    }
-    if !open {
-        outcome = SettingsOutcome::Close;
-    }
-    // Escape gets out, the way every other dialog in the app lets you out.
-    //
-    // This is a trading window, and it can now be opened by a double click
-    // that was meant for the chart; while one of its fields holds the keyboard
-    // the app's trading shortcuts are suppressed by design
-    // (`wants_keyboard_input`). One key back to the chart is the difference
-    // between an interruption and a trap. Escape is Close, which reverts a
-    // pending preview — the same thing the button of that name does.
-    //
-    // Read after the window has drawn, so an Escape a field consumed to cancel
-    // its own edit is spent there first: one press leaves the field, the next
-    // leaves the dialog.
-    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-        outcome = SettingsOutcome::Close;
-    }
-    outcome
 }
 
 /// The button row, shared by both tabs so the way out of the dialog is in the
@@ -504,32 +413,6 @@ fn preset_row(
     });
 }
 
-/// The section whose rows are hoisted to the top of the dialog: the layer
-/// switches a trader reaches for mid-session must not sit below "Advanced"
-/// at the bottom of a long parameter list (trader-ux review). Scripts opt
-/// in by titling an input `Display: <layer>`.
-pub(crate) const DISPLAY_SECTION: &str = "Display";
-
-/// A title's section grammar, the one the built-in scripts already use:
-/// `"1 Context: window (bars)"` → section `"1 Context"`, label
-/// `"window (bars)"`. A title without the separator has no section.
-pub(crate) fn split_section(title: &str) -> (&str, &str) {
-    title
-        .split_once(": ")
-        .map_or(("", title), |(section, label)| (section, label))
-}
-
-/// Render order for the dialog's rows: script order, except the
-/// [`DISPLAY_SECTION`] rows, which move to the top as one block. Rendering
-/// order only — the draft/committed vectors stay in declaration order, so
-/// positional persistence never notices.
-fn row_order(specs: &[InputSpec]) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..specs.len()).collect();
-    // Stable sort: within "display first, rest after", script order holds.
-    order.sort_by_key(|&index| split_section(specs[index].title()).0 != DISPLAY_SECTION);
-    order
-}
-
 /// One label + widget row. The value enum always matches its spec variant
 /// (both come from the same declaration); a mismatch draws nothing rather
 /// than panicking a frame. Returns whether the value changed this frame —
@@ -704,7 +587,6 @@ fn input_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::indicator_worker::SlotId;
 
     fn plot(title: &str) -> PlotSpec {
         PlotSpec {
@@ -718,23 +600,82 @@ mod tests {
         }
     }
 
-    fn open_dialog() -> SettingsDialog {
-        SettingsDialog {
-            slot: SlotId(0),
-            title: "EMA(9)".to_owned(),
-            tab: SettingsTab::default(),
-            draft: vec![InputValue::Int(9)],
-            committed: vec![InputValue::Int(9)],
-            previewed: false,
-            settled: false,
-            preset_label: None,
-            preset_name_draft: String::new(),
+    type Editor = crate::surfaces::indicator_settings::IndicatorSettingsSurface;
+
+    fn editor(slot: u64, title: &str, values: Vec<InputValue>) -> Editor {
+        let mut editor = Editor::new(
+            Default::default(),
+            crate::surfaces::indicator_settings::effects,
+        );
+        editor.update(Intent::Open {
+            target: quantick_chart::indicator_registry::TabSlot {
+                workspace: quantick_workspace::lifetime::WorkspaceId(1),
+                pane: 1,
+                tab: 1,
+                side: crate::pane::PaneSide::Flow,
+                slot: crate::indicator_worker::SlotId(slot),
+            },
+            title: title.to_owned(),
+            values,
+        });
+        editor
+    }
+
+    fn open_dialog() -> Editor {
+        editor(0, "EMA(9)", vec![InputValue::Int(9)])
+    }
+
+    fn draw(
+        ctx: &egui::Context,
+        editor: &mut Editor,
+        specs: &[InputSpec],
+        plots: &[PlotSpec],
+        style: &mut StyleOverride,
+        presets: Option<&[String]>,
+    ) -> SettingsOutcome {
+        let mut outcome = SettingsOutcome::Open;
+        editor.with_updates(
+            |response| {
+                for effect in response.model_effects {
+                    if let crate::surfaces::HostEffect::IndicatorSettings(effects) = effect {
+                        for change in effects.changes {
+                            outcome = match change {
+                                quantick_ui_model::indicator_settings::Change::Inputs {
+                                    commit: true,
+                                    ..
+                                } => SettingsOutcome::Apply,
+                                quantick_ui_model::indicator_settings::Change::Inputs {
+                                    ..
+                                } => SettingsOutcome::Preview,
+                                quantick_ui_model::indicator_settings::Change::Style(_) => {
+                                    SettingsOutcome::StyleChanged
+                                }
+                            };
+                        }
+                    }
+                }
+            },
+            |_, session| {
+                let label = session.state().dialog().unwrap().title.clone();
+                session.update(Intent::ObserveTarget {
+                    valid: true,
+                    label,
+                    has_style: !plots.is_empty(),
+                });
+                let intent = super::draw(ctx, session, specs, plots, style, presets);
+                session.update(intent);
+            },
+        );
+        if editor.model_state.dialog().is_none() {
+            SettingsOutcome::Close
+        } else {
+            outcome
         }
     }
 
     fn painted_dialog(
         ctx: &egui::Context,
-        dialog: &mut SettingsDialog,
+        dialog: &mut Editor,
         specs: &[InputSpec],
         plots: &[PlotSpec],
         style: &mut StyleOverride,
@@ -775,9 +716,13 @@ mod tests {
         // And a tab left selected when the plots vanish falls back rather than
         // showing an empty half.
         let mut stale = open_dialog();
-        stale.tab = SettingsTab::Style;
+        stale.update(Intent::SelectTab(SettingsTab::Style));
         let _ = painted_dialog(&ctx, &mut stale, &specs, &[], &mut style);
-        assert_eq!(stale.tab, SettingsTab::Inputs, "it fell back");
+        assert_eq!(
+            stale.model_state.dialog().unwrap().tab,
+            SettingsTab::Inputs,
+            "it fell back"
+        );
     }
 
     /// A style edit reports itself so the caller can write the state file, and
@@ -821,9 +766,7 @@ mod tests {
             step: None,
             options: vec![1, 3, 5],
         }];
-        let mut dialog = open_dialog();
-        dialog.draft = vec![InputValue::Int(5)];
-        dialog.committed = vec![InputValue::Int(5)];
+        let mut dialog = editor(0, "EMA(9)", vec![InputValue::Int(5)]);
         let mut style = StyleOverride::default();
         let text = painted_dialog(&ctx, &mut dialog, &specs, &[], &mut style);
 
@@ -850,7 +793,10 @@ mod tests {
             let specs = [int_spec()];
             let plots = [plot("ema")];
             let mut style = StyleOverride::default();
-            let id = egui::Id::new(("indicator-settings", dialog.slot.0));
+            let id = egui::Id::new((
+                "indicator-settings",
+                dialog.model_state.target().unwrap().slot.0,
+            ));
             // Enough frames for the window's size, and so its centring, to
             // settle.
             for _ in 0..6 {
@@ -942,14 +888,6 @@ mod tests {
         }
     }
 
-    fn display_bool() -> InputSpec {
-        InputSpec::Bool {
-            name: "show".to_owned(),
-            title: "Display: context semaphore".to_owned(),
-            default: true,
-        }
-    }
-
     /// A stepped slider snaps a value that is not on its grid the moment it
     /// first draws, and reports that as `changed`. Without the settle frame
     /// the dialog opened already announcing a preview nobody asked for —
@@ -957,17 +895,7 @@ mod tests {
     #[test]
     fn first_frame_widget_normalization_is_not_a_preview() {
         let specs = vec![stepped_float("Advanced: min bar body (×ATR)")];
-        let mut dialog = SettingsDialog {
-            slot: SlotId(7),
-            title: "Copilot".to_owned(),
-            tab: SettingsTab::default(),
-            draft: vec![InputValue::Float(0.123)],
-            committed: vec![InputValue::Float(0.123)],
-            previewed: false,
-            settled: false,
-            preset_label: None,
-            preset_name_draft: String::new(),
-        };
+        let mut dialog = editor(7, "Copilot", vec![InputValue::Float(0.123)]);
         let ctx = egui::Context::default();
         for frame in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -985,32 +913,14 @@ mod tests {
                 );
             });
         }
-        assert!(dialog.settled, "the first frame settles the dialog");
+        assert!(
+            dialog.model_state.dialog().unwrap().settled,
+            "the first frame settles the dialog"
+        );
         assert_eq!(
-            dialog.draft, dialog.committed,
+            dialog.model_state.dialog().unwrap().draft,
+            dialog.model_state.dialog().unwrap().committed,
             "whatever the widgets normalized became the baseline"
         );
-    }
-
-    /// Render order only: the Display rows move to the top as one block,
-    /// everything else keeps script order — and the indices still point at
-    /// the declaration positions the state file persists by.
-    #[test]
-    fn display_rows_hoist_to_the_top_in_render_order_only() {
-        let specs = vec![
-            stepped_float("1 Context: max height (×ATR)"),
-            display_bool(),
-            stepped_float("Advanced: min bar body (×ATR)"),
-        ];
-        assert_eq!(row_order(&specs), vec![1, 0, 2]);
-    }
-
-    #[test]
-    fn titles_split_into_section_and_label() {
-        assert_eq!(
-            split_section("1 Context: window (bars)"),
-            ("1 Context", "window (bars)")
-        );
-        assert_eq!(split_section("Length"), ("", "Length"));
     }
 }

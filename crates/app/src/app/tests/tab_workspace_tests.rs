@@ -267,7 +267,7 @@ fn chip_and_snapshot_read_one_state() {
             (symbol, venue),
             (status.symbol.as_str(), status.venue.as_str())
         );
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         assert_eq!(capsule.marks().1, app.tab_workspace_row(tab).1);
     }
     assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
@@ -285,7 +285,7 @@ fn autosave_on_never_marks_an_edit() {
     frames(&mut app, 2);
     assert!(!app.runtime.workspace.book.tab_row(first).1);
     assert!(
-        !crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default())
+        !crate::app::chrome::capsule::snapshot(&app, &egui::Context::default())
             .marks()
             .1
     );
@@ -706,7 +706,7 @@ fn chip_and_status_cell_read_one_state() {
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
         let (name, unsaved, _) = capsule.marks();
         assert_eq!((name.to_owned(), unsaved), (workspace, modified));

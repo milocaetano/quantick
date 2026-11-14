@@ -326,9 +326,10 @@ fn only_an_edit_that_happened_makes_the_ledgers_read_again() {
 fn delete_over_the_dock_never_deletes_the_selected_drawing() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
-    app.dock.open_tab(crate::dock::DockTab::Trades);
+    app.surfaces.dock.open_tab(crate::dock::DockTab::Trades);
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let chart = egui::pos2(500.0, 300.0);
     click_chart(&mut app, &ctx, chart);
@@ -341,7 +342,7 @@ fn delete_over_the_dock_never_deletes_the_selected_drawing() {
     };
     press_at(&mut app, dock);
     assert!(
-        crate::dock::holds_pointer(&app.dock, &ctx, false),
+        crate::dock::holds_pointer(&app.surfaces.dock.model_state, &ctx, false),
         "the press landed on the dock"
     );
     assert_eq!(

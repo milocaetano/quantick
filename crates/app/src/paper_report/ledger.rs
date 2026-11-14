@@ -5,17 +5,14 @@
 //! "which trades, in what order, from which file?", so the two read the same
 //! journal for different questions and keep their state apart.
 
+use super::LedgerScope;
 use eframe::egui;
 use egui_phosphor::regular as icons;
-pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
 use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting, saved_items};
-use quantick_paper::report::ledger_state::{
-    LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
-};
-use quantick_paper::report::load_history;
+use quantick_paper::report::ledger_state::{LedgerEdit, SessionPress};
 use quantick_paper::report::readout::LedgerScopeTotals;
-use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, live_keys};
+use quantick_ui_model::paper_report::{Intent, LedgerIntent, RowInput};
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
@@ -23,130 +20,33 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv, ReportState,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, Paint, ReportEnv,
     TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{caption, financial_text_on, list_symbol_folders, points_color_on};
+use crate::paper_chrome::{caption, financial_text_on, points_color_on};
 use crate::theme;
 use crate::timezone::TzOffset;
 use quantick_appearance::panel_chrome::FOOTER;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
-impl ReportState {
-    // ------------------------------------------------------------------
-    // Trades ledger tab
-    // ------------------------------------------------------------------
-
-    /// Load the earlier sessions' rows for the ledger, scoped to the
-    /// current symbol or the whole folder. The live session's own file is
-    /// excluded — its trades are already in the simulator.
-    pub(crate) fn reload_ledger(&mut self, env: &ReportEnv<'_>) {
-        self.ledger_layout_revision = self.ledger_layout_revision.wrapping_add(1);
-        let symbol = self.ledger_scope.folder(env.symbol);
-        let history = load_history(env.dir, symbol, env.session_journal_paths);
-        // The strip under the list sums every saved trade, not the revealed
-        // page, so it is summed once here rather than on every frame.
-        self.saved_totals = LedgerTotals::of_rows(env.pnl, &history.rows);
-        self.sessions.reloaded(&history);
-        self.history_cache = Some(history);
-        self.ledger_symbols = list_symbol_folders(env.dir);
-    }
-
-    /// Set what the ledger shows from outside its filter row — the
-    /// `session.journal.set` view action — and read it back.
-    pub(crate) fn ledger_view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
-        self.sessions.view(change)
-    }
-
-    /// A session file was renamed, tagged or deleted — by a gesture here, in
-    /// another tab, or through the control plane: re-read the folder.
-    pub(crate) fn journal_edited(&mut self, env: &ReportEnv<'_>) {
-        self.history_cache = None;
-        if self.report_open {
-            self.reload_report(env);
-        }
-    }
-
-    /// Fold or unfold one civil day in the ledger. A named action taking
-    /// data, like every other capability here: the header click calls it,
-    /// and so does anything else that ever wants to.
-    pub(crate) fn set_day_collapsed(&mut self, day: CivilDate, collapsed: bool) {
-        if collapsed {
-            self.collapsed_days.insert(day.day_number());
-        } else {
-            self.collapsed_days.remove(&day.day_number());
-        }
-    }
-
-    /// Whether every day currently in the ledger is folded shut. Read from
-    /// the loaded history, so the control can name what it will do.
-    pub(super) fn all_days_collapsed(&self, env: &ReportEnv<'_>) -> bool {
-        let mut any = false;
-        for day in self.ledger_days(env) {
-            any = true;
-            if !self.collapsed_days.contains(&day) {
-                return false;
-            }
-        }
-        any
-    }
-
-    /// Every civil day the ledger currently lists, saved and live alike.
-    fn ledger_days(&self, env: &ReportEnv<'_>) -> std::collections::BTreeSet<i64> {
-        let tz = self.ledger_tz;
-        let saved = self
-            .history_cache
-            .iter()
-            .flat_map(|cache| cache.rows.iter().map(|row| &row.trade));
-        saved
-            .chain(env.session_trades.iter())
-            .map(|trade| CivilDate::from_ms(trade.closed_ms, tz).day_number())
-            .collect()
-    }
-
-    /// Fold every day shut, or open every one back up.
-    pub(crate) fn toggle_all_days(&mut self, expand: bool, env: &ReportEnv<'_>) {
-        if expand {
-            self.collapsed_days.clear();
-        } else {
-            self.collapsed_days = self.ledger_days(env);
-        }
-    }
-
-    /// Re-read the folder for a *changed scope* — the refresh button and
-    /// the symbol/scope switches. Unlike [`Self::reload_ledger`] this also
-    /// drops back to the first page: a deep page count cannot survive a
-    /// list it was never counted against.
-    pub(crate) fn rescope_ledger(&mut self, env: &ReportEnv<'_>) {
-        self.ledger_pages = 1;
-        self.reload_ledger(env);
-    }
-
+impl Paint<'_, '_> {
     /// The Trades dock tab: the ledger of closed simulated trades — the
     /// open position pinned on top, this session under it, the saved
     /// history under that, each day split by session where it holds
     /// several, and a totals strip that never scrolls away.
-    pub(crate) fn draw_trades_tab(
-        &mut self,
-        ui: &mut egui::Ui,
-        tz: TzOffset,
-        env: &ReportEnv<'_>,
-    ) -> Option<LedgerAction> {
+    pub(crate) fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset, env: &ReportEnv<'_>) {
         let palette = theme::get(ui.ctx());
-        if self.history_cache.is_none() {
-            self.reload_ledger(env);
-        }
-        self.ledger_tz = tz;
+        self.ledger(LedgerIntent::EnsureLoaded);
+        self.ledger(LedgerIntent::Timezone(tz));
 
         crate::panel_chrome::filter_bar(ui, |ui| {
             self.draw_scope_row(ui, env);
-            self.sessions
-                .draw_filter_row(ui, self.history_cache.as_ref(), tz);
+            self.draw_filter_row(ui, tz);
         });
-        self.sessions
-            .state
-            .ensure_cut(self.history_cache.as_ref(), env.live_closes(), tz);
+        if let Some(receipt) = self.project_ledger(env.live_closes(), tz, env.pnl) {
+            self.update(Intent::InstallLedger(receipt));
+        }
         ui.horizontal(|ui| {
             ui.label(caption(&palette, "TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -163,27 +63,27 @@ impl ReportState {
         }
 
         let saved_len = self
-            .history_cache
+            .history_cache()
             .as_ref()
             .map_or(0, |cache| cache.rows.len());
         if env.session_trades.is_empty() && saved_len == 0 {
-            let action = if env.open.is_none() {
-                self.draw_empty_state(ui, env)
-            } else {
-                None
-            };
+            if env.open.is_none() {
+                self.draw_empty_state(ui, env);
+            }
             self.draw_ledger_disclosure(ui);
-            return action;
+            return;
         }
 
-        let cache = self.history_cache.as_ref();
-        let cut = self.sessions.state.cut.as_ref()?;
+        let cache = self.history_cache().as_ref();
+        let Some(cut) = self.sessions().cut.as_ref() else {
+            return;
+        };
         // Each close's session and file trade were recorded as it was
         // written; only the set of files still being written is read here.
         let live_keys = live_keys(env.dir, env.session_journal_paths);
         // This session's trades go through the same filter the saved rows
         // were cut with, a handful per frame.
-        let (live, hidden_live) = self.sessions.state.live_trades(
+        let (live, hidden_live) = self.sessions().live_trades(
             env.session_trades,
             env.session_trade_at,
             env.session_trade_sources,
@@ -197,16 +97,16 @@ impl ReportState {
             .collect();
         // Only the revealed pages are turned into rows; the rest stay
         // loaded and counted, which is what the control below them says.
-        let page = LedgerPage::of(cut.kept.len(), self.ledger_pages);
+        let page = LedgerPage::of(cut.kept.len(), self.ledger_pages());
         let saved = saved_items(cache, &cut.kept, page.shown, env.pnl);
 
         // Rows are cut newest first, so day headers open each day as the
         // list walks back in time.
         let view = GroupView {
-            collapsed_days: &self.collapsed_days,
-            collapsed_sessions: &self.sessions.state.view.folded,
-            focused: self.sessions.state.focused.as_ref(),
-            editing: self.sessions.state.edit.as_ref().map(LedgerEdit::session),
+            collapsed_days: self.collapsed_days(),
+            collapsed_sessions: &self.sessions().view.folded,
+            focused: self.sessions().focused.as_ref(),
+            editing: self.sessions().edit.as_ref().map(LedgerEdit::session),
             labels: &cut.labels,
             live: &live_keys,
             tz,
@@ -220,7 +120,7 @@ impl ReportState {
             &view,
         );
 
-        let scope = if self.sessions.state.view.filter.is_default() {
+        let scope = if self.sessions().view.filter.is_default() {
             let own = env.session_trades;
             LedgerScopeTotals::Whole {
                 symbol: env.symbol,
@@ -234,7 +134,7 @@ impl ReportState {
             }
         };
         let rows_in = cache.map(|cache| cache.rows.as_slice());
-        let totals = self.saved_totals.in_scope(env.pnl, rows_in, scope);
+        let totals = (self.saved_totals().clone()).in_scope(env.pnl, rows_in, scope);
         let shown = live.len() + cut.kept.len();
         let rows_listed = live.len() + saved.len();
         let list_height = (ui.available_height() - palette.layout(TOTALS_STRIP_PX) * 3.0)
@@ -246,68 +146,70 @@ impl ReportState {
                     .small(),
             );
         }
-        let target = self.sessions.state.tag_target(self.live_pick(env), cache);
-        let delete_key = self.sessions.state.key_press(false, &live_keys, cache);
+        let target = self.sessions().tag_target(self.live_pick(env), cache);
+        let delete_key = self.sessions().key_press(false, &live_keys, cache);
+        // Small native input buffers; authoritative edit and focus request remain in the model.
+        let mut edit = self.sessions().edit.clone();
+        let mut focus_edit = self.sessions().focus_edit;
         let presses = RowList {
             layout_key: self.ledger_layout_key(env, tz, rows.len()),
             rows: &rows,
-            selected: self.selected_trade,
-            selected_saved: self.sessions.state.selected_saved.as_ref(),
+            selected: self.selected_trade(),
+            selected_saved: self.sessions().selected_saved.as_ref(),
             chart: env.symbol,
             tz,
             deletes: delete_key.is_some(),
-            edit: &mut self.sessions.state.edit,
-            focus_edit: &mut self.sessions.state.focus_edit,
+            edit: &mut edit,
+            focus_edit: &mut focus_edit,
         }
         .show(ui, list_height);
-        self.sessions.state.edit_placed(inline_placed);
         let focus_tags = presses.tag || (presses.hovered && presses.hash);
         let keyed = if presses.f2 {
-            self.sessions.state.key_press(true, &live_keys, cache)
+            self.sessions().key_press(true, &live_keys, cache)
         } else if presses.delete {
             delete_key
         } else {
             None
         };
-        let mut action = self.apply_row_presses(presses);
-        if let Some(press) = keyed {
-            action = action.or(self.apply_session_press(press));
-        }
+        self.ledger(LedgerIntent::Rows(Box::new(RowInput {
+            select: presses.select,
+            select_saved: presses.select_saved,
+            navigate: presses.navigate,
+            reveal_more: presses.reveal_more,
+            fold: presses.fold,
+            session: presses.session,
+            keyed,
+            edit,
+            focus_edit,
+            inline_placed,
+        })));
 
         ui.separator();
-        let target = target
-            .as_ref()
-            .map(|(key, trade, tags)| (key.clone(), *trade, tags.as_slice()));
-        if let Some(edit) = self.sessions.draw_tag_strip(ui, target, focus_tags) {
-            action = Some(LedgerAction::Edit(edit));
-        }
-        self.sessions
-            .draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
+        self.draw_tag_strip(ui, target, focus_tags);
+        self.draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
         crate::panel_chrome::panel_footer(ui, |ui| {
             draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
         });
         self.draw_ledger_disclosure(ui);
-        action
     }
 
     /// The row list's layout identity: anything that moves a row changes it.
     fn ledger_layout_key(&self, env: &ReportEnv<'_>, tz: TzOffset, rows: usize) -> egui::Id {
         egui::Id::new((
-            self.ledger_layout_revision,
+            self.ledger_layout_revision(),
             env.symbol,
             env.dir,
             env.session_journal_paths,
             env.session_trades.len(),
             rows,
-            self.ledger_pages,
+            self.ledger_pages(),
             format!(
                 "{:?}{:?}{:?}{:?}{:?}",
-                self.sessions.state.view,
-                self.collapsed_days,
-                env.pnl.key(),
+                self.sessions().view,
+                self.collapsed_days(),
+                self.ledger_layout_revision(),
                 tz,
-                self.sessions
-                    .state
+                self.sessions()
                     .edit
                     .as_ref()
                     .map(|edit| (std::mem::discriminant(edit), edit.session()))
@@ -318,18 +220,8 @@ impl ReportState {
     /// The selected live trade's journal entry — `Some(None)` for one no
     /// file holds — or `None` when no live trade is selected.
     fn live_pick<'e>(&self, env: &ReportEnv<'e>) -> Option<Option<&'e JournaledTrade>> {
-        let index = self.selected_trade?;
+        let index = self.selected_trade()?;
         Some(env.session_trade_at.get(index).and_then(Option::as_ref))
-    }
-
-    /// Hand a session gesture to the session layer; an edit leaves for the
-    /// host, which applies it for every tab.
-    fn apply_session_press(&mut self, press: SessionPress) -> Option<LedgerAction> {
-        let cache = self.history_cache.as_ref();
-        self.sessions
-            .state
-            .apply(press, cache)
-            .map(LedgerAction::Edit)
     }
 
     /// Scope row: which instrument's saved history the ledger lists, the
@@ -343,22 +235,22 @@ impl ReportState {
             egui::ComboBox::from_id_salt("paper_ledger_scope")
                 .width(LEDGER_SCOPE_COMBO_PX)
                 .selected_text(
-                    egui::RichText::new(self.ledger_scope.label(&chart))
+                    egui::RichText::new(self.ledger_scope().label(&chart))
                         .font(palette.mono_font(11.0)),
                 )
                 .show_ui(ui, |ui| {
                     let mut option = |ui: &mut egui::Ui, scope: LedgerScope| {
-                        let on = self.ledger_scope == scope;
+                        let on = self.ledger_scope() == &scope;
                         if ui.selectable_label(on, scope.label(&chart)).clicked() && !on {
                             picked = Some(scope);
                         }
                     };
                     option(ui, LedgerScope::Chart);
                     option(ui, LedgerScope::All);
-                    if !self.ledger_symbols.is_empty() {
+                    if !self.ledger_symbols().is_empty() {
                         ui.separator();
                     }
-                    for symbol in self.ledger_symbols.clone() {
+                    for symbol in self.ledger_symbols().to_vec() {
                         option(ui, LedgerScope::Symbol(symbol));
                     }
                 })
@@ -378,7 +270,7 @@ impl ReportState {
                 // Folding every earlier day at once: the list becomes one
                 // line per day, which is how a week is read rather than
                 // scrolled.
-                let folded = self.all_days_collapsed(env);
+                let folded = self.all_days_collapsed(env.live_closes());
                 let (icon, hover) = if folded {
                     (icons::ARROWS_OUT_LINE_VERTICAL, "open every day back up")
                 } else {
@@ -388,24 +280,25 @@ impl ReportState {
                     )
                 };
                 if ui.small_button(icon).on_hover_text(hover).clicked() {
-                    self.toggle_all_days(folded, env);
+                    let receipt = self.project_day_folds(folded, env.live_closes());
+                    self.ledger(LedgerIntent::FoldDays(receipt));
                 }
             });
         });
         if let Some(scope) = picked {
-            self.ledger_scope = scope;
+            self.ledger(LedgerIntent::Scope(scope));
             reload = true;
         }
         if reload {
-            self.rescope_ledger(env);
+            self.ledger(LedgerIntent::Rescope);
         }
     }
 
     /// Nothing closed and nothing open: say so, and offer the ticket.
-    fn draw_empty_state(&self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> Option<LedgerAction> {
+    fn draw_empty_state(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
         let palette = theme::get(ui.ctx());
         ui.add_space(12.0);
-        let headline = match self.ledger_scope.folder(env.symbol) {
+        let headline = match self.ledger_scope().folder(env.symbol) {
             Some(symbol) if !symbol.is_empty() => {
                 format!("No trades for {symbol}.")
             }
@@ -423,45 +316,16 @@ impl ReportState {
             .button("Open the ticket")
             .on_hover_text("switch to the Trading tab and place an order")
             .clicked();
-        open_ticket.then_some(LedgerAction::OpenTicket)
-    }
-
-    /// Apply what the list was pressed for, after it drew. The navigation,
-    /// if any, is the host's to perform and is handed back.
-    fn apply_row_presses(&mut self, presses: RowPresses) -> Option<LedgerAction> {
-        if let Some(selection) = presses.select {
-            self.selected_trade = selection;
-            if selection.is_some() {
-                self.sessions.state.selected_saved = None;
-                self.sessions.state.trade_selected();
-            }
+        if open_ticket {
+            self.ledger(LedgerIntent::OpenTicket);
         }
-        if let Some(selection) = presses.select_saved {
-            if selection.is_some() {
-                self.selected_trade = None;
-                self.sessions.state.trade_selected();
-            }
-            self.sessions.state.selected_saved = selection;
-        }
-        if let Some(press) = presses.session
-            && let Some(action) = self.apply_session_press(press)
-        {
-            return Some(action);
-        }
-        if presses.reveal_more {
-            self.ledger_pages = self.ledger_pages.saturating_add(1);
-        }
-        if let Some((day, collapsed)) = presses.fold {
-            self.set_day_collapsed(day, collapsed);
-        }
-        presses.navigate
     }
 
     /// The honesty line under the ledger: unreadable files and skipped rows
     /// are counted, never silently dropped.
     fn draw_ledger_disclosure(&self, ui: &mut egui::Ui) {
         let palette = theme::get(ui.ctx());
-        let Some(cache) = &self.history_cache else {
+        let Some(cache) = self.history_cache() else {
             return;
         };
         if cache.unreadable_files == 0 && cache.problem_rows == 0 {
@@ -734,27 +598,6 @@ pub(super) fn draw_totals_strip(
     let color = points_color_on(&palette, FOOTER.fill, net.1);
     let words = (net.0.as_str(), palette.mono_font(12.0), color);
     ui.label(financial_text_on(&palette, FOOTER, words));
-}
-
-/// What the Trades ledger asked of its host.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LedgerAction {
-    /// Center the chart on this round trip (`opened_ms`, `closed_ms`).
-    Navigate(i64, i64),
-    /// Switch the dock to the Trading tab — the empty state's call to
-    /// action.
-    OpenTicket,
-    /// Rename, tag or delete a session. The host applies it for every tab,
-    /// the same way the `session.journal.set` capability does.
-    Edit(JournalEdit),
-}
-
-#[cfg(test)]
-impl ReportState {
-    /// Whether the ledger holds a read of the folder.
-    pub(crate) fn ledger_loaded(&self) -> bool {
-        self.history_cache.is_some()
-    }
 }
 
 #[cfg(test)]

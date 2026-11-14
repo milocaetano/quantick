@@ -37,7 +37,11 @@ use crate::indicator_worker::IndicatorSource;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::indicators::state_file::SavedKind;
 #[cfg(any(feature = "scenario-harness", test))]
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::tab::CanvasLayout;
+#[cfg(any(feature = "drawing-harness", test))]
+use crate::toolrail::ToolRailExt as _;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::{orderflow_panel::open_on, ui_state::PanelSection};
 #[cfg(any(feature = "scenario-harness", test))]
@@ -61,9 +65,15 @@ pub(super) fn apply_launch_phase(
     #[cfg(any(feature = "scenario-harness", test))]
     book_and_strip(app, env);
     #[cfg(any(feature = "control-harness", test))]
-    app.control.apply_launch(control_launch);
+    app.control
+        .apply_launch(control_launch, &mut app.surfaces.access_panel);
     #[cfg(any(feature = "drawing-harness", test))]
-    if app.toolrail.apply_launch(rail_launch).favorites_staged {
+    if app
+        .surfaces
+        .toolrail
+        .apply_launch(rail_launch)
+        .favorites_staged
+    {
         app.runtime.workspace.session_mut().stage_favorites();
     }
     #[cfg(any(feature = "scenario-harness", test))]
@@ -74,7 +84,7 @@ pub(super) fn apply_launch_phase(
     // to be in place before any of them. They live with the fields they
     // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
     #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
-    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.drawings.chrome);
+    crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.surfaces.drawing_chrome);
     #[cfg(any(feature = "scenario-harness", test))]
     tape(app, env);
     #[cfg(any(feature = "scenario-harness", test))]
@@ -533,7 +543,7 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
         };
         match staged {
             Some(enabled) => {
-                app.replay_view.stage_day_before(enabled);
+                app.surfaces.replay_browser.stage_day_before(enabled);
                 tracing::info!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -583,7 +593,10 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             .var("QUANTICK_REPLAY_SESSION")
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let started = app.replay_view.autostart(speed, day.as_deref(), play);
+        let started = app
+            .surfaces
+            .replay_browser
+            .autostart(speed, day.as_deref(), play);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -592,10 +605,10 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             // once a stored pick can supply it, reading the hook back
             // would report an empty folder for a run that scanned a full
             // one — a log that lies about the input it acted on.
-            folder = app.replay_view.folder_in_use(),
+            folder = app.surfaces.replay_browser.folder_in_use(),
             speed,
             day = day.as_deref().unwrap_or("(first)"),
-            day_before = app.replay_view.day_before(),
+            day_before = app.surfaces.replay_browser.day_before(),
             play,
             started,
             action = if started { "load_first_session" } else { "open_browser" },
@@ -611,12 +624,12 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_REPLAY_BROWSER")
         .is_some_and(|value| value == "1")
     {
-        app.replay_view.open_browser();
+        app.surfaces.replay_browser.open_browser();
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "REPLAY_BROWSER_AUTOSTART",
-            folder = app.replay_view.folder_in_use(),
+            folder = app.surfaces.replay_browser.folder_in_use(),
             "opened the session browser"
         );
     }
@@ -632,7 +645,7 @@ fn replay(app: &mut QuantickApp, env: &ScenarioInputs) {
             "1" | "" => Some(app.active_tab().symbol.clone()),
             symbol => Some(symbol.to_string()),
         };
-        app.replay_view.open_get_data(symbol.as_deref());
+        app.surfaces.replay_browser.open_get_data(symbol.as_deref());
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -653,9 +666,9 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
         match name.trim() {
             "l2" => open_on(app.active_tab_mut(), PanelSection::L2),
             "bubbles" => open_on(app.active_tab_mut(), PanelSection::Bubbles),
-            "session" => app.dock.open_tab(DockTab::Session),
-            "trading" => app.dock.open_tab(DockTab::Trading),
-            "trades" => app.dock.open_tab(DockTab::Trades),
+            "session" => app.surfaces.dock.open_tab(DockTab::Session),
+            "trading" => app.surfaces.dock.open_tab(DockTab::Trading),
+            "trades" => app.surfaces.dock.open_tab(DockTab::Trades),
             _ => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -834,8 +847,13 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
         .as_deref()
         .and_then(quantick_workspace::canvas::menu_hook)
     {
-        let menus = &mut app.active_tab_mut().canvas.menus;
-        (menus.open, menus.picked) = (row.is_none().then_some(slot), row.map(|row| (slot, row)));
+        use quantick_ui_model::remove_chart::Intent;
+        let intent = row.map_or(Intent::SetMenuOpen(Some(slot)), |row| {
+            Intent::Pick(slot, row)
+        });
+        app.surfaces
+            .remove_chart
+            .update_scoped(app.runtime.tabs.active_id(), intent);
     }
     // The three file entries, reachable with no click for the same reason
     // (`.claude/skills/ui-harness`). Each runs the menu entry's own code

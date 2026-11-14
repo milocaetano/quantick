@@ -2,11 +2,13 @@
 use super::ArrangementHost;
 use crate::config::AppConfig;
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};
 use quantick_feed::{self as feed, FeedHandle, history_reach};
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) config: &'a AppConfig,
@@ -18,7 +20,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) harness: &'a crate::harness::Harness,
     pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
     pub(super) tz: &'a mut TzOffset,
-    pub(super) dock: &'a mut crate::dock::Dock,
+    pub(super) dock: &'a mut crate::surfaces::dock::DockSurface,
     pub(super) show_perf: &'a mut bool,
     pub(super) record_deals: &'a mut Option<bool>,
     pub(super) history: &'a mut quantick_session::HistorySettings,
@@ -36,7 +38,7 @@ pub(crate) struct ArrangementRead<'a> {
     pub(super) config: &'a AppConfig,
     pub(super) toolrail: &'a crate::toolrail::ToolRail,
     pub(super) tz: &'a TzOffset,
-    pub(super) dock: &'a crate::dock::Dock,
+    pub(super) dock: &'a quantick_ui_model::dock::State,
     pub(super) show_perf: bool,
     pub(super) record_deals: Option<bool>,
     pub(super) history: &'a quantick_session::HistorySettings,

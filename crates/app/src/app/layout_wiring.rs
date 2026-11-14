@@ -39,6 +39,7 @@
 //! allocates on a quiet frame.
 
 use crate::state::BarConfiguration;
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use quantick_drawings::{PaneMarks, PaneSync};
 use quantick_workspace::market_settings::{MarketSettings, PaneWrite};
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
@@ -149,8 +150,9 @@ pub(crate) struct LayoutAdapter<'a> {
     pub(super) store: &'a mut crate::workspace_store::LayoutStore,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
-    pub(super) rename: &'a mut Option<super::chrome::LayoutRename>,
-    pub(super) delete_confirm: &'a mut Option<LayoutId>,
+    pub(super) indicator_settings:
+        &'a mut crate::surfaces::indicator_settings::IndicatorSettingsSurface,
+    pub(super) dialogs: &'a mut crate::surfaces::layout_dialogs::LayoutDialogsSurface,
 }
 
 /// The layouts and the market store this cockpit opens with, the drawings an
@@ -296,7 +298,7 @@ impl LayoutAdapter<'_> {
         &self.tabs[self.active]
     }
     fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(self.toast, message, Instant::now());
     }
     fn end_inline_text_edit(&mut self) {
         self.drawing_chrome.commit_inline_text(self.tabs);
@@ -711,14 +713,13 @@ impl LayoutAdapter<'_> {
             return false;
         }
         self.indicators.registry.move_context_pane(tab_id, from, to);
-        if self.indicators.indicator_settings_target.tab == tab_id {
-            self.indicators.indicator_settings_target.side =
-                quantick_chart::indicator_registry::remap_side(
-                    self.indicators.indicator_settings_target.side,
-                    from,
-                    to,
-                );
-        }
+        self.indicator_settings.update(
+            quantick_ui_model::indicator_settings::Intent::ContextPaneMoved {
+                tab: tab_id,
+                from,
+                to,
+            },
+        );
         true
     }
 

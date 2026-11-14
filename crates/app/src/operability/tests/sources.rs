@@ -286,7 +286,7 @@ fn declaration(window: &str) -> &str {
 /// counted instead: a new one changes this number and fails the guard, which
 /// sends the author to this module to say which behaviour it belongs to. They
 /// are the legend and context-chart switches; the layout, preset and recent-file
-/// lists; the table's row and submenu labels; the two buttons Settings names from
+/// lists; the table's row and workspace-list labels; the two buttons Settings names from
 /// its own table; and the two `Chart N up` / `Chart N down` entries.
 pub(crate) const COMPUTED_MENU_LABELS: usize = 11;
 
@@ -294,7 +294,7 @@ pub(crate) const COMPUTED_MENU_LABELS: usize = 11;
 const MENU_SOURCES: &[&str] = &[
     "crates/app/src/theme/choice.rs",
     "crates/app/src/app/menu_bar.rs",
-    "crates/app/src/app/menu_bar/menus.rs",
+    "crates/ui-model/src/chrome/menu_bar.rs",
     "crates/app/src/app/menu_bar/settings_window.rs",
 ];
 
@@ -313,13 +313,18 @@ fn menu_labels() -> (Vec<String>, usize) {
     let mut computed = 0usize;
     // `.menu_button(` is checked before `.button(` would match it; it cannot,
     // because the character before `button(` there is `_`, not `.`.
-    for opener in [".button(", "egui::Button::new(", ".menu_button("] {
+    for opener in [
+        ".button(",
+        "egui::Button::new(",
+        ".menu_button(",
+        "Row::new(",
+    ] {
         let mut cursor = 0usize;
         while let Some(found) = text[cursor..].find(opener) {
             let argument = cursor + found + opener.len();
             cursor = argument;
-            if text[argument..].starts_with('"') {
-                let literal = &text[argument + 1..];
+            let argument = text[argument..].trim_start();
+            if let Some(literal) = argument.strip_prefix('"') {
                 let end = literal
                     .find('"')
                     .expect("a string literal in the menu bar is closed");
@@ -359,13 +364,13 @@ fn menu_labels() -> (Vec<String>, usize) {
 pub(crate) fn registered() -> Vec<Registered> {
     let mut entries = Vec::new();
 
-    for variant in enum_variants("app", "ToolbarAction") {
+    for variant in enum_variants("ui-model", "ToolbarAction") {
         entries.push(Registered::new(Source::ToolbarAction, variant));
     }
-    for variant in enum_variants("app", "StripAction") {
+    for variant in enum_variants("ui-model", "StripAction") {
         entries.push(Registered::new(Source::StripAction, variant));
     }
-    for variant in enum_variants("app", "TabAction") {
+    for variant in enum_variants("ui-model", "TabAction") {
         entries.push(Registered::new(Source::TabAction, variant));
     }
     for variant in enum_variants("chart-interaction", "ToolboxDock") {
@@ -388,7 +393,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     // `[Tool::Pointer, Tool::Crosshair]` here would let a third non-drawing
     // tool ship unclaimed with this guard green, which is the failure the
     // guard exists to catch.
-    for variant in enum_variants("app", "Tool") {
+    for variant in enum_variants("ui-model", "Tool") {
         entries.push(Registered::new(Source::RailTool, variant));
     }
     for preset in crate::canvas_layout::LAYOUT_PRESETS {

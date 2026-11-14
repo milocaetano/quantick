@@ -7,8 +7,9 @@
 //! pointer is over, the marks one pane paints on another's behalf, the focus
 //! rule, the collapsed rail and the divider between the columns.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
-use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIdentity};
+use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{PANE_MENU_BUTTON_PX, seat_slot};
 use smallvec::SmallVec;
@@ -24,16 +25,14 @@ use crate::pane::{
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
 
 pub(crate) mod tree;
 
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
 pub struct CanvasChrome<'a> {
-    pub toolrail: &'a mut ToolRail,
+    pub(crate) surfaces: &'a mut crate::surfaces::Surfaces,
     pub presets: &'a crate::drawings::presets::PresetStore,
-    pub drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     /// See [`PaneChrome::begin_text_edit`].
     pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
@@ -175,10 +174,10 @@ impl Tab {
         self.canvas.mirror_split(columns);
         let (frame, rects) = if columns {
             let frame = self.canvas_frame(area);
-            let rects = self.draw_context_column(ui, &frame, chrome);
+            let rects = self.draw_context_column(tab_id, ui, &frame, chrome);
             (frame, rects)
         } else {
-            self.draw_tree(ui, area, chrome)
+            self.draw_tree(tab_id, ui, area, chrome)
         };
         self.canvas.drawn_bands = rects.pane_bands.clone();
 
@@ -200,7 +199,7 @@ impl Tab {
         self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
-        if let Some(pane) = chrome.drawing_chrome.menu_target() {
+        if let Some(pane) = chrome.surfaces.drawing_chrome.menu_target() {
             self.aim_drawing_at(pane);
         }
 
@@ -244,6 +243,7 @@ impl Tab {
     /// chart rect below it.
     fn draw_context_column(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         frame: &CanvasFrame,
         chrome: &mut CanvasChrome<'_>,
@@ -301,7 +301,14 @@ impl Tab {
                     pane_areas.body,
                     palette.layout(crate::time_header::HEIGHT_PX),
                 );
-                self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
+                self.draw_time_header(
+                    ui,
+                    slot,
+                    areas.header,
+                    bar_inputs,
+                    job_slot.take(),
+                    (tab_id, chrome.surfaces),
+                );
                 rects
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
@@ -318,7 +325,7 @@ impl Tab {
                 egui::Rounding::ZERO,
                 palette.flow_surface(),
             );
-            self.draw_flow_header(ui, areas.band, chrome);
+            self.draw_flow_header(tab_id, ui, areas.band, chrome);
             rects.flow_side_row = Some((areas.side_row, bar_inputs));
             self.flow_pane.frame.side_row = Some(areas.side_row);
             PaneAreas {
@@ -421,14 +428,18 @@ impl Tab {
                 link,
                 seam_words: seam_words.clone(),
             };
-            let intent = pane.draw_capsules(ui, side, &sides);
-            if let Some(intent) = intent {
-                // A settings window edits the focused chart, and this is the
-                // one the hand asked about.
-                if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
-                    focus = Some(side);
-                }
-                pane.apply_header_intent(intent, chrome.layers);
+            let intent = pane.draw_capsules(
+                ui,
+                side,
+                &sides,
+                chrome.surfaces.pane_header.scoped(pane.id).0,
+            );
+            let intent = crate::pane_header::resolve(chrome.surfaces, pane.id, intent);
+            if intent.focus {
+                focus = Some(side);
+            }
+            if let Some(request) = intent.request {
+                pane.apply_header_intent(request, chrome.layers);
             }
         }
         if let Some(side) = focus {
@@ -440,6 +451,7 @@ impl Tab {
     /// changed here wherever focus sits.
     fn draw_flow_header(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         strip: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
@@ -447,9 +459,10 @@ impl Tab {
         let chip = self.connection.chip();
         let slot = self.connection.slot(self.session.history_note());
         let pane = &mut self.flow_pane;
-        let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
-        let row = crate::pane_header::FlowRow {
-            state: pane.flow_header_state(),
+        let snapshot = quantick_ui_model::pane_header::Snapshot {
+            identity: PaneIdentity::OrderFlow,
+            bars: pane.spec.spec(),
+            flow: pane.flow_header_state(),
             chip,
             slot,
             settings_open: pane
@@ -458,9 +471,36 @@ impl Tab {
                 .is_some_and(|tape| tape.settings_panel.is_open()),
             lights_on: pane.surface() == quantick_appearance::ChartSurface::LitFlow,
         };
-        let painted = &mut pane.frame.header_controls;
-        let intent = crate::pane_header::draw_marked(ui, strip, &header, pane.id, row, painted);
-        self.menu_button(ui, strip, None, theme::get(ui.ctx()).flow_gear_ink());
+        chrome.surfaces.pane_header.update_scoped(
+            pane.id,
+            quantick_ui_model::pane_header::Intent::Refresh(snapshot),
+        );
+        chrome.surfaces.pane_header.scoped(pane.id).1.salt = pane.id;
+        let ctx = ui.ctx().clone();
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(strip));
+        let response = chrome.surfaces.draw_slot_scoped(
+            pane.id,
+            quantick_ui_model::Slot::PaneHeader,
+            &mut crate::surfaces::ViewContext {
+                ctx: &ctx,
+                ui: Some(&mut child),
+            },
+        );
+        pane.frame.header_controls = chrome
+            .surfaces
+            .pane_header
+            .scoped(pane.id)
+            .1
+            .painted
+            .clone();
+        let intent = crate::pane_header::outcome(response);
+        self.menu_button(
+            ui,
+            strip,
+            None,
+            theme::get(ui.ctx()).flow_gear_ink(),
+            (tab_id, chrome.surfaces),
+        );
         self.apply_flow_intent(intent, chrome);
     }
 
@@ -483,7 +523,17 @@ impl Tab {
                 link: self.connection.spoken_link(crate::metrics::wall_clock_ms()),
             };
             let pane = &mut self.flow_pane;
-            let (intent, indicators) = pane.draw_flow_sides(ui, row, &sides);
+            chrome.surfaces.pane_header.update_scoped(
+                pane.id,
+                quantick_ui_model::pane_header::Intent::RefreshFlow(pane.flow_header_state()),
+            );
+            let (intent, indicators) = pane.draw_flow_sides(
+                ui,
+                row,
+                &sides,
+                chrome.surfaces.pane_header.scoped(pane.id).0,
+            );
+            let intent = crate::pane_header::resolve(chrome.surfaces, pane.id, intent);
             if indicators {
                 pane.request_indicator_picker();
             }
@@ -492,14 +542,16 @@ impl Tab {
         crate::pane_header::close_unseen_window_list(ui.ctx());
     }
 
-    fn apply_flow_intent(&mut self, intent: Option<HeaderIntent>, chrome: &mut CanvasChrome<'_>) {
-        if let Some(intent) = intent {
-            // A settings window edits the focused chart, and this is the one
-            // the hand asked about.
-            if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
-                self.focus = PaneSide::Flow;
-            }
-            self.flow_pane.apply_header_intent(intent, chrome.layers);
+    fn apply_flow_intent(
+        &mut self,
+        effect: quantick_ui_model::pane_header::Effects,
+        chrome: &mut CanvasChrome<'_>,
+    ) {
+        if effect.focus {
+            self.focus = PaneSide::Flow;
+        }
+        if let Some(request) = effect.request {
+            self.flow_pane.apply_header_intent(request, chrome.layers);
         }
     }
 
@@ -512,6 +564,7 @@ impl Tab {
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
         job_slot: Option<(String, bool)>,
+        (tab_id, surfaces): (u64, &mut crate::surfaces::Surfaces),
     ) {
         let rebuilding = self
             .loading
@@ -528,11 +581,17 @@ impl Tab {
                 crate::loading::slot_width(ui, slot) + quantick_chart::pane_header::GROUP_GAP_PX
             });
         let pane = &mut self.time_panes[slot];
-        let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
+        let snapshot = quantick_ui_model::pane_header::Snapshot::time(pane.spec.spec());
+        surfaces.pane_header.update_scoped(
+            pane.id,
+            quantick_ui_model::pane_header::Intent::Refresh(snapshot),
+        );
+        let (model, _) = surfaces.pane_header.scoped(pane.id);
+        let header = model.header.as_ref().expect("refreshed header");
         let spec = &mut pane.spec;
         pane.frame.header_controls.clear();
         let indicators = crate::time_header::draw(ui, strip, pane.id, reserve_px, |ui| {
-            crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
+            crate::pane_header::bars_control(ui, header, pane.id, spec, bar_inputs, rebuilding)
         });
         if let Some(job_slot) = &job_slot {
             let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right()
@@ -540,7 +599,13 @@ impl Tab {
                 - PANE_MENU_BUTTON_PX;
             crate::loading::draw_slot(ui, right, strip, job_slot, None);
         }
-        self.menu_button(ui, strip, Some(slot), theme::get(ui.ctx()).text_muted());
+        self.menu_button(
+            ui,
+            strip,
+            Some(slot),
+            theme::get(ui.ctx()).text_muted(),
+            (tab_id, surfaces),
+        );
         if indicators {
             self.time_panes[slot].request_indicator_picker();
         }
@@ -554,10 +619,24 @@ impl Tab {
         strip: egui::Rect,
         seat: Option<usize>,
         ink: egui::Color32,
+        (tab_id, surfaces): (u64, &mut crate::surfaces::Surfaces),
     ) {
         let canvas = &mut self.canvas;
         if let Some(slot) = seat_slot(&canvas.state, &mut canvas.seats, seat) {
-            crate::pane_menu::button(ui, strip, (slot, &canvas.state), &mut canvas.menus, ink);
+            surfaces.remove_chart.with_scoped_updates(
+                tab_id,
+                |_| {},
+                |_, session| {
+                    crate::pane_menu::button(
+                        ui,
+                        strip,
+                        (slot, &canvas.state),
+                        &mut canvas.menus,
+                        ink,
+                        session,
+                    );
+                },
+            );
         }
     }
 
@@ -644,9 +723,9 @@ impl Tab {
         let mut chrome = PaneChrome {
             tab: tab_id,
             side: PaneSide::Flow,
-            toolrail: chrome.toolrail,
+            toolrail: &mut chrome.surfaces.toolrail,
             presets: chrome.presets,
-            drawing_chrome: chrome.drawing_chrome,
+            drawing_chrome: &mut chrome.surfaces.drawing_chrome,
             begin_text_edit: chrome.begin_text_edit,
             style: chrome.style,
             tz: chrome.tz,

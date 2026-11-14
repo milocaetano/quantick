@@ -102,7 +102,7 @@ fn a_real_double_click_on_open_canvas_centres_the_live_price_at_its_spacing() {
     assert!(pane.model.viewport.follows_live());
     assert_eq!(pane.model.viewport.px_per_bar(), 20.0, "spacing kept");
     assert_last_price_centred(pane);
-    assert!(!app.surfaces.chart_settings.is_open());
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
 }
 
 /// Already live, each real double click on open canvas zooms in once and
@@ -130,7 +130,7 @@ fn a_real_double_click_while_live_zooms_in_each_time() {
             "one zoom a pair"
         );
         assert_last_price_centred(pane);
-        assert!(!app.surfaces.chart_settings.is_open());
+        assert!(!app.surfaces.chart_settings.model_state.is_open());
     }
 }
 
@@ -167,7 +167,10 @@ fn a_real_triple_click_doubles_the_spacing_though_its_double_moved_a_candle_unde
     assert_eq!(pane.model.viewport.px_per_bar(), 40.0, "the triple doubles");
     assert_last_price_centred(pane);
     run_frame(&mut app, &ctx);
-    assert!(!app.surfaces.chart_settings.is_open(), "no candle settings");
+    assert!(
+        !app.surfaces.chart_settings.model_state.is_open(),
+        "no candle settings"
+    );
 }
 
 /// A candle's double click opens the Candles settings over a view left
@@ -183,12 +186,12 @@ fn a_real_double_click_on_a_candle_opens_its_settings_and_the_next_click_zooms_n
     click(&mut app, &ctx, candle);
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.chart_settings.is_open(),
+        app.surfaces.chart_settings.model_state.is_open(),
         "the Candles settings"
     );
     assert_eq!(candles_view(&app), before, "the view kept");
     // Closed so the window cannot take the next click off the canvas.
-    app.surfaces.chart_settings.close();
+    app.surfaces.chart_settings.model_state.close();
     click(&mut app, &ctx, open);
     assert!(ctx.input(|input| input.pointer.button_triple_clicked(PRIMARY)));
     let pane = &app.active_tab().flow_pane;
@@ -252,7 +255,7 @@ fn a_real_double_click_on_the_tape_returns_it_to_live_and_then_zooms_the_tape_on
         Some(manual),
         "nor the price"
     );
-    assert!(!app.surfaces.chart_settings.is_open());
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
 }
 
 /// A click, then a real double click past one double-click delay but inside
