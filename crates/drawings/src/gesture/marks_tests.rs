@@ -76,6 +76,8 @@ fn a_recut_moves_a_body_drag_with_the_store() {
     marks(&mut drawings, &mut gestures, &state, &spec).reanchor(20);
 
     assert_eq!(drawings.items()[0].points[0].bar, 6.5);
+    assert_eq!(drawings.items()[0].points[0].time_ms, Some(12_000));
+    assert!(!drawings.items()[0].off_series, "still on its own instant");
     assert_eq!(dragged_bar(&gestures), 6.5);
 }
 

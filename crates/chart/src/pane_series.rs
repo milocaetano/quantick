@@ -339,3 +339,7 @@ impl PaneSeriesRead<'_> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "pane_series_tests.rs"]
+mod tests;
