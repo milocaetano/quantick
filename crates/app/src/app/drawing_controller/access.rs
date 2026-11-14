@@ -3,6 +3,7 @@
 use crate::app::arrangement_host::ArrangementHost;
 use crate::drawings;
 use crate::pane::{ChartPane, PaneSide};
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 
 pub(crate) struct DrawingReadAccess<'a> {
     tabs: &'a ArrangementHost,
@@ -300,18 +301,27 @@ impl DrawingAccess<'_> {
             .map(|instance| (instance.spec.clone(), instance.preset.clone()))
     }
     #[cfg(any(feature = "drawing-harness", test))]
-    pub(super) fn text_note_point(&self) -> Option<drawings::ChartPoint> {
+    pub(super) fn text_note_point(
+        &self,
+        chrome: &mut crate::surfaces::drawing_chrome::DrawingChromeSurface,
+    ) -> Option<drawings::ChartPoint> {
         let pane = self.pane();
         let slots = pane.slots();
         let close = pane
             .closed_bar(slots.saturating_sub(1))
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close));
-        let plan = crate::surfaces::drawing_chrome::launch::NotePlacement::plan(
-            pane.frame.chart_area.is_some(),
-            slots,
-            close,
-            pane.frame.auto_range,
-        )?;
-        Some(plan.point(pane.slot_open_time(plan.slot)))
+        use quantick_ui_model::drawing_chrome::scenario::{Effect, Intent, SeriesFacts};
+        let Some(Effect::Note(plan)) = chrome.scenario(Intent::PlanNote {
+            chart_available: pane.frame.chart_area.is_some(),
+            series: SeriesFacts {
+                slots,
+                last_close: close,
+                auto_range: pane.frame.auto_range,
+            },
+        }) else {
+            return None;
+        };
+        let time = pane.slot_open_time(plan.slot);
+        Some(crate::surfaces::drawing_chrome::launch::NotePlacement::point(plan, time))
     }
 }

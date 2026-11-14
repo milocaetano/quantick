@@ -10,22 +10,21 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_appearance::paper::{RowKind, RowLook, SESSION_HEAD_PAD, SIDE_GAP_PX, ledger_row};
-use quantick_paper::report::LoadedHistory;
 use quantick_paper::report::fit::fit_session_head;
 use quantick_paper::report::ledger_state::{
-    LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress, complete_tag,
-    tag_suggestions,
+    LedgerEdit, LedgerViewChange, SessionPress, complete_tag, tag_suggestions,
 };
 use quantick_paper::report::session_edit::JournalEdit;
-use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef, title_span};
+use quantick_paper::report::sessions::{SessionKey, TradeRef, title_span};
 use quantick_sim::history::SessionSource;
 
 use super::rows::{Bold, draw_header};
-use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
-use crate::paper_calendar::{CalendarAction, CalendarState, DayIndex, draw_month, today};
+use super::{LEDGER_ROW_HEIGHT_PX, Paint, SourceFilter};
+use crate::paper_calendar::{draw_month, today};
 use crate::paper_chrome::pill_toggle;
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_ui_model::paper_report::LedgerIntent;
 
 /// Indent of the hidden-session line under its caption.
 const SESSION_INDENT_PX: f32 = 14.0;
@@ -36,54 +35,26 @@ const TAG_SUGGESTIONS: usize = 6;
 /// One calendar cell of the ledger's date picker.
 const PICKER_CELL_PX: egui::Vec2 = egui::vec2(30.0, 24.0);
 
-/// What the ledger's session layer remembers between frames: the headless
-/// state, and the date picker the window alone has.
-#[derive(Default)]
-pub(crate) struct LedgerSessions {
-    pub(super) state: LedgerState,
-    /// The date picker's month and whether it is open.
-    calendar: CalendarState,
-    /// The picker's day tints, built when it first opens after a reload.
-    days: Option<DayIndex>,
-}
-
 pub(super) use quantick_paper::report::ledger_rows::SessionHead;
 
-impl LedgerSessions {
-    /// The folder was read again.
-    pub(super) fn reloaded(&mut self, history: &LoadedHistory) {
-        self.state.reloaded(history);
-        self.days = None;
-    }
-
-    /// Set the view from outside the filter row; a picked span the change
-    /// replaced stops showing in the picker.
-    pub(super) fn view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
-        if change.clear || change.range.is_some() {
-            self.calendar.selection = Default::default();
-        }
-        let moved = self.state.view.apply(change);
-        (self.state.view.clone(), moved)
-    }
-
+impl Paint<'_, '_> {
     /// Source pills, the date picker and the search box. The cut follows
     /// the filter by itself.
-    pub(super) fn draw_filter_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        history: Option<&LoadedHistory>,
-        tz: TzOffset,
-    ) {
+    pub(super) fn draw_filter_row(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
         ui.horizontal_wrapped(|ui| {
             for pill in SourceFilter::PILLS {
-                let on = self.state.view.filter.source == pill;
+                let on = self.sessions().view.filter.source == pill;
                 if pill_toggle(ui, pill.label(), on, pill.hover()).clicked() {
-                    self.state.view.filter.source = pill;
+                    self.ledger(LedgerIntent::View(LedgerViewChange {
+                        source: Some(pill),
+                        ..Default::default()
+                    }));
                 }
             }
-            self.draw_date_button(ui, history, tz);
+            self.draw_date_button(ui, tz);
+            let mut search = self.sessions().view.filter.search.clone();
             ui.add(
-                egui::TextEdit::singleline(&mut self.state.view.filter.search)
+                egui::TextEdit::singleline(&mut search)
                     .id_salt("paper_ledger_search")
                     .hint_text("#tag or session")
                     .desired_width(SEARCH_FIELD_PX),
@@ -91,23 +62,24 @@ impl LedgerSessions {
             .on_hover_text(
                 "#tags must all be on a trade; other words must all appear in its session's name",
             );
+            if search != self.sessions().view.filter.search {
+                self.ledger(LedgerIntent::View(LedgerViewChange {
+                    search: Some(search),
+                    ..Default::default()
+                }));
+            }
         });
     }
 
-    fn draw_date_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        history: Option<&LoadedHistory>,
-        tz: TzOffset,
-    ) {
-        let label = match self.state.view.filter.range {
+    fn draw_date_button(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
+        let label = match self.sessions().view.filter.range {
             Some(range) => format!("{} {}", icons::CALENDAR_BLANK, range.label()),
             None => format!("{} any date", icons::CALENDAR_BLANK),
         };
         let button = pill_toggle(
             ui,
             &label,
-            self.state.view.filter.range.is_some(),
+            self.sessions().view.filter.range.is_some(),
             "pick a day, or a second day for a span - tinted days hold trades",
         );
         let id = ui.id().with("paper_ledger_dates");
@@ -117,28 +89,29 @@ impl LedgerSessions {
         if !ui.memory(|memory| memory.is_popup_open(id)) {
             return;
         }
-        let days = self.days.get_or_insert_with(|| {
-            history.map_or_else(DayIndex::default, |history| {
-                DayIndex::build(history.rows.iter().map(|row| &row.trade), tz)
-            })
-        });
-        let calendar = &mut self.calendar;
-        let mut picked = None;
+        self.ledger(LedgerIntent::PrepareCalendar(tz));
+        let days = self
+            .ledger_days()
+            .as_ref()
+            .expect("prepared calendar index");
+        let mut calendar = self.ledger_calendar();
         egui::popup::popup_below_widget(
             ui,
             id,
             &button,
             egui::PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                if draw_month(ui, days, calendar, PICKER_CELL_PX, today(tz))
-                    == Some(CalendarAction::SelectionChanged)
-                {
-                    picked = Some(calendar.selection.range());
-                }
+                let _action = draw_month(ui, days, &mut calendar, PICKER_CELL_PX, today(tz));
             },
         );
-        if let Some(range) = picked {
-            self.state.view.filter.range = range;
+        if (calendar.month, calendar.selection, calendar.open)
+            != (
+                self.ledger_calendar().month,
+                self.ledger_calendar().selection,
+                self.ledger_calendar().open,
+            )
+        {
+            self.ledger(LedgerIntent::Calendar(calendar));
         }
     }
 
@@ -146,7 +119,7 @@ impl LedgerSessions {
     /// filter cuts.
     pub(super) fn draw_filter_status(&mut self, ui: &mut egui::Ui, shown: usize, total: usize) {
         let palette = theme::get(ui.ctx());
-        if self.state.view.filter.is_default() {
+        if self.sessions().view.filter.is_default() {
             return;
         }
         ui.horizontal_wrapped(|ui| {
@@ -164,8 +137,10 @@ impl LedgerSessions {
                 .on_hover_text("drop every filter: both sources, any date, no search")
                 .clicked()
             {
-                self.state.view.filter = LedgerFilter::default();
-                self.calendar.selection = Default::default();
+                self.ledger(LedgerIntent::View(LedgerViewChange {
+                    clear: true,
+                    ..Default::default()
+                }));
             }
         });
     }
@@ -175,28 +150,14 @@ impl LedgerSessions {
     pub(super) fn draw_tag_strip(
         &mut self,
         ui: &mut egui::Ui,
-        target: Option<(SessionKey, TradeRef, &[String])>,
+        target: Option<(SessionKey, TradeRef, Vec<String>)>,
         focus: bool,
-    ) -> Option<JournalEdit> {
+    ) {
         let palette = theme::get(ui.ctx());
-        let Some((session, trade, tags)) = target else {
-            self.state.tag_text = None;
-            return None;
+        self.ledger(LedgerIntent::TagTarget(target));
+        let Some((_, _, mut text)) = self.sessions().tag_text.clone() else {
+            return;
         };
-        if self
-            .state
-            .tag_text
-            .as_ref()
-            .is_none_or(|(key, at, _)| *key != session || *at != trade)
-        {
-            let text = tags
-                .iter()
-                .map(|tag| format!("#{tag}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.state.tag_text = Some((session.clone(), trade, text));
-        }
-        let (_, _, text) = self.state.tag_text.as_mut()?;
         let mut send = false;
         let mut field_id = None;
         ui.horizontal_wrapped(|ui| {
@@ -213,7 +174,7 @@ impl LedgerSessions {
                     .on_hover_text("set this trade's tags - none clears them")
                     .clicked();
                 let field = ui.add(
-                    egui::TextEdit::singleline(text)
+                    egui::TextEdit::singleline(&mut text)
                         .id_salt("paper_ledger_tags")
                         .hint_text("#tag #tag")
                         .desired_width(ui.available_width()),
@@ -227,13 +188,14 @@ impl LedgerSessions {
         });
         let mut completed = false;
         ui.horizontal_wrapped(|ui| {
-            for (tag, count) in tag_suggestions(&self.state.known_tags, text, TAG_SUGGESTIONS) {
+            for (tag, count) in tag_suggestions(&self.sessions().known_tags, &text, TAG_SUGGESTIONS)
+            {
                 if ui
                     .small_button(egui::RichText::new(format!("#{tag} {count}")).small())
                     .on_hover_text("complete the tag being typed with this one")
                     .clicked()
                 {
-                    *text = complete_tag(text, tag);
+                    text = complete_tag(&text, tag);
                     completed = true;
                 }
             }
@@ -249,11 +211,17 @@ impl LedgerSessions {
             state.store(ui.ctx(), id);
             ui.memory_mut(|memory| memory.request_focus(id));
         }
-        send.then(|| JournalEdit::Tag {
-            session,
-            trade,
-            tags: text.split_whitespace().map(str::to_owned).collect(),
-        })
+        if self
+            .sessions()
+            .tag_text
+            .as_ref()
+            .is_some_and(|(_, _, held)| *held != text)
+        {
+            self.ledger(LedgerIntent::TagText(text));
+        }
+        if send {
+            self.ledger(LedgerIntent::SubmitTags);
+        }
     }
 }
 

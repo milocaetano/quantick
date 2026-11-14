@@ -1,0 +1,5 @@
+# #923: reviewed one-time scoped catalog routing and pane View/host integration.
+# Headless state and policy live in ui-model; this delta pays only app UI/host glue.
+# Authorized on #923 by the #920 coordinator. Original feature reduction targets stand.
+crates/app +99
+!budget +99

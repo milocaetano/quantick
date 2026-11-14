@@ -144,7 +144,7 @@ fn alert_target_binding_end_to_end() {
         "rectangle",
         &[egui::pos2(500.0, 300.0), egui::pos2(650.0, 420.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(index));
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
@@ -459,12 +459,12 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
         "rectangle",
         &[egui::pos2(500.0, 300.0), egui::pos2(700.0, 420.0)],
     );
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(rectangle));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the selection raised the bar"
     );
 
@@ -474,10 +474,12 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
     assert!(app.surfaces.alerts.is_open());
     assert!(!app.surfaces.alerts.is_editing());
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the manager sidebar coexists with the selected drawing toolbar"
     );
-    app.dock.select(crate::dock::DockTab::Session);
+    let _ = (app.surfaces.dock).update(quantick_ui_model::dock::Intent::Select(
+        crate::dock::DockTab::Session,
+    ));
     run_frame(&mut app, &ctx);
     assert!(
         !app.surfaces.alerts.is_open(),
@@ -486,19 +488,19 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
 
     app.surfaces.alerts.open_drawing(None);
     assert!(app.surfaces.alerts.is_editing());
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_none(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_none(),
         "the bar stands down while the alert surface is open"
     );
 
-    app.surfaces.alerts = Default::default();
+    let _ = (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Close);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the bar returns once the alert surface closes"
     );
 }
@@ -507,18 +509,20 @@ fn the_context_bar_yields_to_the_open_alert_surface() {
 /// price or drawing." while alerts existed. A filtered-out list says so.
 #[test]
 fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
-    use crate::surfaces::{Surface, SurfaceEnv, alerts::AlertSurface, alerts::Request};
+    use crate::surfaces::{Surface, SurfaceEnv, alerts::Request};
     let (app, _commands) = app_with_history(200);
     let mut book = quantick_alerts::AlertBook::default();
     book.command(AlertCommand::Create(spec(&app)), 0)
         .expect("the alert is valid");
-    let mut surface = AlertSurface::default();
+    let mut surface = crate::surfaces::alerts::new_surface();
     let open = Request {
         open: true,
         ..Request::default()
     };
-    surface.apply(&mut book, open).expect("opening is admitted");
-    surface.search = "nothing matches".into();
+    let _ = surface.update(quantick_ui_model::alerts::Intent::Apply(Box::new(open)));
+    let _ = surface.update(quantick_ui_model::alerts::Intent::Search(
+        "nothing matches".into(),
+    ));
     let env = SurfaceEnv {
         alerts: Some(&book),
         ..SurfaceEnv::quiet(std::time::Instant::now())
@@ -528,7 +532,7 @@ fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
     for _ in 0..3 {
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             surface.draw(ctx, &env);
-            surface.draw_manager_panel(ctx, &book, None, None);
+            crate::surfaces::alerts::draw_manager_panel(&mut surface, ctx, &book, None, None);
         });
         labels = output
             .shapes
@@ -553,13 +557,13 @@ fn a_search_that_hides_every_alert_does_not_claim_there_are_none() {
 /// sat hidden behind the footer. Every Tab stop must be on screen.
 #[test]
 fn tab_keeps_the_focused_control_visible_in_a_short_alert_editor() {
-    use crate::surfaces::{Surface, SurfaceEnv, alerts::AlertSurface};
+    use crate::surfaces::{Surface, SurfaceEnv};
     let (app, _commands) = app_with_history(200);
     let tab = app.active_tab();
     let context =
         super::super::alerts_runtime::context(tab, &tab.flow_pane, app.runtime.tabs.active_id(), 0);
     let book = quantick_alerts::AlertBook::default();
-    let mut surface = AlertSurface::default();
+    let mut surface = crate::surfaces::alerts::new_surface();
     surface.open_drawing(None);
     let env = SurfaceEnv {
         alerts: Some(&book),
@@ -627,11 +631,11 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
             run_frame(&mut app, &ctx);
             let chart = egui::pos2(500.0, 300.0);
             let drawing = place_drawing(&mut app, &ctx, "horizontal-line", &[chart]);
-            app.toolrail.arm(Tool::Pointer);
+            app.surfaces.toolrail.arm(Tool::Pointer);
             app.drawing_pane_mut().drawings.select(Some(drawing));
             app.apply_menu_command(super::super::menu_bar::MenuCommand::OpenAlerts);
             if hide_strip {
-                app.dock.toggle_visible();
+                app.surfaces.dock.toggle_visible();
             }
             run_frame(&mut app, &ctx);
             let panel = egui::containers::panel::PanelState::load(
@@ -645,7 +649,11 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
                 &ctx,
                 vec![egui::Event::PointerMoved(manager), key_press(key)],
             );
-            assert!(crate::dock::holds_pointer(&app.dock, &ctx, true));
+            assert!(crate::dock::holds_pointer(
+                &app.surfaces.dock.model_state,
+                &ctx,
+                true
+            ));
             assert_eq!(app.drawing_pane_mut().drawings.items().len(), 1);
             assert!(app.drawing_pane_mut().drawings.selected().is_some());
 
@@ -658,7 +666,7 @@ fn alerts_manager_owns_delete_keys_in_its_viewport() {
             input.viewports.entry(other).or_default();
             let _ = ctx.run(input, |ctx| {
                 assert!(
-                    !crate::dock::holds_pointer(&app.dock, ctx, true),
+                    !crate::dock::holds_pointer(&app.surfaces.dock.model_state, ctx, true),
                     "the other viewport cannot inherit this manager's rectangle"
                 );
             });

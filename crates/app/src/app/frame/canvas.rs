@@ -5,12 +5,34 @@
 //! that tab after it drew: the one overlay over the panes with no bars, and the
 //! recovery popup the status word opens.
 
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_feed::stall::Stall;
 
 use crate::feed_notice;
 use crate::loading;
 use crate::tab::Tab;
+
+/// Synchronize the existing canvas owners before painting or accepting input.
+pub(super) fn prepare(
+    tabs: &mut crate::app::ArrangementHost,
+    surfaces: &mut crate::surfaces::Surfaces,
+    config: &crate::config::AppConfig,
+    style: &crate::style::ChartStyle,
+    background: Option<egui::Color32>,
+) -> (egui::Color32, crate::config::FeedCapabilities, bool) {
+    surfaces.drawing_chrome.sync_content_editing(tabs);
+    surfaces.retain_slot_scopes(quantick_ui_model::Slot::PaneHeader, |scope| {
+        tabs.iter()
+            .any(|tab| tab.panes().any(|(pane, _)| pane.id == scope))
+    });
+    let tab = &tabs[tabs.active_index()];
+    (
+        background.unwrap_or_else(|| crate::pane::background_color(style)),
+        tab.capabilities(config),
+        tab.side_note(config).is_some(),
+    )
+}
 
 /// What the canvas answers for the stages after it: the feed chip and popup
 /// the tail publishes, and whether a placement asked for its note typed.
@@ -42,7 +64,7 @@ impl CanvasAnswers {
     ) -> Self {
         Self {
             popup_tab,
-            popup_open: app.chrome.feed_popup_tab == Some(popup_tab),
+            popup_open: app.surfaces.feed_notice.model_state.open() == Some(popup_tab),
             chip_clicked: status.word_clicked,
             chip_rect: status.word_rect,
             notice_action: if status.reconnect {
@@ -91,12 +113,12 @@ pub(super) fn settle_overlay_control(
 /// published their rects on the draw just before this, so these are this frame's
 /// geometry rather than the previous one's.
 pub(super) fn overlays(
+    surface: &mut crate::surfaces::feed_notice::FeedNoticeSurface,
     ui: &mut egui::Ui,
     area: egui::Rect,
     tab: &Tab,
     config: &crate::config::AppConfig,
-    stall: Option<&Stall>,
-    now: i64,
+    (stall, now): (Option<&Stall>, i64),
     answers: &mut CanvasAnswers,
 ) {
     let feed_name = source_name(tab, config);
@@ -118,14 +140,20 @@ pub(super) fn overlays(
     if let Some(chip) = answers.chip_rect
         && answers.popup_open
     {
-        draw_recovery_popup(ui, area, chip, tab, feed_name, stall, answers);
+        surface.with_pass(
+            quantick_ui_model::Slot::Overlay,
+            |_| {},
+            |view, _| {
+                draw_recovery_popup(view, ui, (area, chip), tab, feed_name, stall, answers);
+            },
+        );
     }
 }
 
 fn draw_recovery_popup(
+    view: &mut crate::surfaces::feed_notice::View,
     ui: &mut egui::Ui,
-    area: egui::Rect,
-    chip: egui::Rect,
+    (area, chip): (egui::Rect, egui::Rect),
     tab: &Tab,
     feed_name: &str,
     stall: Option<&Stall>,
@@ -151,19 +179,9 @@ fn draw_recovery_popup(
         }
     };
     let report = report.with_roll(tab.link.roll_note());
-    // A click anywhere else puts it away, measured against the rectangles that
-    // were actually drawn — so a click on the edge of what the trader can see
-    // is never read as a click outside it, and the popup is laid out once
-    // rather than measured again to ask.
-    let (action, popup) = feed_notice::draw_popup(ui, area, chip, &report);
+    let (action, dismissed) = view.draw(ui, area, chip, &report);
     if action != feed_notice::NoticeAction::None {
         answers.notice_action = action;
     }
-    answers.dismissed = ui.input(|input| {
-        input.pointer.any_click()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|at| !popup.contains(at) && !chip.contains(at))
-    });
+    answers.dismissed = dismissed;
 }

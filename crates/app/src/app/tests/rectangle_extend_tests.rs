@@ -20,15 +20,18 @@ fn short_inspector_keeps_compact_alert_action_clear_of_its_body() {
     let (mut app, ctx, _commands) = drawn_rectangle();
     let size = egui::vec2(1000.0, 360.0);
     let parked = egui::pos2(100.0, 150.0);
-    app.drawings.chrome.context_bar_mut().set_manual(parked);
-    app.drawings.chrome.set_inspector_open(true);
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
+        .context_bar_mut()
+        .set_manual(parked);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.surfaces
+        .drawing_chrome
         .place_inspector_by_hand(egui::pos2(288.0, 96.0));
     for _ in 0..30 {
         run_frame_at(&mut app, &ctx, size);
     }
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     let output = run_frame_sized(&mut app, &ctx, size, vec![], egui::Modifiers::NONE);
     let inspector = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -44,23 +47,29 @@ fn short_inspector_keeps_compact_alert_action_clear_of_its_body() {
     );
     assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(action));
     assert!(
-        app.drawings.chrome.context_bar_rect().is_none(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_none(),
         "redundant full bar must yield to the inspector"
     );
     assert_eq!(
-        app.drawings.chrome.context_bar_mut().manual_position(),
+        app.surfaces
+            .drawing_chrome
+            .context_bar_mut()
+            .manual_position(),
         Some(parked)
     );
-    app.drawings.chrome.set_inspector_open(false);
+    app.surfaces.drawing_chrome.set_inspector_open(false);
     for _ in 0..3 {
         run_frame_at(&mut app, &ctx, size);
     }
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "full bar returns after closing inspector"
     );
     assert_eq!(
-        app.drawings.chrome.context_bar_mut().manual_position(),
+        app.surfaces
+            .drawing_chrome
+            .context_bar_mut()
+            .manual_position(),
         Some(parked)
     );
 }
@@ -203,7 +212,7 @@ fn a_double_click_inside_puts_back_the_original_size() {
         "a double click in the band ends at the original size"
     );
     assert!(
-        !app.surfaces.chart_settings.is_open(),
+        !app.surfaces.chart_settings.model_state.is_open(),
         "a drawing's double click is the drawing's, not the chart settings'"
     );
 }
@@ -261,12 +270,12 @@ fn each_zone_shows_its_own_cursor() {
             frame.capsules
         );
         assert!(
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .is_none_or(|rect| !rect.contains(corner)),
             "the projected resize corner {corner:?} must be outside the selected drawing toolbar {:?}",
-            app.drawings.chrome.context_bar_rect()
+            app.surfaces.drawing_chrome.context_bar_rect()
         );
         let mut at = |x: f32, y: f32| cursor_at(&mut app, &ctx, egui::pos2(x, y));
         let zones = [
@@ -396,8 +405,8 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
                 .all(|rect| !rect.contains(position))
         );
         assert!(
-            app.drawings
-                .chrome
+            app.surfaces
+                .drawing_chrome
                 .context_bar_rect()
                 .is_none_or(|rect| !rect.contains(position))
         );

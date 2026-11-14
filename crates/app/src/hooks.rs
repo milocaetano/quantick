@@ -122,7 +122,7 @@ const CONFIGURATION: &[(&str, &[HookSpec])] = &[("crates/app/src/launch.rs", cra
 #[cfg(any(feature = "scenario-harness", test))]
 const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     (
-        "crates/app/src/surfaces/alerts.rs",
+        "crates/app/src/surfaces/alerts/mod.rs",
         crate::surfaces::alerts::HOOKS,
     ),
     (
@@ -213,7 +213,7 @@ const CONTROL_OWNERS: &[(&str, &[HookSpec])] = &[(
 /// The drawing rail and the drawing chrome's demos: `drawing-harness`.
 #[cfg(any(feature = "drawing-harness", test))]
 const DRAWING_OWNERS: &[(&str, &[HookSpec])] = &[
-    ("crates/app/src/toolrail.rs", crate::toolrail::HOOKS),
+    ("crates/app/src/toolrail/mod.rs", crate::toolrail::HOOKS),
     (
         "crates/app/src/surfaces/drawing_chrome/mod.rs",
         crate::surfaces::drawing_chrome::HOOKS,
@@ -223,7 +223,7 @@ const DRAWING_OWNERS: &[(&str, &[HookSpec])] = &[
 /// The quick-range demo: `quick-range-harness`.
 #[cfg(any(feature = "quick-range-harness", test))]
 const QUICK_RANGE_OWNERS: &[(&str, &[HookSpec])] = &[(
-    "crates/app/src/surfaces/drawing_chrome/quick_range/launch.rs",
+    "crates/app/src/surfaces/drawing_chrome/quick_range.rs",
     crate::surfaces::drawing_chrome::QUICK_RANGE_HOOKS,
 )];
 

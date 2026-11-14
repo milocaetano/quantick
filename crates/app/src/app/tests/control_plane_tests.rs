@@ -472,7 +472,7 @@ fn a_parked_popup_greets_the_avwap_and_the_profile_too() {
     drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-220.0, 150.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.inspector_moved(),
+        app.surfaces.drawing_chrome.inspector_moved(),
         "the drag records the manual move"
     );
     let parked = ctx
@@ -655,8 +655,8 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.active_tab_mut().canvas.split_fraction = 0.35;
     app.active_tab_mut().focus = PaneSide::Flow;
     app.runtime.tz = TzOffset::new(-180);
-    app.dock.open_tab(DockTab::Trading);
-    app.toolrail.set_dock(ToolboxDock::Bottom);
+    app.surfaces.dock.open_tab(DockTab::Trading);
+    app.surfaces.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
 
     let workspace = app.workspace_state().capture_workspace();
@@ -3085,6 +3085,7 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let popup = app
         .surfaces
         .agent_popup
+        .model_state
         .pending()
         .expect("the popup is on screen");
     assert_eq!(popup.message, "look at 108k");
@@ -3099,7 +3100,7 @@ fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.drawings.chrome.set_pending_text_note(true);
+    app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
 
@@ -3163,7 +3164,7 @@ fn an_operator_cannot_remove_an_object_the_trader_drew() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.drawings.chrome.set_pending_text_note(true);
+    app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id.0;
 
@@ -4103,8 +4104,8 @@ fn the_scene_names_the_same_controls_two_frames_running() {
     // be renamed by that alone, and an assistant told to press it a moment
     // later would press whatever had slid into its place.
     let before = scene_control_ids(&first);
-    let dock_was_open = app.dock.visible();
-    app.dock.toggle_visible();
+    let dock_was_open = app.surfaces.dock.visible();
+    app.surfaces.dock.toggle_visible();
     run_frame(&mut app, &ctx);
     let after = scene_control_ids(&observer_scene(&app));
     let dock_now_listed = after.iter().any(|id| id.starts_with("dock."));
@@ -4280,7 +4281,7 @@ fn a_starred_tool_is_a_button_the_scene_names_in_its_own_right() {
     );
 
     let starred = drawings::DRAWING_TOOLS[0];
-    app.toolrail.toggle_favorite(starred);
+    app.surfaces.toolrail.toggle_favorite(starred);
     run_frame(&mut app, &ctx);
     let pinned = scene_control_ids(&observer_scene(&app));
     let expected = format!("tool_rail.favorite.{}", starred.id());
@@ -4715,7 +4716,7 @@ fn a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image(
         test_screenshot(width, height),
     );
     assert!(
-        app.surfaces.toast.message().is_some(),
+        app.surfaces.toast.model_state.message().is_some(),
         "the trader is told when a picture of their window is taken"
     );
     let manifest = success_result(&response).clone();
@@ -4857,7 +4858,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     app.config.metatrader.listen_addr = "192.168.7.31:9100".to_owned();
     run_frame(&mut app, &ctx);
     // The trader's own words on the chart.
-    app.drawings.chrome.set_pending_text_note(true);
+    app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     {
         let tool = drawings::DRAWING_TOOLS
@@ -6430,10 +6431,10 @@ fn the_window_routes_each_notification_to_its_own_lane() {
     crate::control::invoke_action(&mut app, &mut access, &actor, "notify.toast", toast)
         .expect("a toast within budget is raised");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("hello — fake assistant (agent)")
     );
-    assert!(app.surfaces.agent_popup.pending().is_none());
+    assert!(app.surfaces.agent_popup.model_state.pending().is_none());
 
     let popup = serde_json::json!({ "message": "look at the bid" });
     crate::control::invoke_action(&mut app, &mut access, &actor, "notify.popup", popup)
@@ -6441,12 +6442,13 @@ fn the_window_routes_each_notification_to_its_own_lane() {
     let shown = app
         .surfaces
         .agent_popup
+        .model_state
         .pending()
         .expect("the popup is open");
     assert_eq!(shown.message, "look at the bid");
     assert_eq!(shown.author, "fake assistant (agent)");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("hello — fake assistant (agent)"),
         "a popup posts nothing to the toast lane"
     );
@@ -6552,7 +6554,11 @@ fn canvas_actions_drive_through_the_control_plane() {
         serde_json::json!({ "preset_id": "time+flow" }),
     );
     assert_eq!(picked["preset_id"], "time+flow");
-    app.chrome.layout_picker_open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetLayoutOpen(
+            true,
+        ));
     settle(&mut app);
     look(&app, &mut seen);
     let added = call(
@@ -6566,7 +6572,9 @@ fn canvas_actions_drive_through_the_control_plane() {
             .as_array()
             .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "floating"))
     );
-    app.chrome.add_menu.open = true;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::SetAddOpen(true));
     settle(&mut app);
     look(&app, &mut seen);
     let pane = serde_json::json!({ "slot": slot });
@@ -6585,7 +6593,10 @@ fn canvas_actions_drive_through_the_control_plane() {
         serde_json::json!({ "slot": slot, "corner": "top_left" }),
     );
     assert!(parked["panes"].is_array());
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let out = call(&mut app, wire::POP_OUT_CAPABILITY_ID, pane.clone());
@@ -6594,18 +6605,27 @@ fn canvas_actions_drive_through_the_control_plane() {
             .as_array()
             .is_some_and(|panes| panes.iter().any(|pane| pane["mode"] == "os_window"))
     );
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let back = call(&mut app, wire::RETURN_CAPABILITY_ID, pane.clone());
     assert_eq!(back["changed"], true);
     let time = app.active_tab().canvas.state.tree().panes()[0].0;
     let time_pane = serde_json::json!({ "slot": time });
-    app.active_tab_mut().canvas.menus.open = Some(time);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(time)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     call(&mut app, wire::MAXIMIZE_CAPABILITY_ID, time_pane.clone());
-    app.active_tab_mut().canvas.menus.open = Some(time);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(time)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane.clone());
@@ -6613,7 +6633,10 @@ fn canvas_actions_drive_through_the_control_plane() {
     assert_eq!(folded["changed"], true);
     look(&app, &mut seen);
     call(&mut app, wire::RESTORE_CAPABILITY_ID, time_pane);
-    app.active_tab_mut().canvas.menus.open = Some(slot);
+    app.surfaces.remove_chart.update_scoped(
+        app.runtime.tabs.active_id(),
+        quantick_ui_model::remove_chart::Intent::SetMenuOpen(Some(slot)),
+    );
     settle(&mut app);
     look(&app, &mut seen);
     let removed = call(
