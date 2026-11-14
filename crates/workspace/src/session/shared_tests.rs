@@ -626,3 +626,60 @@ fn a_deleted_workspace_keeps_its_tabs_indicator_edits() {
         [(); 2].map(|()| vec![native("native.cvd")])
     );
 }
+
+/// Three tabs come back on Pair, tied: tab A clean on EMA, B and C each
+/// holding a second kind. The first in strip order among the fullest wins,
+/// whatever order they land in. `ids` are A, B, C's, so landing order, which
+/// follows tab id, is theirs.
+fn a_three_way_tie(ids: [u64; 3]) {
+    let ema = vec![native("native.ema")];
+    let cvd = vec![native("native.ema"), native("native.cvd")];
+    let rsi = vec![native("native.ema"), native("native.rsi")];
+    let stored = showing(ema.clone(), Vec::new());
+    let [a, b, c] = ids;
+    let tabs = [(a, ema.clone()), (b, ema.clone()), (c, ema)];
+    let kept = [
+        (b, showing(cvd.clone(), Vec::new())),
+        (c, showing(rsi, Vec::new())),
+    ];
+    let mut desk = Desk::restored_with("Pair", &stored, &tabs, &kept, false);
+    desk.frames(4);
+    assert_eq!(
+        ids.map(|tab| desk.set(tab + 1)),
+        [(); 3].map(|()| cvd.clone())
+    );
+}
+
+#[test]
+fn a_three_way_tie_goes_to_the_first_in_the_strip_landing_in_strip_order() {
+    a_three_way_tie([10, 20, 30]);
+}
+
+#[test]
+fn a_three_way_tie_goes_to_the_first_in_the_strip_landing_in_reverse() {
+    a_three_way_tie([30, 20, 10]);
+}
+
+/// Scalp's tab shows a healed set (no edit) and holds a footprint edit of its
+/// own. Swing's tab lands on Scalp and shows the healed set: that heal marks
+/// no tab, as no indicator edit is held.
+#[test]
+fn a_heal_beside_an_edit_of_another_kind_marks_no_landing_tab() {
+    let mut desk = Desk::open(&[10, 20]);
+    desk.on("Scalp", &[10]);
+    desk.on("Swing", &[20]);
+    desk.add(11, native("native.cvd"));
+    let live = desk.live_recipe(10).unwrap();
+    let signal = desk.recipe_signal(10);
+    desk.sync.reread(10, live, signal);
+    let mut copy = desk.book.tab_copy(10).cloned().unwrap();
+    copy.footprint_style = Some("mine".to_owned());
+    desk.book.observe(10, &copy).unwrap();
+    let stored = desk.book.recipe("Scalp").cloned().unwrap();
+    desk.book.set(20, "Scalp").unwrap();
+    show_recipe(&mut desk, 20, &stored);
+    desk.frames(2);
+    assert_eq!(desk.set(21), [native("native.cvd")], "the healed set");
+    assert!(desk.modified(10), "its footprint edit");
+    assert!(!desk.modified(20), "a heal marks no tab");
+}
