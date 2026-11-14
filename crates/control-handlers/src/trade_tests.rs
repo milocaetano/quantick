@@ -302,3 +302,81 @@ fn a_placement_journals_its_actor_and_the_venues_answer() {
     );
     assert_eq!(placed[1].payload["asked"]["side"], "buy");
 }
+
+/// A desk on WIN$N marked at 140,000, with the money declared (0.20 BRL a
+/// point), a 100 BRL risk per trade and the lock on.
+fn locked_win_window() -> DeskWindow {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/trade_tests.rs/trades");
+    let mut account = quantick_paper::PaperAccount::with_trades_dir(dir);
+    account.set_symbol("WIN$N");
+    account.seed(&quantick_engine::Trade {
+        agg_id: 0,
+        timestamp_ms: 0,
+        price: Decimal::from(140_000),
+        quantity: Decimal::ONE,
+        side: Side::Buy,
+    });
+    let money = quantick_sim::InstrumentMoney {
+        point_value: Decimal::new(20, 2),
+        size_step: Decimal::ONE,
+        min_size: Decimal::ONE,
+        max_size: None,
+        currency: quantick_sim::Currency::new("BRL").expect("BRL"),
+        source: quantick_sim::MoneySource::Declared,
+    };
+    account.set_instrument_money([("WIN$N".to_owned(), money)].into_iter().collect());
+    account.set_risk_settings(quantick_paper::risk_sizing::RiskSettings {
+        basis: quantick_paper::risk_sizing::RiskBasis::Amount,
+        amount: Decimal::from(100),
+        amount_currency: None,
+        percent: Decimal::ZERO,
+        lock: true,
+    });
+    DeskWindow {
+        desk: PaperDesk {
+            account,
+            desk: quantick_paper::desk::Desk::default(),
+        },
+    }
+}
+
+/// The lock holds on the named path too: an order whose own stop risks
+/// more than the budget is refused as an invalid request carrying the
+/// sentence the ticket shows, and nothing reaches the venue. A ceiling the
+/// ticket enforced and this call did not would stand only while a human
+/// is clicking.
+#[test]
+fn the_lock_refuses_a_named_order_over_the_budget() {
+    let mut window = locked_win_window();
+    let mut access = FakeAccess::with_budget(0);
+    // 4000 points x 0.20 x 10 = 8,000 BRL against a budget of 100.
+    let same = OrderIntent::limit(Side::Buy, Decimal::from(10), Decimal::from(139_000))
+        .with_bracket(Bracket::whole(Some(Decimal::from(135_000)), None));
+    let sentence = window
+        .desk
+        .account
+        .risk_refusal_for(&same)
+        .expect("the lock names the over-budget order");
+    assert!(sentence.contains("8000 BRL"), "{sentence}");
+    assert!(sentence.contains("turn the lock off"), "{sentence}");
+
+    let refusal = place_order(
+        &mut window,
+        &mut access,
+        &FakeWindow::trader(),
+        &json!({
+            "side": "buy",
+            "kind": "limit",
+            "quantity": "10",
+            "price": "139000",
+            "stop_loss": "135000",
+        }),
+    )
+    .expect_err("the lock refuses the call");
+    assert_eq!(refusal, ControlError::invalid_request(sentence));
+    assert!(
+        window.desk.account.working_orders().is_empty(),
+        "nothing rests at the venue"
+    );
+    assert!(window.desk.account.is_flat(), "nothing was filled");
+}

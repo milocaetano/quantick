@@ -956,6 +956,10 @@ mod tests {
         assert_eq!(state.derived_quantity(), None, "it never guesses a size");
         assert!(state.sentence().contains("WDO$N"));
         assert!(state.sentence().contains("point value"));
+        assert!(
+            !state.blocks_entry(true),
+            "an unknown instrument is not an over-budget one: the lock lets it through"
+        );
     }
 
     #[test]

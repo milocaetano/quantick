@@ -573,6 +573,39 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
     assert!((point.price - 101.5).abs() < f64::EPSILON);
 }
 
+/// The trader's report: after a timeframe switch a rectangle stayed as
+/// faded borders. A mark placed at print 5 on a tape that starts at print
+/// 10 is off the series; older bars arriving must put it back on its bar,
+/// whether they come as trades or as a venue prefix.
+#[test]
+fn older_history_puts_an_off_series_mark_back_on_its_bar() {
+    for as_prefix in [false, true] {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        pane.ingest_backfill(&(10..20).map(print_at).collect::<Vec<_>>());
+        let line = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "horizontal-line")
+            .expect("the horizontal line is registered");
+        pane.drawings.place(
+            line,
+            ChartPoint::at_time(5.5, 100.0, Some(TAPE_START_MS + 5_000)),
+        );
+        pane.reanchor_drawings(pane.slots());
+        assert!(pane.drawings.items()[0].off_series, "the tape misses it");
+
+        if as_prefix {
+            let older = pane_of_prints(10, 1).series_read().closed_bars();
+            assert!(pane.install_history_prefix(older));
+        } else {
+            pane.prepend_history(&(0..10).map(print_at).collect::<Vec<_>>());
+        }
+
+        let drawing = &pane.drawings.items()[0];
+        assert!(!drawing.off_series, "reached (prefix: {as_prefix})");
+        assert_eq!(slot_of(drawing.points[0].bar), 5, "prefix: {as_prefix}");
+    }
+}
+
 /// A pane carrying one indicator pane of `kind`, with `columns` of
 /// committed values — the fixture every band test starts from.
 #[test]

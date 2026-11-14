@@ -54,6 +54,39 @@ fn dragging_a_panes_top_edge_resizes_that_pane() {
     );
 }
 
+/// Double click on a divider gives the pane back to the automatic layout —
+/// the escape every other axis in the app offers on the same gesture.
+#[test]
+fn double_clicking_a_divider_returns_the_pane_to_automatic() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+
+    let automatic = pane_slots(&app)[0].rect.height();
+    let edge = pane_slots(&app)[0].rect.center_top();
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        edge,
+        edge - egui::vec2(0.0, 60.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(
+        (pane_slots(&app)[0].rect.height() - automatic).abs() > 1.0,
+        "the drag took manual control"
+    );
+
+    let edge = pane_slots(&app)[0].rect.center_top();
+    click_sized(&mut app, &ctx, TEST_WINDOW, edge);
+    click_sized(&mut app, &ctx, TEST_WINDOW, edge);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(
+        (pane_slots(&app)[0].rect.height() - automatic).abs() < 1.0,
+        "and a double click hands it back: {} vs {automatic}",
+        pane_slots(&app)[0].rect.height()
+    );
+}
+
 /// The other half of the disclosure. A control that only opens is half a
 /// control: a trader who wants the candles back must be able to put a pane
 /// away without deleting the indicator, and the value must survive it.
@@ -1533,6 +1566,38 @@ fn resetting_the_startup_layout_keeps_the_other_standing_choices() {
     );
     assert!(file.tabs.is_empty(), "and the layout really was reset");
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
+}
+
+/// Switching layouts focuses the pane the switch reveals, so the first
+/// command after a switch already lands on the chart that just appeared
+/// (audit: opening the split did not focus the pane it created).
+#[test]
+fn switching_layouts_focuses_the_pane_the_switch_reveals() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    run_frame(&mut app, &ctx);
+
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().focused_side(),
+        PaneSide::Time(0),
+        "coming from Single, the split reveals the time pane"
+    );
+
+    app.active_tab_mut().set_layout(CanvasLayout::Single);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+
+    app.active_tab_mut().set_layout(CanvasLayout::Time);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
+
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    assert_eq!(
+        app.active_tab().focused_side(),
+        PaneSide::Flow,
+        "coming from Time, the split reveals the flow pane"
+    );
 }
 
 /// The selector of the focused pane — the pane the status bar reads and
@@ -3026,8 +3091,8 @@ fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
 }
 
 /// The window's last target reaches a tab that never pressed. A tab that
-/// pressed keeps its own: `HistoryRun`'s `the_main_click_repeats_this_tabs_last_action`
-/// and `a_run_in_flight_keeps_its_target_when_the_default_changes`.
+/// pressed keeps its own: `HistoryRun`'s `the_main_click_repeats_this_tabs_last_action`,
+/// and `drawings_tests`' `a_run_in_flight_keeps_its_target_when_the_default_changes`.
 #[test]
 fn a_fresh_tab_follows_the_windows_target() {
     let ctx = egui::Context::default();
