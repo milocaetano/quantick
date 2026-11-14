@@ -118,6 +118,7 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
         return;
     }
     app.surfaces.toolrail.handle_keys(ctx);
+    let alerts_open = app.surfaces.alerts.is_open();
     let effects = app
         .drawings
         .with(&mut app.surfaces.drawing_chrome)
@@ -127,7 +128,7 @@ fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
             &mut *app.audio.alerts,
             ctx,
             now,
-            crate::dock::holds_pointer(&app.surfaces.dock.model_state, ctx),
+            crate::dock::holds_pointer(&app.surfaces.dock.model_state, ctx, alerts_open),
         );
     effects.apply(&mut app.surfaces.toast, &mut app.surfaces.toolrail);
 }
@@ -153,6 +154,12 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: PaletteIntent)
 /// (resets the chart) and apply its spec; a changed market moves its
 /// layouts along.
 fn apply_feed_switch(app: &mut QuantickApp) {
+    // A pressed Roll, and restored tabs on a contract no longer listed.
+    let port = app as &mut dyn super::control_host::ControlPort;
+    let settled = quantick_control_handlers::contract_roll::settle_auto_rolls(port);
+    if !settled.is_empty() {
+        super::tab_workspaces::as_hand(app, |_, journal| settled.journal(journal));
+    }
     let (tab, config) = app.active_with_config();
     let changed =
         tab.link.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
@@ -183,7 +190,7 @@ fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &
         .background
         .unwrap_or_else(|| pane::background_color(&app.runtime.style));
     let popup_tab = app.runtime.tabs.active_id();
-    scratch.canvas = canvas::CanvasAnswers::seeded(popup_tab, &app.surfaces, &scratch.status);
+    scratch.canvas = canvas::CanvasAnswers::seeded(app, popup_tab, &scratch.status);
     app.surfaces
         .drawing_chrome
         .sync_content_editing(&mut app.runtime.tabs);
@@ -444,9 +451,16 @@ impl QuantickApp {
                 super::frame_tail::clean_up_background_strategies(&mut self.runtime.tabs);
             }
             FrameStage::PlayAlerts => {
-                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
-                    self.alerts().show_toast(note);
-                }
+                super::alerts_runtime::deliver(
+                    &mut self.runtime.alerts,
+                    &mut self.audio,
+                    &mut self.surfaces.toast,
+                    &mut self.surfaces.agent_popup,
+                    self.runtime
+                        .tabs
+                        .iter_mut()
+                        .flat_map(|tab| tab.pending_alarm_sounds.drain(..)),
+                );
             }
             FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(
                 &mut self.runtime.tabs,
@@ -523,6 +537,8 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
+                alerts: &mut self.runtime.alerts,
+                display_offset_minutes: self.runtime.tz.minutes(),
                 indicators: &mut self.runtime.indicators,
                 store: self.runtime.workspace.layouts(),
                 alert_failure: self.audio.alert_failure.as_deref(),
@@ -532,6 +548,9 @@ impl QuantickApp {
                 markets: markets.as_ref(),
             },
         );
+        if let Some(request) = asks.alerts {
+            super::alerts_runtime::apply_alert_request(self, *request);
+        }
         for action in asks.indicator_actions {
             self.apply_toolbar_action(action);
         }
@@ -623,11 +642,13 @@ impl QuantickApp {
     }
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) -> Option<crate::surfaces::SurfaceResponse> {
+        let alerts_open = self.surfaces.alerts.is_open();
         let response = panels::draw_dock(
             ctx,
             &mut self.surfaces,
             &mut self.runtime.tabs,
             self.runtime.tz,
+            alerts_open,
         );
         let response = match begin_paper_panel_effects(
             &mut self.runtime.tabs,
@@ -637,6 +658,13 @@ impl QuantickApp {
             Ok(response) => response,
             Err(response) => return Some(*response),
         };
+        if response.open_alerts {
+            self.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+        }
+        if self.surfaces.dock.tab().is_some() {
+            self.surfaces.alerts.close_manager();
+        }
+        super::alerts_runtime::draw_manager_panel(self, ctx);
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
@@ -670,7 +698,7 @@ impl QuantickApp {
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
-        let mut answers = canvas::CanvasAnswers::seeded(popup_tab, &self.surfaces, &scratch.status);
+        let mut answers = canvas::CanvasAnswers::seeded(self, popup_tab, &scratch.status);
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -741,14 +769,16 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        if scratch.canvas.begin_text_edit {
-            self.surfaces.drawing_chrome.request_text_edit();
-        }
+        let open = self.surfaces.alerts.is_editing();
+        self.surfaces
+            .drawing_chrome
+            .frame_facts(scratch.canvas.begin_text_edit, open);
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
         let ask = drawings.draw_drawing_chrome(
             ctx,
             &DrawingReadAccess::new(&self.runtime.tabs),
             &self.surfaces.toolrail,
+            &self.runtime.alerts.core.book,
         );
         self.resolve_drawing_response(ask, now);
     }
@@ -766,7 +796,7 @@ impl QuantickApp {
             presentation: presented.then_some(ctx),
             now,
             tz: self.runtime.tz,
-            notice_action: answers.notice_action,
+            notice_action: answers.notice_action.clone(),
             popup_tab: answers.popup_tab,
             chip_clicked: answers.chip_clicked,
             dismissed: answers.dismissed,
@@ -957,6 +987,15 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
+        if let Some(selector) = ask.alert_target.take() {
+            match self.layout_adapter().resolve_alert_target(selector) {
+                Ok(target) => self.surfaces.alerts.open_drawing(Some(target)),
+                Err(error) => self
+                    .surfaces
+                    .toast
+                    .note(format!("Alert target unavailable: {error:?}"), now),
+            }
+        }
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);
         if let Some(action) = drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;

@@ -283,7 +283,7 @@ fn open_controls(view: &mut OrderflowView) -> (egui::Context, PaintedText) {
         style.interaction.show_tooltips_only_when_still = false;
     });
     let mut text = paint(view, &ctx, Vec::new());
-    for title in ["live lane", "labels", "colours"] {
+    for title in ["LIVE LANE", "LABELS", "COLOURS"] {
         let pos = text
             .iter()
             .find(|(label, _)| label == title)
@@ -461,6 +461,7 @@ fn fixed_native_size_control_edits_the_drawn_reference_and_preserves_grouping() 
         view.config.bubbles.size_reference_quantity = 8.0;
         let tick = quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
+            peak_spheres: None,
             viewport_scale: None,
             reference_quantity: 1.0,
             reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,

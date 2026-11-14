@@ -15,24 +15,10 @@ use crate::{
     viewport::Viewport,
 };
 use eframe::egui;
-use quantick_drawings::{Align, Align2, FontFamily, FontSpec, MarkShape, Px, TextMetrics};
+use quantick_drawings::{Align, Align2, FontFamily, FontSpec, MarkShape, Px};
 use smallvec::SmallVec;
 
-/// How big a label sets, measured with the window's own fonts — the same
-/// layout [`paint_scene`] will paint it with.
-pub(in crate::pane) struct TextFonts<'a>(pub &'a egui::Context);
-
-impl TextMetrics for TextFonts<'_> {
-    fn size(&self, text: &str, font: FontSpec) -> Px {
-        let size = self
-            .0
-            .fonts(|fonts| {
-                fonts.layout_no_wrap(text.to_owned(), font_id(font), egui::Color32::PLACEHOLDER)
-            })
-            .size();
-        Px::new(size.x, size.y)
-    }
-}
+pub(in crate::pane) use crate::drawings::text::TextFonts;
 
 fn font_id(font: FontSpec) -> egui::FontId {
     match font.family {
@@ -60,6 +46,16 @@ pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
     let palette = crate::theme::get(painter.ctx());
     for shape in &scene.shapes {
         match shape {
+            MarkShape::NoteText {
+                at,
+                text,
+                format,
+                color,
+            } => {
+                let color = to_color32(*color);
+                let galley = crate::drawings::text::layout(painter.ctx(), text, *format, color);
+                painter.galley(pos(*at), galley, color);
+            }
             MarkShape::Line {
                 from,
                 to,
@@ -130,12 +126,15 @@ pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
                 font,
                 color,
             } => {
-                let color = to_color32(*color);
+                // A theme without label plates writes bare, legible ink and
+                // never backs it; one with plates may back low-contrast text.
+                let color = to_color32(palette.resolved.drawing_text_ink(*color));
                 let galley = painter.layout_no_wrap(text.clone(), font_id(*font), color);
                 let rect =
                     egui::Align2([align(*x), align(*y)]).anchor_size(pos(*at), galley.size());
-                if let Some(backing) =
-                    crate::drawings::text_backing(&palette, color, palette.canvas())
+                if palette.resolved.drawing_label_plates
+                    && let Some(backing) =
+                        crate::drawings::text_backing(&palette, color, palette.canvas())
                 {
                     painter.rect_filled(rect.expand(2.0), 2.0, backing);
                 }

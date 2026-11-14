@@ -311,3 +311,21 @@ fn light_choice_before_the_slate_vwap_migrates_to_current_light() {
     let old = ResolvedTheme::parse(old).unwrap();
     assert_eq!(old.plot_ink("VWAP (cumulative)", "vwap"), None);
 }
+
+/// A Light choice saved with slate drawings and plated drawing labels opens
+/// with new drawings born black and labels painted as ink alone.
+#[test]
+fn light_choice_before_black_drawings_migrates_to_current_light() {
+    let old = include_str!("legacy-light-087454de.toml");
+    let scratch = ScratchDir::new("legacy-light-black-drawings");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    assert_eq!(store.resolved(), &ResolvedTheme::parse(LIGHT).unwrap());
+    assert_eq!(
+        store.resolved().color(Token::DrawingDefault).to_array(),
+        [0, 0, 0, 255]
+    );
+    assert!(!store.resolved().drawing_label_plates);
+}

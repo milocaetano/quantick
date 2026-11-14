@@ -1890,8 +1890,8 @@ fn run_frame_every(app: &mut QuantickApp, ctx: &egui::Context, dt: f32) {
 }
 
 /// Where the Bubbles header rests once scrolled to the top, under the layout
-/// branch's title bar.
-const LANDED_Y: f32 = 166.0;
+/// branch's title bar and the panel's title plate.
+const LANDED_Y: f32 = 180.0;
 
 fn bubbles_header_y(app: &QuantickApp) -> f32 {
     flow_control(app, section_control(PanelSection::Bubbles)).top()
@@ -2119,7 +2119,15 @@ fn a_sections_state_stands_right_and_never_over_its_title() {
             .into_iter()
             .find(|rect| rect.y_range().contains(header.center().y))
             .expect("its state is painted on its header's line");
-        assert!(state.left() >= header.right(), "{section:?}: {state:?}");
+        let title = painted_text_rects(&output, &section.title().to_uppercase())
+            .into_iter()
+            .find(|rect| header.contains_rect(*rect))
+            .expect("its title is painted on its band");
+        assert!(state.left() >= title.right(), "{section:?}: {state:?}");
+        assert!(
+            header.contains_rect(state),
+            "{section:?} on its band: {state:?}"
+        );
         assert!(
             (close.right() - state.right()).abs() < 20.0,
             "{section:?} stands at the content's right: {state:?}, × at {close:?}"

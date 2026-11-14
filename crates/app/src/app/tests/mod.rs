@@ -61,11 +61,15 @@ pub(crate) fn update_indicator_settings(
     }
 }
 
+mod alert_target_binding_tests;
+mod alerts_control_tests;
+mod alerts_native_tests;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;
 mod bench_batches;
 mod calendar_history_tests;
+mod canvas_follow_tests;
 mod canvas_layout_tests;
 mod capsule_tests;
 mod catalog_registration_tests;
@@ -124,6 +128,7 @@ mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
+mod unlisted_roll_tests;
 mod widget_surface_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;

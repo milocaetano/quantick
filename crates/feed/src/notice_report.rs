@@ -5,7 +5,7 @@ use crate::{
 };
 
 /// What the person watching asked of the popup this frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NoticeAction {
     /// Nothing was clicked.
     #[default]
@@ -14,6 +14,31 @@ pub enum NoticeAction {
     Reconnect,
     /// Throw the timeline away and rebuild it.
     Reload,
+    /// Roll the tab off a contract the venue no longer lists, onto the one
+    /// its feed config names next: the contract roll, drawings carried.
+    Roll(String),
+}
+
+impl NoticeAction {
+    /// The word on the control that asks for this.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Roll(target) => roll_label(target),
+            Self::Reload => Recovery::Reload.label().to_owned(),
+            Self::None | Self::Reconnect => Recovery::Reconnect.label().to_owned(),
+        }
+    }
+
+    /// What it costs, on the control's own hover.
+    #[must_use]
+    pub fn cost(&self) -> &'static str {
+        match self {
+            Self::Roll(_) => ROLL_CAPTION,
+            Self::Reload => Recovery::Reload.cost(),
+            Self::None | Self::Reconnect => Recovery::Reconnect.cost(),
+        }
+    }
 }
 
 impl From<Recovery> for NoticeAction {
@@ -55,15 +80,85 @@ pub struct Report<'a> {
     pub severity: Severity,
     /// The control offered first. The other is always beside it.
     pub primary: Recovery,
+    /// What a contract roll can do about a contract the venue no longer
+    /// lists; `None` leaves the report exactly as it was without one. An
+    /// offered roll comes before the pair, which stays whole.
+    pub roll: Option<RollNote<'a>>,
 }
 
-impl Report<'_> {
+/// The contract roll a report about an unlisted contract carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollNote<'a> {
+    /// The configured next contract: offered first, ahead of the pair.
+    To(&'a str),
+    /// Why the configured roll cannot run now, said under the next step.
+    Refused(&'a str),
+}
+
+impl<'a> Report<'a> {
     /// Whether the corner should carry this report.
     #[must_use]
     pub fn is_offline(&self) -> bool {
         matches!(self.severity, Severity::Offline)
     }
+
+    /// The same report, carrying `roll`.
+    #[must_use]
+    pub fn with_roll(self, roll: Option<RollNote<'a>>) -> Self {
+        Self { roll, ..self }
+    }
+
+    /// The roll this report offers ahead of Reconnect and Reload, if any.
+    #[must_use]
+    pub fn roll_target(&self) -> Option<&'a str> {
+        match self.roll {
+            Some(RollNote::To(target)) => Some(target),
+            _ => None,
+        }
+    }
+
+    /// The next step as the popup words it: a refused roll's reason follows
+    /// the provider's own step, which stays word for word.
+    #[must_use]
+    pub fn next_step_text(&self) -> Option<String> {
+        let step = self.next_step?;
+        Some(match self.roll {
+            Some(RollNote::Refused(reason)) => format!("{step}\n{}", roll_refused_sentence(reason)),
+            _ => step.to_owned(),
+        })
+    }
 }
+
+impl<'a> From<Result<&'a str, &'a str>> for RollNote<'a> {
+    /// The roll on offer, or the reason it is refused.
+    fn from(roll: Result<&'a str, &'a str>) -> Self {
+        match roll {
+            Ok(target) => Self::To(target),
+            Err(reason) => Self::Refused(reason),
+        }
+    }
+}
+
+/// What [`Recovery::Reload`] costs, said on the popup rather than behind a
+/// confirmation dialog.
+///
+/// A modal between a trader and a stalled chart is one more thing in the way at
+/// the worst moment, and this act is recoverable in the sense that matters —
+/// the position it closes is journaled, with its reason, by
+/// `PaperTrading::on_timeline_reset`. What is not acceptable is the trader
+/// learning about it afterwards, which is what happened while the only button
+/// on offer said "Try again" and quietly reset the timeline.
+pub const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
+     disarms every strategy.";
+
+/// What a roll off an unlisted contract does, on the hover of the control
+/// that runs it.
+pub const ROLL_CAPTION: &str = "Roll starts the chart on the next contract: it keeps the workspace and \
+     drawings, and disarms the tab's strategies.";
+
+/// The roll's words, owned below the control plane so the scene names the
+/// roll as the popup paints it.
+pub use quantick_sources::recovery::{ROLL_REFUSED_PREFIX, roll_label, roll_refused_sentence};
 
 /// Build the report for a feed, or `None` when there is nothing to say.
 ///
@@ -78,6 +173,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
     if let FeedNotice::Attention {
         headline,
         next_step,
+        ..
     } = notice
     {
         return Some(Report {
@@ -86,6 +182,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: true,
             severity: Severity::Offline,
             primary: Recovery::Reconnect,
+            roll: None,
         });
     }
     if let Some(stall) = stall {
@@ -95,6 +192,7 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: stall.needs_attention,
             severity: Severity::Offline,
             primary: stall.primary,
+            roll: None,
         });
     }
     match notice {
@@ -105,8 +203,18 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
             needs_user: false,
             severity: Severity::Progress,
             primary: Recovery::Reconnect,
+            roll: None,
         }),
     }
+}
+
+/// The recovery the popup fills and paints first: its report's, or
+/// Reconnect while the door stays latched open over a report that is gone.
+#[must_use]
+pub fn popup_primary(notice: &FeedNotice, stall: Option<&Stall>) -> Recovery {
+    report(notice, stall)
+        .filter(Report::is_offline)
+        .map_or(Recovery::Reconnect, |report| report.primary)
 }
 
 #[cfg(test)]
@@ -190,6 +298,81 @@ mod tests {
         assert!(
             report.is_offline(),
             "an escalated progress notice is no longer progress"
+        );
+    }
+    #[test]
+    fn a_roll_offer_comes_first_and_the_pair_stays_whole() {
+        let notice = FeedNotice::attention("MetaTrader does not list WINV26", "Add it.")
+            .with_unlisted(Some("WINV26".to_owned()));
+        let bare = plain(&notice).expect("an attention speaks");
+        assert_eq!(bare.roll, None, "the notice alone offers no roll");
+        assert_eq!(bare.next_step_text().as_deref(), Some("Add it."));
+
+        let offered = bare.with_roll(Some(RollNote::To("WINZ26")));
+        assert_eq!(offered.roll_target(), Some("WINZ26"));
+        assert_eq!(roll_label("WINZ26"), "Roll to WINZ26");
+        assert_eq!(offered.next_step_text().as_deref(), Some("Add it."));
+        assert_eq!(offered.headline, bare.headline, "today's words stay");
+        assert_eq!(
+            (offered.primary, offered.primary.other()),
+            (Recovery::Reconnect, Recovery::Reload),
+            "Reconnect and Reload both stay reachable beside the roll"
+        );
+        let roll = NoticeAction::Roll("WINZ26".to_owned());
+        assert_eq!(roll.label(), "Roll to WINZ26");
+        assert_eq!(roll.cost(), ROLL_CAPTION);
+        assert_eq!(NoticeAction::Reconnect.label(), "Reconnect");
+        assert_eq!(NoticeAction::Reconnect.cost(), Recovery::Reconnect.cost());
+        assert_eq!(NoticeAction::Reload.label(), "Reload");
+
+        let refused = bare.with_roll(Some(RollNote::Refused("Finish the drawing gesture first")));
+        assert_eq!(
+            refused.roll_target(),
+            None,
+            "a refused roll offers no button"
+        );
+        assert_eq!(
+            refused.next_step_text().as_deref(),
+            Some("Add it.\nCannot roll to the next contract: Finish the drawing gesture first.")
+        );
+        assert_eq!(refused.primary, Recovery::Reconnect);
+        assert_eq!(
+            RollNote::from(Err("Finish the drawing gesture first")),
+            RollNote::Refused("Finish the drawing gesture first")
+        );
+        assert_eq!(RollNote::from(Ok("WINZ26")), RollNote::To("WINZ26"));
+    }
+
+    /// The popup's filled control: the stall's own pick, Reconnect for a
+    /// named reason, and Reconnect over a door held open on nothing.
+    #[test]
+    fn the_popup_leads_with_the_stall_s_recovery() {
+        let silent = silent_stall();
+        assert_eq!(popup_primary(&CLEAR, Some(&silent)), Recovery::Reload);
+        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Open it.");
+        assert_eq!(
+            popup_primary(&attention, Some(&silent)),
+            Recovery::Reconnect
+        );
+        let working = FeedNotice::working("starting the MetaTrader bridge");
+        assert_eq!(popup_primary(&working, None), Recovery::Reconnect);
+    }
+    /// The consequence of the destructive control is on the popup, so a trader
+    /// learns it before pressing rather than from a journal afterwards.
+    #[test]
+    fn the_popup_says_what_reload_costs() {
+        assert!(
+            RELOAD_CAPTION.contains("paper position") && RELOAD_CAPTION.contains("strateg"),
+            "the caption has to name both things Reload ends: {RELOAD_CAPTION}"
+        );
+    }
+    /// A roll is a market switch, which disarms the tab's strategies; the
+    /// control says so before it is pressed, as Reload's does.
+    #[test]
+    fn the_roll_says_it_disarms_the_strategies() {
+        assert!(
+            ROLL_CAPTION.contains("drawings") && ROLL_CAPTION.contains("disarms the tab's strateg"),
+            "the caption has to name what Roll keeps and what it ends: {ROLL_CAPTION}"
         );
     }
     #[test]

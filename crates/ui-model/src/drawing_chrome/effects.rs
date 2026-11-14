@@ -8,6 +8,8 @@ use super::{Drawing, DrawingEdit, PresetWrite, SavedDefault, quick_range};
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub struct DrawingChromeAsk {
+    /// Open the alert editor on this drawing.
+    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
     /// Synchronous host continuations, absent on idle frames.
     pub readbacks: Option<Box<Readbacks>>,
     pub clipboard_paste: Option<(Box<Drawing>, u32)>,
@@ -117,6 +119,7 @@ impl DrawingChromeAsk {
         );
         self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
+        self.alert_target = self.alert_target.take().or(other.alert_target);
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
             .commit_edit_gesture

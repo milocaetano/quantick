@@ -168,6 +168,100 @@ pub(super) fn open_layout_store(config: &crate::config::AppConfig) -> LayoutStor
 }
 
 impl LayoutAdapter<'_> {
+    /// Promote exactly the selected live object, then verify its committed copy.
+    pub(crate) fn resolve_alert_target(
+        &mut self,
+        selector: quantick_control_schema::alerts::DrawingSelector,
+    ) -> Result<
+        quantick_alerts::DurableDrawingRef,
+        quantick_control_schema::alerts::TargetResolveError,
+    > {
+        use quantick_control_schema::alerts::TargetResolveError as Error;
+        use quantick_workspace::drawing_identity;
+        self.persist_changed_drawings();
+        let tab = self.tabs.by_id(selector.tab_id).ok_or(Error::Missing)?;
+        let (pane, side) = tab
+            .panes()
+            .find(|(pane, _)| pane.id == selector.pane_id)
+            .ok_or(Error::Missing)?;
+        let mut key = self
+            .drawing_key(selector.tab_id, side)
+            .ok_or(Error::Missing)?;
+        if pane.layout.drawings_key.as_ref() != Some(&key) || pane.layout.is_behind() {
+            return Err(Error::SourceChanged);
+        }
+        if facts_of(pane).gesture_in_flight {
+            return Err(Error::Busy);
+        }
+        let id = quantick_drawings::DrawingId(selector.drawing_id);
+        let mut matches = pane.drawings.items().iter().filter(|item| item.id == id);
+        let drawing = matches.next().ok_or(Error::Missing)?;
+        if matches.next().is_some() {
+            return Err(Error::Ambiguous);
+        }
+        if drawing.all_timeframes() {
+            key = DrawingKey::all_timeframes(key.market);
+        }
+        let existing = drawing.durable_identity.clone();
+        let workspace = self.store.market().path().to_string_lossy().into_owned();
+        if existing
+            .as_ref()
+            .is_some_and(|identity| !drawing_identity::belongs_to(identity, &key))
+        {
+            return Err(Error::SourceChanged);
+        }
+        // Known mirrors may hold stale undo state while a gesture is active.
+        if self
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .any(|(pane, _)| {
+                pane.layout
+                    .drawings_key
+                    .as_ref()
+                    .is_some_and(|held| held.market == key.market)
+                    && facts_of(pane).gesture_in_flight
+            })
+        {
+            return Err(Error::Busy);
+        }
+        let proposed = match existing {
+            Some(identity) => identity,
+            None => {
+                let mut bytes = [0_u8; 32];
+                getrandom::fill(&mut bytes).map_err(|_| Error::Unavailable)?;
+                let entropy = bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                drawing_identity::issue(&workspace, &key, id.0, &entropy)
+                    .map_err(|_| Error::Unavailable)?
+            }
+        };
+        let identity = self
+            .pane_mut_at(selector.tab_id, side)
+            .ok_or(Error::Missing)?
+            .drawings
+            .ensure_identity(id, proposed)
+            .map_err(|_| Error::Ambiguous)?;
+        self.persist_changed_drawings();
+        market_settings::commit(self.store.market_mut(), std::slice::from_ref(&key))
+            .map_err(Error::WriteFailed)?;
+        let text = std::fs::read_to_string(self.store.market().path())
+            .map_err(|error| Error::WriteFailed(error.to_string()))?;
+        let document = market_settings::parse_settings(&text)
+            .map_err(|error| Error::WriteFailed(error.to_string()))?;
+        drawing_identity::resolve(
+            &identity,
+            document
+                .drawings(&key)
+                .iter()
+                .filter_map(|item| item.durable_identity.as_ref()),
+        )
+        .map_err(|_| Error::Ambiguous)?;
+        Ok(identity)
+    }
+
     /// Take every indicator off every pane.
     ///
     /// Straight off each pane's own collection rather than by walking

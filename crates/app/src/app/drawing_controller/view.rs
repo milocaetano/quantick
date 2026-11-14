@@ -72,6 +72,7 @@ fn drawing_env<'a>(
             ))
         });
     crate::surfaces::DrawingEnv {
+        linked_alerts: read.linked_alerts,
         pane_id: facts.pane_id,
         selected,
         chart_area: facts.chart_area,
@@ -103,6 +104,7 @@ fn drawing_env<'a>(
 #[derive(Default)]
 struct DrawingViewCosts<'a> {
     context_bar: bool,
+    linked_alerts: usize,
     selected_bbox: Option<egui::Rect>,
     selected_band: Option<String>,
     authored_objects: usize,
@@ -195,11 +197,11 @@ impl DrawingControllerAccess<'_> {
         // popup that keeps clear of an object reads this rectangle, so asking
         // the anchors alone is what let a panel land in the middle of a
         // profile while believing it had walked around it.
-        let bbox = drawings::egui_rect(
-            drawing
-                .tool
-                .painted_bounds(drawings::px_rect(bbox), band.rect),
-        );
+        let bbox = drawings::egui_rect(drawing.tool.content_bounds(
+            drawing.payload.as_ref(),
+            drawings::px_rect(bbox),
+            band.rect,
+        ));
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
     pub(crate) fn draw_drawing_chrome(
@@ -207,6 +209,7 @@ impl DrawingControllerAccess<'_> {
         ctx: &egui::Context,
         host: &DrawingReadAccess<'_>,
         tools: &ToolRail,
+        alerts: &quantick_alerts::AlertBook,
     ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
         let manager_open = self.chrome.manager_open();
         let rows = if manager_open {
@@ -222,6 +225,12 @@ impl DrawingControllerAccess<'_> {
         let inspector_showing = self.chrome.inspector_open() || self.chrome.inspector_pinned();
         let read = DrawingViewCosts {
             context_bar: true,
+            linked_alerts: host
+                .drawings()
+                .selected()
+                .and_then(|index| host.drawings().items().get(index))
+                .and_then(|drawing| drawing.durable_identity.as_ref())
+                .map_or(0, |target| alerts.drawing_alert_count(target)),
             selected_bbox: self.selected_drawing_bbox(host),
             selected_band: inspector_showing
                 .then(|| self.selected_drawing_band(host))

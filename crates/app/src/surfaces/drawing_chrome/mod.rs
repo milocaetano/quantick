@@ -132,6 +132,7 @@ pub(crate) struct ManagerRow {
 /// one subsystem's slice, and eleven more fields on the shared env would move
 /// the loose-field problem out one level instead of solving it.
 pub(crate) struct DrawingEnv<'a> {
+    pub linked_alerts: usize,
     pub pane_id: u64,
     /// The selected object on the pane the chrome speaks for, if any.
     pub selected: Option<SelectedDrawing<'a>>,
@@ -372,6 +373,14 @@ impl Chrome<'_> {
     /// wants its note typed.
     pub fn request_text_edit(&mut self) {
         self.emit(Intent::RequestTextEdit);
+    }
+
+    /// The window's facts: a placed note wants the caret; Alerts owns the pointer.
+    pub fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
+        self.emit(Intent::FrameFacts {
+            text_edit,
+            surface_over,
+        });
     }
 
     /// The host placed the note the `QUANTICK_TEXT_NOTE` hook asked for.

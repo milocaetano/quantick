@@ -54,6 +54,8 @@ pub struct Core {
     pub inline: InlineEditor,
     pub pending_text_edit: bool,
     pub pending_open_settings: bool,
+    /// A floating surface (Alerts) owns the pointer; the context bar stands down.
+    pub surface_over: bool,
     pub clipboard: Option<Drawing>,
     pub paste_count: u32,
     pub menu_ask: Option<(u64, DrawingChromeAsk)>,
@@ -80,6 +82,11 @@ pub enum Intent {
     },
     ConfirmDelete(bool),
     RequestTextEdit,
+    /// A placed note wants the caret; Alerts owns the pointer.
+    FrameFacts {
+        text_edit: bool,
+        surface_over: bool,
+    },
     CarrySelection,
     InspectorOpen(bool),
     OpenSettings,
@@ -157,6 +164,13 @@ impl crate::Model for Model {
             }
             Intent::ConfirmDelete(confirm) => state.core.shared.delete_confirm = confirm,
             Intent::RequestTextEdit => state.core.pending_text_edit = true,
+            Intent::FrameFacts {
+                text_edit,
+                surface_over,
+            } => {
+                state.core.pending_text_edit |= text_edit;
+                state.core.surface_over = surface_over;
+            }
             Intent::CarrySelection => state.core.pending_open_settings |= state.core.shared.open,
             Intent::OpenSettings => {
                 state.core.shared.open = true;

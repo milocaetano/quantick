@@ -1,0 +1,4 @@
+# #858 approved narrow book getters and surface/delivery/store docking only.
+# Command dispatch remains with the surface owner; no root rule decisions.
+QuantickApp +21
+!budget +21

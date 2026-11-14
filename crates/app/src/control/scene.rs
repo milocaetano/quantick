@@ -56,11 +56,12 @@ use quantick_control::{
 };
 
 use eframe::egui;
+use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
+use quantick_control_handlers::feed_status::{FeedStatusView, feed_status_controls};
 use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
     dock::DockTab,
-    feed::stall::Recovery,
     pane::{ChartPane, PaneSide},
     tab::Tab,
     toolrail::{RailControl, RailControlKind},
@@ -187,10 +188,10 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     push_settings(&mut controls, app);
-    // With the other fixed-size regions, ahead of the strip. At most three
+    // With the other fixed-size regions, ahead of the strip. At most four
     // entries, and worth keeping if a workspace ever reaches the ceiling: the
     // word is the one control on screen with no capability behind it.
-    push_feed_status(&mut controls, app);
+    push_feed_status(&mut controls, app, active);
     // Bounded like every other projection, and honest about it. Every registry
     // behind the scene is fixed-size except the trader's own tab strip, which
     // is why the strip is walked last and why it is the one walk told when to
@@ -618,6 +619,21 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
     if !dock.visible() {
         return;
     }
+    controls.push(SceneControlSnapshot {
+        control_id: quantick_control_schema::alerts::RAIL_CONTROL.to_owned(),
+        label: "Alerts".to_owned(),
+        description: None,
+        role: SceneRoleDto::Tab,
+        owner: SceneOwnerSnapshot {
+            kind: SceneOwnerKindDto::Dock,
+            id: DOCK_OWNER_ID.to_owned(),
+        },
+        selected: app.chrome_reads().alerts_open,
+        availability: available(),
+        bounds: None,
+        bounds_availability: bounds_not_recorded(),
+        capability_id: Some(quantick_control_schema::alerts::OPEN.to_owned()),
+    });
     let open = dock.tab();
     for tab in DockTab::ALL {
         controls.push(SceneControlSnapshot {
@@ -672,7 +688,11 @@ fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot
 /// reading a capture with no `feed_status` control has been told the feed is
 /// healthy. The recovery controls name the capability that operates them, which
 /// is the whole reason `capability_id` exists.
-fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+fn push_feed_status<P: TabsPort + ChromePort + ?Sized>(
+    controls: &mut Vec<SceneControlSnapshot>,
+    app: &P,
+    tab: &Tab,
+) {
     let Some(chip) = app.chrome_reads().feed_chip_rect() else {
         return;
     };
@@ -706,34 +726,31 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         // human something would be a second way to say the same thing.
         capability_id: None,
     });
-    // Both inside the popup. Outside it, the one-click Reconnect standing on
-    // screen: the overlay's or the status bar's, never both.
-    let recoveries = [
-        (FEED_RECONNECT_CONTROL_ID, Recovery::Reconnect),
-        (FEED_RELOAD_CONTROL_ID, Recovery::Reload),
-    ];
-    let shown = if popup_open {
-        2
-    } else {
-        usize::from(app.chrome_reads().feed_reconnect_offered())
+    // All inside the popup, in the order it paints them. Outside it, the
+    // one-click act standing on screen: the overlay's or the status bar's.
+    let stall = tab.stall_at(app.tab_reads().config(), crate::metrics::wall_clock_ms());
+    let view = FeedStatusView {
+        roll: tab.link.roll_offer(),
+        primary: quantick_feed::notice_report::popup_primary(&tab.link.notice, stall.as_ref()),
+        popup_open,
+        offered: app.chrome_reads().feed_reconnect_offered(),
     };
-    for (control_id, recovery) in recoveries.into_iter().take(shown) {
+    for entry in feed_status_controls(view) {
+        let control = entry.control;
         controls.push(SceneControlSnapshot {
-            control_id: control_id.to_owned(),
-            label: recovery.label().to_owned(),
-            description: None,
+            control_id: control.control_id().to_owned(),
+            label: entry.label,
+            description: entry.description,
             role: SceneRoleDto::Action,
             owner: owner(),
-            // Which of the two leads is the application's judgement about
+            // Which one leads is the application's judgement about
             // *this* stall, and it is a matter of emphasis rather than of
             // state: neither control is chosen until it is pressed.
             selected: false,
-            availability: available(),
+            availability: entry.refused.map_or_else(available, unavailable),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: Some(
-                quantick_control_handlers::recovery::capability_id(recovery).to_owned(),
-            ),
+            capability_id: Some(control.capability_id().to_owned()),
         });
     }
 }

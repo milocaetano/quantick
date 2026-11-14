@@ -95,6 +95,7 @@ fn tick_spheres_stand_on_their_executions() {
     assert_eq!(frame.dots.len(), 2);
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4500.0,
@@ -235,6 +236,7 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     styled.tick = Some((
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
+            peak_spheres: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
@@ -279,6 +281,7 @@ fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publi
     let ctx = egui::Context::default();
     let style = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
             x_units_per_pixel: 1.0 / 22.0,
             price_units_per_pixel: 1.0,
@@ -378,6 +381,7 @@ fn tick_spheres_follow_the_pane_theme() {
     bookmap.tick = Some((
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
+            peak_spheres: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
@@ -814,6 +818,7 @@ fn tick_separator_palette_changes_rebuild_cached_meshes_and_keep_snapshots() {
     k.tick = Some((
         quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
+            peak_spheres: None,
             viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
             reference_quantity: 9000.0,

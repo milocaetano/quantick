@@ -72,6 +72,10 @@ pub enum FlowExecutionDisplayPolicy {
     /// brighten gradually up to the reference. Display separation never promotes
     /// a small region. Oversized opening regions keep their faint treatment.
     VolumeWeightedWithDimContext,
+    /// Peak spheres: every mass is drawn, its radius by rank among the
+    /// visible masses (`scale_basis` `ranked_visible_masses`), labels on the
+    /// top fifth; no mass is held back as dim context.
+    RankedPeakMasses,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +85,9 @@ pub enum FlowExecutionScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    /// Peak spheres: radius by rank among the visible masses; the frame's
+    /// notes name how many and from which quantity labels are drawn.
+    RankedVisibleMasses,
 }
 impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
     fn from(value: FlowScaleBasis) -> Self {
@@ -91,6 +98,7 @@ impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
             FlowScaleBasis::OpeningOnlyFallback => Self::OpeningOnlyFallback,
             FlowScaleBasis::TypedReference => Self::TypedReference,
             FlowScaleBasis::VisibleRegionMaxWithFloor => Self::VisibleRegionMax,
+            FlowScaleBasis::RankedVisibleMasses { .. } => Self::RankedVisibleMasses,
         }
     }
 }
@@ -150,7 +158,8 @@ pub struct FlowExecutionMark {
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
     pub trade_count: WireU64,
-    /// Actual painted circle radius; gross quantity determines its area.
+    /// Actual painted circle radius: gross quantity determines its area, or
+    /// under `ranked_peak_masses` its rank among the visible masses does.
     pub radius_px: CanonicalDecimal,
     /// Radius of a disc with the same area as the buy sector; not a separate painted disc.
     pub buy_radius_px: CanonicalDecimal,
@@ -206,7 +215,11 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             scale_basis: FlowExecutionScaleBasis::for_frame(frame),
             typed_reference: frame.view.reference.typed().map(canonical_decimal),
             effective_reference: frame.effective_reference.map(canonical_decimal),
-            display_policy: FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext,
+            display_policy: if frame.view.region.divides_at_peaks() {
+                FlowExecutionDisplayPolicy::RankedPeakMasses
+            } else {
+                FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext
+            },
             large_region_threshold: frame.large_region_threshold().map(canonical_decimal),
             opening_exclusion_effective: frame.opening_exclusion_effective,
             radius_limit_px: canonical_decimal(

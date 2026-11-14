@@ -123,6 +123,13 @@ pub struct FlowTapeSource {
     pub(super) cells_walked: std::sync::atomic::AtomicUsize,
     /// The spheres of the last cached projection, per region window.
     memo: Option<incremental::FlowMemo>,
+    /// The tape's price grid: only ever narrows.
+    grid: quantick_engine::PriceGrid,
+    /// Peak regions' cuts per region window, and what they were read for.
+    peak_cuts: super::peaks::PeakCutsByWindow,
+    peak_key: Option<super::peaks::PeakKey>,
+    /// The admitted slots the kept cuts were last filled over.
+    peak_walked: Option<(usize, usize)>,
 }
 
 #[path = "incremental.rs"]
@@ -148,6 +155,8 @@ impl FlowTapeSource {
         // A keep that only grew with the live edge evicts nothing.
         if !beyond.is_empty() || !self.cells.is_empty() {
             self.memo = None;
+            self.peak_cuts.clear();
+            self.peak_walked = None;
         }
         self.cells = inside;
         drop(beyond);
@@ -187,6 +196,7 @@ impl FlowTapeSource {
                 self.ineligible.insert(ordinal..ordinal + 1);
                 continue;
             }
+            self.grid.observe(trade.price);
             self.dirty
                 .insert(trade.timestamp_ms.div_euclid(FLOW_REGION_WINDOW_MS));
             self.dirty_slots.insert(slot);
@@ -253,7 +263,14 @@ impl FlowTapeSource {
             frame.offscreen_executions,
             frame.scale_basis,
             frame.opening_exclusion_effective,
-        ) = finish_groups(groups, view);
+        ) = finish_groups(
+            groups,
+            view,
+            super::peaks::PeakDivision {
+                tick: self.grid.step(),
+                kept: None,
+            },
+        );
         frame.order_for_paint();
         frame
     }

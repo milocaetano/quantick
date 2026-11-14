@@ -210,7 +210,7 @@ pub struct StatusResponse {
     pub word_clicked: bool,
     /// The word's rect while it is a door, which is the popup's anchor.
     pub word_rect: Option<egui::Rect>,
-    /// The one-click Reconnect beside the word was pressed.
+    /// The one-click control beside the word was pressed.
     pub reconnect: bool,
 }
 
@@ -224,6 +224,10 @@ pub struct StatusLead<'a> {
     pub open: bool,
     /// The reason, on the word's hover, so reading it takes no click.
     pub report: Option<crate::feed_notice::Report<'a>>,
+    /// What the one-click control beside the word asks: the popup's first.
+    pub action: crate::feed_notice::NoticeAction,
+    /// Why the tab shows another contract than it was opened on.
+    pub note: Option<String>,
 }
 
 impl<'a> StatusLead<'a> {
@@ -240,7 +244,14 @@ impl<'a> StatusLead<'a> {
             door: tab.connection.has_recovery_door(),
             open,
             report: crate::feed_notice::report(&tab.link.notice, stall)
-                .filter(crate::feed_notice::Report::is_offline),
+                .filter(crate::feed_notice::Report::is_offline)
+                .map(|report| report.with_roll(tab.link.roll_note())),
+            action: tab.link.quick_action(),
+            note: tab
+                .link
+                .rolled
+                .as_ref()
+                .map(quantick_feed::link::Rolled::sentence),
         }
     }
 }
@@ -281,6 +292,13 @@ pub fn draw(
 /// The word: a grey dot and what is true of the feed. Only an attempt pulses.
 fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResponse) {
     let palette = theme::get(ui.ctx());
+    if let Some(note) = &lead.note {
+        ui.label(
+            egui::RichText::new(note)
+                .small()
+                .color(palette.loading_meta()),
+        );
+    }
     let Some(word) = &lead.word else {
         return;
     };
@@ -340,7 +358,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
             .on_hover_ui(|ui| {
                 if let Some(report) = &lead.report {
                     ui.label(report.headline);
-                    if let Some(step) = report.next_step {
+                    if let Some(step) = report.next_step_text() {
                         ui.label(egui::RichText::new(step).color(palette.text_muted()));
                     }
                 }
@@ -351,14 +369,14 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         let reconnect = ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new(crate::loading::RECONNECT_LABEL)
+                    egui::RichText::new(lead.action.label())
                         .small()
                         .color(palette.loading_meta()),
                 )
                 .sense(egui::Sense::click()),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text("Keeps the chart as it is");
+            .on_hover_text(lead.action.cost());
         response.reconnect = reconnect.clicked();
     }
 }

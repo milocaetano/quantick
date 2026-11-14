@@ -105,6 +105,35 @@ fn a_real_double_click_on_open_canvas_centres_the_live_price_at_its_spacing() {
     assert!(!app.surfaces.chart_settings.model_state.is_open());
 }
 
+/// Already live, each real double click on open canvas zooms in once and
+/// keeps the last price centred: no triple click needed.
+#[test]
+fn a_real_double_click_while_live_zooms_in_each_time() {
+    let ctx = egui::Context::default();
+    let mut app = candles_app(&ctx, true);
+    let at = open_canvas(&app);
+    click(&mut app, &ctx, at);
+    click(&mut app, &ctx, at);
+    assert!(app.active_tab().flow_pane.model.viewport.follows_live());
+    assert_eq!(app.active_tab().flow_pane.model.viewport.px_per_bar(), 20.0);
+    for expected in [40.0, 80.0] {
+        quiet(&mut app, &ctx);
+        let open = open_above_the_candles(&app);
+        click(&mut app, &ctx, open);
+        click(&mut app, &ctx, open);
+        assert!(ctx.input(|input| input.pointer.button_double_clicked(PRIMARY)));
+        let pane = &app.active_tab().flow_pane;
+        assert!(pane.model.viewport.follows_live());
+        assert_eq!(
+            pane.model.viewport.px_per_bar(),
+            expected,
+            "one zoom a pair"
+        );
+        assert_last_price_centred(pane);
+        assert!(!app.surfaces.chart_settings.is_open());
+    }
+}
+
 /// The third click zooms where its double centred, even though the view
 /// that double moved puts a live candle under the pointer: the triple
 /// is not hit-tested again.
@@ -172,9 +201,10 @@ fn a_real_double_click_on_a_candle_opens_its_settings_and_the_next_click_zooms_n
 }
 
 /// Over the tape the double click returns the tape to live and leaves the
-/// candles; a click on the candles' canvas right after it is no triple.
+/// candles; the third click, even on the candles' canvas, zooms the tape it
+/// returned. Once live, each double click on the tape zooms it again.
 #[test]
-fn a_real_double_click_on_the_tape_returns_it_to_live_and_the_next_click_zooms_nothing() {
+fn a_real_double_click_on_the_tape_returns_it_to_live_and_then_zooms_the_tape_only() {
     let ctx = egui::Context::default();
     let (mut app, tape, candles) = split_app(&ctx);
     let manual = (90.455, 111.545);
@@ -188,15 +218,35 @@ fn a_real_double_click_on_the_tape_returns_it_to_live_and_the_next_click_zooms_n
     run_frame(&mut app, &ctx);
     assert!(!app.active_tab().tape().tape_end().is_live());
     let before = candles_view(&app);
+    let window = app.active_tab().tape().live_lane_window();
     click(&mut app, &ctx, tape);
     click(&mut app, &ctx, tape);
     assert!(
         app.active_tab().tape().tape_end().is_live(),
         "the tape live"
     );
+    assert_eq!(
+        app.active_tab().tape().live_lane_window(),
+        window,
+        "no zoom yet"
+    );
     click(&mut app, &ctx, candles);
     assert!(ctx.input(|input| input.pointer.button_triple_clicked(PRIMARY)));
     run_frame(&mut app, &ctx);
+    let zoomed = app.active_tab().tape().live_lane_window();
+    assert_ne!(zoomed, window, "the third click zooms the tape");
+    assert!(app.active_tab().tape().tape_end().is_live());
+    quiet(&mut app, &ctx);
+    click(&mut app, &ctx, tape);
+    click(&mut app, &ctx, tape);
+    assert!(ctx.input(|input| input.pointer.button_double_clicked(PRIMARY)));
+    run_frame(&mut app, &ctx);
+    assert_ne!(
+        app.active_tab().tape().live_lane_window(),
+        zoomed,
+        "live, the double click zooms the tape again"
+    );
+    assert!(app.active_tab().tape().tape_end().is_live());
     let pane = &app.active_tab().flow_pane;
     assert_eq!(candles_view(&app), before, "the candles never moved");
     assert!(!pane.model.viewport.follows_live());

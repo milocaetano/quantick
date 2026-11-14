@@ -28,6 +28,7 @@ mod cases {
                         &mut dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            alerts_open: false,
                             replay: None,
                             paper: &mut paper,
                             timezone: TzOffset::default(),
@@ -44,6 +45,7 @@ mod cases {
                 &mut dock,
                 ctx,
                 &mut PaperPanelEnv {
+                    alerts_open: false,
                     replay: None,
                     paper: &mut paper,
                     timezone: TzOffset::default(),
@@ -70,6 +72,7 @@ mod cases {
                         dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            alerts_open: false,
                             replay: None,
                             paper,
                             timezone: TzOffset::default(),
@@ -110,6 +113,7 @@ mod cases {
         env: &mut PaperPanelEnv<'_>,
     ) -> PaperPanelEffects {
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: env.paper,
             replay: env.replay,
             timezone: env.timezone,
@@ -135,6 +139,7 @@ mod cases {
         let mut response = SurfaceResponse::default();
         let output = ctx.run(panel_input(viewport, events), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                alerts_open: false,
                 paper,
                 replay: None,
                 timezone: Default::default(),
@@ -430,6 +435,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
     for paper in [&mut first, &mut second] {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                alerts_open: false,
                 paper,
                 replay: None,
                 timezone: Default::default(),
@@ -477,6 +483,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
             SurfaceResponse::default()
         );
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: &mut first,
             replay: None,
             timezone: Default::default(),
