@@ -382,3 +382,125 @@ fn a_column_fold_survives_the_switch_to_the_tree_painter_and_back() {
     );
     assert!(app.active_tab().reading().flow_collapsed);
 }
+
+/// The active tab's canvas as the model reads it, and the seam after child
+/// `index` of its root split dragged `by` points in one press.
+fn drag_root_seam(app: &mut QuantickApp, index: usize, by: f32) -> CanvasRect {
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let seam = quantick_workspace::canvas::SeamAddress {
+        path: Vec::new(),
+        index,
+    };
+    (app.active_tab_mut().canvas.state)
+        .step_seam_drag(&mut None, (&seam, by, true), whole)
+        .expect("the seam moves");
+    whole
+}
+
+/// A chart dragged shut to its rail and then maximized draws its chart over
+/// the whole canvas, menu and all; the first restore puts it back on its
+/// rail.
+#[test]
+fn a_maximized_railed_chart_draws_and_restores_to_its_rail() {
+    let ctx = egui::Context::default();
+    for id in ["time+flow", "charts-3", "charts-2"] {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        run_frame(&mut app, &ctx);
+        app.apply_layout_preset(crate::canvas_layout::preset(id).expect("registered"));
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let whole = drag_root_seam(&mut app, 0, -10_000.0);
+        let canvas = &mut app.active_tab_mut().canvas;
+        let first = canvas.state.tree().panes()[0].0;
+        assert_eq!(
+            canvas.state.railed().first(),
+            Some(&first),
+            "{id}: the first chart folded"
+        );
+        assert_eq!(canvas.state.maximize(first), Ok(true), "{id}");
+        let seat = quantick_workspace::canvas::slot_seat(&canvas.state, &mut canvas.seats, first)
+            .flatten()
+            .expect("a chart");
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let pane = app.active_tab().time_panes[seat].id;
+        let scene = crate::control::scene_snapshot(&app);
+        let canvas = (scene.controls.iter())
+            .find(|control| control.control_id == format!("pane.{pane}.canvas"))
+            .expect("the maximized chart is in the scene");
+        assert!(canvas.bounds.is_some(), "{id}: drawn, with bounds");
+        let drawn = app.active_tab().pane(PaneSide::Time(seat)).frame.chart_area;
+        let wide = drawn.is_some_and(|chart| chart.width() > whole.w / 2.0);
+        assert!(wide, "{id}: over the canvas, {drawn:?}");
+        let menu = format!("pane_menu.{first}");
+        assert!(
+            scene
+                .controls
+                .iter()
+                .any(|control| control.control_id == menu),
+            "{id}: its menu"
+        );
+        let state = &mut app.active_tab_mut().canvas.state;
+        assert_eq!(state.restore(first), Ok(true), "{id}");
+        assert!(state.railed().contains(&first), "{id}: back on its rail");
+        assert_eq!(state.maximized(), None, "{id}");
+    }
+}
+
+/// One chart of "4 TF + Flow" dragged shut inside the grid leaves the other
+/// three on screen: their legends still draw, the readback says the context
+/// is not collapsed, and a save writes no column fold.
+#[test]
+fn one_grid_chart_folded_keeps_the_other_legends() {
+    use quantick_control_handlers::layout::LayoutTab as _;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame(&mut app, &ctx);
+    app.apply_layout_preset(crate::canvas_layout::preset("grid4+flow").expect("registered"));
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    for seat in 0..4 {
+        app.active_tab_mut().focus = PaneSide::Time(seat);
+        app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+        settle_indicators(&mut app);
+    }
+    for _ in 0..2 {
+        run_frame(&mut app, &ctx);
+    }
+    let legends = |app: &QuantickApp| -> Vec<bool> {
+        (app.active_tab().time_panes.iter())
+            .map(|pane| pane.frame.indicator_legend.is_some())
+            .collect()
+    };
+    assert_eq!(legends(&app), vec![true; 4], "every chart's legend draws");
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let seam = quantick_workspace::canvas::SeamAddress {
+        path: vec![0, 0],
+        index: 0,
+    };
+    (app.active_tab_mut().canvas.state)
+        .step_seam_drag(&mut None, (&seam, -10_000.0, true), whole)
+        .expect("the seam inside the grid folds");
+    for _ in 0..2 {
+        run_frame(&mut app, &ctx);
+    }
+    let tab = app.active_tab();
+    assert_eq!(tab.canvas.state.railed().len(), 1, "one chart folded");
+    assert_eq!(
+        &legends(&app)[1..],
+        &[true; 3],
+        "the open charts keep theirs"
+    );
+    assert!(tab.shows_context_charts());
+    assert!(!tab.reading().collapsed, "the context is not collapsed");
+    assert_eq!(tab.canvas.folds(), (false, false));
+    let recipe =
+        crate::app::tab_workspaces::live_recipe(&app.runtime, app.runtime.tabs.active_id())
+            .expect("an open tab");
+    assert!(!recipe.context_collapsed, "a save writes no column fold");
+}

@@ -769,3 +769,63 @@ fn rails_wider_than_the_canvas_never_go_negative() {
         assert!(rect.x + rect.w <= narrow.w + EPS, "{slot}: {rect:?}");
     }
 }
+
+/// A restore by call gives the pair a drag folded the shares it had at the
+/// press, and the split's other children keep theirs: in splits of three and
+/// of four children, every seam, each way.
+#[test]
+fn a_restore_gives_the_pair_its_shares_back_and_leaves_the_others() {
+    for (id, path) in [
+        ("charts-3", vec![]),
+        ("time+time+flow", vec![]),
+        ("stack3+flow", vec![0]),
+        ("charts-7", vec![0]),
+        ("charts-8", vec![1]),
+    ] {
+        let state = canvas(id);
+        let Some(PaneTree::Split { children, .. }) = super::seams::node_at(state.tree(), &path)
+        else {
+            panic!("{id} {path:?} names a split");
+        };
+        assert!(children.len() >= 3, "{id}: three children or more");
+        let seams = tree_seams(&state, AREA, DIVIDER).into_iter();
+        for seam in seams.filter(|seam| seam.address.path == path) {
+            let whole = along(AREA, seam.axis);
+            for by in [whole, -whole] {
+                let name = format!("{id} {:?} by {by}", seam.address);
+                let mut live = state.clone();
+                drag(&mut live, &seam.address, by);
+                let rails = tree_rails(&live, AREA, DIVIDER);
+                assert_eq!(rails.len(), 1, "{name}: one rail");
+                assert_eq!(live.restore(rails[0].slot), Ok(true), "{name}");
+                assert!(live.railed().is_empty(), "{name}: open");
+                let (was, now) = (shares_of(&state), shares_of(&live));
+                assert!(
+                    was.iter().zip(&now).all(|(a, b)| (a - b).abs() < 1e-5),
+                    "{name}: the pre-fold shares, {was:?} -> {now:?}"
+                );
+            }
+        }
+    }
+}
+
+/// One chart folded inside the stack or the grid beside the flow pane, or
+/// one of the two charts there, is no context fold: the readback says the
+/// context is folded only while every chart on one side of the flow pane is
+/// on a rail.
+#[test]
+fn one_chart_folded_beside_the_flow_is_no_context_fold() {
+    for (id, path) in [
+        ("stack3+flow", vec![0]),
+        ("grid4+flow", vec![0, 0]),
+        ("time+time+flow", vec![]),
+    ] {
+        let mut state = canvas(id);
+        let seam = SeamAddress { path, index: 0 };
+        drag(&mut state, &seam, -AREA.w);
+        assert_eq!(state.railed().len(), 1, "{id}: one chart folded");
+        assert_eq!(state.flow_side_folds(), (false, false), "{id}");
+        assert!(state.fold_flow_side(false, true), "{id}: the whole side");
+        assert_eq!(state.flow_side_folds(), (true, false), "{id}");
+    }
+}
