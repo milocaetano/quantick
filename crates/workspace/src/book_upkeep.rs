@@ -240,6 +240,9 @@ fn settle<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
     book.settle_tab(id, &live);
     sync.settle(id, live);
     sync.note_signal(id, signal);
+    if let Some(state) = book.tab_state(id) {
+        sync.settled_on(id, state.workspace);
+    }
 }
 
 /// Queue `recipe` for a tab and carry it as far as the panes allow. The
@@ -257,7 +260,10 @@ pub fn show_recipe<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, recipe: &Wo
 /// Carry each recipe on its way as far as the tab's panes allow.
 pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
     for id in host.recipe_book().1.pending_tabs() {
-        let arrived = host.tab_settled(id)
+        let (book, sync) = host.recipe_book();
+        let on = book.tab_state(id).map(|state| state.workspace);
+        let arrived = sync.stands_on(id, on)
+            && host.tab_settled(id)
             && host.live_recipe(id).as_ref() == host.recipe_book().1.pending_recipe(id);
         if !arrived && let Some(recipe) = host.recipe_book_mut().1.take_canvas(id) {
             host.apply_recipe_canvas(id, &recipe);
@@ -281,7 +287,9 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
 
 /// After `landed` took its recipe, which may repaint the other tabs on its
 /// workspace: each that stands is read again, as no edit. Where any tab
-/// there holds an edit, the sets shown are that edit, the workspace's, and
+/// there holds an indicator edit (another kind of edit stays its tab's, so a
+/// heal beside it marks no one), the sets shown are that edit, the
+/// workspace's, and
 /// every one of them holds it ([`WorkspaceBook::hold_shown`]): each reads
 /// held, a save from any writes it, and a discard on one leaves it with the
 /// rest. With no edit held a landing's heal stays out of every copy.
@@ -291,7 +299,7 @@ fn share_shown_sets<H: TabRecipeHost + ?Sized>(host: &mut H, landed: u64) {
         return;
     };
     let tabs = book.tabs_on(state.workspace);
-    let held = tabs.iter().any(|tab| book.differs(*tab));
+    let held = tabs.iter().any(|tab| book.holds_set_edit(*tab));
     for tab in tabs {
         let sync = host.recipe_book().1;
         if sync.is_pending(tab) || !sync.is_settled(tab) {

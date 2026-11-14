@@ -169,8 +169,9 @@ snapshot reads it as `auto_save`.
 - **Off:** the change is held on the tab. An indicator change is the
   exception: every tab on the workspace whose panes show that strip layout
   shows it at once and holds it too, so each is marked, a save from any of
-  them writes it, and it stays until the last of them saves it, switches
-  away or closes without saving. The cell wears the amber mark and a
+  them writes it, and it stays until the last of them switches away or
+  closes without saving; a switch away from one of them drops, with the
+  "changes dropped" toast, only what that tab held alone. The cell wears the amber mark and a
   blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the tab's own drawing sets

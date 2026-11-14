@@ -450,6 +450,17 @@ impl WorkspaceBook {
         }
     }
 
+    /// Whether the tab's copy names other indicator sets than its workspace:
+    /// an indicator edit, held. Nothing else of the copy counts.
+    #[must_use]
+    pub fn holds_set_edit(&self, tab: u64) -> bool {
+        let Some(state) = self.tabs.get(&tab) else {
+            return false;
+        };
+        self.baseline(state)
+            .is_none_or(|base| !same_sets(&state.copy, base))
+    }
+
     /// A landing showed `shown` on the tab while its workspace holds an edit,
     /// which these sets are: the copy takes them, as [`Self::take_sets`], and
     /// reads held. With autosave on a copy that comes to differ this way is
@@ -907,12 +918,16 @@ impl WorkspaceBook {
                 dropped_edits: false,
             });
         }
-        // An edit another tab there still holds is not dropped: it is theirs too.
-        let others = (self.tabs.iter()).filter(|(other, _)| **other != tab);
-        let shared = others
-            .filter(|(_, held)| held.workspace == state.workspace)
-            .any(|(_, held)| self.is_modified(held));
-        let dropped_edits = self.is_modified(state) && !shared;
+        // Indicator sets another tab there still holds are not dropped: they
+        // are that tab's too. Anything else the copy changed is this tab's.
+        let base = self.baseline(state);
+        let rest = base.is_none_or(|base| !base.holds(&with_sets_of(&state.copy, base)));
+        let sets = base.is_none_or(|base| !same_sets(&state.copy, base));
+        let mut others = (self.tabs.iter()).filter(|(other, _)| **other != tab);
+        let shared = others.any(|(_, held)| {
+            held.workspace == state.workspace && same_sets(&held.copy, &state.copy)
+        });
+        let dropped_edits = rest || (sets && !shared);
         self.tabs.insert(tab, TabWorkspace::on(name, recipe));
         self.unsynced.remove(&tab);
         Ok(SetOutcome {
@@ -1137,6 +1152,24 @@ impl WorkspaceBook {
             .get(DEFAULT_WORKSPACE)
             .expect("parse and the constructor keep Default in the book")
     }
+}
+
+/// `copy` with the indicator sets `from` names, pane by pane.
+fn with_sets_of(copy: &WorkspaceRecipe, from: &WorkspaceRecipe) -> WorkspaceRecipe {
+    let mut copy = copy.clone();
+    copy.flow_indicators.clone_from(&from.flow_indicators);
+    for (pane, named) in copy.context_panes.iter_mut().zip(&from.context_panes) {
+        pane.indicators.clone_from(&named.indicators);
+    }
+    copy
+}
+
+/// Whether two recipes name the same indicator sets, pane by pane.
+fn same_sets(one: &WorkspaceRecipe, other: &WorkspaceRecipe) -> bool {
+    fn context(recipe: &WorkspaceRecipe) -> impl Iterator<Item = &[SavedIndicator]> {
+        (recipe.context_panes.iter()).map(|pane| pane.indicators.as_slice())
+    }
+    one.flow_indicators == other.flow_indicators && context(one).eq(context(other))
 }
 
 /// A pane's layout id as a copy of what it holds, the book's active layout where

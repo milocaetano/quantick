@@ -58,6 +58,8 @@ struct SeenTab {
     last: WorkspaceRecipe,
     /// The window's cheap change signal when `last` was read.
     signal: Option<u64>,
+    /// The workspace the tab settled on, once told.
+    on: Option<String>,
 }
 
 /// The window's side of the book, kept apart from the recipes: none of it is
@@ -193,8 +195,25 @@ impl TabRecipeSync {
                 baseline: live.clone(),
                 last: live,
                 signal: None,
+                on: None,
             },
         );
+    }
+
+    /// The tab settled on `workspace`.
+    pub fn settled_on(&mut self, tab: u64, workspace: &str) {
+        if let Some(seen) = self.seen.get_mut(&tab) {
+            seen.on = Some(workspace.to_owned());
+        }
+    }
+
+    /// Whether the tab's panes stand where `workspace` puts them: it settled
+    /// there, or was never told where it settled. A tab moved to another
+    /// workspace shows another workspace's sets until its recipe lands.
+    #[must_use]
+    pub fn stands_on(&self, tab: u64, workspace: Option<&str>) -> bool {
+        let on = self.seen.get(&tab).and_then(|seen| seen.on.as_deref());
+        on.is_none_or(|on| Some(on) == workspace)
     }
 
     /// Whether a recipe has settled on this tab since it joined.

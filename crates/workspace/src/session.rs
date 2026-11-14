@@ -143,6 +143,9 @@ pub struct LayoutSession {
     edited_tabs: BTreeSet<u64>,
     /// The open tabs in strip order, as [`Self::own_copies`] last met them.
     strip: Vec<u64>,
+    /// The tab whose set a copy took at its last landing: a restore's tie
+    /// goes to the first tab in strip order whichever lands first.
+    set_from: BTreeMap<LayoutId, u64>,
     /// The tabs whose panes stand on what their workspace showed them: what
     /// they show is what a tab landing there takes.
     settled_tabs: BTreeSet<u64>,
@@ -174,6 +177,7 @@ impl LayoutSession {
             next_workspace_id: 0,
             edited_tabs: BTreeSet::new(),
             strip: Vec::new(),
+            set_from: BTreeMap::new(),
             settled_tabs: BTreeSet::new(),
             left: BTreeMap::new(),
         }
@@ -405,6 +409,7 @@ impl LayoutSession {
         }
         let book = &self.book;
         self.owner.retain(|copy, _| book.is_private(*copy));
+        self.set_from.retain(|copy, _| book.is_private(*copy));
         for &(tab, _, layout) in &seeded {
             if self.book.is_private(layout) {
                 let holder = self.holder(tab);
@@ -718,7 +723,7 @@ impl LayoutSession {
     /// after [`Self::own_copies`], once per landing; sets are cloned only here.
     #[must_use]
     pub fn landing_sets<'a>(
-        &self,
+        &mut self,
         wanted: impl IntoIterator<Item = (u64, &'a [SavedIndicator])>,
     ) -> Vec<(u64, Vec<SavedIndicator>)> {
         let wanted: Vec<(u64, &[SavedIndicator])> = wanted.into_iter().collect();
@@ -734,6 +739,7 @@ impl LayoutSession {
                 .map_or(&[][..], |layout| &layout.indicators)
         };
         let mut decided: Vec<(LayoutId, &[SavedIndicator])> = Vec::new();
+        let mut sources: Vec<(LayoutId, u64)> = Vec::new();
         for &(pane, _) in &wanted {
             let Some(copy) = self
                 .held(pane)
@@ -751,23 +757,32 @@ impl LayoutSession {
                 .clone()
                 .any(|other| self.settled_tabs.contains(&other));
             let current = set_of(copy);
+            // The copy's set is the tab's that put it there, while it stands.
+            let from = (self.set_from.get(&copy).copied())
+                .filter(|by| others.clone().any(|other| other == *by))
+                .or(first);
             let (winner, action) = if !back && settled {
                 (current, "shown_set_kept")
             } else {
-                let at = tab.and_then(place);
-                let mut candidates: Vec<(Option<usize>, &[SavedIndicator])> =
-                    given.clone().map(|set| (at, set)).collect();
-                if let Some(first) = first.filter(|_| back) {
-                    candidates.push((place(first), current));
+                let landing = tab.unwrap_or_default();
+                let mut candidates: Vec<(Option<usize>, u64, &[SavedIndicator])> = given
+                    .clone()
+                    .map(|set| (place(landing), landing, set))
+                    .collect();
+                if let Some(from) = from.filter(|_| back) {
+                    candidates.push((place(from), from, current));
                 }
-                candidates.sort_by_key(|(at, _)| at.unwrap_or(usize::MAX));
-                let mut best = candidates.first().map_or(current, |(_, set)| *set);
-                for (_, set) in &candidates {
-                    if fullness(set) > fullness(best) {
-                        best = set;
+                candidates.sort_by_key(|(at, _, _)| at.unwrap_or(usize::MAX));
+                let mut best = candidates
+                    .first()
+                    .map_or((landing, current), |(_, by, set)| (*by, *set));
+                for (_, by, set) in &candidates {
+                    if fullness(set) > fullness(best.1) {
+                        best = (*by, set);
                     }
                 }
-                (best, "fullest_set_shown")
+                sources.push((copy, best.0));
+                (best.1, "fullest_set_shown")
             };
             let others_show = first.map(|_| current);
             self.log_joined(tab, copy, winner, given.chain(others_show), action);
@@ -791,6 +806,7 @@ impl LayoutSession {
                 shown.push((*pane, set.to_vec()));
             }
         }
+        self.set_from.extend(sources);
         shown
     }
     /// Say what a landing recipe gave the panes on `copy` that `shown` leaves
