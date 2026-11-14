@@ -10,7 +10,7 @@
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{PANE_MENU_BUTTON_PX, seat_slot};
+use quantick_workspace::canvas::{ColumnDrag, PANE_MENU_BUTTON_PX, column_drag, seat_slot};
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
@@ -220,7 +220,7 @@ impl Tab {
     fn canvas_frame(&mut self, area: egui::Rect) -> CanvasFrame {
         self.canvas.last_canvas = area;
         let canvas = &mut self.canvas;
-        let folds = (canvas.context_collapsed, canvas.flow_collapsed);
+        let folds = canvas.folds();
         let (fraction, across) = (&mut canvas.split_fraction, (area.left(), area.width()));
         let built = self.time_panes.len();
         let at = canvas_layout::column_frame(canvas.layout, built, across, fraction, folds);
@@ -1000,7 +1000,7 @@ impl Tab {
             band.contains(position) && !self.canvas.context_stack.heights[slot].is_collapsed()
         }) {
             self.focus = PaneSide::Time(slot);
-        } else if !self.canvas.flow_collapsed && flow_area.contains(position) {
+        } else if !self.canvas.folds().1 && flow_area.contains(position) {
             self.focus = PaneSide::Flow;
         }
     }
@@ -1053,7 +1053,10 @@ impl Tab {
         }
 
         let edge_x = if right { rail.left() } else { rail.right() };
-        paint_rail(ui.painter(), rail, edge_x, response.hovered());
+        paint_rail(ui.painter(), rail, (edge_x, false), response.hovered());
+        if let Some(id) = self.canvas.state.side_rail_id(right) {
+            self.canvas.menus.publish_rail(id, rail);
+        }
         let drawn_width = if right {
             rail.left() - canvas.left()
         } else {
@@ -1103,48 +1106,20 @@ impl Tab {
         drawn_width: f32,
         canvas_width: f32,
     ) {
-        if response.drag_started() {
-            self.canvas.drag = Some((
-                drawn_width,
-                self.canvas.context_collapsed,
-                self.canvas.flow_collapsed,
-            ));
+        if response.drag_started() || (response.dragged() && self.canvas.drag.is_none()) {
+            self.canvas.drag = Some((drawn_width, self.canvas.folds()));
         }
-        if response.dragged() && response.drag_delta().x.abs() > f32::EPSILON && canvas_width > 0.0
-        {
-            let (wanted_px, opening_left, opening_right) = {
-                let state = self.canvas.drag.get_or_insert((
-                    drawn_width,
-                    self.canvas.context_collapsed,
-                    self.canvas.flow_collapsed,
-                ));
-                state.0 += response.drag_delta().x;
-                *state
-            };
-            if opening_left && wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0 {
-                return;
-            }
-            if opening_right
-                && canvas_width - wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0
-            {
-                return;
-            }
-            if wanted_px < canvas_layout::COLLAPSE_AT_PX {
-                self.canvas.set_context_collapsed(true);
-            } else if canvas_width - wanted_px < canvas_layout::COLLAPSE_AT_PX {
-                self.canvas.set_flow_collapsed(true);
-            } else {
-                self.canvas.set_context_collapsed(false);
-                self.canvas.set_flow_collapsed(false);
-                let width = if canvas_width >= 2.0 * canvas_layout::MIN_PANE_WIDTH_PX {
-                    wanted_px.clamp(
-                        canvas_layout::MIN_PANE_WIDTH_PX,
-                        canvas_width - canvas_layout::MIN_PANE_WIDTH_PX,
-                    )
-                } else {
-                    wanted_px.clamp(0.0, canvas_width)
-                };
-                self.canvas.split_fraction = clamp_pane_fraction(width / canvas_width);
+        let step = response.drag_delta().x;
+        let held = self.canvas.drag.as_mut().filter(|_| response.dragged());
+        if let Some(held) = held.filter(|_| step.abs() > f32::EPSILON && canvas_width > 0.0) {
+            held.0 += step;
+            let asked = column_drag(held.0, canvas_width, held.1);
+            if let ColumnDrag::Open(fraction) = asked {
+                self.canvas.fold(false, false);
+                self.canvas.fold(true, false);
+                self.canvas.split_fraction = clamp_pane_fraction(fraction);
+            } else if asked != ColumnDrag::Hold {
+                self.canvas.fold(asked == ColumnDrag::FoldFlow, true);
             }
         }
         if response.drag_stopped() {
@@ -1214,15 +1189,21 @@ impl Tab {
 }
 
 /// A folded side's rail, one look for every fold: chrome, the inner edge
-/// where it meets the open side (so it reads as chrome rather than a stripe
-/// the chart starts after), and a grip in the colour a reader knows means
-/// "chrome you can take hold of", lit while `hot`.
-pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge_x: f32, hot: bool) {
+/// where it meets the open side at `edge` (so it reads as chrome rather than
+/// a stripe the chart starts after), and a grip in the colour a reader knows
+/// means "chrome you can take hold of", lit while `hot`. A rail folded
+/// across a column (`edge.1`) lies flat: its edge and grip run sideways.
+pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge: (f32, bool), hot: bool) {
     let palette = theme::get(painter.ctx());
     painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
     let stroke = egui::Stroke::new(1.0_f32, palette.border());
-    painter.vline(edge_x, rail.y_range(), stroke);
-    let size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
+    let mut size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
+    if edge.1 {
+        painter.hline(rail.x_range(), edge.0, stroke);
+        size = egui::vec2(size.y, size.x);
+    } else {
+        painter.vline(edge.0, rail.y_range(), stroke);
+    }
     let grip = egui::Rect::from_center_size(rail.center(), size);
     let colour = if hot {
         palette.accent()

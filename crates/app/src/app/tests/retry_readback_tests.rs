@@ -941,6 +941,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
         ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
         ("canvas.pane.resize", 1, Value::Null, Readback::Moves),
+        ("canvas.seam.drag", 1, Value::Null, Readback::Moves),
         (
             "canvas.widget.add",
             1,
@@ -1309,6 +1310,22 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 let state = &app.active_tab().canvas.state;
                 json!({ "slot": state.tree().panes()[0].0 })
             }
+            "canvas.seam.drag" => {
+                // The first seam that moves, dragged shut.
+                let canvas = &app.active_tab().canvas;
+                let at = canvas.last_canvas;
+                let whole = quantick_workspace::canvas::CanvasRect::new(
+                    at.left(),
+                    at.top(),
+                    at.width(),
+                    at.height(),
+                );
+                let seams = quantick_workspace::canvas::tree_seams(&canvas.state, whole, 4.0);
+                let seam = (seams.into_iter())
+                    .find(|seam| seam.resizable)
+                    .expect("a seam to drag");
+                json!({ "path": seam.address.path, "index": seam.address.index, "travel": "-4000" })
+            }
             "canvas.pane.resize" => {
                 // The first docked chart, wider within its row.
                 let state = &app.active_tab().canvas.state;
@@ -1555,6 +1572,8 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
 fn a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
+    // A collapse needs a context column beside the flow pane to put away.
+    app.apply_layout_preset(crate::canvas_layout::preset("time+flow").expect("registered"));
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-v1-refusal");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2196,7 +2215,7 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    app.active_tab_mut().canvas.fold(true, true);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("layout-focus-hidden");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -2229,3 +2248,45 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
 
 #[path = "native_indicator_control_tests.rs"]
 mod native_indicator_control;
+
+/// On the flow pane alone there is nothing to fold, and the four collapse
+/// calls answer as they always have: the context column's two succeed with
+/// `changed: false`, the flow pane's two refuse as a bad request. No new
+/// refusal reaches a v2 caller (contract section 4).
+#[test]
+fn a_collapse_with_nothing_to_fold_answers_as_before() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-nothing-to-fold");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    for capability in ["layout.pane.collapse", "layout.pane.expand"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        let ResponseOutcome::Success { result } = &answer.outcome else {
+            panic!("{capability} answers success: {:?}", answer.outcome);
+        };
+        assert_eq!(result["changed"], json!(false), "{capability}");
+        assert_eq!(result["collapsed"], json!(false), "{capability}");
+    }
+    for capability in ["layout.flow.collapse", "layout.flow.expand"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        assert_eq!(
+            error_code(&answer),
+            Some(codes::INVALID_REQUEST),
+            "{capability}"
+        );
+        let error = response_error(&answer);
+        assert_eq!(
+            error.message,
+            "the flow pane has no right rail in this layout"
+        );
+        assert_eq!(error.context.details, None, "{capability}: no refusal code");
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}

@@ -103,8 +103,8 @@ impl TabRecipeHost for BookTabs<'_> {
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
                 quantick_workspace::canvas::signal(&tab.canvas.state),
-                tab.canvas.context_collapsed,
-                tab.canvas.flow_collapsed,
+                tab.canvas.folds().0,
+                tab.canvas.folds().1,
             );
             (canvas, tab.canvas.split_fraction.to_bits()).hash(&mut hash);
             tab.canvas.context_collapsed_slots().hash(&mut hash);

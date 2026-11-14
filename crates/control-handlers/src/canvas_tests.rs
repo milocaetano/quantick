@@ -36,6 +36,7 @@ impl CanvasHost for FakeCanvas {
                 slot: 2,
                 kind: CanvasPaneKind::Time,
                 mode: CanvasPaneMode::Docked,
+                railed: false,
                 width_share: Some(CanonicalDecimal::new("0.6").unwrap()),
                 height_share: None,
             }],
@@ -145,6 +146,15 @@ fn calls() -> Vec<(&'static str, Value, Option<CanvasAct>)> {
                 slot: 0,
                 dimension: CanvasDimension::Width,
                 share: 0.6,
+            }),
+        ),
+        (
+            quantick_control_schema::canvas::SEAM_DRAG_CAPABILITY_ID,
+            json!({"path": [0], "index": 0, "travel": "-1600"}),
+            Some(CanvasAct::SeamDrag {
+                path: vec![0],
+                index: 0,
+                travel: -1600.0,
             }),
         ),
     ]
@@ -809,4 +819,100 @@ fn a_dragged_menu_button_lifts_its_chart() {
         lifted(&state, area, Some(1), Some((1.0, 1.0)), far).is_none(),
         "the last docked chart stays"
     );
+}
+
+/// `canvas.seam.drag` runs the hand's drag: travel past the threshold folds
+/// the far chart and names it, exactly at the threshold the chart stays
+/// open, travel back from the rail reopens it, and a maximized chart leaves
+/// no seam to drag.
+#[test]
+fn a_seam_drag_call_folds_past_the_threshold_and_reopens_back() {
+    use crate::canvas::{Drawn, act};
+    use quantick_workspace::canvas::{self, COLLAPSE_AT_PX, CanvasRect, CanvasState};
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let drawn = Drawn {
+        area,
+        columns: false,
+    };
+    let mut state = CanvasState::from_preset(canvas::preset("charts-2").unwrap());
+    let drag = |travel| CanvasAct::SeamDrag {
+        path: Vec::new(),
+        index: 0,
+        travel,
+    };
+    let at = 800.0 - COLLAPSE_AT_PX;
+    assert_eq!(
+        act(&mut state, None, drawn, drag(at)).unwrap(),
+        (true, None)
+    );
+    assert!(state.railed().is_empty(), "exactly at the threshold: open");
+    let folded = act(&mut state, None, drawn, drag(1.0)).unwrap();
+    assert_eq!(folded, (true, Some(1)), "past it the far chart folds");
+    assert!(state.railed().contains(&1));
+    let panes = crate::canvas::view(&state, drawn).panes;
+    let railed: Vec<_> = (panes.iter())
+        .map(|pane| (pane.slot, pane.railed))
+        .collect();
+    assert_eq!(
+        railed,
+        [(0, false), (1, true)],
+        "the readback names the rail"
+    );
+    let back = act(&mut state, None, drawn, drag(-400.0)).unwrap();
+    assert_eq!(back, (true, Some(1)), "dragged back it reopens");
+    assert!(state.railed().is_empty());
+    state.maximize(0).unwrap();
+    let refused = act(&mut state, None, drawn, drag(10.0)).unwrap_err();
+    let code = refused
+        .context
+        .details
+        .as_ref()
+        .map(|details| details["refusal"].clone());
+    assert_eq!(code, Some(serde_json::json!("canvas.no_seam")));
+}
+
+/// The readback lists every seam as `canvas.seam.drag` addresses it, which
+/// way it moves, whether it can, and the rail beside it; a maximized chart
+/// leaves none.
+#[test]
+fn the_readback_lists_each_seam_with_its_address_and_rail() {
+    use crate::canvas::{Drawn, act};
+    use quantick_control_schema::canvas::{CanvasDimension, CanvasSeamDto};
+    use quantick_workspace::canvas::{self, CanvasRect, CanvasState};
+    let drawn = Drawn {
+        area: CanvasRect::new(0.0, 0.0, 1600.0, 900.0),
+        columns: false,
+    };
+    let mut state = CanvasState::from_preset(canvas::preset("grid4+flow").unwrap());
+    let seam = |path: Vec<u32>, index, dimension, rail_slot| CanvasSeamDto {
+        path,
+        index,
+        dimension,
+        resizable: true,
+        rail_slot,
+    };
+    let (width, height) = (CanvasDimension::Width, CanvasDimension::Height);
+    assert_eq!(
+        crate::canvas::view(&state, drawn).seams,
+        [
+            seam(vec![], 0, width, None),
+            seam(vec![0], 0, height, None),
+            seam(vec![0, 0], 0, width, None),
+            seam(vec![0, 1], 0, width, None),
+        ]
+    );
+    let drag = CanvasAct::SeamDrag {
+        path: vec![0, 0],
+        index: 0,
+        travel: -2000.0,
+    };
+    assert_eq!(act(&mut state, None, drawn, drag).unwrap(), (true, Some(0)));
+    let seams = crate::canvas::view(&state, drawn).seams;
+    assert_eq!(
+        seams[2],
+        seam(vec![0, 0], 0, width, Some(0)),
+        "beside its rail"
+    );
+    state.maximize(4).unwrap();
+    assert!(crate::canvas::view(&state, drawn).seams.is_empty());
 }

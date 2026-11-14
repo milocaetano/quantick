@@ -344,8 +344,8 @@ fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() 
                     id,
                     tab.canvas.layout,
                     tab.canvas.split_fraction,
-                    tab.canvas.context_collapsed,
-                    tab.canvas.flow_collapsed,
+                    tab.canvas.folds().0,
+                    tab.canvas.folds().1,
                     tab.focused_side(),
                     tab.panes().map(|(pane, _)| pane.id).collect::<Vec<_>>(),
                 )

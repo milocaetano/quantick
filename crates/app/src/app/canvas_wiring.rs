@@ -259,9 +259,11 @@ pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
         .unwrap_or_else(|| CanvasLayout::from(recipe.layout))
 }
 
-/// The canvas model a recipe restores: its saved one, else its preset and split.
+/// The canvas model a recipe restores, saved or rebuilt, its fold flags in.
 #[must_use]
 pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
     let (preset, split) = (recipe_layout(recipe).preset(), recipe.split_fraction);
-    (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset_split(preset, split))
+    let rebuilt = || CanvasState::from_preset_split(preset, split);
+    let state = (recipe.canvas.clone()).unwrap_or_else(rebuilt);
+    state.with_folds(recipe.context_collapsed, recipe.flow_collapsed)
 }

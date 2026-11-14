@@ -975,7 +975,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
     let layout = app.active_tab().canvas.layout;
     let legend = app.active_tab().focused_pane().legend_collapsed;
-    let context = app.active_tab().canvas.context_collapsed;
+    let context = app.active_tab().canvas.folds().0;
     assert_ne!(layout, preset_layout(2));
 
     app.show_home_tab().unwrap();
@@ -990,7 +990,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let tab = app.active_tab();
     assert_eq!(tab.canvas.layout, layout);
     assert_eq!(tab.focused_pane().legend_collapsed, legend);
-    assert_eq!(tab.canvas.context_collapsed, context);
+    assert_eq!(tab.canvas.folds().0, context);
     assert!(tab.paper.is_flat());
     assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");
 

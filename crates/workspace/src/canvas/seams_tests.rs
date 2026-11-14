@@ -77,19 +77,292 @@ fn a_maximized_chart_leaves_no_seam_to_drag() {
     );
 }
 
+/// The reopen rule: a seam beside a minimized strip at the split's end never
+/// moves (the strip opens from its menu), while a seam beside a rail a drag
+/// folded reopens it when dragged back past the threshold, and only a drag
+/// does: a nudge between two open charts never reaches a rail.
 #[test]
-fn a_seam_beside_a_folded_chart_is_painted_but_never_moves() {
+fn a_seam_beside_a_strip_never_moves_but_one_beside_a_rail_reopens_it() {
     let mut state = canvas("charts-3");
     state.minimize(0).unwrap();
     let seams = tree_seams(&state, AREA, DIVIDER);
     assert_eq!(seams.len(), 2);
     assert!(!seams[0].resizable, "beside the folded strip");
     assert!(seams[1].resizable, "between the two open charts");
+    assert_eq!(seams[0].rail, None, "a strip is no rail");
     assert_eq!(
         state.move_seam(&root(0), 50.0, AREA),
         Err(CanvasRefusal::NoSeam)
     );
     assert_eq!(state.move_seam(&root(1), 50.0, AREA), Ok(true));
+
+    let mut state = canvas("charts-3");
+    drag(&mut state, &root(0), -AREA.w);
+    let seams = tree_seams(&state, AREA, DIVIDER);
+    assert!(seams[0].resizable, "beside the rail, it reopens it");
+    let rail = seams[0].rail.expect("the rail beside the seam");
+    assert_eq!((rail.slot, rail.meets_after), (0, true));
+    assert_eq!(
+        state.move_seam(&root(0), 200.0, AREA),
+        Err(CanvasRefusal::NoSeam),
+        "a nudge never reopens a rail"
+    );
+    drag(&mut state, &root(0), COLLAPSE_AT_PX / 2.0);
+    assert!(
+        state.railed().contains(&0),
+        "short of the threshold: still a rail"
+    );
+    drag(&mut state, &root(0), 300.0);
+    assert!(state.railed().is_empty() && state.minimized().is_empty());
+    let reopened = rect_of(&state, 0).w;
+    assert!(
+        (reopened - (rail.rect.w + DIVIDER / 2.0 + 300.0)).abs() < 1.0,
+        "it opens under the pointer, as the column painter's rail does: {reopened}"
+    );
+}
+
+/// One hand drag of `seam` by `by` points, pressed and released, in sixteen
+/// frames: travel adds up from the press, never lost against a floor.
+fn drag(state: &mut CanvasState, seam: &SeamAddress, by: f32) {
+    let mut held = None;
+    for _ in 0..16 {
+        state
+            .step_seam_drag(&mut held, (seam, by / 16.0, false), AREA)
+            .unwrap();
+    }
+}
+
+/// Every split's shares, depth first.
+fn all_shares(node: &PaneTree, out: &mut Vec<f32>) {
+    if let PaneTree::Split {
+        children, shares, ..
+    } = node
+    {
+        out.extend(shares.iter());
+        children.iter().for_each(|child| all_shares(child, out));
+    }
+}
+
+fn shares_of(state: &CanvasState) -> Vec<f32> {
+    let mut out = Vec::new();
+    all_shares(state.tree(), &mut out);
+    out
+}
+
+fn along(rect: CanvasRect, axis: SplitAxis) -> f32 {
+    match axis {
+        SplitAxis::Row => rect.w,
+        SplitAxis::Column => rect.h,
+    }
+}
+
+/// Each child's extent along the split at `seam`'s path.
+fn extents(state: &CanvasState, seam: &SeamAddress) -> Vec<f32> {
+    let Some(PaneTree::Split { axis, children, .. }) =
+        super::seams::node_at(state.tree(), &seam.path)
+    else {
+        panic!("{seam:?} names a split");
+    };
+    let rects = state.rects(AREA);
+    (children.iter())
+        .map(|child| along(super::seams::bounds(child, &rects), *axis))
+        .collect()
+}
+
+/// The first pane of the child at `index` of `seam`'s split.
+fn first_slot(state: &CanvasState, seam: &SeamAddress, index: usize) -> PaneSlot {
+    let Some(PaneTree::Split { children, .. }) = super::seams::node_at(state.tree(), &seam.path)
+    else {
+        panic!("{seam:?} names a split");
+    };
+    children[index].panes()[0].0
+}
+
+/// Drag every seam of `state` the whole canvas each way and back, checking
+/// the fold, the fill and the way back; `case` names it in a failure.
+fn every_seam_folds_and_comes_back(state: &CanvasState, case: &str) {
+    for seam in tree_seams(state, AREA, DIVIDER) {
+        let name = format!("{case} {:?}", seam.address);
+        let whole = along(AREA, seam.axis);
+        let (index, before) = (seam.address.index, extents(state, &seam.address));
+        for (by, folded) in [(whole, index + 1), (-whole, index)] {
+            let (kept, mut live) = (index + index + 1 - folded, state.clone());
+            let mut held = None;
+            for _ in 0..16 {
+                let step = (&seam.address, by / 16.0, false);
+                live.step_seam_drag(&mut held, step, AREA).unwrap();
+            }
+            let rails = tree_rails(&live, AREA, DIVIDER);
+            assert_eq!(rails.len(), 1, "{name} by {by}: one rail");
+            let rail = rails[0];
+            assert_eq!(rail.axis, seam.axis, "{name}");
+            assert_eq!(
+                rail.slot,
+                first_slot(state, &seam.address, folded),
+                "{name}: the far side"
+            );
+            assert!(
+                (along(rail.rect, seam.axis) - COLLAPSED_PANE_WIDTH_PX).abs() < EPS,
+                "{name} by {by}: one rail wide, {:?}",
+                rail.rect
+            );
+            let after = extents(&live, &seam.address);
+            let pair = before[index] + before[index + 1];
+            assert!(
+                (after[kept] + after[folded] - pair).abs() < EPS,
+                "{name} by {by}: the other side fills the rest: {before:?} -> {after:?}"
+            );
+            for other in (0..before.len()).filter(|at| *at != index && *at != index + 1) {
+                assert!(
+                    (after[other] - before[other]).abs() < EPS,
+                    "{name}: {other} kept"
+                );
+            }
+            for _ in 0..16 {
+                let step = (&seam.address, -by / 16.0, false);
+                live.step_seam_drag(&mut held, step, AREA).unwrap();
+            }
+            assert!(live.railed().is_empty(), "{name} by {by}: back open");
+            let (was, now) = (shares_of(state), shares_of(&live));
+            assert!(
+                was.iter().zip(&now).all(|(a, b)| (a - b).abs() < 1e-5),
+                "{name} by {by}: the pre-drag shares, {was:?} -> {now:?}"
+            );
+        }
+    }
+}
+
+/// Every seam of every layout folds the side it is dragged towards to one
+/// rail, as "2 stacked + Flow" does, and gives it back on the way back: as
+/// laid out, with a floating chart added, and after a minimize and restore.
+#[test]
+fn every_seam_of_every_layout_folds_to_one_rail_and_reopens() {
+    for preset in LAYOUT_PRESETS {
+        let state = CanvasState::from_preset(preset);
+        every_seam_folds_and_comes_back(&state, preset.id);
+        let mut floated = state.clone();
+        if floated.add(PaneKind::Time, AREA).is_ok() {
+            every_seam_folds_and_comes_back(&floated, &format!("{} + float", preset.id));
+        }
+        let mut restored = state.clone();
+        let slot = restored.tree().panes()[0].0;
+        if restored.minimize(slot).is_ok() {
+            restored.restore(slot).unwrap();
+            every_seam_folds_and_comes_back(&restored, &format!("{} restored", preset.id));
+        }
+    }
+}
+
+/// The 2x2 grid of "4 TF + Flow", dragged shut, is one rail, not four strips
+/// end to end; no seam inside it is listed, and the seam beside it carries it.
+#[test]
+fn a_folded_grid_is_one_rail_wide() {
+    let mut state = canvas("grid4+flow");
+    drag(&mut state, &root(0), -AREA.w);
+    assert_eq!(state.railed().len(), 4, "every chart of the grid folded");
+    let rails = tree_rails(&state, AREA, DIVIDER);
+    assert_eq!(rails.len(), 1);
+    assert!(
+        (rails[0].rect.w - COLLAPSED_PANE_WIDTH_PX).abs() < EPS,
+        "{:?}",
+        rails[0]
+    );
+    assert_eq!(rails[0].rect.h, AREA.h);
+    let seams = tree_seams(&state, AREA, DIVIDER);
+    assert_eq!(seams.len(), 1, "no seam inside the rail");
+    assert_eq!(seams[0].rail, Some(rails[0]));
+    let flow = rect_of(&state, 4);
+    assert!((flow.x + flow.w - AREA.w).abs() < EPS && flow.w > AREA.w - 16.0);
+    let bands = tree_bands(&state, &mut Seats::default(), AREA, DIVIDER);
+    assert!(bands.iter().filter(|band| band.railed).count() == 4);
+}
+
+/// Beside a rail the seam takes the column painter's rail target: the
+/// rail's hit width from its outer edge, through the seam into the chart.
+#[test]
+fn a_seam_beside_a_rail_is_grabbed_over_the_rail_hit_width() {
+    let mut state = canvas("charts-2");
+    let open = tree_seams(&state, AREA, DIVIDER)[0].clone();
+    assert_eq!(open.grab(6.0), CanvasRect::new(792.0, 0.0, 16.0, 900.0));
+    drag(&mut state, &root(0), AREA.w);
+    let seam = tree_seams(&state, AREA, DIVIDER)[0].clone();
+    let rail = seam.rail.expect("the right chart folded");
+    assert!(!rail.meets_after);
+    let grab = seam.grab(6.0);
+    assert_eq!(grab.right(), AREA.w);
+    assert!((grab.w - COLLAPSED_HIT_PX).abs() < EPS, "{grab:?}");
+}
+
+/// A restore by call opens a rail at the shares the drag found it at, and a
+/// maximize opens it too.
+#[test]
+fn a_restore_opens_a_rail_at_its_pre_drag_shares() {
+    let mut state = canvas("time+flow");
+    state.move_seam(&root(0), 200.0, AREA).unwrap();
+    let before = root_shares(&state);
+    drag(&mut state, &root(0), AREA.w);
+    assert_eq!(
+        state.mode(1),
+        Some(PaneMode::Minimized),
+        "folded, as a reader sees it"
+    );
+    assert_eq!(state.restore(1), Ok(true));
+    let after = root_shares(&state);
+    assert!((before[0] - after[0]).abs() < 1e-5 && (before[1] - after[1]).abs() < 1e-5);
+    drag(&mut state, &root(0), -AREA.w);
+    assert_eq!(state.maximize(0), Ok(true));
+    assert_eq!(state.mode(0), Some(PaneMode::Maximized));
+    assert_eq!(state.restore(0), Ok(true), "back from maximized");
+    assert!(state.railed().contains(&0), "folded, as it was before");
+    assert_eq!(state.restore(0), Ok(true), "a second restore opens it");
+    assert!(state.railed().is_empty() && state.minimized().is_empty());
+}
+
+/// The collapse calls fold the flow pane or the charts beside it on a tree
+/// the column painter does not draw; the two never fold together.
+#[test]
+fn the_collapse_calls_fold_either_side_of_the_flow_pane() {
+    let mut state = canvas("time+time+flow");
+    assert_eq!(state.flow_side_folds(), (false, false));
+    assert!(state.fold_flow_side(true, true), "the flow folds");
+    assert_eq!(state.flow_side_folds(), (false, true));
+    assert!(
+        !state.fold_flow_side(true, true),
+        "a repeat changes nothing"
+    );
+    assert!(
+        state.fold_flow_side(false, true),
+        "the charts fold, the flow opens"
+    );
+    assert_eq!(state.flow_side_folds(), (true, false));
+    assert_eq!(state.railed().len(), 2);
+    let flow = rect_of(&state, 2);
+    assert!(flow.w > AREA.w - 2.0 * (COLLAPSED_PANE_WIDTH_PX + DIVIDER) - EPS);
+    assert!(state.fold_flow_side(false, false));
+    assert_eq!(state.flow_side_folds(), (false, false));
+    assert_eq!(state, canvas("time+time+flow"), "back as laid out");
+    let mut alone = canvas("charts-2");
+    assert!(
+        !alone.fold_flow_side(true, true),
+        "no flow pane, nothing to fold"
+    );
+    let mut strip = canvas("time+flow");
+    strip.minimize(0).unwrap();
+    assert!(
+        !strip.fold_flow_side(true, true),
+        "the last open chart stays open"
+    );
+}
+
+/// A rail is saved with the canvas and read back as itself.
+#[test]
+fn a_rail_survives_a_save() {
+    let mut state = canvas("stack3+flow");
+    drag(&mut state, &root(0), -AREA.w);
+    assert_eq!(state.railed().len(), 3);
+    let back: CanvasState = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+    assert_eq!(back, state);
+    assert!(!back.numbered_as(preset("stack3+flow").unwrap()));
 }
 
 #[test]
@@ -435,4 +708,160 @@ fn the_column_split_mirrors_the_tree_share() {
         "another layout's tree is not this split"
     );
     assert_eq!(other, 0.5);
+}
+
+/// A save naming a rail on a pane the tree lost, or leaving no pane open, is
+/// healed as it is read, so a column layout is never kept on the tree.
+#[test]
+fn a_stale_rail_in_a_save_is_healed_on_load() {
+    let mut state = canvas("time+flow");
+    assert!(state.fold_flow_side(true, true));
+    let saved = toml::to_string(&state).unwrap();
+    let stale = saved.replace("railed = [1]", "railed = [1, 9]");
+    assert_ne!(stale, saved, "the save names its rail");
+    let back: CanvasState = toml::from_str(&stale).unwrap();
+    assert_eq!(back.railed().iter().copied().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(back.minimized().len(), 0, "a rail needs no strip");
+    assert!(back.column_painted(preset("time+flow").unwrap(), true));
+    let everything = saved.replace("railed = [1]", "railed = [0, 1]");
+    let back: CanvasState = toml::from_str(&everything).unwrap();
+    assert!(
+        back.railed().is_empty(),
+        "no pane left open: the rail is dropped"
+    );
+}
+
+/// A chart minimized from its menu inside a node a drag folds comes back a
+/// strip when the node reopens, never open.
+#[test]
+fn a_menu_strip_inside_a_folded_node_comes_back_a_strip() {
+    let mut state = canvas("grid4+flow");
+    state.minimize(1).unwrap();
+    let mut held = None;
+    let seam = root(0);
+    for by in [-AREA.w, AREA.w] {
+        let pressed = held.is_none();
+        state
+            .step_seam_drag(&mut held, (&seam, by, pressed), AREA)
+            .unwrap();
+        if by < 0.0 {
+            assert_eq!(state.railed().len(), 4, "the grid folded whole");
+        }
+    }
+    assert!(state.railed().is_empty(), "the grid reopened");
+    assert_eq!(
+        state.mode(1),
+        Some(PaneMode::Minimized),
+        "chart 1 is a strip again"
+    );
+    assert_eq!(rect_of(&state, 1).w, MINIMIZED_STRIP_PX);
+    assert_eq!(state.mode(0), Some(PaneMode::Docked));
+}
+
+/// Rails wider than a narrow canvas never leave a chart a negative extent.
+#[test]
+fn rails_wider_than_the_canvas_never_go_negative() {
+    let mut state = canvas("time+time+flow");
+    assert!(state.fold_flow_side(false, true));
+    let narrow = CanvasRect::new(0.0, 0.0, 20.0, 900.0);
+    for (slot, rect) in state.rects(narrow) {
+        assert!(rect.w >= 0.0, "{slot}: {rect:?}");
+        assert!(rect.x + rect.w <= narrow.w + EPS, "{slot}: {rect:?}");
+    }
+}
+
+/// A restore by call gives the pair a drag folded the shares it had at the
+/// press, and the split's other children keep theirs: in splits of three and
+/// of four children, every seam, each way.
+#[test]
+fn a_restore_gives_the_pair_its_shares_back_and_leaves_the_others() {
+    for (id, path) in [
+        ("charts-3", vec![]),
+        ("time+time+flow", vec![]),
+        ("stack3+flow", vec![0]),
+        ("charts-7", vec![0]),
+        ("charts-8", vec![1]),
+    ] {
+        let state = canvas(id);
+        let Some(PaneTree::Split { children, .. }) = super::seams::node_at(state.tree(), &path)
+        else {
+            panic!("{id} {path:?} names a split");
+        };
+        assert!(children.len() >= 3, "{id}: three children or more");
+        let seams = tree_seams(&state, AREA, DIVIDER).into_iter();
+        for seam in seams.filter(|seam| seam.address.path == path) {
+            let whole = along(AREA, seam.axis);
+            for by in [whole, -whole] {
+                let name = format!("{id} {:?} by {by}", seam.address);
+                let mut live = state.clone();
+                drag(&mut live, &seam.address, by);
+                let rails = tree_rails(&live, AREA, DIVIDER);
+                assert_eq!(rails.len(), 1, "{name}: one rail");
+                assert_eq!(live.restore(rails[0].slot), Ok(true), "{name}");
+                assert!(live.railed().is_empty(), "{name}: open");
+                let (was, now) = (shares_of(&state), shares_of(&live));
+                assert!(
+                    was.iter().zip(&now).all(|(a, b)| (a - b).abs() < 1e-5),
+                    "{name}: the pre-fold shares, {was:?} -> {now:?}"
+                );
+            }
+        }
+    }
+}
+
+/// One chart folded inside the stack or the grid beside the flow pane, or
+/// one of the two charts there, is no context fold: the readback says the
+/// context is folded only while every chart on one side of the flow pane is
+/// on a rail.
+#[test]
+fn one_chart_folded_beside_the_flow_is_no_context_fold() {
+    for (id, path) in [
+        ("stack3+flow", vec![0]),
+        ("grid4+flow", vec![0, 0]),
+        ("time+time+flow", vec![]),
+    ] {
+        let mut state = canvas(id);
+        let seam = SeamAddress { path, index: 0 };
+        drag(&mut state, &seam, -AREA.w);
+        assert_eq!(state.railed().len(), 1, "{id}: one chart folded");
+        assert_eq!(state.flow_side_folds(), (false, false), "{id}");
+        assert!(state.fold_flow_side(false, true), "{id}: the whole side");
+        assert_eq!(state.flow_side_folds(), (true, false), "{id}");
+    }
+}
+
+/// A drag fold marks the layout changed as a menu minimize does, even where
+/// the shares come out as they were; a minimize asked of a chart already on
+/// a rail changes nothing and refuses nothing.
+#[test]
+fn a_drag_fold_reads_as_a_layout_change_and_a_railed_chart_does_not_minimize() {
+    let saved = canvas("charts-2");
+    let mut live = saved.clone();
+    drag(&mut live, &root(0), AREA.w);
+    assert_eq!(
+        shares_of(&live),
+        shares_of(&saved),
+        "the pair's shares kept"
+    );
+    assert!(!same_layout(&saved, &live), "but the layout reads changed");
+    live.restore(1).unwrap();
+    assert!(same_layout(&saved, &live));
+
+    let mut grid = canvas("grid4+flow");
+    drag(&mut grid, &root(0), AREA.w);
+    assert_eq!(grid.railed().len(), 1, "the flow folded");
+    assert_eq!(grid.minimize(4), Ok(false), "on a rail already");
+    let mut grid = canvas("grid4+flow");
+    drag(&mut grid, &root(0), -AREA.w);
+    assert_eq!(grid.railed().len(), 4, "the whole grid folded");
+    assert_eq!(grid.minimize(0), Ok(false), "no refusal: nothing to do");
+    let mut cell = canvas("grid4+flow");
+    let seam = SeamAddress {
+        path: vec![0, 0],
+        index: 0,
+    };
+    drag(&mut cell, &seam, -AREA.w);
+    let before = cell.clone();
+    assert_eq!(cell.minimize(0), Ok(false), "one cell on its rail");
+    assert_eq!(cell, before, "nothing changed");
 }

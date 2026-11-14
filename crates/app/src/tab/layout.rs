@@ -3,7 +3,7 @@
 //! flight, and what the context panes not built yet will open with.
 
 use eframe::egui;
-use quantick_workspace::canvas::{fold_column, revealed};
+use quantick_workspace::canvas::revealed;
 use smallvec::SmallVec;
 
 use super::CanvasLayout;
@@ -30,14 +30,12 @@ pub struct TabCanvas {
     /// One number and one flag rather than two numbers: a separate "restore"
     /// field would be a second opinion about the same width.
     pub split_fraction: f32,
-    /// Whether the context column is collapsed to its rail.
-    pub context_collapsed: bool,
-    /// Whether the flow pane is folded against the right canvas edge.
-    pub flow_collapsed: bool,
     /// Retained context heights and the geometry of their last drawn stack.
     pub(super) context_stack: ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
-    pub(super) drag: Option<(f32, bool, bool)>,
+    pub(super) drag: Option<(f32, (bool, bool))>,
+    /// The tree seam drag in flight, its travel counted from the press.
+    pub(super) seam_drag: Option<quantick_workspace::canvas::SeamDrag>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
     pub(crate) last_canvas: egui::Rect,
     /// Which built time pane each time slot of [`Self::state`] shows, kept
@@ -83,10 +81,9 @@ impl Default for TabCanvas {
                 CanvasLayout::Single.preset(),
             ),
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: false,
-            flow_collapsed: false,
             context_stack: ContextStack::default(),
             drag: None,
+            seam_drag: None,
             last_canvas: egui::Rect::ZERO,
             drawn_bands: SmallVec::new(),
             menus: Default::default(),
@@ -117,13 +114,12 @@ impl TabCanvas {
         if !self.state.apply_preset(preset) && self.state.preset() != Some(preset) {
             return None;
         }
-        // Leaving the column collapsed meant the cell lit, two panes were
-        // promised, and an 8 px rail arrived instead. Before the early return,
-        // because picking the arrangement that is *already* selected is
-        // exactly how a trader asks for the charts they can see promised in a
-        // lit cell — and a return above this line answered that with the rail.
-        self.context_collapsed = false;
-        self.flow_collapsed = false;
+        // `apply_preset` opened every fold. Leaving the column collapsed
+        // meant the cell lit, two panes were promised, and an 8 px rail
+        // arrived instead. Before the early return, because picking the
+        // arrangement that is *already* selected is exactly how a trader asks
+        // for the charts they can see promised in a lit cell — and a return
+        // above this line answered that with the rail.
         self.expand_context_stack();
         self.seats.clear();
         if layout == previous {
@@ -227,11 +223,16 @@ impl TabCanvas {
         self.context_opening_intervals_ms = intervals.take(MAX_CONTEXT_PANES).collect();
     }
 
-    /// Put the context column away, or bring it back, through the one
-    /// collapse path ([`fold_column`]). Answers whether anything changed.
-    pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
-        let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
-        fold_column(context, flow, collapsed)
+    /// Put the context column, or the flow pane (`flow`), away to its rail or
+    /// bring it back: one fold in the canvas model, whichever painter draws.
+    /// Folding one side opens the other. Answers whether anything changed.
+    pub fn fold(&mut self, flow: bool, collapsed: bool) -> bool {
+        self.state.fold_flow_side(flow, collapsed)
+    }
+
+    /// Whether the context column and the flow pane are folded.
+    pub(crate) fn folds(&self) -> (bool, bool) {
+        self.state.flow_side_folds()
     }
 
     /// Whether the column painter draws this frame; anything else is painted
@@ -253,12 +254,6 @@ impl TabCanvas {
         if self.layout.is_column() && self.layout.shows_time() {
             self.split_fraction = (self.layout.preset().flow_left()).unwrap_or(self.split_fraction);
         }
-    }
-
-    /// Fold or restore the flow pane while retaining the split's open width.
-    pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
-        let (context, flow) = (&mut self.context_collapsed, &mut self.flow_collapsed);
-        fold_column(flow, context, collapsed)
     }
 }
 

@@ -1290,6 +1290,134 @@ fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
     );
 }
 
+/// A workspace saved before rails carried its column fold only as a flag, no
+/// canvas: applied to a tab it lands as one rail and the tab reads clean.
+#[test]
+fn an_old_folded_recipe_lands_as_one_rail_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-old-fold", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 4);
+    let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+    (old.canvas, old.context_collapsed, old.flow_collapsed) = (None, true, false);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &old).expect("held");
+    book.save_as(first, "Folded").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Folded").expect("a known workspace");
+    frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+    assert_eq!(tab.canvas.folds(), (true, false), "the column is folded");
+    assert!(
+        tab.canvas.column_painted(),
+        "on the column painter's own rail"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Folded".to_owned(), false),
+        "and the tab reads clean"
+    );
+}
+
+/// A workspace saved before rails with a canvas *and* the column fold as a
+/// flag: the fold flags were cleared only by a layout pick or a divider drag,
+/// so a maximized chart kept the canvas with no rail beside
+/// `context_collapsed`. Applied to a tab it lands as one rail and the tab
+/// reads clean.
+#[test]
+fn an_old_folded_recipe_with_a_canvas_lands_as_one_rail_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-old-fold-canvas", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 4);
+    let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+    let preset = crate::canvas_layout::preset("time+flow").expect("registered");
+    // As the base saved it: the tree's shares mirror the column split.
+    let mut canvas =
+        quantick_workspace::canvas::CanvasState::from_preset_split(preset, old.split_fraction);
+    assert_eq!(canvas.maximize(1), Ok(true), "the flow chart maximized");
+    (old.canvas, old.context_collapsed, old.flow_collapsed) = (Some(canvas), true, false);
+    // Read back as the base wrote it.
+    let old: quantick_workspace::workspace_recipe::WorkspaceRecipe =
+        toml::from_str(&toml::to_string(&old).expect("a recipe writes")).expect("and reads");
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &old).expect("held");
+    book.save_as(first, "Folded max").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Folded max").expect("a known workspace");
+    frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+    assert_eq!(tab.canvas.folds(), (true, false), "the column is folded");
+    assert_eq!(tab.canvas.state.railed().len(), 1, "on one rail");
+    assert_eq!(
+        tab.canvas.state.maximized(),
+        Some(1),
+        "under the maximized flow"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Folded max".to_owned(), false),
+        "and the tab reads clean"
+    );
+    for _ in 0..2 {
+        frames(&mut app, 3);
+        assert!(!app.runtime.workspace.book.tab_row(second).1, "still clean");
+    }
+}
+
+/// The same old save with the flow chart floated or minimized instead: no
+/// rail can stand beside it, so the fold flag reads as no fold, the tab
+/// lands clean and stays clean, and the save reads back as itself.
+#[test]
+fn an_old_fold_flag_with_nowhere_to_rail_lands_clean() {
+    use quantick_workspace::canvas::{CanvasRect, CanvasState};
+    use quantick_workspace::workspace_recipe::WorkspaceRecipe;
+    for (case, float) in [("floated", true), ("minimized", false)] {
+        let file = format!("workspace-old-fold-{case}");
+        let layouts = crate::scratch::ScratchFile::new(&file, "layouts.toml");
+        let (mut app, first, second) = two_tabs(&layouts);
+        let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        frames(&mut app, 4);
+        let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+        let preset = crate::canvas_layout::preset("time+flow").expect("registered");
+        let mut canvas = CanvasState::from_preset_split(preset, old.split_fraction);
+        let moved = if float {
+            canvas.float(1, CanvasRect::new(100.0, 100.0, 400.0, 300.0))
+        } else {
+            canvas.minimize(1)
+        };
+        assert_eq!(moved, Ok(true), "{case}");
+        (old.canvas, old.context_collapsed, old.flow_collapsed) = (Some(canvas), true, false);
+        let read = |recipe: &WorkspaceRecipe| -> WorkspaceRecipe {
+            toml::from_str(&toml::to_string(recipe).expect("a recipe writes")).expect("and reads")
+        };
+        let old = read(&old);
+        assert!(!old.context_collapsed, "{case}: no rail, no fold");
+        assert_eq!(read(&old), old, "{case}: a second read is the first");
+        let name = format!("Folded {case}");
+        let book = app.runtime.workspace.book.book_mut();
+        book.observe(first, &old).expect("held");
+        book.save_as(first, &name).expect("a free name");
+
+        set_tab_workspace(&mut app, second, &name).expect("a known workspace");
+        frames(&mut app, 5);
+        let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+        assert_eq!(tab.canvas.folds(), (false, false), "{case}");
+        let row = app.runtime.workspace.book.tab_row(second);
+        assert_eq!(row, (name.clone(), false), "{case}: the tab reads clean");
+        for _ in 0..2 {
+            frames(&mut app, 3);
+            assert!(
+                !app.runtime.workspace.book.tab_row(second).1,
+                "{case}: still clean"
+            );
+        }
+    }
+}
+
 /// The window size the trader's desk runs at.
 const FULL_HD: egui::Vec2 = egui::vec2(1920.0, 1000.0);
 
