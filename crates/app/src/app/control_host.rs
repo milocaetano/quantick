@@ -26,7 +26,7 @@ use eframe::egui;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
-use quantick_control_handlers::workspace_cell_menu::CellRow;
+use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::market_list::{self as list, OpenChoice};

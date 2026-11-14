@@ -6,7 +6,7 @@
 //!
 //! A row view-model sits among the handler families because what a row does
 //! is the workspace calls' own business: each row names the call that does
-//! the same, beside `workspace_book`, which carries the rows' commands out,
+//! the same, under `workspace_book`, which carries the rows' commands out,
 //! and this is the highest headless crate that sees both the session's
 //! commands and the control plane's words and scene.
 
@@ -346,5 +346,5 @@ fn fixed(book: &WorkspaceBook, tab: u64, keys: &str) -> CellMenu {
 }
 
 #[cfg(test)]
-#[path = "workspace_cell_menu_tests.rs"]
+#[path = "cell_menu_tests.rs"]
 mod tests;
