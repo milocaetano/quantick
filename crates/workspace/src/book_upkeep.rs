@@ -308,6 +308,16 @@ pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) -> bool {
         .is_some_and(|edit| book.observe(id, &edit).unwrap_or(false))
 }
 
+/// Each open tab's workspace, as `(tab, workspace, settled)`.
+pub fn tab_holdings<'a>(
+    (_book, _sync): (&'a WorkspaceBook, &'a TabRecipeSync),
+) -> impl Iterator<Item = (u64, &'a str, bool)> + Clone + 'a {
+    std::iter::empty()
+}
+
+/// Before a save: the tab's copy names the sets its panes show.
+pub fn take_shown_sets(_book: &mut WorkspaceBook, _sync: &TabRecipeSync, _tab: u64) {}
+
 #[cfg(test)]
 #[path = "book_upkeep_tests.rs"]
 mod book_upkeep_tests;

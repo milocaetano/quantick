@@ -519,6 +519,26 @@ impl LayoutSession {
             .map(|&(pane, copy, set)| (pane, shown(copy).unwrap_or(set)))
             .collect()
     }
+    /// Tell which workspace each tab is on, as `(tab, workspace, settled)`.
+    pub fn hold_workspaces<'a, I>(&mut self, tabs: I)
+    where
+        I: IntoIterator<Item = (u64, &'a str, bool)>,
+        I::IntoIter: Clone,
+    {
+        let _ = tabs.into_iter();
+    }
+    /// What a recipe landing on one tab shows, pane by pane.
+    #[must_use]
+    pub fn landing_sets<'a>(
+        &self,
+        wanted: impl IntoIterator<Item = (u64, &'a [SavedIndicator])>,
+    ) -> Vec<(u64, Vec<SavedIndicator>)> {
+        let shown = self.shared_sets(wanted);
+        shown
+            .into_iter()
+            .map(|(pane, set)| (pane, set.to_vec()))
+            .collect()
+    }
     /// Say what a landing recipe gave the panes on `copy` that `shown` leaves
     /// out, when it gave them more than one set.
     fn log_joined<'a>(
@@ -835,5 +855,7 @@ fn unshown<'a>(
     (lacked, other_settings)
 }
 
+#[cfg(test)]
+mod shared_tests;
 #[cfg(test)]
 mod tests;
