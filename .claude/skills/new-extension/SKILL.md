@@ -17,16 +17,18 @@ line? — answers itself.
 | Indicator | `Indicator` trait (commit/preview + rollback) | a `.pine` script (data only), else a native file under `crates/indicators/src/native/` plus one `pub use` and one `NATIVES` entry (stable id like `native.sma`, the menu label printed verbatim, a `fn() -> Box<dyn Indicator>`) — nothing in `app` |
 | Chart layer / overlay | layer registry (`QUANTICK_CHART_LAYERS`) | new layer module in `app` |
 | Panel / dock tab | dock tab set | new `app` module, one tab registration |
-| Floating surface (popup, toast, box) | `Surface` + `SurfaceEnv`/`SurfaceResponse` | new module in `app/src/surfaces/`, one field on `Surfaces` |
+| Any UI surface (popup, toast, panel, chrome slot) — the default | `ui-model` `Model` + app `View` | model file in `crates/ui-model/src/`, view file in `crates/app/src/surfaces/`, one `surface_catalog!` line |
 | Look / preset | config (`bubbles.toml`, drawing presets) | data only |
 | Sim/backtest behaviour | `sim` fill model + metrics | `sim`, consumed by chart and runner alike |
 
 Prefer a `.pine` script whenever the dialect can express the kernel. An id no
 build ships becomes an error slot naming it, never a substitute.
 
-**The shape to copy** — a surface: the `Surface` trait in
-`crates/app/src/surfaces/mod.rs` (reads arrive in `SurfaceEnv`, requests leave
-in `SurfaceResponse`, no reference to the host); a port: `TradingVenue` in
+**The shape to copy** — a surface: a model in `crates/ui-model/src/` owns
+`State`, `Intent`, `Effects` and a pure `update` (no egui, no clock); a dumb
+`View` in `crates/app/src/surfaces/` paints state and emits intents; one entry
+in `crates/ui-model/src/catalog.rs` declares both, the slot and the effect
+conversion ([references/headless-ui.md](references/headless-ui.md)); a port: `TradingVenue` in
 `crates/trading/src/venue.rs`; a decision: the pure plan in
 `crates/feed/src/ohlcv_plan.rs` (inputs handed in, no clock or socket). Never a
 new field, constructor line, `draw_frame` call or menu hotkey on `QuantickApp`

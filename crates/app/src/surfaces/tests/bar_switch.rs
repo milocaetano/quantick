@@ -152,6 +152,15 @@ fn the_hook_opened_switch_follows_focus_to_the_time_pane() {
         response.bar_switch.map(|request| request.side),
         Some(crate::pane::PaneSide::Time(0))
     );
+
+    surface.open(0, PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
+    assert_eq!(response.bar_switch, None);
+    assert!(
+        !surface.is_open(),
+        "ordinary switches close before Enter on focus change"
+    );
 }
 
 #[test]
@@ -186,6 +195,37 @@ fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
             .bar_switch
             .map(|request| request.config.to_config_string()),
         Some("renko:50".to_owned())
+    );
+
+    surface.open(0, PaneSide::Flow, "123456789T");
+    frame(&mut surface, &ctx, Vec::new());
+    for (typed, expected) in [
+        ("R", "123456789R"),
+        ("5", "123456789R"),
+        ("r", "123456789r"),
+    ] {
+        frame(&mut surface, &ctx, vec![egui::Event::Text(typed.into())]);
+        assert_eq!(surface.model_state.open().unwrap().query, expected);
+    }
+    frame(&mut surface, &ctx, vec![key(egui::Key::Escape)]);
+    frame(&mut surface, &ctx, vec![egui::Event::Text("1".into())]);
+    assert!(surface.is_open());
+    frame(&mut surface, &ctx, Vec::new());
+    for (typed, expected) in [("m", "time:1m"), ("o", "time:1mo")] {
+        frame(&mut surface, &ctx, vec![egui::Event::Text(typed.into())]);
+        let listed: Vec<_> = surface
+            .candidates()
+            .into_iter()
+            .map(BarConfiguration::to_config_string)
+            .collect();
+        assert_eq!(listed, [expected]);
+    }
+    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
+    assert_eq!(
+        response
+            .bar_switch
+            .map(|request| request.config.to_config_string()),
+        Some("time:1mo".to_owned())
     );
 }
 

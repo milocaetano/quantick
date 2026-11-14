@@ -180,6 +180,32 @@ fn replay_scan_completion_preserves_requested_selection() {
         !state.folder_dirty,
         "scanning is never a standing folder choice"
     );
+    Model::update(&mut state, Intent::Select(1));
+    assert_eq!(state.selected, Some(1));
+    let missing = Library {
+        root: PathBuf::from("missing-recordings"),
+        problems: vec![quantick_replay::library::Problem {
+            path: None,
+            kind: quantick_replay::library::ProblemKind::FolderMissing,
+            detail: "recordings folder does not exist".into(),
+        }],
+        ..library(&[])
+    };
+    assert_eq!(
+        Model::update(&mut state, Intent::ScanCompleted(missing)),
+        Effects::default()
+    );
+    assert_eq!(state.selected, None);
+    let missing = state.library.as_ref().unwrap();
+    assert!(missing.sessions.is_empty());
+    assert_eq!(missing.root, PathBuf::from("missing-recordings"));
+    assert_eq!(missing.problems.len(), 1);
+    assert_eq!(
+        missing.problems[0].kind,
+        quantick_replay::library::ProblemKind::FolderMissing
+    );
+    assert_eq!(missing.problems[0].path, None);
+    assert_eq!(missing.problems[0].detail, "recordings folder does not exist");
 }
 
 #[test]
@@ -251,6 +277,8 @@ fn replay_picker_and_arrival_request_one_local_operation() {
         Effects::default(),
         "no configured folder scans nothing"
     );
+    assert!(state.browser_open);
+    assert!(state.library.is_none());
     Model::update(&mut state, Intent::SetFolderDraft("recordings".into()));
     assert!(
         Model::update(&mut state, Intent::OpenBrowser)

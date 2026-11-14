@@ -68,13 +68,15 @@ class TargetTests(unittest.TestCase):
                          'wiring_paths': []}
         self.current = {'totals': {'production': 99, 'guard_production': 99, 'tests': 99},
                         'wiring_paths': [],
-                        'quantick_app_field_count': 14, 'app_owner_structs': {}}
+                        'quantick_app_field_count': 11, 'app_owner_structs': {}}
         self.files = {'crates/ui-model/src/lib.rs': 'pub trait Model {}'}
 
-    def test_final_requires_strict_reductions(self):
+    def test_final_requires_strict_production_reductions(self):
         measure.check_targets(self.current, self.baseline, self.files, final=True)
-        self.current['totals']['tests'] = 100
-        with self.assertRaisesRegex(ValueError, 'tests must be strictly'):
+        self.current['totals']['tests'] = 200
+        measure.check_targets(self.current, self.baseline, self.files, final=True)
+        self.current['totals']['production'] = 100
+        with self.assertRaisesRegex(ValueError, 'production must be strictly'):
             measure.check_targets(self.current, self.baseline, self.files, final=True)
 
     def test_chrome_requires_retiring_owner_and_wiring(self):
@@ -84,9 +86,9 @@ class TargetTests(unittest.TestCase):
             measure.check_targets(self.current, self.baseline, self.files, chrome=True)
 
     def test_new_wiring_and_fields_fail(self):
-        self.current['quantick_app_field_count'] = 31
+        self.current['quantick_app_field_count'] = 12
         self.current['wiring_paths'] = ['new_wiring.rs']
-        with self.assertRaisesRegex(ValueError, '30 fields.*new'):
+        with self.assertRaisesRegex(ValueError, '11 fields.*new'):
             measure.check_targets(self.current, self.baseline, self.files)
 
     def test_recipe_checks_actual_files_and_exact_registration(self):
