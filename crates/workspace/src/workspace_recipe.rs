@@ -172,8 +172,9 @@ pub struct WorkspaceRecipe {
 
 /// A recipe as a save holds it, healed as it is read: a canvas saved before
 /// rails, beside a column fold flag that outlived a maximize, a float or an
-/// add, carries that fold as its rail, so the tab it opens and the save read
-/// alike ([`CanvasState::with_folds`]).
+/// add, carries that fold as its rail where it can ([`CanvasState::with_folds`]),
+/// and the flags then say what the canvas folds, so the tab it opens and the
+/// save read alike.
 #[derive(Deserialize)]
 struct StoredRecipe {
     layout: DeclaredLayout,
@@ -220,6 +221,14 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             legacy_context_bars,
             canvas,
         } = stored;
+        let canvas = canvas.map(|canvas| canvas.with_folds(context_collapsed, flow_collapsed));
+        // With a canvas the flags are its readback, as a live tab writes them:
+        // a fold it could not place (its flow pane floated or minimized) is no
+        // fold, and the flags and the canvas never disagree after a read.
+        let (context_collapsed, flow_collapsed) = (canvas.as_ref()).map_or(
+            (context_collapsed, flow_collapsed),
+            CanvasState::flow_side_folds,
+        );
         Self {
             layout,
             split_fraction,
@@ -233,7 +242,7 @@ impl From<StoredRecipe> for WorkspaceRecipe {
             footprint_style,
             flow_bars,
             legacy_context_bars,
-            canvas: canvas.map(|canvas| canvas.with_folds(context_collapsed, flow_collapsed)),
+            canvas,
         }
     }
 }

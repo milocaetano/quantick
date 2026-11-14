@@ -510,3 +510,41 @@ fn an_old_fold_flag_beside_a_canvas_reads_back_as_a_rail() {
     let read: WorkspaceRecipe = toml::from_str(&toml::to_string(&railed).unwrap()).unwrap();
     assert_eq!(read.canvas, Some(grid), "its own rail wins");
 }
+
+/// The same old fold flag beside a canvas whose flow pane floats or is a
+/// menu strip: no rail can stand, so the flags read what the canvas folds,
+/// nothing, and a second read is the first.
+#[test]
+fn an_old_fold_flag_with_nowhere_to_rail_reads_as_no_fold() {
+    let preset = crate::canvas::preset("time+flow").unwrap();
+    for float in [true, false] {
+        let mut canvas = CanvasState::from_preset(preset);
+        if float {
+            canvas
+                .float(1, CanvasRect::new(0.0, 0.0, 400.0, 300.0))
+                .unwrap();
+        } else {
+            canvas.minimize(1).unwrap();
+        }
+        let old = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeAndFlow,
+            context_collapsed: true,
+            canvas: Some(canvas.clone()),
+            ..WorkspaceRecipe::default()
+        };
+        let read: WorkspaceRecipe = toml::from_str(&toml::to_string(&old).unwrap()).unwrap();
+        assert_eq!(
+            (read.context_collapsed, read.flow_collapsed),
+            (false, false)
+        );
+        assert_eq!(read.canvas, Some(canvas), "the canvas as it was");
+        let again: WorkspaceRecipe = toml::from_str(&toml::to_string(&read).unwrap()).unwrap();
+        assert_eq!(again, read, "a second read is the first");
+    }
+    let flags_only = WorkspaceRecipe {
+        context_collapsed: true,
+        ..WorkspaceRecipe::default()
+    };
+    let read: WorkspaceRecipe = toml::from_str(&toml::to_string(&flags_only).unwrap()).unwrap();
+    assert!(read.context_collapsed, "without a canvas the flags stand");
+}

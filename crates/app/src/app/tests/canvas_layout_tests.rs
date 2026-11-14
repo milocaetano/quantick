@@ -450,6 +450,10 @@ fn a_maximized_railed_chart_draws_and_restores_to_its_rail() {
     }
 }
 
+/// How many frames a chart's indicator worker gets to answer before a test
+/// gives up on it.
+const LEGEND_FRAMES: usize = 200;
+
 /// One chart of "4 TF + Flow" dragged shut inside the grid leaves the other
 /// three on screen: their legends still draw, the readback says the context
 /// is not collapsed, and a save writes no column fold.
@@ -468,15 +472,25 @@ fn one_grid_chart_folded_keeps_the_other_legends() {
         app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
         settle_indicators(&mut app);
     }
-    for _ in 0..2 {
-        run_frame(&mut app, &ctx);
-    }
     let legends = |app: &QuantickApp| -> Vec<bool> {
         (app.active_tab().time_panes.iter())
-            .map(|pane| pane.frame.indicator_legend.is_some())
+            .map(|pane| !pane.indicators.all().is_empty() && pane.frame.indicator_legend.is_some())
             .collect()
     };
-    assert_eq!(legends(&app), vec![true; 4], "every chart's legend draws");
+    // The workers answer on their own threads: wait, bounded, for each chart
+    // to hold its EMA and draw its legend, however loaded the machine is.
+    for _ in 0..LEGEND_FRAMES {
+        if legends(&app) == [true; 4] {
+            break;
+        }
+        settle_indicators(&mut app);
+        run_frame(&mut app, &ctx);
+    }
+    assert_eq!(
+        legends(&app),
+        vec![true; 4],
+        "every chart holds its EMA and draws its legend within {LEGEND_FRAMES} frames"
+    );
     let area = app.active_tab().canvas.last_canvas;
     let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
     let seam = quantick_workspace::canvas::SeamAddress {
