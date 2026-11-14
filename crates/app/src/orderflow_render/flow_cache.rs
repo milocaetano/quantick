@@ -130,26 +130,5 @@ pub(crate) fn cached_flow(
 }
 
 #[cfg(test)]
-pub(crate) fn draw_cached_flow(
-    painter: &egui::Painter,
-    history: egui::Rect,
-    frame: &Arc<FlowTapeFrame>,
-    geometry: FlowExecutionGeometry,
-    backing: Option<egui::Color32>,
-) {
-    let drawing = cached_flow(
-        painter,
-        history,
-        frame,
-        geometry,
-        crate::theme::CANVAS,
-        backing,
-        None,
-    );
-    drawing.paint(painter, false);
-    drawing.paint(painter, true);
-}
-
-#[cfg(test)]
 #[path = "tests/flow_cache.rs"]
 mod tests;

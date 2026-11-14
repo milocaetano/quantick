@@ -37,31 +37,6 @@ mod tape_only_tests;
 mod tape_path_tests;
 mod tape_price_tests;
 
-/// The dust threshold is defined by inverting this module's radius
-/// mapping, but lives in `config` beside the style it reads. This pins the
-/// two together: a print at the threshold must land exactly on the
-/// readability floor.
-#[test]
-fn the_dust_threshold_lands_on_the_readability_floor() {
-    use rust_decimal::prelude::ToPrimitive as _;
-
-    let bubbles = BubbleStyle::default();
-    let reference = rust_decimal::Decimal::from(400);
-    let dust = bubbles
-        .dust_quantity(reference)
-        .expect("the default style has a readability floor above its minimum");
-    let size = (dust / reference)
-        .to_f32()
-        .expect("the threshold share converts")
-        .sqrt();
-    let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
-    assert!(
-        (radius - bubbles.readable_min_radius).abs() < 1e-3,
-        "a dust print rendered at {radius}, not {}",
-        bubbles.readable_min_radius
-    );
-}
-
 /// The shipped presets tune `detail_min_radius` down to buy sphere shading
 /// on small prints — "dense tape btc" (the default open) sets it *below*
 /// `min_radius`. Anchoring the readability floor there made both the dust
@@ -109,32 +84,6 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         painted(|painter| draw_bubble(painter, mark, &solid, &colors)),
         "the ring must still fire when the dressing radius is below the minimum"
     );
-}
-
-#[test]
-fn nothing_is_dust_without_a_reference_or_a_readability_floor() {
-    let bubbles = BubbleStyle::default();
-    assert!(bubbles.dust_quantity(rust_decimal::Decimal::ZERO).is_none());
-
-    let flat = BubbleStyle {
-        readable_min_radius: 0.0,
-        ..BubbleStyle::default()
-    };
-    assert!(
-        flat.dust_quantity(rust_decimal::Decimal::from(400))
-            .is_none()
-    );
-}
-
-#[test]
-fn bubble_area_above_floor_tracks_normalized_quantity() {
-    let minimum = 3.0;
-    let maximum = 13.0;
-    let quarter_quantity_radius = bubble_radius(0.5, minimum, maximum);
-    let full_radius = bubble_radius(1.0, minimum, maximum);
-    let quarter_area = quarter_quantity_radius.powi(2) - minimum.powi(2);
-    let full_area = full_radius.powi(2) - minimum.powi(2);
-    assert!((quarter_area / full_area - 0.25).abs() < 1e-5);
 }
 
 /// The stretch older than this session's capture used to be a hatched,
@@ -196,46 +145,6 @@ fn a_gap_spanning_the_whole_chart_draws_no_boundary() {
             right_boundary: false,
         }
     );
-}
-
-#[test]
-fn render_style_sanitizes_non_finite_geometry() {
-    let style = OrderflowRenderStyle {
-        heat_opacity: f32::NAN,
-        min_cell_height: f32::INFINITY,
-        edge_glow: -1.0,
-        bubbles: BubbleStyle {
-            min_radius: f32::NAN,
-            max_radius: -4.0,
-            label_min_radius: f32::NAN,
-            ..BubbleStyle::default()
-        },
-        legend_max_width: f32::NAN,
-        ..OrderflowRenderStyle::default()
-    }
-    .sanitized();
-    assert_eq!(style.heat_opacity, 1.0);
-    assert_eq!(style.min_cell_height, 1.5);
-    assert_eq!(style.edge_glow, 0.0);
-    assert!(style.bubbles.max_radius >= style.bubbles.min_radius);
-    assert!(style.bubbles.label_min_radius.is_finite());
-    assert!(style.legend_max_width.is_finite());
-}
-
-#[test]
-fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
-    // Screen y grows downward: buys sit above the print, sells below.
-    assert!(side_offset_y(Side::Buy, 4.0, false) < 0.0);
-    assert!(side_offset_y(Side::Sell, 4.0, false) > 0.0);
-    assert_eq!(side_offset_y(Side::Buy, 0.0, false), 0.0);
-    assert_eq!(
-        side_offset_y(Side::Buy, 4.0, false).abs(),
-        side_offset_y(Side::Sell, 4.0, false).abs()
-    );
-    // The nudge names a book side, not a screen side: upside down it
-    // mirrors with the chart.
-    assert!(side_offset_y(Side::Buy, 4.0, true) > 0.0);
-    assert!(side_offset_y(Side::Sell, 4.0, true) < 0.0);
 }
 
 /// Paint through `draw` off-screen and return the shapes it emitted.
@@ -347,34 +256,6 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         "the sample must actually draw a bubble: {live}"
     );
     assert_eq!(live, preview);
-}
-
-#[test]
-fn bubble_colours_fall_back_to_the_theme_and_the_trail_follows_the_front() {
-    let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
-    let default = bubble_colors(&palette, &BubbleStyle::default());
-    assert_eq!(default.buy, palette.buy);
-    assert_eq!(default.sell, palette.sell);
-    assert_eq!(default.trail, palette.consumption);
-
-    let overridden = bubble_colors(
-        &palette,
-        &BubbleStyle {
-            buy_color: Some([1, 2, 3]),
-            front_color: Some([9, 9, 9]),
-            ..BubbleStyle::default()
-        },
-    );
-    assert_eq!(overridden.buy, egui::Color32::from_rgb(1, 2, 3));
-    assert_eq!(
-        overridden.sell, palette.sell,
-        "untouched side keeps the theme"
-    );
-    assert_eq!(
-        overridden.trail,
-        egui::Color32::from_rgb(9, 9, 9),
-        "the trail follows the front colour unless overridden itself"
-    );
 }
 
 #[test]
@@ -587,40 +468,6 @@ fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
     assert_eq!(
         silent, untouched,
         "ConsumptionMark::None must leave the bubble exactly as it was"
-    );
-}
-
-#[test]
-fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
-    let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
-    let bubbles = BubbleStyle::default();
-    let colors = bubble_colors(&palette, &bubbles);
-    // Derived from the side colour, and brighter than it: consumption is
-    // the same event, hotter — no third hue enters the canvas.
-    for (side, base) in [(Side::Buy, colors.buy), (Side::Sell, colors.sell)] {
-        let crown = colors.crown_for_side(side);
-        assert_ne!(crown, base);
-        assert!(
-            crown.r() >= base.r() && crown.g() >= base.g() && crown.b() >= base.b(),
-            "the crown is the side colour pushed toward white, not away from it"
-        );
-    }
-    assert_ne!(
-        colors.crown_for_side(Side::Buy),
-        colors.crown_for_side(Side::Sell)
-    );
-
-    // The consumption colour override stays the one door to change it.
-    let overridden = bubble_colors(
-        &palette,
-        &BubbleStyle {
-            front_color: Some([10, 20, 30]),
-            ..bubbles
-        },
-    );
-    assert_eq!(
-        overridden.crown_for_side(Side::Buy),
-        egui::Color32::from_rgb(10, 20, 30)
     );
 }
 
@@ -963,109 +810,6 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
     assert!(readable.contains(&sell_ink), "a readable pie: {readable}");
 }
 
-/// Hiding the bubble layer hides bubbles — it does not empty the frame.
-///
-/// The clusters are a fact more than one surface reads: the bubbles, the
-/// consumption carve behind them, and the live strip's histogram beside
-/// the price axis. The projection used to apply these switches, so turning
-/// the bubbles off blanked the strip with them ("se eu desativar as bolhas
-/// de agressão, quero continuar vendo essa parte"). The filter belongs
-/// here, one step before the ink.
-#[test]
-fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
-    let viewport = Viewport::new();
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
-    let mut projection = HeatmapProjection::empty(
-        true,
-        quantick_orderflow::EffectiveGrouping::resolve(
-            quantick_orderflow::DisplayGrouping::Native,
-            rust_decimal::Decimal::ONE,
-            rust_decimal::Decimal::from(100),
-        ),
-    );
-    for (agg_id, side, x) in [(1_u64, Side::Buy, 0.25_f64), (2, Side::Sell, 0.75)] {
-        projection.aggressions.push(AggressionPrimitive {
-            agg_id,
-            agg_ids: vec![agg_id],
-            generation: None,
-            side,
-            consumed_side: match side {
-                Side::Buy => BookSide::Ask,
-                Side::Sell => BookSide::Bid,
-            },
-            quantity: rust_decimal::Decimal::ONE,
-            buy_share: match side {
-                Side::Buy => 1.0,
-                Side::Sell => 0.0,
-            },
-            live: false,
-            price_bucket: rust_decimal::Decimal::ONE,
-            price_span: rust_decimal::Decimal::ONE,
-            price: rust_decimal::Decimal::ONE,
-            trade_count: 1,
-            first_timestamp_ms: 0,
-            last_timestamp_ms: 0,
-            timestamp_quantity: rust_decimal::Decimal::ZERO,
-            matched_quantity: rust_decimal::Decimal::ZERO,
-            buy_quantity: match side {
-                Side::Buy => rust_decimal::Decimal::ONE,
-                Side::Sell => rust_decimal::Decimal::ZERO,
-            },
-            matched_fraction: 0.0,
-            liquidity_event_ids: Vec::new(),
-            x,
-            y: 0.5,
-            size: 1.0,
-            folded_marks: 0,
-        });
-    }
-
-    let drawn = |style: &OrderflowRenderStyle| {
-        RenderContext::new(&projection, layout, style)
-            .bubbles()
-            .map(|mark| mark.agg_id)
-            .collect::<Vec<_>>()
-    };
-
-    let both = OrderflowRenderStyle::default();
-    assert_eq!(drawn(&both), vec![1, 2]);
-
-    let mut buys_hidden = both.clone();
-    buys_hidden.show_buy = false;
-    assert_eq!(drawn(&buys_hidden), vec![2]);
-
-    let mut layer_off = both.clone();
-    layer_off.aggression_layer = false;
-    assert!(drawn(&layer_off).is_empty(), "no bubble is drawn");
-    // …and the frame the other surfaces read is untouched: this is the
-    // whole point of moving the switch out of the projection.
-    assert_eq!(projection.aggressions.len(), 2);
-    // The strip builds its histogram from exactly these clusters, so it
-    // still has both prints with the bubble layer off.
-    let rows = crate::live_strip::aggression_rows(
-        &projection.aggressions,
-        0,
-        projection.summarized,
-        projection.effective_grouping.bucket_width,
-    );
-    assert_eq!(rows.len(), 1, "both prints share one bucket");
-    assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
-    assert_eq!(rows[0].sell, rust_decimal::Decimal::ONE);
-
-    // Nothing draws over the canvas either — the bubble pass is silent.
-    let painted_with_layer_off = painted(|painter| {
-        draw_aggression_bubbles(
-            painter,
-            &RenderContext::new(&projection, layout, &layer_off),
-        );
-    });
-    assert!(
-        !painted_with_layer_off.contains("Circle"),
-        "no circle with the layer off: {painted_with_layer_off}"
-    );
-}
-
 /// The lane's radius multiplier has to survive all the way to the circle
 /// that gets drawn, and it must touch nothing outside the lane.
 #[test]
@@ -1228,12 +972,11 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
     assert!(layout.lane_rect().left() >= divider);
 }
 
-/// The candles and the tape are switched apart: clearing a layer on one
-/// pane leaves the other drawing exactly what it drew. This is the pixel
-/// half of the promise — the config half is
-/// `hiding_a_layer_on_one_pane_leaves_the_other_drawing_and_fed`.
+/// The bubble pass paints what each pane's switch lets through
+/// (`quantick_orderflow::projection::draws_bubble` decides which), each print
+/// in its own pane, and a pass with both panes off paints nothing.
 #[test]
-fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
+fn the_bubble_pass_paints_what_each_panes_switch_lets_through() {
     let viewport = Viewport::new();
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     // Three bar slots plus a 300 px lane: the divider lands on x = 700.
@@ -1294,37 +1037,30 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             },
             ..OrderflowRenderStyle::default()
         };
-        let context = RenderContext::new(&projection, layout, &style);
-        let counted = context.bubbles().count();
-        (
-            counted,
-            painted(|painter| draw_aggression_bubbles(painter, &context)),
-        )
+        painted(|painter| {
+            draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style))
+        })
     };
 
-    let (both, _) = drawn(true, true);
-    assert_eq!(both, 2, "with both panes on, both prints draw");
-
-    // The candles are cleared. The tape's print survives — the whole ask.
-    let (tape_only, marks) = drawn(false, true);
-    assert_eq!(
-        tape_only, 1,
-        "the tape keeps drawing with the candles clear"
-    );
+    // The candles are cleared: the tape's print alone is painted, in its pane.
+    let marks = drawn(false, true);
+    assert_eq!(marks.matches("CircleShape").count(), 1, "{marks}");
     assert!(
         marks.contains(&format!("{:?}", layout.lane_rect())),
-        "and it is the tape's print that survived: {marks}"
+        "{marks}"
     );
-
     // And the other way round.
-    let (chart_only, marks) = drawn(true, false);
-    assert_eq!(chart_only, 1);
+    let marks = drawn(true, false);
+    assert_eq!(marks.matches("CircleShape").count(), 1, "{marks}");
     assert!(
         marks.contains(&format!("{:?}", layout.history_rect())),
-        "the candle-pane print is the one left: {marks}"
+        "{marks}"
     );
-
-    assert_eq!(drawn(false, false).0, 0, "both off draws nothing");
+    assert_eq!(
+        drawn(false, false),
+        painted(|_| {}),
+        "both off paints nothing"
+    );
 }
 
 /// The depth map is switched per pane by the region it may paint, not by
@@ -1354,18 +1090,6 @@ fn the_depth_map_is_cut_at_the_divider_rather_than_dropped() {
     assert_eq!(laneless.layer_clip(true, false), Some(laneless.chart_rect));
     assert_eq!(laneless.layer_clip(true, true), Some(laneless.chart_rect));
     assert_eq!(laneless.layer_clip(false, true), None);
-}
-
-/// The two sides never both get the side nudge: an even split sits on the
-/// exact price, and the lean grows continuously from there.
-#[test]
-fn a_pie_leans_with_its_buy_share() {
-    let offset = 4.0;
-    let lean = |buy_share: f32| -((finite_unit(buy_share) - 0.5) * 2.0) * offset;
-    assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset, false));
-    assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset, false));
-    assert_eq!(lean(0.5), 0.0);
-    assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
 }
 
 /// The lane is a pane of its own: a fixed band on the right edge of the

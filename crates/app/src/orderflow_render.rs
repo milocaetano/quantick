@@ -19,8 +19,6 @@ mod flow_cache;
 mod flow_execution;
 mod flow_perimeter;
 pub(crate) use flow_cache::cached_flow;
-#[cfg(test)]
-pub(crate) use flow_cache::draw_cached_flow;
 pub(crate) use flow_execution::FlowDrawing;
 pub(crate) use flow_perimeter::draw_flow_perimeters;
 mod heatmap;

@@ -318,9 +318,9 @@ impl Scan {
             let Ok(source) = fs::read_to_string(root.join(path)) else {
                 continue;
             };
-            if !is_test_file(path) {
-                scan.test_modules += source.matches(TEST_MODULE_SITE).count();
-            }
+            // `size`'s walk already drops `tests/`, `tests.rs` and
+            // `*_tests.rs`, so every path here is a production file.
+            scan.test_modules += source.matches(TEST_MODULE_SITE).count();
             let production = size::production_source(&source);
             for (total, found) in scan.sites.iter_mut().zip(site_counts(&production)) {
                 *total += found;
@@ -336,16 +336,4 @@ impl Scan {
         scan.wide_structs.sort();
         scan
     }
-}
-
-/// Whether a path is test code by its own name.
-///
-/// `size`'s walk already refuses any path with a `tests/` segment, so the
-/// only test files left in scope are the `tests.rs` siblings a module split
-/// leaves behind. Counting their `#[cfg(test)]` would score the extraction
-/// that moved tests *out* of a production file as no improvement at all.
-fn is_test_file(path: &str) -> bool {
-    path.rsplit('/')
-        .next()
-        .is_some_and(|file| file == "tests.rs")
 }

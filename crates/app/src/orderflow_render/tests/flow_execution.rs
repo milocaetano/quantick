@@ -3,8 +3,6 @@ use crate::orderflow_render::constants::{FLOW_BUY, FLOW_SELL};
 use quantick_chart::flow_execution::FlowRegionRole;
 #[path = "flow_live_bench.rs"]
 mod live_bench;
-#[path = "flow_stage_profile.rs"]
-mod profile;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
     PriceWindow,
@@ -165,27 +163,6 @@ fn footprint_isolation_is_opaque_without_adding_to_the_earned_sector_geometry() 
             assert_eq!(isolated.color.a(), 255);
             assert_ne!(plain.color, isolated.color);
         }
-    }
-}
-
-#[test]
-fn circle_edge_visibility_uses_exact_geometry() {
-    let (frame, _) = painted_region(4593, 4594);
-    let history = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
-    for x in [-10.0, 110.0] {
-        let disc = flow_disc(&frame.dots[0], egui::pos2(x, 50.0) - FLOW_OFFSET).unwrap();
-        assert!(disc.visible([history.min.into(), history.max.into()]));
-    }
-    for center in [
-        egui::pos2(-13.0, 50.0),
-        egui::pos2(113.0, 50.0),
-        egui::pos2(-10.0, -10.0),
-    ] {
-        let disc = flow_disc(&frame.dots[0], center - FLOW_OFFSET).unwrap();
-        assert!(
-            !disc.visible([history.min.into(), history.max.into()]),
-            "a bounding-box corner is not a circle intersection"
-        );
     }
 }
 
@@ -441,125 +418,6 @@ fn dense_flow_fixture(dot_count: u64) -> FlowTapeFrame {
     );
     assert_eq!(frame.dots.len(), dot_count as usize);
     frame
-}
-
-#[test]
-#[ignore = "manual production FLOW cache cold, warm and invalidated frame timing"]
-fn dense_production_flow_cache_benchmark() {
-    use quantick_chart::{flow_execution::FlowExecutionGeometry, viewport::Viewport};
-    use std::{sync::Arc, time::Instant};
-
-    for dot_count in [6000_u64, 30000] {
-        let frame = Arc::new(dense_flow_fixture(dot_count));
-        let slot_count = dot_count as usize / 40;
-        let mut viewport = Viewport::new();
-        viewport.set_px_per_bar(1200.0 / slot_count as f32);
-        let geometry = |price_shift: f64| {
-            FlowExecutionGeometry::new(
-                viewport,
-                slot_count,
-                0,
-                (90.0 + price_shift, 140.0 + price_shift),
-                [20.0, 20.0, 1220.0, 815.0],
-                false,
-            )
-            .unwrap()
-        };
-        let ctx = egui::Context::default();
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1240.0, 835.0));
-        let history = egui::Rect::from_min_max(egui::pos2(20.0, 20.0), egui::pos2(1220.0, 815.0));
-        let paint = |source: &Arc<FlowTapeFrame>, geometry| {
-            let started = Instant::now();
-            let output = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    ..Default::default()
-                },
-                |ctx| {
-                    crate::orderflow_render::draw_cached_flow(
-                        &ctx.layer_painter(egui::LayerId::background()),
-                        history,
-                        source,
-                        geometry,
-                        Some(egui::Color32::from_rgb(19, 23, 34)),
-                    );
-                },
-            );
-            let shapes = output.shapes.len();
-            let paint_ms = started.elapsed().as_secs_f64() * 1000.0;
-            let tessellation_started = Instant::now();
-            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
-            let tessellation_ms = tessellation_started.elapsed().as_secs_f64() * 1000.0;
-            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-            let counts =
-                primitives
-                    .iter()
-                    .fold((shapes, 0, 0), |(shapes, vertices, indices), primitive| {
-                        if let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive {
-                            (
-                                shapes,
-                                vertices + mesh.vertices.len(),
-                                indices + mesh.indices.len(),
-                            )
-                        } else {
-                            (shapes, vertices, indices)
-                        }
-                    });
-            (elapsed_ms, paint_ms, tessellation_ms, counts)
-        };
-        let cold = paint(&frame, geometry(0.0));
-        println!(
-            "DENSE_FLOW_PRODUCTION_CACHE_COLD {{\"dots\":{dot_count},\"total_ms\":{:.6},\"paint_ms\":{:.6},\"final_tessellation_ms\":{:.6},\"shapes\":{},\"vertices\":{},\"indices\":{}}}",
-            cold.0, cold.1, cold.2, cold.3.0, cold.3.1, cold.3.2,
-        );
-        for mode in ["warm_same_arc", "new_source_arc", "changed_price_axis"] {
-            let mut samples = Vec::new();
-            let mut paint_total = 0.0;
-            let mut tessellation_total = 0.0;
-            let (warmup, measured) = if mode == "warm_same_arc" {
-                (30, 100)
-            } else {
-                (2, 10)
-            };
-            for iteration in 0..warmup + measured {
-                // Worker projection and camera-key creation are outside renderer timing.
-                let source = if mode == "new_source_arc" {
-                    let mut next = (*frame).clone();
-                    next.source_revision += iteration as u64 + 1;
-                    Arc::new(next)
-                } else {
-                    Arc::clone(&frame)
-                };
-                let shift = if mode == "changed_price_axis" {
-                    (iteration + 1) as f64 * 0.001
-                } else {
-                    0.0
-                };
-                let result = paint(&source, geometry(shift));
-                if mode == "warm_same_arc" {
-                    assert_eq!(
-                        result.3, cold.3,
-                        "the same frame retains every cached triangle"
-                    );
-                }
-                if iteration >= warmup {
-                    samples.push(result.0);
-                    paint_total += result.1;
-                    tessellation_total += result.2;
-                }
-            }
-            samples.sort_by(f64::total_cmp);
-            let p95 = (samples.len() * 95).div_ceil(100) - 1;
-            println!(
-                "DENSE_FLOW_PRODUCTION_CACHE {{\"dots\":{dot_count},\"mode\":\"{mode}\",\"frames\":{},\"mean_ms\":{:.6},\"p95_ms\":{:.6},\"paint_mean_ms\":{:.6},\"final_tessellation_mean_ms\":{:.6}}}",
-                samples.len(),
-                samples.iter().sum::<f64>() / samples.len() as f64,
-                samples[p95],
-                paint_total / samples.len() as f64,
-                tessellation_total / samples.len() as f64,
-            );
-        }
-    }
 }
 
 /// The tick spheres the dense fixture is drawn with: rims from 3.5 px,

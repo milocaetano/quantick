@@ -1153,6 +1153,20 @@ mod tests {
             .collect()
     }
 
+    /// Both Fib tools open finite, between their own anchors; an extension's
+    /// targets running on to the chart's edge is an opt-in on the Levels tab.
+    #[test]
+    fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
+        for (id, expected) in [
+            ("fib-retracement", Extend::Anchors),
+            ("fib-extension", Extend::Anchors),
+        ] {
+            let payload = crate::DrawingTool::by_id(id).unwrap().default_payload();
+            let fib = payload.as_any().downcast_ref::<FibPayload>().unwrap();
+            assert_eq!(fib.extend, expected, "{id}");
+        }
+    }
+
     /// The drag is the whole gesture now: A→B places the extension, and its
     /// levels hang from B by the size of that move — linear and log.
     #[test]

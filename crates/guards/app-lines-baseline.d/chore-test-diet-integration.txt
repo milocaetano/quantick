@@ -1,0 +1,6 @@
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+# Measured after merging the test-diet stack with the headless-ui main sync:
+# the cuts of both sides together put crates/app 227 lines under the union
+# of their ceilings, past the 200-line slack.
+crates/app -227
+!budget -227

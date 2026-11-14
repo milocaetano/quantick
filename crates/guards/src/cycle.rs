@@ -165,10 +165,14 @@ pub fn module_of(relative: &str) -> Option<String> {
     }
     let mut segments = relative.split('/');
     let head = segments.next()?;
-    // A `tests/` directory anywhere below `src/`, and the `*_tests.rs`
-    // files this repo splits large suites into. Both are `#[cfg(test)]`
-    // modules; neither ships.
-    if relative.split('/').any(|segment| segment == "tests") || relative.ends_with("_tests.rs") {
+    // A `tests/` directory anywhere below `src/`, and the `tests.rs` and
+    // `*_tests.rs` files a test module moved out of its host lands in. All
+    // are `#[cfg(test)]` modules; none ships.
+    let file = relative.rsplit('/').next().unwrap_or(relative);
+    if relative.split('/').any(|segment| segment == "tests")
+        || file == "tests.rs"
+        || file.ends_with("_tests.rs")
+    {
         return None;
     }
     Some(head.strip_suffix(".rs").unwrap_or(head).to_owned())
@@ -893,6 +897,7 @@ mod tests {
         assert_eq!(module_of("app/tests/mod.rs"), None);
         assert_eq!(module_of("app/tests/paper_trading_tests.rs"), None);
         assert_eq!(module_of("resample_tests.rs"), None);
+        assert_eq!(module_of("toolbar/tests.rs"), None);
     }
 
     /// The hook and the suite must say the same thing about the same

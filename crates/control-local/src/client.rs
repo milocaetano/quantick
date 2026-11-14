@@ -684,6 +684,30 @@ mod tests {
     }
 
     #[test]
+    fn a_named_instance_is_selected_among_many() {
+        // Both ends of the list, so neither `first()` nor `last()` passes.
+        for wanted in [
+            InstanceId::from_bytes([1; 16]),
+            InstanceId::from_bytes([5; 16]),
+        ] {
+            let nonce = ProcessNonce::from_bytes([2; 16]);
+            let (first_port, _a) = fake_gateway(accepted_reply(&nonce));
+            let (second_port, _b) = fake_gateway(accepted_reply(&nonce));
+            let first = LocalClient::connect(descriptor_for(first_port), &options()).unwrap();
+            let mut second = LocalClient::connect(descriptor_for(second_port), &options()).unwrap();
+            // Relabelled after the handshake, as below: selection is under test.
+            second.descriptor.instance_id = InstanceId::from_bytes([5; 16]);
+            let many = LiveInstances {
+                clients: vec![first, second],
+                issues: Vec::new(),
+                next_steps: Vec::new(),
+            };
+            let selected = many.select(Some(&wanted)).unwrap();
+            assert_eq!(selected.descriptor().instance_id, wanted);
+        }
+    }
+
+    #[test]
     fn selection_never_picks_silently_among_many_and_says_so_when_there_are_none() {
         let none = LiveInstances {
             clients: Vec::new(),
