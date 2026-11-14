@@ -43,7 +43,7 @@ pub(super) fn as_hand<I: IntoIterator<Item = String>>(
     let notes = act(app, access.as_mut().zip(hand.as_ref()));
     app.control.control_access = access;
     for message in notes {
-        app.surfaces.toast.note(message, Instant::now());
+        crate::surfaces::toast::note(&mut app.surfaces.toast, message, Instant::now());
     }
 }
 
@@ -233,17 +233,12 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
 }
 
 fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &WorkspaceRecipe) {
-    let sides: Vec<_> = (layouts.tabs.by_id(id).into_iter())
-        .flat_map(|tab| tab.panes().map(|(pane, side)| (pane.id, side)))
-        .collect();
     layouts.own_indicator_copies();
-    let sets = sides
-        .iter()
-        .map(|(pane, side)| (*pane, recipe.for_pane(side.index()).0));
-    let shown = layouts.store.session().shared_sets(sets);
-    for ((_, side), (_, set)) in sides.into_iter().zip(shown) {
-        layouts.show_pane_indicators(id, side, set);
-    }
+    let panes = layouts.tabs.by_id(id).map(|tab| tab.panes());
+    let sets = panes.into_iter().flatten();
+    let sets = sets.map(|(pane, side)| (pane.id, recipe.for_pane(side.index()).0));
+    let shown = layouts.store.session_mut().landing_sets(sets);
+    layouts.show_sets(shown);
 }
 
 /// Carry out what a workspace row or the toolbar asked for, on what the active

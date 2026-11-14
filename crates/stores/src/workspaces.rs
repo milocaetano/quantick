@@ -170,6 +170,17 @@ impl WorkspaceBookStore {
         (&mut self.book, &mut self.sync)
     }
 
+    /// Each open tab's workspace, for the layout session to share copies by:
+    /// `quantick_workspace::book_upkeep::tab_holdings`.
+    pub fn tab_holdings(&self) -> impl Iterator<Item = (u64, &str, bool)> + Clone {
+        quantick_workspace::book_upkeep::tab_holdings(self.parts())
+    }
+
+    /// Before a save: `quantick_workspace::book_upkeep::take_shown_sets`.
+    pub fn take_shown_sets(&mut self, tab: u64) {
+        quantick_workspace::book_upkeep::take_shown_sets(&mut self.book, &self.sync, tab);
+    }
+
     /// A tab closed: nothing of it stays.
     pub fn forget_tab(&mut self, tab: u64) {
         self.book.close_tab(tab);

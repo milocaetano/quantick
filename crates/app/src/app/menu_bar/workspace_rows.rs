@@ -1,19 +1,17 @@
-//! Paints the workspace rows of the `⋮` menu, the menu above the status bar's
-//! workspace cell and the name dialog. The words are `window_menu`'s, the state is
+//! Paints the menu below the capsule's workspace name and the name dialog; the
+//! `⋮` menu's workspace rows are `chrome_menu_bar`'s. The words are `window_menu`'s, the state is
 //! `workspace_menu`'s and what a row does is [`WorkspaceCommand`]'s.
 
-use crate::app::tab_workspaces::symbols_of;
+use crate::surfaces::chrome_menu_bar::{metrics, scrolled};
 use eframe::egui;
-use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowKind, action_row};
-use quantick_control_handlers::workspace_book::cell_menu::{cell_menu, state_of, window_list};
-use quantick_control_schema::window_menu::{self as text, RowId, row_of};
-use quantick_session::workspace_menu::{self as model, ChipSizing, MenuBounds, MenuMetrics};
+use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowKind, cell_menu};
+use quantick_control_schema::window_menu as text;
+use quantick_session::workspace_menu::{self as model, ChipSizing, MenuBounds};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::WorkspaceBook;
 
 use super::MenuCommand;
 use crate::app::QuantickApp;
-use crate::app::arrangement_host::ArrangementHost;
 
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
 
@@ -21,9 +19,7 @@ const NAME_FIELD_WIDTH_PT: f32 = 220.0;
 #[derive(Clone, Copy)]
 pub(super) struct WorkspaceRows<'a> {
     pub(super) book: &'a WorkspaceBook,
-    pub(super) tabs: &'a ArrangementHost,
     pub(super) tab: u64,
-    pub(super) symbol: &'a str,
 }
 
 impl<'a> WorkspaceRows<'a> {
@@ -31,53 +27,8 @@ impl<'a> WorkspaceRows<'a> {
     pub(super) fn of(app: &'a QuantickApp) -> Self {
         Self {
             book: app.runtime.workspace.book.book(),
-            tabs: &app.runtime.tabs,
             tab: app.runtime.tabs.active_id(),
-            symbol: app.active_tab().symbol.as_str(),
         }
-    }
-
-    /// `Save WINV26 to Scalp`, which names the tabs it will change before the click.
-    pub(super) fn save_to_row(
-        self,
-        ui: &mut egui::Ui,
-        keys: String,
-        commands: &mut Vec<MenuCommand>,
-    ) -> egui::Response {
-        let (workspace, modified) = state_of(self.book, self.tab);
-        let row = row_of(RowId::SaveToWorkspace);
-        let followers = self.book.save_to_preview(self.tab).unwrap_or_default();
-        let response = ui
-            .add_enabled(
-                modified,
-                egui::Button::new(text::save_to_label(self.symbol, workspace))
-                    .shortcut_text(crate::theme::supporting_text(ui, keys)),
-            )
-            .on_hover_text(text::save_to_hover(&symbols_of(self.tabs, &followers)))
-            .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
-        if response.clicked() {
-            commands.push(MenuCommand::Workspace(WorkspaceCommand::SaveTo));
-        }
-        response
-    }
-
-    /// Every workspace, the active tab's lit, beside the tabs on it.
-    pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let rows = window_list(self.book, self.tab, |tabs| symbols_of(self.tabs, tabs));
-        let draw = |ui: &mut egui::Ui| rows.iter().for_each(|row| plain(ui, row, commands));
-        scrolled(model::list_cap(rows.len(), metrics(ui)), ui, draw);
-    }
-
-    /// The workspace rows `menus` routes here; false for any other row.
-    pub(super) fn action_row(
-        self,
-        ui: &mut egui::Ui,
-        id: RowId,
-        commands: &mut Vec<MenuCommand>,
-    ) -> bool {
-        let row = action_row(self.book, self.tab, id);
-        row.iter().for_each(|row| plain(ui, row, commands));
-        row.is_some()
     }
 
     /// The capsule's workspace menu: `cell_menu`'s rows within `chip_menu_budget`.
@@ -144,27 +95,6 @@ impl<'a> WorkspaceRows<'a> {
         drawn.retain(|_| show); // An unseen frame shows nothing to press.
         drawn
     }
-}
-
-/// The menu's heights as `ui`'s style draws them.
-fn metrics(ui: &egui::Ui) -> MenuMetrics {
-    let (sp, text) = (ui.spacing(), ui.text_style_height(&egui::TextStyle::Button));
-    let button = text + 2.0 * sp.button_padding.y;
-    MenuMetrics::of(button, sp.item_spacing.y, sp.menu_margin.sum().y)
-}
-
-/// Workspace rows no taller than `height`, the bar shown and measured while they scroll.
-fn scrolled(height: f32, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    use egui::scroll_area::ScrollBarVisibility as Bar;
-    ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
-    let bar = [Bar::AlwaysHidden, Bar::AlwaysVisible][usize::from(height.is_finite())];
-    let list = egui::ScrollArea::vertical().max_height(height);
-    list.scroll_bar_visibility(bar).show(ui, add);
-}
-
-fn plain(ui: &mut egui::Ui, row: &CellRow, commands: &mut Vec<MenuCommand>) {
-    let asked = cell_row(ui, row, &mut ChipSizing::default(), &mut Vec::new());
-    commands.extend(asked.map(MenuCommand::Workspace));
 }
 
 /// One cell-menu row as its kind draws it; answers what a press on it asked.

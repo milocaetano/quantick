@@ -6,6 +6,7 @@ use crate::pane::PaneSide;
 use crate::surfaces::drawing_chrome::SelectedDrawing;
 use crate::toolrail::ToolboxDock;
 use quantick_drawings::{FontFamily, NullPresetHost, TextPayload, text::MAX_WRAP_PX};
+use quantick_ui_model::drawing_chrome::InspectorTab;
 
 #[test]
 fn floating_text_inspector_bounds_long_content_and_keeps_font_style() {
@@ -68,7 +69,8 @@ fn inspect_long_text(pinned: bool) {
                     manager_rows: &[],
                     presets: &NullPresetHost,
                 };
-                let mut chrome = DrawingChromeSurface::default();
+                let mut owner = crate::surfaces::drawing_chrome::new_owner();
+                let mut chrome = crate::surfaces::drawing_chrome::borrow(&mut owner);
                 chrome.set_inspector_open(true);
                 chrome.set_inspector_pinned(pinned);
                 chrome.set_inspector_tab(InspectorTab::Extra);
@@ -84,7 +86,7 @@ fn inspect_long_text(pinned: bool) {
                                 screen.width() - ctx.available_rect().width()
                             } else {
                                 draw_floating(&mut chrome, ctx, &env);
-                                chrome.inspector.size.unwrap().x
+                                chrome.view.inspector.size.unwrap().x
                             };
                             assert!(
                                 width > 0.0 && width <= INSPECTOR_MAX_WIDTH_PX + 1.0,

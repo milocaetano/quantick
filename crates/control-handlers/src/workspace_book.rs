@@ -403,6 +403,10 @@ pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
     let before = book(app)?.clone();
+    // What its panes show, which every tab on the workspace shows.
+    if let Some(store) = app.workspace_store() {
+        store.take_shown_sets(tab);
+    }
     let saved = written(app, |book| book.save_to(tab), |saved| saved.changed);
     if saved.as_ref().is_err_and(failed_write) {
         note_failed(app, tab);
@@ -520,6 +524,10 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
         .clone()
         .save_as(tab, name)
         .map_err(|refusal| refused(&refusal))?;
+    // What its panes show, held edits of the workspace's included.
+    if let Some(store) = app.workspace_store() {
+        store.take_shown_sets(tab);
+    }
     let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
     outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
     Ok(outcome)

@@ -1,130 +1,105 @@
 use super::*;
 use egui_phosphor::regular as icons;
+use quantick_alerts::{
+    AlertSpec, Expiration, ExpirationChoice, Frequency, MAX_CONDITIONS, MarketRef,
+    Operator, Predicate, SourceContext, TargetKind, TargetRef, sound,
+};
 
-impl AlertSurface {
-    pub(super) fn draw_editor(
-        &mut self,
-        ui: &mut egui::Ui,
-        book: &AlertBook,
-        env: &SurfaceEnv<'_>,
-        response: &mut SurfaceResponse,
-    ) {
-        let draft = self.draft.as_mut().expect("editor is open");
-        market_label(ui, &draft.spec.market);
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut draft.subview, Subview::Conditions, "Conditions");
-            ui.selectable_value(&mut draft.subview, Subview::Message, "Message");
-            ui.selectable_value(&mut draft.subview, Subview::Notifications, "Notifications");
+/// The draft's editor; `draft` is a copy the caller hands back if it changed.
+pub(super) fn draw_editor(
+    ui: &mut egui::Ui,
+    draft: &mut Draft,
+    surface_error: Option<&str>,
+    book: &AlertBook,
+    alert_failure: Option<&str>,
+    actions: &mut Vec<Intent>,
+) {
+    market_label(ui, &draft.spec.market);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut draft.subview, Subview::Conditions, "Conditions");
+        ui.selectable_value(&mut draft.subview, Subview::Message, "Message");
+        ui.selectable_value(&mut draft.subview, Subview::Notifications, "Notifications");
+    });
+    ui.separator();
+    // Reserve the viewport margin, window title and fixed footer after the
+    // measured header, including wrapped source labels on short windows.
+    let header_height = (ui.cursor().top() - ui.min_rect().top()).max(0.0);
+    let body_height = (ui.ctx().screen_rect().height() - header_height - 112.0).max(40.0);
+    egui::ScrollArea::vertical()
+        .id_salt("alert_editor_body")
+        .max_height(body_height)
+        .show(ui, |ui| {
+            ui.label("Name");
+            let name = ui.text_edit_singleline(&mut draft.spec.name);
+            if draft.focus_name {
+                name.request_focus();
+                draft.focus_name = false;
+            }
+            match draft.subview {
+                Subview::Conditions => conditions(ui, draft, book, actions),
+                Subview::Message => {
+                    ui.label("Message shown when this alert fires");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut draft.spec.message)
+                            .desired_rows(5)
+                            .desired_width(f32::INFINITY),
+                    );
+                }
+                Subview::Notifications => notifications(ui, draft, alert_failure, actions),
+            }
+            if let Ok(view) = book.editor(draft.spec.clone()) {
+                ui.separator();
+                ui.label("Summary");
+                ui.label(summary(&draft.spec, Some(&draft.context)));
+                for issue in &view.errors {
+                    error(ui, &error_text(issue));
+                }
+            }
+            if let Some(message) = surface_error {
+                error(ui, message);
+            }
+            follow_focus(ui);
         });
-        ui.separator();
-        // Reserve the viewport margin, window title and fixed footer after the
-        // measured header, including wrapped source labels on short windows.
-        let header_height = (ui.cursor().top() - ui.min_rect().top()).max(0.0);
-        let body_height = (ui.ctx().screen_rect().height() - header_height - 112.0).max(40.0);
-        egui::ScrollArea::vertical()
-            .id_salt("alert_editor_body")
-            .max_height(body_height)
-            .show(ui, |ui| {
-                ui.label("Name");
-                let name = ui.text_edit_singleline(&mut draft.spec.name);
-                if draft.focus_name {
-                    name.request_focus();
-                    draft.focus_name = false;
-                }
-                match draft.subview {
-                    Subview::Conditions => conditions(ui, draft, book, response),
-                    Subview::Message => {
-                        ui.label("Message shown when this alert fires");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut draft.spec.message)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
-                    }
-                    Subview::Notifications => notifications(ui, draft, env, response),
-                }
-                if let Ok(view) = book.editor(draft.spec.clone()) {
-                    ui.separator();
-                    ui.label("Summary");
-                    ui.label(summary(&draft.spec, Some(&draft.context)));
-                    for issue in &view.errors {
-                        error(ui, &error_text(issue));
-                    }
-                }
-                if let Some(message) = &self.error {
-                    error(ui, message);
-                }
-                follow_focus(ui);
-            });
-        ui.separator();
-        let mut cancel = false;
-        ui.horizontal(|ui| {
-            if draft.confirming_delete {
-                ui.label("Delete this alert? History is kept.");
-                let keep = ui.button("Keep alert");
-                if draft.focus_delete_cancel {
-                    keep.request_focus();
-                    draft.focus_delete_cancel = false;
-                }
-                if keep.clicked() {
-                    draft.confirming_delete = false;
-                }
-                if ui.button("Confirm delete").clicked() {
-                    response.alerts = Some(Box::new(Request {
-                        command: Some(AlertCommand::Delete {
-                            id: draft.spec.id,
-                            expected_revision: draft.revision.expect("only saved alerts delete"),
-                        }),
-                        ..Default::default()
-                    }));
-                    draft.waiting = true;
-                }
-                return;
+    ui.separator();
+    ui.horizontal(|ui| {
+        if draft.confirming_delete {
+            ui.label("Delete this alert? History is kept.");
+            let keep = ui.button("Keep alert");
+            if draft.focus_delete_cancel {
+                keep.request_focus();
+                draft.focus_delete_cancel = false;
             }
-            if draft.revision.is_some() && action(ui, icons::TRASH, "Delete").clicked() {
-                draft.confirming_delete = true;
-                draft.focus_delete_cancel = true;
+            if keep.clicked() {
+                draft.confirming_delete = false;
             }
-            if ui.button("Cancel").clicked() {
-                cancel = true;
+            if ui.button("Confirm delete").clicked() {
+                actions.push(Intent::ConfirmDelete);
             }
-            let valid = book.validate(&draft.spec).is_ok()
-                && !draft.waiting
-                && draft.resolving.is_none()
-                && draft.expiration_error.is_none();
-            if ui
-                .add_enabled(
-                    valid,
-                    egui::Button::new(if draft.revision.is_some() {
-                        "Save changes"
-                    } else {
-                        "Create alert"
-                    }),
-                )
-                .clicked()
-            {
-                let command = draft.revision.map_or_else(
-                    || AlertCommand::Create(draft.spec.clone()),
-                    |expected_revision| AlertCommand::Edit {
-                        expected_revision,
-                        spec: draft.spec.clone(),
-                    },
-                );
-                response.alerts = Some(Box::new(Request {
-                    command: Some(command),
-                    ..Default::default()
-                }));
-                draft.waiting = true;
-            }
-            if draft.waiting {
-                ui.label("Saving…");
-            }
-        });
-        if cancel {
-            self.draft = None;
-            self.error = None;
+            return;
         }
-    }
+        if draft.revision.is_some() && action(ui, icons::TRASH, "Delete").clicked() {
+            draft.confirming_delete = true;
+            draft.focus_delete_cancel = true;
+        }
+        if ui.button("Cancel").clicked() {
+            actions.push(Intent::Cancel);
+        }
+        let valid = book.validate(&draft.spec).is_ok()
+            && !draft.waiting
+            && draft.resolving.is_none()
+            && draft.expiration_error.is_none();
+        let label = if draft.revision.is_some() {
+            "Save changes"
+        } else {
+            "Create alert"
+        };
+        if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
+            actions.push(Intent::Submit);
+        }
+        if draft.waiting {
+            ui.label("Saving…");
+        }
+    });
 }
 pub(super) fn market_label(ui: &mut egui::Ui, market: &MarketRef) {
     let (label, identity) = match &market.source {
@@ -147,7 +122,7 @@ fn conditions(
     ui: &mut egui::Ui,
     draft: &mut Draft,
     book: &AlertBook,
-    response: &mut SurfaceResponse,
+    actions: &mut Vec<Intent>,
 ) {
     ui.strong("All conditions");
     ui.label("Every condition must be true at the same observation.");
@@ -221,11 +196,10 @@ fn conditions(
                                 )
                                 .clicked()
                             {
-                                draft.resolving = Some((index, choice.selector));
-                                response.alerts = Some(Box::new(Request {
-                                    resolve: Some(choice.selector),
-                                    ..Default::default()
-                                }));
+                                actions.push(Intent::Resolve {
+                                    index,
+                                    selector: choice.selector,
+                                });
                             }
                         }
                     });
@@ -240,10 +214,7 @@ fn conditions(
                     }
                     TargetRef::Drawing(target) => {
                         if action(ui, icons::CROSSHAIR, "Locate drawing").clicked() {
-                            response.alerts = Some(Box::new(Request {
-                                locate: Some(target.clone()),
-                                ..Default::default()
-                            }));
+                            actions.push(Intent::Locate(target.clone()));
                         }
                     }
                 }
@@ -378,8 +349,8 @@ fn expiration(ui: &mut egui::Ui, draft: &mut Draft, book: &AlertBook) {
 fn notifications(
     ui: &mut egui::Ui,
     draft: &mut Draft,
-    env: &SurfaceEnv<'_>,
-    response: &mut SurfaceResponse,
+    alert_failure: Option<&str>,
+    actions: &mut Vec<Intent>,
 ) {
     ui.checkbox(&mut draft.spec.notification.popup, "Local popup");
     ui.checkbox(&mut draft.spec.notification.toast, "Local toast");
@@ -407,10 +378,8 @@ fn notifications(
         });
     if let Some(sound) = selected {
         if action(ui, icons::SPEAKER_HIGH, "Preview sound").clicked() {
-            response.test_alert = Some(crate::audio::Cue::new(
-                sound,
-                draft.spec.notification.sound_seconds,
-            ));
+            let seconds = draft.spec.notification.sound_seconds;
+            actions.push(Intent::Preview(sound::Cue::new(sound, seconds)));
         }
         if sound.can_be_cut() {
             let mut cut = draft.spec.notification.sound_seconds.is_some();
@@ -426,7 +395,7 @@ fn notifications(
             }
         }
     }
-    if let Some(failure) = env.alert_failure {
+    if let Some(failure) = alert_failure {
         error(ui, failure);
     }
     ui.label("Alerts are monitored while this workspace is open.");

@@ -74,9 +74,10 @@ fn edges(rect: egui::Rect) -> [f32; 4] {
 
 impl super::ReportState {
     pub(crate) fn arm_scroll_probe(&mut self, value: &str) {
-        self.scroll_probe.arm(value);
+        self.adapter.view.scroll_probe.arm(value);
     }
     pub(crate) fn push_scroll_probe(&mut self, input: &mut egui::RawInput) {
-        self.scroll_probe.push(self.report_open, input);
+        let open = self.report_open();
+        self.adapter.view.scroll_probe.push(open, input);
     }
 }

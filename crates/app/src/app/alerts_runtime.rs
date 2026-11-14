@@ -53,7 +53,10 @@ pub(super) fn deliver(
     runtime: &mut Runtime,
     audio: &mut super::replay_and_history::AlertState,
     toast: &mut crate::surfaces::ToastSurface,
-    popup: &mut crate::surfaces::AgentPopupSurface,
+    popup: &mut crate::surfaces::Adapter<
+        quantick_ui_model::agent_popup::Model,
+        crate::surfaces::agent_popup::View,
+    >,
     strategy_cues: impl IntoIterator<Item = quantick_alerts::sound::Cue>,
 ) {
     use quantick_alerts::{
@@ -73,7 +76,7 @@ pub(super) fn deliver(
             .map(|sound| Cue::new(sound, event.spec.notification.sound_seconds))
     });
     if let Some(message) = audio.play_pending(strategy_cues.into_iter().chain(alert_cues)) {
-        toast.note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
     if events.is_empty() && runtime.core.error.is_none() {
         return;
@@ -87,14 +90,16 @@ pub(super) fn deliver(
             let notification = &event.spec.notification;
             outcome = DeliveryOutcome::Delivered;
             if notification.toast {
-                toast.note(event.spec.notice(), std::time::Instant::now());
+                crate::surfaces::toast::note(toast, event.spec.notice(), std::time::Instant::now());
             }
             if notification.popup {
-                popup.show(crate::control::AgentPopup {
-                    title: event.spec.name.clone(),
-                    message: event.spec.message.clone(),
-                    author: "Local alert".to_owned(),
-                });
+                let _ = popup.update(quantick_ui_model::agent_popup::Intent::Show(
+                    crate::control::AgentPopup {
+                        title: event.spec.name.clone(),
+                        message: event.spec.message.clone(),
+                        author: "Local alert".to_owned(),
+                    },
+                ));
             }
             if notification.sound.is_some() && sound_failed {
                 outcome = DeliveryOutcome::Failed;
@@ -103,10 +108,8 @@ pub(super) fn deliver(
         let _ = runtime.core.book.record_delivery(event.sequence, outcome);
     }
     if let Err(error) = runtime.core.flush() {
-        toast.note(
-            format!("Alert storage: {error:?}"),
-            std::time::Instant::now(),
-        );
+        let message = format!("Alert storage: {error:?}");
+        crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
 }
 
@@ -196,10 +199,11 @@ pub(super) fn apply_alert_request(
 ) {
     use super::LayoutPort;
     if request.open {
-        if !app.dock.visible() {
-            app.dock.toggle_visible();
+        let dock = &mut app.surfaces.dock;
+        if !dock.visible() {
+            dock.toggle_visible();
         }
-        app.dock.collapse();
+        let _ = dock.update(quantick_ui_model::dock::Intent::Collapse);
     }
     if let Some(selector) = request.resolve.take() {
         let outcome = app
@@ -246,7 +250,8 @@ pub(super) fn apply_alert_request(
                 }
             }
         } else {
-            app.surfaces.toast.note(
+            crate::surfaces::toast::note(
+                &mut app.surfaces.toast,
                 if matches.is_empty() {
                     "Alert target is missing from the open workspace"
                 } else {
@@ -256,19 +261,48 @@ pub(super) fn apply_alert_request(
             );
         }
     }
-    if let Err(error) = app
-        .surfaces
-        .alerts
-        .apply(&mut app.runtime.alerts.core.book, request)
-    {
-        app.surfaces
-            .alerts
-            .settle_command(Err(format!("{error:?}")));
+    let _ =
+        (app.surfaces.alerts).update(quantick_ui_model::alerts::Intent::Apply(Box::new(request)));
+}
+
+/// After the dock: its bell opens the manager, another open dock tab closes
+/// it, and the manager takes its space before chart layout.
+pub(super) fn after_dock(app: &mut super::QuantickApp, ctx: &eframe::egui::Context, bell: bool) {
+    if bell {
+        app.apply_menu_command(super::menu_bar::MenuCommand::OpenAlerts);
+    }
+    if app.surfaces.dock.tab().is_some() {
+        app.surfaces.alerts.close_manager();
+    }
+    draw_manager_panel(app, ctx);
+}
+
+/// The context bar's Create alert: open the editor on the resolved drawing.
+pub(super) fn open_drawing_target(
+    app: &mut super::QuantickApp,
+    ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+    now: std::time::Instant,
+) {
+    use super::LayoutPort;
+    let Some(selector) = ask
+        .readbacks
+        .as_mut()
+        .and_then(|back| back.alert_target.take())
+    else {
+        return;
+    };
+    match app.layout_adapter().resolve_alert_target(selector) {
+        Ok(target) => app.surfaces.alerts.open_drawing(Some(target)),
+        Err(error) => crate::surfaces::toast::note(
+            &mut app.surfaces.toast,
+            format!("Alert target unavailable: {error:?}"),
+            now,
+        ),
     }
 }
 
 /// Reserve manager space after the permanent right rail, before chart layout.
-pub(super) fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egui::Context) {
+fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egui::Context) {
     if !app.surfaces.alerts.is_open() {
         return;
     }
@@ -279,7 +313,8 @@ pub(super) fn draw_manager_panel(app: &mut super::QuantickApp, ctx: &eframe::egu
         app.runtime.tabs.active_id(),
         app.runtime.tz.minutes(),
     );
-    let mut response = app.surfaces.alerts.draw_manager_panel(
+    let mut response = crate::surfaces::alerts::draw_manager_panel(
+        &mut app.surfaces.alerts,
         ctx,
         &app.runtime.alerts.core.book,
         app.runtime.alerts.core.error.as_ref(),

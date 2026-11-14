@@ -12,13 +12,11 @@ use crate::app::arrangement_host::ArrangementHost;
 use crate::app::indicator_manager::IndicatorState;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::footprint_config::FootprintConfig;
-use crate::indicator_panel::SettingsDialog;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
 use quantick_chart::bar_progress::BarProgressReading;
-
-use super::super::TabSlot;
+use quantick_ui_model::indicator_settings::State as SettingsState;
 
 /// A pane's right-click asked to arm one of its drawings. Drained into the
 /// surface that owns the dialog: the click happens while the canvas draws,
@@ -36,7 +34,12 @@ pub(super) fn open_requested_strategy_popups(
         if let Some(drawing) = tab.pane_mut(side).strategies.popup_request.take() {
             let form =
                 crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
-            popup.open(tab_id, side, drawing, form);
+            popup.update(quantick_ui_model::strategy_popup::Intent::Open {
+                tab: tab_id,
+                side,
+                drawing,
+                form: Box::new(form),
+            });
         }
     }
 }
@@ -51,7 +54,7 @@ pub(super) struct SurfaceOwners<'a> {
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
     pub tabs: &'a mut ArrangementHost,
-    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
+    pub markets: Option<&'a std::sync::Arc<quantick_workspace::market_list::MarketSnapshot>>,
 }
 
 /// Draw every registered surface against this frame's environment and
@@ -77,8 +80,9 @@ pub(super) fn draw_surfaces(
     // inside `draw_all`: it is not open yet when this runs, but it is about
     // to be, and it must not draw its first frame against an empty
     // environment.
+    super::super::chart_settings_wiring::initialize(&mut registry.chart_settings.model_state);
     let staging = registry.hooks_pending();
-    let pinned = registry.chart_settings.editor.target;
+    let pinned = registry.chart_settings.model_state.editor.target;
     let target_tab = pinned.and_then(|target| tabs.by_id(target.tab_id));
     let target_pane = pinned.and_then(|target| {
         target_tab.and_then(|tab| {
@@ -88,7 +92,7 @@ pub(super) fn draw_surfaces(
         })
     });
     if let Some(target) = pinned {
-        registry.chart_settings.editor.observe(
+        registry.chart_settings.model_state.editor.observe(
             target,
             target_pane.map(|pane| pane.presentation.candles.context()),
         );
@@ -98,7 +102,7 @@ pub(super) fn draw_surfaces(
     // bar only means something where the rule closes on a count. Built only
     // while that dialog is open, like the open markets below.
     let counted_bar_sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> =
-        if staging || registry.strategy_popup.is_open() {
+        if staging || registry.strategy_popup.model_state.is_open() {
             focused_tab
                 .sides()
                 .filter(|side| {
@@ -116,12 +120,13 @@ pub(super) fn draw_surfaces(
     // collapsed pane is focus on nothing.
     let focused_side = focused_tab.focused_side();
     let focused_pane = focused_tab.pane(focused_side);
-    let picker_indicators: Vec<_> = if staging || registry.indicator_picker.state.target.is_some() {
+    let picker = &registry.indicator_picker.model_state.picker;
+    let picker_indicators: Vec<_> = if staging || picker.target.is_some() {
         focused_pane
             .indicators
             .all()
             .iter()
-            .map(|view| crate::toolbar::IndicatorMenuEntry {
+            .map(|view| quantick_ui_model::indicator_picker::ActiveEntry {
                 slot: view.slot.0,
                 label: view.label().to_owned(),
                 hidden: view.hidden,
@@ -132,6 +137,13 @@ pub(super) fn draw_surfaces(
     } else {
         Vec::new()
     };
+    registry.update(crate::surfaces::HostIntent::IndicatorPicker(Box::new(
+        quantick_ui_model::indicator_picker::Intent::Refresh {
+            target: (tabs.active_id(), focused_pane.id),
+            scripts: indicators.script_library.entries().to_vec(),
+            active: picker_indicators,
+        },
+    )));
     let editor_pane = target_pane.unwrap_or(focused_pane);
     let editor_tab = target_tab.unwrap_or(focused_tab);
     let palette = editor_pane.palette(ctx);
@@ -139,8 +151,8 @@ pub(super) fn draw_surfaces(
         .presentation
         .candles
         .resolve(style, &palette.resolved);
-    registry.chart_settings.target_label =
-        if let Some(target) = pinned.filter(|_| registry.chart_settings.editor.stale) {
+    registry.chart_settings.model_state.target_label =
+        if let Some(target) = pinned.filter(|_| registry.chart_settings.model_state.editor.stale) {
             format!(
                 "Unavailable chart / tab {} / pane {}",
                 target.tab_id, target.pane_id
@@ -159,6 +171,14 @@ pub(super) fn draw_surfaces(
                 editor_pane.id
             )
         };
+    registry.update(crate::surfaces::HostIntent::ChartSettings(Box::new(
+        quantick_ui_model::chart_settings::Intent::Refresh {
+            style: editor_style,
+            footprint: focused_pane.footprint_config(footprint_config).clone(),
+            target: format!("{} chart", focused_side.title().to_lowercase()),
+            customized: focused_pane.presentation.footprint.config.is_own(),
+        },
+    )));
     let alert_context = (staging || registry.alerts.is_open()).then(|| {
         super::super::alerts_runtime::context(
             focused_tab,
@@ -173,20 +193,16 @@ pub(super) fn draw_surfaces(
             alerts: Some(&alerts.core.book),
             alert_error: alerts.core.error.as_ref(),
             alert_context: alert_context.as_ref(),
+            #[cfg(any(feature = "scenario-harness", test))]
             picker_pane_id: focused_pane.id,
-            picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
             now,
             indicator_preview_area: indicator_preview_area(
                 tabs,
-                indicators.indicator_settings.as_ref(),
-                indicators.indicator_settings_target,
+                &registry.indicator_settings.model_state,
             ),
             focused_chart_area: focused_pane.frame.chart_area,
-            style: &editor_style,
             style_surface: editor_pane.surface(),
-            footprint: focused_pane.footprint_config(footprint_config),
-            footprint_customized: focused_pane.presentation.footprint.config.is_own(),
             focused_side,
             markets,
             active_tab: tabs.active_id(),
@@ -195,17 +211,33 @@ pub(super) fn draw_surfaces(
         },
     );
     // A surface hook may have opened the editor inside draw_all.
-    if registry.chart_settings.is_open() && registry.chart_settings.editor.target.is_none() {
-        let target = quantick_chart::pane_style::StyleTarget {
-            tab_id: tabs.active_id(),
-            pane_id: editor_pane.id,
-        };
-        registry.chart_settings.editor.pin(target);
+    if registry.chart_settings.model_state.is_open() && pinned.is_none() {
+        let target = registry.chart_settings.model_state.editor.target.unwrap_or(
+            quantick_chart::pane_style::StyleTarget {
+                tab_id: tabs.active_id(),
+                pane_id: editor_pane.id,
+            },
+        );
+        registry.chart_settings.model_state.editor.pin(target);
         registry
             .chart_settings
+            .model_state
             .editor
             .observe(target, Some(editor_pane.presentation.candles.context()));
     }
+    let mut retained = Vec::new();
+    for effect in std::mem::take(&mut asks.model_effects) {
+        match effect {
+            quantick_ui_model::HostEffect::ChartSettings(effects) => {
+                super::super::chart_settings_wiring::persist(
+                    &mut registry.chart_settings.model_state,
+                    effects.persistence,
+                )
+            }
+            other => retained.push(other),
+        }
+    }
+    asks.model_effects = retained;
     super::super::script_editor_wiring::frame(
         registry,
         indicators,
@@ -242,7 +274,7 @@ fn apply_bar_switch(
         return;
     };
     if let Err(error) = tab.set_pane_bar_spec(request.side.index(), request.config) {
-        toast.note(format!("Bars not changed: {error}"), Instant::now());
+        crate::surfaces::toast::note(toast, format!("Bars not changed: {error}"), Instant::now());
     }
 }
 
@@ -254,12 +286,9 @@ fn apply_bar_switch(
 /// belongs over the numbers that are actually provisional. Per-frame, and
 /// shaped to leave immediately: no dialog open — the ordinary case — is one
 /// `Option` test before the tab scan is reached.
-fn indicator_preview_area(
-    tabs: &ArrangementHost,
-    dialog: Option<&SettingsDialog>,
-    target: TabSlot,
-) -> Option<egui::Rect> {
-    if target.workspace != tabs.owner() || !dialog.is_some_and(|dialog| dialog.previewed) {
+fn indicator_preview_area(tabs: &ArrangementHost, settings: &SettingsState) -> Option<egui::Rect> {
+    let target = settings.target()?;
+    if target.workspace != tabs.owner() || !settings.previewed() {
         return None;
     }
     tabs.by_id(target.tab)
@@ -275,4 +304,93 @@ pub(super) fn reload_changed_scripts(
     store: &crate::workspace_store::LayoutStore,
 ) {
     super::super::script_reload::reload_changed_scripts(indicators, tabs, store);
+}
+
+#[cfg(test)]
+mod bar_switch_tests {
+    use super::*;
+    use quantick_engine::bar_registry::BUILTIN_BARS;
+    use quantick_workspace::{arrangement::TabId, lifetime::WorkspaceId};
+    fn tab(id: u64, dir: &std::path::Path) -> crate::tab::Tab {
+        let (_, events) = tokio::sync::mpsc::channel(1);
+        let (_, book_events) = tokio::sync::mpsc::channel(1);
+        let (commands, _) = tokio::sync::mpsc::channel(1);
+        let mut tab = crate::tab::Tab::new(
+            id,
+            "fixture".into(),
+            "TEST".into(),
+            BUILTIN_BARS.parse("tick:50").unwrap(),
+            quantick_feed::FeedHandle {
+                events,
+                book_events,
+                commands,
+                notices: quantick_feed::silent_notices(),
+                capabilities: quantick_feed::fixed_capabilities(
+                    crate::config::FeedCapabilities::none(),
+                ),
+                latency: quantick_feed::unsplit_latency(),
+                replay: None,
+            },
+            dir.to_path_buf(),
+        );
+        tab.time_panes
+            .push(crate::pane::ChartPane::time(id + 1, 60_000));
+        tab
+    }
+    #[test]
+    fn bar_switch_host_targets_stable_tab_and_pane_and_preserves_refusal_toast() {
+        let dir = crate::scratch::ScratchDir::new("bar-switch-host");
+        let mut tabs = ArrangementHost::new(WorkspaceId(1), TabId(10), tab(100, &dir));
+        tabs.append(tabs.plan_open(), tab(200, &dir));
+        let active = tabs.active_id();
+        assert_ne!(active, 10);
+        let mut toast = crate::surfaces::toast::new();
+        let request = crate::surfaces::BarSwitchRequest {
+            tab: 10,
+            side: PaneSide::Time(0),
+            config: BUILTIN_BARS.parse("time:5m").unwrap(),
+        };
+        apply_bar_switch(&mut tabs, &mut toast, request);
+        assert_eq!(
+            tabs.by_id(10).unwrap().time_panes[0].state.spec(),
+            &crate::state::BarSpec::Time(300_000)
+        );
+        assert_eq!(
+            tabs.by_id(active).unwrap().time_panes[0].state.spec(),
+            &crate::state::BarSpec::Time(60_000)
+        );
+        assert_eq!(
+            tabs.by_id(10).unwrap().flow_pane.state.spec(),
+            &crate::state::BarSpec::Tick(50)
+        );
+        assert_eq!(tabs.active_id(), active);
+        assert_eq!(toast.model_state.message(), None);
+        apply_bar_switch(
+            &mut tabs,
+            &mut toast,
+            crate::surfaces::BarSwitchRequest {
+                config: BUILTIN_BARS.parse("volume:100").unwrap(),
+                ..request
+            },
+        );
+        assert_eq!(
+            tabs.by_id(10).unwrap().time_panes[0].state.spec(),
+            &crate::state::BarSpec::Time(300_000)
+        );
+        assert_eq!(
+            toast.model_state.message(),
+            Some("Bars not changed: this source quotes prices but prints no traded volume")
+        );
+        toast.model_state = Default::default();
+        apply_bar_switch(
+            &mut tabs,
+            &mut toast,
+            crate::surfaces::BarSwitchRequest {
+                tab: u64::MAX,
+                ..request
+            },
+        );
+        assert_eq!(toast.model_state.message(), None);
+        assert_eq!(tabs.active_id(), active);
+    }
 }

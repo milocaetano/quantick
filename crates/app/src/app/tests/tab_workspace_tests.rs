@@ -118,9 +118,12 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     two.context_panes[1]
         .layers
         .insert(layer.id().to_owned(), !on);
+    let own = app.runtime.workspace.book.tab_row(first).0;
     let book = app.runtime.workspace.book.book_mut();
     book.observe(first, &two).expect("held");
     book.save_as(first, "Two").expect("a free name");
+    // The saving tab never showed `two`: off Two, it holds none of its sets.
+    set_tab_workspace(&mut app, first, &own).expect("its own workspace");
 
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
@@ -147,10 +150,12 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     );
 }
 
-/// The footprint style, the indicators and the layers are the tab's: an edit on
-/// one tab reaches another on the same workspace only by Save to.
+/// The footprint style and the layers are the tab's: an edit on one tab
+/// reaches another on the same workspace only by Save to. So do indicators on
+/// a strip layout the other tab does not show; on one it shows they are the
+/// workspace's: see `an_indicator_added_on_a_flow_pane_reaches_every_pane…`.
 #[test]
-fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
+fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     let layouts = crate::scratch::ScratchFile::new("workspace-no-leak-all", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
     for tab in [first, second] {
@@ -159,6 +164,12 @@ fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
     frames(&mut app, 3);
     let edited = app.runtime.tabs.active_id();
     let other = if edited == first { second } else { first };
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    let apart = session.create(Some("Apart")).expect("a free name");
+    app.layout_adapter()
+        .switch_pane_layout(other, PaneSide::Flow, apart)
+        .expect("a known layout");
+    frames(&mut app, 2);
     let before = live_recipe(&app.runtime, other).expect("an open tab");
 
     let window = app.runtime.footprint_config.clone();
@@ -283,7 +294,7 @@ fn chip_and_snapshot_read_one_state() {
             (symbol, venue),
             (status.symbol.as_str(), status.venue.as_str())
         );
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         assert_eq!(capsule.marks().1, app.tab_workspace_row(tab).1);
     }
     assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
@@ -301,7 +312,7 @@ fn autosave_on_never_marks_an_edit() {
     frames(&mut app, 2);
     assert!(!app.runtime.workspace.book.tab_row(first).1);
     assert!(
-        !crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default())
+        !crate::app::chrome::capsule::snapshot(&app, &egui::Context::default())
             .marks()
             .1
     );
@@ -527,11 +538,11 @@ fn the_real_frame_adopts_a_restored_tab_on_its_saved_workspace() {
     );
 }
 
-/// The panes of one tab on one strip layout share the tab's copy: an indicator
-/// added on the flow pane reaches the tab's context pane, and never a pane of
-/// another tab on the same workspace and the same strip layout.
+/// The panes of every tab on one workspace and one strip layout share one
+/// copy: an indicator added on one tab's flow pane reaches its context pane
+/// and both panes of the other tab, and both tabs read the one held edit.
 #[test]
-fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_tab() {
+fn an_indicator_added_on_a_flow_pane_reaches_every_pane_of_its_layout_in_both_tabs() {
     let layouts = crate::scratch::ScratchFile::new("workspace-mirror-in-tab", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
     let a = app.runtime.tabs.active_id();
@@ -575,10 +586,11 @@ fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_
         "its own context pane"
     );
     let after = [PaneSide::Flow, PaneSide::Time(0)].map(|side| count(&app, b, side));
-    assert_eq!(after, other, "never another tab");
+    assert_eq!(after, other.map(|count| count + 1), "and the other tab's");
+    observe_tab(&mut app, b);
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(a).1, "the edit marks its tab");
-    assert!(!store.tab_row(b).1, "and no other");
+    assert!(store.tab_row(b).1, "and the other, which shows it");
 }
 
 const THREE_PANES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(1)];
@@ -619,11 +631,14 @@ fn a_recipe_of_three_sets_lands_one_and_an_edit_reaches_every_pane_of_the_tab() 
         ..ema()
     };
     three.context_panes[1].indicators = vec![ema(), cvd.clone()];
+    let own = app.runtime.workspace.book.tab_row(b).0;
     let book = app.runtime.workspace.book.book_mut();
     book.observe(b, &three).expect("held");
     book.save_as(b, "Three").expect("a free name");
-    book.set_autosave(true);
     let stored = book.recipe("Three").cloned();
+    // The saving tab never showed `three`: off Three, it holds none of its sets.
+    set_tab_workspace(&mut app, b, &own).expect("its own workspace");
+    app.runtime.workspace.book.book_mut().set_autosave(true);
 
     // Edits made while autosave was off are behind us: what is due from here
     // on is the landing's alone.
@@ -940,7 +955,7 @@ fn chip_and_status_cell_read_one_state() {
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
-        let capsule = crate::app::capsule_wiring::CapsuleState::of(&app, &egui::Context::default());
+        let capsule = crate::app::chrome::capsule::snapshot(&app, &egui::Context::default());
         let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
         let (name, unsaved, _) = capsule.marks();
         assert_eq!((name.to_owned(), unsaved), (workspace, modified));
@@ -1839,4 +1854,150 @@ fn the_window_menu_covers_its_workspace_submenu_and_lists_nine_whole() {
             row.name
         );
     }
+}
+
+/// The kinds each pane of `tab` shows, flow first, as the observer's
+/// `analysis.indicators` scope reads them: how the rule is checked without a
+/// mouse.
+fn scope_kinds(app: &QuantickApp, tab: u64) -> Vec<Vec<String>> {
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("analysis.indicators");
+    let capture = registry
+        .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let tabs = capture.scopes[&scope].value["tabs"].clone();
+    let tabs = tabs.as_array().expect("tabs");
+    let id = tab.to_string();
+    let entry = tabs
+        .iter()
+        .find(|entry| entry["tab_id"] == id.as_str())
+        .expect("the tab");
+    let panes = entry["panes"].as_array().expect("panes").iter();
+    panes
+        .map(|pane| {
+            let views = pane["indicators"].as_array().expect("indicators").iter();
+            views
+                .map(|view| view["kind"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+/// Frames until `done` holds, at most `limit` of them: the indicator workers
+/// answer on threads of their own. Answers whether it held.
+fn frames_until(
+    app: &mut QuantickApp,
+    limit: usize,
+    mut done: impl FnMut(&QuantickApp) -> bool,
+) -> bool {
+    for _ in 0..limit {
+        if done(app) {
+            return true;
+        }
+        frames(app, 1);
+        for pane in app.runtime.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+            pane.indicator_worker.flush();
+            pane.apply_indicator_events();
+        }
+    }
+    done(app)
+}
+
+fn native(id: &str) -> quantick_workspace::indicator_document::SavedIndicator {
+    quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native(id),
+        ..ema()
+    }
+}
+
+/// Tab `a` holds an unsaved CVD on its layout; tab `b`, on a workspace of its
+/// own with two kinds there, is put on `a`'s. Through real frames `b` shows
+/// what `a` shows, as the `analysis.indicators` scope reads both, the stored
+/// recipe stays as saved, and the held edit, the workspace's, marks both.
+#[test]
+fn a_tab_put_on_a_held_workspace_shows_what_its_tab_shows() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-land-on-held", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(a, "Pair").expect("a free name");
+    let stored = book.recipe("Pair").cloned();
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    let theirs = [ema(), native("native.volume")];
+    app.layout_adapter()
+        .show_pane_indicators(b, PaneSide::Flow, &theirs);
+    let cvd = "native.cvd".to_owned();
+    let shown = frames_until(&mut app, 50, |app| {
+        scope_kinds(app, a)[0].contains(&cvd) && scope_kinds(app, b)[0].len() == 2
+    });
+    assert!(
+        shown,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    assert_ne!(scope_kinds(&app, a)[0], scope_kinds(&app, b)[0]);
+
+    set_tab_workspace(&mut app, b, "Pair").expect("a known workspace");
+    let same = frames_until(&mut app, 50, |app| {
+        scope_kinds(app, a)[0] == scope_kinds(app, b)[0]
+    });
+    assert!(
+        same,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    let store = &app.runtime.workspace.book;
+    assert_eq!(store.book().recipe("Pair").cloned(), stored, "as saved");
+    assert!(store.tab_row(a).1, "the held edit is a's");
+    assert!(store.tab_row(b).1, "and the workspace's, held on b too");
+}
+
+/// The defect the report's reproduction found: a save from the second tab of
+/// a workspace wrote its own set over the first tab's. Both tabs show the
+/// first tab's add, so the second tab's save writes it.
+#[test]
+fn a_save_from_the_second_tab_keeps_the_first_tabs_add() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-second-save", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    frames(&mut app, 2);
+    observe_tab(&mut app, a);
+    app.runtime
+        .workspace
+        .book
+        .book_mut()
+        .save_as(a, "Pair")
+        .expect("a free name");
+    set_tab_workspace(&mut app, b, "Pair").expect("a known workspace");
+    frames(&mut app, 3);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    let ema = "native.ema".to_owned();
+    let same = frames_until(&mut app, 50, |app| {
+        let shows = |tab| scope_kinds(app, tab)[0].contains(&ema);
+        shows(a) && shows(b)
+    });
+    assert!(
+        same,
+        "a {:?}, b {:?}",
+        scope_kinds(&app, a),
+        scope_kinds(&app, b)
+    );
+    let saved = save_tab_to(&mut app, b).expect("saved");
+    assert!(saved.changed);
+    let recipe = app.runtime.workspace.book.book().recipe("Pair").cloned();
+    let kinds: Vec<_> = (recipe.expect("saved").flow_indicators.iter())
+        .map(|entry| entry.kind.stable_name().to_owned())
+        .collect();
+    assert_eq!(kinds, scope_kinds(&app, a)[0], "what both tabs show");
+    assert!(!app.runtime.workspace.book.tab_row(a).1);
 }

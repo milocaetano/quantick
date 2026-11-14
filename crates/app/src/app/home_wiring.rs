@@ -37,7 +37,9 @@ pub(super) fn observe_market(tabs: &ArrangementHost, surface: &mut StripSurface)
 /// hides. The market itself can still change underneath, and settling that is
 /// what brings it back on screen.
 pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
-    app.chrome.layout_picker_open = false;
+    app.surfaces
+        .canvas_popovers
+        .update(quantick_ui_model::canvas_popovers::Intent::ToolbarHidden);
     // Nothing of the toolbar is drawn on Home, so the scene lists none of it.
     app.chrome.toolbar_controls.clear();
     app.chrome.window_menu.cell_rows.clear();
@@ -96,12 +98,12 @@ fn take_home_press(input: &mut egui::InputState) -> bool {
     letter || number
 }
 
-/// The canvas stage while Home is up. Answers whether "Open a market" was
-/// pressed.
+/// The canvas stage while Home is up, through the registered page adapter.
 pub(super) fn draw_stage(
     ctx: &egui::Context,
     tab: &mut crate::tab::Tab,
     background: egui::Color32,
+    surfaces: &mut crate::surfaces::Surfaces,
 ) -> bool {
     tab.update_tape_clock_at((ctx.input(|input| input.time).max(0.0) * 1_000.0) as u64);
     for pane in tab.panes_mut() {
@@ -109,6 +111,27 @@ pub(super) fn draw_stage(
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::none().fill(background))
-        .show(ctx, crate::surfaces::home::draw_page)
+        .show(ctx, |ui| {
+            use crate::surfaces::View as _;
+            let mut open = false;
+            surfaces.home.with_pass(
+                quantick_ui_model::Slot::HomeCanvas,
+                |response| {
+                    open |= response
+                        .model_effects
+                        .contains(&crate::surfaces::HostEffect::Home(
+                            quantick_ui_model::home::Effects::OpenMarket,
+                        ));
+                },
+                |view, session| {
+                    view.paint_updated(
+                        session,
+                        &mut crate::surfaces::ViewContext { ctx, ui: Some(ui) },
+                        None,
+                    );
+                },
+            );
+            open
+        })
         .inner
 }

@@ -1,0 +1,4 @@
+# Issue #986: explicit bounded allowance for the borrowed indicator View/preset IO adapter.
+# Independent source-map review confirms app-only authority; original aggregate targets remain unchanged.
+crates/app +181
+!budget +181

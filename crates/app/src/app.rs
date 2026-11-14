@@ -12,6 +12,8 @@
 //! [`ChartPane`], not to the window. The market feeding that pane — channels,
 //! connection state, notices, history counters — is still owned here.
 
+#[cfg(any(feature = "drawing-harness", feature = "quick-range-harness", test))]
+use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use std::time::Instant;
 
 use eframe::egui;
@@ -21,7 +23,6 @@ use crate::canvas_layout::PaneIdAllocator;
 pub(crate) mod alerts_runtime;
 mod arrangement_adapter;
 pub(crate) mod canvas_wiring;
-pub(crate) mod capsule_wiring;
 mod workspace_runtime;
 use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
@@ -62,7 +63,6 @@ pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tab_workspaces;
 pub(crate) mod title_bar;
-mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
 mod workspace_save_adapter;
@@ -83,20 +83,19 @@ use menu_bar::{
 };
 
 use crate::config::AppConfig;
-use crate::dock::Dock;
 #[cfg(test)]
 use crate::drawings;
+#[cfg(test)]
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::Harness;
-use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
+use crate::surfaces::replay_browser::ReplayBrowserExt as _;
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
 #[cfg(test)]
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
 use quantick_feed::FeedHandle;
@@ -208,9 +207,6 @@ pub struct QuantickApp {
     added_symbols: AddedSymbols,
     config: AppConfig,
     control: control_host::ControlState,
-    replay_view: ReplayView,
-    dock: Dock,
-    toolrail: ToolRail,
     surfaces: crate::surfaces::Surfaces,
     drawings: drawing_controller::DrawingController,
     audio: replay_and_history::AlertState,
@@ -253,13 +249,13 @@ macro_rules! arrangement_adapter {
             indicators: &mut $app.runtime.indicators,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &$app.chrome.harness,
-            toolrail: &mut $app.toolrail,
+            toolrail: &mut $app.surfaces.toolrail,
             tz: &mut $app.runtime.tz,
-            dock: &mut $app.dock,
+            dock: &mut $app.surfaces.dock,
             show_perf: &mut $app.health.show_perf,
             record_deals: &mut $app.chrome.record_deals,
             history: &mut $app.runtime.history,
-            drawing_chrome: &mut $app.drawings.chrome,
+            drawing_chrome: &mut $app.surfaces.drawing_chrome,
             toast: &mut $app.surfaces.toast,
             surface: &mut $app.chrome.title_bar.surface,
         }
@@ -273,13 +269,13 @@ impl QuantickApp {
         workspace_bundle_adapter::WorkspaceBundleAdapter {
             arrangement: arrangement_adapter!(self),
             alerts: &mut self.runtime.alerts.core,
-            replay_view: &self.replay_view,
-            layout_rename: &mut self.chrome.layout_rename,
-            layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
+            replay_view: &self.surfaces.replay_browser,
+            dialogs: &mut self.surfaces.layout_dialogs,
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.runtime.footprint_config,
-            chart_settings: &mut self.surfaces.chart_settings,
+            chart_settings: &mut self.surfaces.chart_settings.model_state,
+            indicator_settings: &mut self.surfaces.indicator_settings,
         }
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
@@ -288,11 +284,7 @@ impl QuantickApp {
     fn indicator_wiring(&mut self) -> indicator_wiring::IndicatorWiring<'_> {
         indicator_wiring::IndicatorWiring {
             runtime: self.runtime.bound_mut(&self.presentation.binding),
-            picker: &mut self.surfaces.indicator_picker,
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
+            surfaces: &mut self.surfaces,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &mut self.chrome.harness,
         }
@@ -300,7 +292,7 @@ impl QuantickApp {
     pub(crate) fn workspace_save_adapter(
         &mut self,
     ) -> workspace_save_adapter::WorkspaceSaveAdapter<'_> {
-        arrangement_adapter!(self).into_save(&self.replay_view)
+        arrangement_adapter!(self).into_save(&self.surfaces.replay_browser)
     }
 
     pub(crate) fn symbol_catalog(&mut self) -> quantick_stores::symbol_catalog::SymbolCatalog<'_> {
@@ -496,19 +488,15 @@ impl QuantickApp {
                 #[cfg(any(feature = "scenario-harness", test))]
                 window_startup: launch.window,
                 record_deals: None,
-                layout_picker_open: false,
                 add_menu: Default::default(),
                 capsule: Default::default(),
                 toolbar_controls: Vec::new(),
-                layout_rename: None,
-                layout_delete_confirm: None,
                 surface: None,
                 window_menu: Default::default(),
                 history_menu_rect: None,
                 feed_chip_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
                 // is the first tab there is.
-                feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
             },
             pane_ids,
             added_symbols,
@@ -518,12 +506,6 @@ impl QuantickApp {
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
-            replay_view: ReplayView::new(
-                workspace.replay_folder.as_deref(),
-                workspace.replay_day_before,
-            ),
-            dock: Dock::new(),
-            toolrail: ToolRail::new(),
             surfaces: crate::surfaces::Surfaces::default(),
             drawings: drawing_controller::DrawingController::new(),
             audio: replay_and_history::AlertState {
@@ -532,6 +514,11 @@ impl QuantickApp {
             },
             health: health::HealthCounters::new(),
         };
+        app.surfaces.replay_browser.initialize(
+            workspace.replay_folder.as_deref(),
+            workspace.replay_day_before,
+        );
+        crate::surfaces::feed_notice::initialize(&mut app.surfaces.feed_notice, FIRST_TAB_ID);
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
         let config = app.config.clone();
@@ -561,12 +548,14 @@ impl QuantickApp {
         // hooks and the captured rail inputs. `launch_hooks` owns their
         // construction-phase order after workspace restoration.
         #[cfg(any(feature = "quick-range-harness", test))]
-        app.drawings
-            .chrome
-            .quick_range
+        app.surfaces
+            .drawing_chrome
+            .quick_range()
             .queue_launch(launch.quick_range);
         #[cfg(any(feature = "drawing-harness", test))]
-        app.drawings.chrome.queue_launch(launch.drawing_chrome);
+        app.surfaces
+            .drawing_chrome
+            .queue_launch(launch.drawing_chrome);
         launch_hooks::apply_launch_phase(
             &mut app,
             #[cfg(any(feature = "scenario-harness", test))]

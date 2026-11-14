@@ -1,0 +1,4 @@
+# #979 reviewed local ratchet amendment; original #920 acceptance remains unchanged.
+# Disjoint surface/domain borrows at existing host phases; no new root field or wiring path.
+QuantickApp +2
+!budget +2

@@ -33,7 +33,7 @@ use quantick_layers::SavedLayers;
 /// folder, which is a machine fact this window hands to every tab it opens.
 pub(crate) struct WorkspaceStore {
     paths: StorePaths,
-    layouts: LayoutStore,
+    pub(crate) layouts: LayoutStore,
     /// The workspace book, beside the layouts file.
     pub(crate) book: quantick_stores::workspaces::WorkspaceBookStore,
     layers: SavedLayers,

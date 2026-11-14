@@ -9,6 +9,31 @@ use quantick_workspace::canvas::{RemoveAnswer, RemovePrompt};
 
 use crate::pane_menu::{PaneMenus, danger_ink};
 use crate::theme;
+use quantick_ui_model::remove_chart::{Effects, Intent, Model, State};
+
+#[derive(Default)]
+pub(crate) struct View;
+impl super::View<Model> for View {
+    fn id(&self) -> &'static str {
+        "remove_chart"
+    }
+    fn paint(
+        &mut self,
+        _: &State,
+        _: &mut super::ViewContext<'_>,
+        _: Option<&super::SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        // Canvas-local geometry and prompt are borrowed at settle_canvas.
+        None
+    }
+}
+
+pub(crate) fn effects(answer: Effects) -> super::SurfaceResponse {
+    super::SurfaceResponse {
+        model_effects: vec![super::HostEffect::RemoveChart(answer)],
+        ..Default::default()
+    }
+}
 
 /// The dialog's width, where it stands, its padding, and where its words start.
 const WIDTH_PX: f32 = 440.0;
@@ -17,13 +42,13 @@ const PADDING_PX: f32 = 18.0;
 const WORDS_X_PX: f32 = 26.0;
 const BUTTON_HEIGHT_PX: f32 = 26.0;
 
-/// Draw the dialog over `doomed`; answers the button pressed, Cancel for Esc.
+/// Paint the dialog over `doomed` and emit its clicked or keyboard input.
 pub(crate) fn draw(
     ctx: &egui::Context,
     prompt: &RemovePrompt,
     doomed: egui::Rect,
     menus: &mut PaneMenus,
-) -> Option<RemoveAnswer> {
+) -> Option<Intent> {
     let screen = ctx.screen_rect();
     egui::Area::new(egui::Id::new("remove_chart_scrim"))
         .order(egui::Order::Foreground)
@@ -75,7 +100,10 @@ pub(crate) fn draw(
             });
         });
     let escaped = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-    answer.or(escaped.then_some(RemoveAnswer::Cancel))
+    (answer.is_some() || escaped).then_some(Intent::Answer {
+        clicked: answer,
+        escaped,
+    })
 }
 
 /// One answer: Remove filled red, the others outlined.

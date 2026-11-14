@@ -3,7 +3,6 @@ use crate::theme;
 use eframe::egui;
 
 use quantick_control_schema::native_window::WindowState;
-use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, AGENT_PILL_LABEL, KEBAB_CONTROL};
 mod resize;
 
 #[derive(Default)]
@@ -64,22 +63,7 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
     }
 }
 
-pub(super) const HEIGHT: f32 = 36.0;
-pub(super) const WINDOW_BUTTON_WIDTH: f32 = 46.0;
-const DRAG_WIDTH: f32 = 32.0;
-/// The window buttons' strokes, at the size the Windows Terminal draws its own.
-const WINDOW_GLYPH_PX: f32 = 10.0;
-/// Keeps the drag region's edge off the `+`, so a press on one never reads as
-/// the other.
-const DRAG_GAP: f32 = 1.0;
-/// The `⋮` button: wide enough to find, as tall as a tab.
-pub(super) const KEBAB_WIDTH: f32 = 36.0;
-const KEBAB_GLYPH_PX: f32 = 18.0;
-const AGENT_PILL_WIDTH: f32 = 72.0;
-/// The outline's gap to the pill's hit area, so it reads as a pill on the strip.
-const AGENT_OUTLINE_PX: f32 = 1.0;
-const AGENT_OUTLINE_INSET: egui::Vec2 = egui::vec2(3.0, 5.0);
-const AGENT_TEXT_PX: f32 = 11.0;
+pub(super) use crate::surfaces::chrome_title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
 
 /// One chip per tab of this strip: dot, symbol and broker, read off the tab.
 /// The workspace and its mark are the status bar cell's alone.
@@ -109,29 +93,67 @@ pub(crate) fn draw(
     ctx: &egui::Context,
     tabs: &super::arrangement_host::ArrangementHost,
     title: &mut TitleBarState,
+    surfaces: &mut crate::surfaces::Surfaces,
 ) -> Option<crate::tabstrip::TabAction> {
+    use crate::surfaces::{HostEffect, HostIntent, ViewContext};
+    use quantick_ui_model::{Slot, chrome_tab_strip as strip, chrome_title_bar as model};
     resize::draw(ctx);
-    // The strip's own palette (Light: slate, Dark's inks) until this returns;
-    // the active tab's face keeps the theme's own, `root`.
+    let scope = tabs.windows().presented().0;
+    for slot in [Slot::TitleBar, Slot::TabStrip] {
+        surfaces.retain_slot_scopes(slot, |scope| {
+            tabs.windows()
+                .window(quantick_workspace::arrangement::windows::WindowId(scope))
+                .is_some()
+        });
+    }
     let root = theme::get(ctx);
     let _strip = theme::title_strip_scope(ctx);
     let palette = theme::get(ctx);
     let active = tabs.presented_index();
-    title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
     let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
-    let chips = chips_of(tabs, &indices);
+    let chips = chips_of(tabs, &indices)
+        .into_iter()
+        .map(|chip| strip::Chip {
+            id: chip.id,
+            label: chip.label.to_owned(),
+            feed: chip.feed,
+        })
+        .collect();
     if let Some(state) = title.requests.take() {
         send_state(ctx, state);
     }
-    title.controls.clear();
     ctx.input(|input| {
         title.maximized = input.viewport().maximized.unwrap_or(false);
         title.minimized = input.viewport().minimized.unwrap_or(false);
     });
-    let mut action = None;
+    surfaces.update_scoped(
+        scope,
+        HostIntent::ChromeTitleBar(Box::new(model::Intent::Refresh(model::Snapshot {
+            maximized: title.maximized,
+            minimized: title.minimized,
+            agent_on: title.agent_on,
+            menu_open: title.menu_open,
+            menu_hover: format!(
+                "Window menu ({})",
+                super::menu_bar::shortcut_text(ctx, &super::menu_bar::WINDOW_MENU_SHORTCUT)
+            ),
+        }))),
+    );
+    surfaces.update_scoped(
+        scope,
+        HostIntent::ChromeTabStrip(Box::new(strip::Intent::Refresh(strip::Snapshot {
+            chips,
+            active,
+            surface: title.surface.clone(),
+            allow_close_last: tabs.plan_close(tabs.active_index()).is_ok(),
+        }))),
+    );
+    let view = surfaces.chrome_tab_strip.scoped(scope).1;
+    view.root = Some(root);
+    view.drawn.reveal = title.strip.reveal;
+    let mut effects = Vec::new();
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "market_title_bar")))
         .exact_height(HEIGHT)
-        // No floor rule: the active tab joins the toolbar with no bottom edge.
         .show_separator_line(false)
         .frame(
             egui::Frame::none()
@@ -145,218 +167,78 @@ pub(crate) fn draw(
         )
         .show(ctx, |ui| {
             ui.visuals_mut().override_text_color = Some(palette.text_primary());
-            // Tabs and the menu sit on the row's floor; the window's own buttons
-            // fill it from the top edge, as the Windows Terminal's do.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                let pill_width = if title.agent_on {
-                    AGENT_PILL_WIDTH
-                } else {
-                    0.0
-                };
-                let reserve_drag = if ui.available_width() >= 600.0 {
-                    DRAG_WIDTH
-                } else {
-                    0.0
-                };
-                let tab_width = (ui.available_width()
-                    - 3.0 * WINDOW_BUTTON_WIDTH
-                    - KEBAB_WIDTH
-                    - pill_width
-                    - DRAG_GAP
-                    - reserve_drag)
-                    .max(0.0);
+                let width = crate::surfaces::chrome_title_bar::tab_width(
+                    ui.available_width(),
+                    title.agent_on,
+                );
                 ui.allocate_ui_with_layout(
-                    egui::vec2(tab_width, crate::tabstrip::CHIP_HEIGHT),
+                    egui::vec2(width, crate::tabstrip::CHIP_HEIGHT),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        // One point above the tabs, so an idle tab's top edge shows.
                         let clip = ui.max_rect().with_min_y(ui.max_rect().top() - 1.0);
                         ui.set_clip_rect(ui.clip_rect().intersect(clip));
-                        let surface = &title.surface;
-                        let strip = (&mut title.strip, &*root);
-                        action = crate::tabstrip::draw(ui, &chips, active, surface, strip);
+                        effects.extend(
+                            surfaces
+                                .draw_slot_scoped(
+                                    scope,
+                                    Slot::TabStrip,
+                                    &mut ViewContext { ctx, ui: Some(ui) },
+                                )
+                                .model_effects,
+                        );
                     },
                 );
-                ui.add_space(DRAG_GAP);
-                let drag_width =
-                    (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - KEBAB_WIDTH - pill_width)
-                        .max(0.0);
-                let (_, drag) = ui.allocate_exact_size(
-                    egui::vec2(drag_width, HEIGHT),
-                    egui::Sense::click_and_drag(),
+                effects.extend(
+                    surfaces
+                        .draw_slot_scoped(
+                            scope,
+                            Slot::TitleBar,
+                            &mut ViewContext { ctx, ui: Some(ui) },
+                        )
+                        .model_effects,
                 );
-                let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
-                let bounds = drag.rect.intersect(ui.clip_rect());
-                if bounds.is_positive() {
-                    title.controls.push(("drag", bounds));
-                }
-                if drag.double_clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                } else if drag.drag_started() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-                if title.agent_on && agent_pill(ui, title) {
-                    title.agent_clicked = true;
-                }
-                if kebab(ui, title) {
-                    title.kebab_clicked = true;
-                }
-                for (id, hint, state) in [
-                    ("minimize", "Minimize window", Some(WindowState::Minimized)),
-                    (
-                        "maximize",
-                        if maximized {
-                            "Restore window"
-                        } else {
-                            "Maximize window"
-                        },
-                        Some(if maximized {
-                            WindowState::Normal
-                        } else {
-                            WindowState::Maximized
-                        }),
-                    ),
-                    ("close", "Close window", None),
-                ] {
-                    let button = window_button(ui, id, hint, maximized).on_hover_text(hint);
-                    let bounds = button.rect.intersect(ui.clip_rect());
-                    if bounds.is_positive() {
-                        title.controls.push((id, bounds));
-                    }
-                    if button.clicked() {
-                        if let Some(state) = state {
-                            send_state(ctx, state);
-                        } else {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    }
-                }
             });
         });
-    // The strip lays out local positions; the rest of the app addresses the
-    // stable physical runtime store, including its existing control scenes.
+    std::mem::swap(
+        &mut title.strip,
+        &mut surfaces.chrome_tab_strip.scoped(scope).1.drawn,
+    );
     for (index, _) in &mut title.strip.tabs {
         *index = indices[*index];
     }
-    action.map(|action| match action {
-        crate::tabstrip::TabAction::Activate(index) => {
-            crate::tabstrip::TabAction::Activate(indices[index])
-        }
-        crate::tabstrip::TabAction::Close(index) => {
-            crate::tabstrip::TabAction::Close(indices[index])
-        }
-        action => action,
-    })
-}
-
-/// The `⋮` button. Returns whether it was pressed.
-fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
-    let palette = theme::get(ui.ctx());
-    let glyph = egui::RichText::new(super::menu_bar::KEBAB_GLYPH).size(KEBAB_GLYPH_PX);
-    let surface = ui.painter().add(egui::Shape::Noop);
-    let button = ui
-        .add_sized(
-            [KEBAB_WIDTH, crate::tabstrip::CHIP_HEIGHT],
-            egui::Button::new(glyph).frame(false),
-        )
-        .on_hover_ui(|ui| {
-            let keys =
-                super::menu_bar::shortcut_text(ui.ctx(), &super::menu_bar::WINDOW_MENU_SHORTCUT);
-            ui.label(format!("Window menu ({keys})"));
-        });
-    title.kebab_pressed = title.menu_open || button.is_pointer_button_down_on();
-    if title.kebab_pressed {
-        let fill = egui::Shape::rect_filled(button.rect, 0.0, palette.control());
-        ui.painter().set(surface, fill);
-    }
-    let bounds = button.rect.intersect(ui.clip_rect());
-    if bounds.is_positive() {
-        title.controls.push((KEBAB_CONTROL, bounds));
-    }
-    button.clicked()
-}
-
-/// The pill naming local agent access, shown only while it is on.
-fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
-    let palette = theme::get(ui.ctx());
-    let face = egui::RichText::new(AGENT_PILL_LABEL)
-        .size(AGENT_TEXT_PX)
-        .color(palette.amber());
-    let pill = ui
-        .add_sized(
-            [AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT],
-            egui::Button::new(face).frame(false),
-        )
-        .on_hover_text("Local agent access is on. Click to manage it.");
-    ui.painter().rect_stroke(
-        pill.rect.shrink2(AGENT_OUTLINE_INSET),
-        pill.rect.height(),
-        egui::Stroke::new(AGENT_OUTLINE_PX, palette.amber()),
-    );
-    let bounds = pill.rect.intersect(ui.clip_rect());
-    if bounds.is_positive() {
-        title.controls.push((AGENT_PILL_CONTROL, bounds));
-    }
-    pill.clicked()
-}
-
-/// Vector strokes keep native controls crisp and equally legible at every DPI.
-fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> egui::Response {
-    let palette = theme::get(ui.ctx());
-    let response = ui.add_sized(
-        [WINDOW_BUTTON_WIDTH, HEIGHT],
-        egui::Button::new("").frame(false),
-    );
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
-    if response.hovered() || response.has_focus() {
-        ui.painter().rect_filled(
-            response.rect,
-            0.0,
-            if id == "close" {
-                palette.warn()
-            } else {
-                palette.bare_hover()
-            },
-        );
-    }
-    let ink = if id == "close" && (response.hovered() || response.has_focus()) {
-        palette.ink_on(palette.warn())
-    } else if response.hovered() || response.has_focus() {
-        palette.text_primary()
-    } else {
-        palette.text_muted()
-    };
-    let stroke = egui::Stroke::new(1.0_f32, ink);
-    let icon =
-        egui::Rect::from_center_size(response.rect.center(), egui::Vec2::splat(WINDOW_GLYPH_PX));
-    match id {
-        "minimize" => {
-            ui.painter()
-                .line_segment([icon.left_center(), icon.right_center()], stroke);
-        }
-        "maximize" if maximized => {
-            let back = icon.translate(egui::vec2(2.0, -2.0)).shrink(2.0);
-            ui.painter()
-                .line_segment([back.left_top(), back.right_top()], stroke);
-            ui.painter()
-                .line_segment([back.right_top(), back.right_bottom()], stroke);
-            ui.painter().rect_stroke(
-                icon.translate(egui::vec2(-2.0, 2.0)).shrink(2.0),
-                0.0,
-                stroke,
-            );
-        }
-        "maximize" => {
-            ui.painter().rect_stroke(icon, 0.0, stroke);
-        }
-        _ => {
-            ui.painter()
-                .line_segment([icon.left_top(), icon.right_bottom()], stroke);
-            ui.painter()
-                .line_segment([icon.right_top(), icon.left_bottom()], stroke);
+    let view = surfaces.chrome_title_bar.scoped(scope).1;
+    title.controls.clone_from(&view.controls);
+    title.kebab_pressed = view.kebab_pressed;
+    let mut action = None;
+    for effect in effects {
+        match effect {
+            HostEffect::ChromeTabStrip(effect) => {
+                action = effect.0.map(|action| match action {
+                    strip::Action::Activate(index) => strip::Action::Activate(indices[index]),
+                    strip::Action::Close(index) => strip::Action::Close(indices[index]),
+                    action => action,
+                })
+            }
+            HostEffect::ChromeTitleBar(effect) => {
+                for action in effect.0 {
+                    match action {
+                        model::Action::Minimize => send_state(ctx, WindowState::Minimized),
+                        model::Action::Maximize => send_state(ctx, WindowState::Maximized),
+                        model::Action::Restore => send_state(ctx, WindowState::Normal),
+                        model::Action::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        model::Action::StartDrag => {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag)
+                        }
+                        model::Action::Menu => title.kebab_clicked = true,
+                        model::Action::Agent => title.agent_clicked = true,
+                        model::Action::ToggleMaximize => {}
+                    }
+                }
+            }
+            _ => {}
         }
     }
-    response
+    action
 }
