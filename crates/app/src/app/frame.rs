@@ -650,15 +650,10 @@ impl QuantickApp {
             self.runtime.tz,
             alerts_open,
         );
-        let response = match begin_paper_panel_effects(
-            &mut self.runtime.tabs,
-            &mut self.surfaces.replay_browser,
-            response,
-        ) {
+        let response = match begin_dock_effects(self, ctx, response) {
             Ok(response) => response,
             Err(response) => return Some(*response),
         };
-        super::alerts_runtime::after_dock(self, ctx, response.open_alerts);
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
         // is opened from the Trading tab but it does not belong to it, and a
@@ -836,6 +831,23 @@ fn run_frame_tail(
         }
     }
     unsupported
+}
+
+/// Begin the dock's effects, then draw the alert manager panel: it draws every
+/// frame it is open, whichever way the dock pass ended.
+fn begin_dock_effects(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    response: crate::surfaces::SurfaceResponse,
+) -> Result<crate::surfaces::PaperPanelEffects, Box<crate::surfaces::SurfaceResponse>> {
+    let begun = begin_paper_panel_effects(
+        &mut app.runtime.tabs,
+        &mut app.surfaces.replay_browser,
+        response,
+    );
+    let bell = begun.as_ref().is_ok_and(|effects| effects.open_alerts);
+    super::alerts_runtime::after_dock(app, ctx, bell);
+    begun
 }
 
 /// The same recipient surrounds both Dock and tail painting, borrowing only
