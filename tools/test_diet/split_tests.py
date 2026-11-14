@@ -267,7 +267,12 @@ def main() -> int:
             target, deeper = target_for(path, block.name)
             if target.exists() or (target.parent / block.name / "mod.rs").exists():
                 raise SystemExit(f"{rel}: target for `{block.name}` already exists")
-            body = b"\n".join(lines[block.mod_line + 1 : block.end]) + b"\n"
+            body_lines = lines[block.mod_line + 1 : block.end]
+            # A blank first line survives one rustfmt pass at file start and
+            # then fails `--check`; drop it rather than format twice.
+            while body_lines and not body_lines[0].strip():
+                body_lines.pop(0)
+            body = b"\n".join(body_lines) + b"\n"
             if deeper:
                 body, n = deepen_includes(body)
                 if n:

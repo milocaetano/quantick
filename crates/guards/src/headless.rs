@@ -379,7 +379,9 @@ fn in_scope(relative: &str) -> bool {
 /// The same pair [`crate::cycle::module_of`] excludes. Stated once here so
 /// the two arms of `in_scope` read as one rule.
 fn is_test_path(relative: &str) -> bool {
-    relative.split('/').any(|part| part == "tests") || relative.ends_with("_tests.rs")
+    relative.split('/').any(|part| part == "tests")
+        || relative.ends_with("/tests.rs")
+        || relative.ends_with("_tests.rs")
 }
 
 /// Every hit in one file's production source.
@@ -881,6 +883,9 @@ fn z() { let f = std::collections::HashSet::new(); }
         assert!(!in_scope("crates/engine/src/tests/bars.rs"));
         assert!(!in_scope("crates/orderflow/src/projection_tests.rs"));
         assert!(!in_scope("crates/engine/src/bars/golden_tests.rs"));
+        assert!(!in_scope(
+            "crates/orderflow/src/projection/lane_heat/tests.rs"
+        ));
         assert!(!in_scope("crates/app/src/app.rs"));
         assert!(!in_scope("crates/feed/src/lib.rs"));
         assert!(!in_scope("crates/feed-mt5/src/lib.rs"));

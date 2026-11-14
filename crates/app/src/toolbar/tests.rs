@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn test_capsule() -> quantick_ui_model::chrome_toolbar::Capsule {
