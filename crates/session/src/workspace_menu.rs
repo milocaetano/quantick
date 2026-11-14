@@ -754,6 +754,28 @@ mod tests {
         let twelve = CHIP_MENU_MAX_LIST_ROWS as f32 * METRICS.row_pt;
         assert_eq!(list_cap(30, METRICS), twelve);
     }
+    /// The caption gives way before the name: whole while both fit, then cut
+    /// to what the whole name leaves, then dropped; never bounded, whole.
+    #[test]
+    fn a_row_s_caption_gives_way_before_its_name() {
+        assert_eq!(fit_caption(300.0, 100.0, 8.0, 120.0), CaptionFit::Whole);
+        assert_eq!(fit_caption(228.0, 100.0, 8.0, 120.0), CaptionFit::Whole);
+        assert_eq!(fit_caption(200.0, 100.0, 8.0, 120.0), CaptionFit::Cut(92.0));
+        let least = 100.0 + 8.0 + CHIP_MENU_MIN_CAPTION_PT;
+        assert_eq!(
+            fit_caption(least, 100.0, 8.0, 120.0),
+            CaptionFit::Cut(CHIP_MENU_MIN_CAPTION_PT)
+        );
+        assert_eq!(
+            fit_caption(least - 1.0, 100.0, 8.0, 120.0),
+            CaptionFit::Dropped
+        );
+        assert_eq!(fit_caption(80.0, 100.0, 8.0, 120.0), CaptionFit::Dropped);
+        assert_eq!(fit_caption(80.0, 100.0, 8.0, 0.0), CaptionFit::Whole);
+        let open = fit_caption(f32::INFINITY, 900.0, 8.0, 900.0);
+        assert_eq!(open, CaptionFit::Whole, "a row that extends");
+    }
+
     #[test]
     fn the_measuring_frame_keeps_to_the_floor_and_the_others_to_the_cap() {
         let budget = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 9, METRICS);

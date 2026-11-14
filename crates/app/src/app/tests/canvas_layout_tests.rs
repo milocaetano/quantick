@@ -518,3 +518,78 @@ fn one_grid_chart_folded_keeps_the_other_legends() {
             .expect("an open tab");
     assert!(!recipe.context_collapsed, "a save writes no column fold");
 }
+
+/// A click on a rail, pressed and let go without moving, opens it at the
+/// place the flow pane had before the fold: on the column painter ("1 TF +
+/// Flow") and on the tree ("2 TF + Flow") alike.
+#[test]
+fn a_click_on_a_rail_restores_it_on_both_painters() {
+    use quantick_workspace::canvas::{PaneKind, tree_rails, tree_seams};
+    let ctx = egui::Context::default();
+    for (id, columns) in [("time+flow", true), ("time+time+flow", false)] {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        run_frame(&mut app, &ctx);
+        let preset = (LAYOUT_PRESETS.iter())
+            .find(|preset| preset.id == id)
+            .expect("a registered preset");
+        app.apply_layout_preset(preset);
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        assert_eq!(app.active_tab().canvas.column_painted(), columns, "{id}");
+        let area = app.active_tab().canvas.last_canvas;
+        let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+        let state = &app.active_tab().canvas.state;
+        let flow = (state.tree().panes().into_iter())
+            .find(|(_, kind)| *kind == PaneKind::Flow)
+            .expect("a flow pane")
+            .0;
+        let flow_x = |app: &QuantickApp| {
+            let rects = app.active_tab().canvas.state.rects(whole).into_iter();
+            rects
+                .filter(|(slot, _)| *slot == flow)
+                .map(|(_, rect)| rect.x)
+                .sum::<f32>()
+        };
+        let before = flow_x(&app);
+        let grab = if columns {
+            app.active_tab()
+                .canvas_divider_rect()
+                .expect("the divider")
+                .center()
+        } else {
+            let seam = (tree_seams(state, whole, CANVAS_DIVIDER_PX).into_iter())
+                .find(|seam| seam.address.path.is_empty() && seam.address.index == 1)
+                .expect("the seam before the flow pane");
+            egui::pos2(seam.rect.x + seam.rect.w / 2.0, area.center().y)
+        };
+        let edge = egui::pos2(area.right() - 1.0, grab.y);
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(grab)]);
+        let press = vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)];
+        run_frame_with_events(&mut app, &ctx, press);
+        for step in 1..=24 {
+            let at = grab.lerp(edge, step as f32 / 24.0);
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        }
+        let release = vec![egui::Event::PointerMoved(edge), pointer_button(edge, false)];
+        run_frame_with_events(&mut app, &ctx, release);
+        run_frame(&mut app, &ctx);
+        let state = &app.active_tab().canvas.state;
+        assert!(state.railed().contains(&flow), "{id}: the flow folded");
+        let rail = if columns {
+            app.active_tab().flow_rail_rect().expect("the column rail")
+        } else {
+            let rail = tree_rails(state, whole, CANVAS_DIVIDER_PX)[0].rect;
+            egui::Rect::from_min_size(egui::pos2(rail.x, rail.y), egui::vec2(rail.w, rail.h))
+        };
+        click_chart(&mut app, &ctx, rail.center());
+        run_frame(&mut app, &ctx);
+        let state = &app.active_tab().canvas.state;
+        assert!(state.railed().is_empty(), "{id}: the click opened it");
+        assert!(
+            (flow_x(&app) - before).abs() < 1.0,
+            "{id}: where it stood before the fold, {before} -> {}",
+            flow_x(&app)
+        );
+    }
+}
