@@ -53,6 +53,14 @@ pub(crate) use quantick_workspace::write_refusal::{
 /// `paper_state` is here.
 pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     CockpitStore {
+        key: "alerts",
+        file: quantick_stores::alerts::ALERTS_FILE,
+        validate: quantick_stores::alerts::validate,
+        path: crate::app::alerts_runtime::path,
+        in_bundle: quantick_stores::alerts::BUNDLE_ENABLED,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "appearance",
         file: quantick_stores::appearance::THEME_FILE,
         validate: quantick_stores::appearance::validate,

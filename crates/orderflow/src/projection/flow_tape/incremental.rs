@@ -11,7 +11,7 @@
 //! [`FlowTapeSource::project`] builds.
 use super::super::{
     Admission, FlowRegionSpan, FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView, Group,
-    admit, clip_merged, finish_group, merge_window,
+    admit, clip_merged, finish_group, merge_window, peaks,
 };
 use super::{FlowOpeningSelection, FlowTapeSource, cell_group, valid};
 use rust_decimal::Decimal;
@@ -37,6 +37,8 @@ struct WindowSpheres {
 /// The spheres of the last cached projection, and what they were built for.
 pub(super) struct FlowMemo {
     view: FlowTapeView,
+    /// The tape's tick the peak cuts were read on.
+    tick: Option<Decimal>,
     opening_windows: Vec<i64>,
     opening_ordinals: Vec<usize>,
     windows: BTreeMap<i64, WindowSpheres>,
@@ -52,9 +54,10 @@ impl FlowMemo {
 
 /// Merge and finish one region window's groups, given in cell key order.
 fn finish_window(
-    cells: Vec<(CellKey, Group)>,
+    (window, cells): (i64, Vec<(CellKey, Group)>),
     view: FlowTapeView,
     reference: Decimal,
+    peaks: peaks::PeakDivision<'_>,
 ) -> WindowSpheres {
     let mut spheres = WindowSpheres {
         first_slot: cells.first().map_or(0, |((slot, ..), _)| *slot),
@@ -73,8 +76,9 @@ fn finish_window(
     let mut merged = if mergeable.is_empty() {
         Vec::new()
     } else {
-        merge_window(mergeable, view)
+        merge_window(mergeable, view, window, peaks)
     };
+    spheres.off_axis += peaks::drop_off_axis(&mut merged, view);
     spheres.offscreen += clip_merged(&mut merged, view, |group| group);
     spheres.offscreen += clip_merged(&mut standalone, view, |(_, group)| group);
     spheres.opening = merged
@@ -105,6 +109,10 @@ impl FlowTapeSource {
         reference: Decimal,
         only: Option<(&BTreeSet<i64>, usize)>,
     ) -> BTreeMap<i64, WindowSpheres> {
+        let peaks = peaks::PeakDivision {
+            tick: self.grid.step(),
+            kept: Some(&self.peak_cuts),
+        };
         let mut windows: BTreeMap<i64, Vec<(CellKey, Group)>> = BTreeMap::new();
         let from = only.map_or(view.first_slot, |(_, from)| from);
         let from = from.clamp(view.first_slot, view.end_slot);
@@ -124,8 +132,63 @@ impl FlowTapeSource {
         }
         windows
             .into_iter()
-            .map(|(window, cells)| (window, finish_window(cells, view, reference)))
+            .map(|(window, cells)| {
+                let spheres = finish_window((window, cells), view, reference, peaks);
+                (window, spheres)
+            })
             .collect()
+    }
+
+    /// Keep the cuts of every peak region window in `view`: a window a print
+    /// joined, or every window when the region, the tape's tick, the profile
+    /// row or the openings changed, is read again; the rest are what an
+    /// earlier projection read. Over the same admitted slots only the cells
+    /// from the first dirty window on are walked, so a live print walks its
+    /// own region, not the view; a pan walks the view once.
+    fn keep_peak_cuts(
+        &mut self,
+        view: FlowTapeView,
+        openings: FlowOpeningSelection<'_>,
+        dirty: &BTreeSet<i64>,
+    ) {
+        let tick = self.grid.step();
+        let key = peaks::PeakKey::of(view, tick, openings.windows);
+        let span = (view.first_slot, view.end_slot);
+        let from = if self.peak_key.as_ref() == Some(&key) && self.peak_walked == Some(span) {
+            let candles = view.region.candles().unwrap_or(1);
+            dirty.first().map_or(view.end_slot, |window| {
+                usize::try_from(*window)
+                    .unwrap_or(0)
+                    .saturating_mul(candles)
+            })
+        } else {
+            view.first_slot
+        };
+        if self.peak_key.as_ref() != Some(&key) {
+            self.peak_cuts.clear();
+            self.peak_key = Some(key);
+        }
+        for window in dirty {
+            self.peak_cuts.remove(window);
+        }
+        self.peak_walked = Some(span);
+        let from = from.clamp(view.first_slot, view.end_slot);
+        let mut missing: BTreeMap<i64, Vec<Group>> = BTreeMap::new();
+        let cells = (from, i64::MIN, Decimal::MIN)..(view.end_slot, i64::MIN, Decimal::MIN);
+        for (&key, cell) in self.cells.range(cells) {
+            #[cfg(test)]
+            self.cells_walked
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let window = view.region.key(key.0, cell.mark.first_timestamp_ms);
+            if !self.peak_cuts.contains_key(&window) {
+                let group = cell_group(key.0, key.1, cell, view, openings);
+                missing.entry(window).or_default().push(group);
+            }
+        }
+        for (window, groups) in missing {
+            let cuts = peaks::peak_cuts(&groups, view, tick);
+            self.peak_cuts.insert(window, cuts);
+        }
     }
 
     /// [`Self::project`] for a worker that keeps its projections. Under a
@@ -147,13 +210,28 @@ impl FlowTapeSource {
         let dirty_slots = std::mem::take(&mut self.dirty_slots);
         let dirty = match view.region {
             FlowRegionSpan::Time => dirty,
-            FlowRegionSpan::Candles(_) => dirty_slots
+            FlowRegionSpan::Candles(_) | FlowRegionSpan::Peaks(_) => dirty_slots
                 .into_iter()
                 .map(|slot| view.region.key(slot, 0))
                 .collect(),
         };
         let dirty_from = self.dirty_from.take();
+        // The dirty windows are drained here, whatever this projection is:
+        // a non-peak view drops every kept cut, so prints it absorbed are
+        // read when peaks return.
+        let divides = view.region.divides_at_peaks();
+        if !divides {
+            self.peak_cuts.clear();
+            self.peak_key = None;
+            self.peak_walked = None;
+        }
         let Some(reference) = view.reference.typed().filter(|_| valid(view)) else {
+            if divides {
+                for window in &dirty {
+                    self.peak_cuts.remove(window);
+                }
+                self.peak_walked = None;
+            }
             self.memo = None;
             return self.project(
                 epoch,
@@ -164,8 +242,12 @@ impl FlowTapeSource {
                 openings,
             );
         };
+        if view.region.divides_at_peaks() {
+            self.keep_peak_cuts(view, openings, &dirty);
+        }
+        let tick = self.grid.step();
         let memo = match self.memo.take() {
-            Some(mut memo) if memo.holds(view, openings) => {
+            Some(mut memo) if memo.holds(view, openings) && memo.tick == tick => {
                 // A dirty window's cells start at its first slot, or at a
                 // print that joined it lower; a new window's are all new.
                 let mut from = dirty_from.unwrap_or(view.end_slot);
@@ -180,6 +262,7 @@ impl FlowTapeSource {
             }
             _ => FlowMemo {
                 view,
+                tick,
                 opening_windows: openings.windows.to_vec(),
                 opening_ordinals: openings.ordinals.to_vec(),
                 windows: self.window_spheres(view, openings, reference, None),

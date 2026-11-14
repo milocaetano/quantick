@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn full_action_footprint_keeps_the_inspector_title_reachable() {
+    let size = egui::vec2(364.0, 61.0);
+    let wanted = egui::pos2(47.0, 268.0);
+    for bottom in [400.0, 800.0] {
+        let chart = egui::Rect::from_min_max(egui::pos2(47.0, 88.0), egui::pos2(900.0, bottom));
+        let legend = egui::Rect::from_min_max(chart.min, egui::pos2(600.0, 150.0));
+        let inspector = egui::Rect::from_min_max(
+            egui::pos2(288.0, 294.0),
+            egui::pos2(620.0, bottom.min(535.0)),
+        );
+        let object = egui::Rect::from_min_max(egui::pos2(47.0, 250.0), egui::pos2(900.0, 251.0));
+        let placed = egui::Rect::from_min_size(
+            avoid_panels(
+                wanted,
+                size,
+                chart,
+                [Some(legend), Some(inspector)],
+                Some(object),
+            ),
+            size,
+        );
+        assert!(chart.contains_rect(placed));
+        assert!(!placed.intersects(legend));
+        assert!(!placed.intersects(inspector));
+        assert!(!placed.intersects(object));
+    }
+}
+
+#[test]
+fn crowded_panel_fallback_keeps_the_action_footprint_in_the_viewport() {
+    let chart = egui::Rect::from_min_size(egui::pos2(47.0, 88.0), egui::vec2(400.0, 100.0));
+    let size = egui::vec2(364.0, 61.0);
+    let parked = egui::pos2(900.0, 900.0);
+    let placed = avoid_panels(parked, size, chart, [Some(chart), None], None);
+    assert!(chart.contains_rect(egui::Rect::from_min_size(placed, size)));
+    assert_eq!(placed, clamp_into_chart(parked, size, chart));
+}
+
+#[test]
 fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
     for width in [650.0, 1000.0, 1500.0] {
         let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(width, 700.0));
@@ -16,7 +55,7 @@ fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
             egui::pos2(4000.0, legend.top()),
         ] {
             let placed = egui::Rect::from_min_size(
-                avoid_legend(wanted, size, reachable, Some(legend)),
+                avoid_panels(wanted, size, reachable, [Some(legend), None], None),
                 size,
             );
             assert!(!placed.intersects(legend), "{placed:?} / {legend:?}");

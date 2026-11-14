@@ -62,6 +62,10 @@ pub struct BridgeReport {
     /// must ask this, not whether something needed attention at some point —
     /// otherwise one survivable warning silences every later crash.
     pub ends_session: bool,
+    /// The contract the terminal does not list, as the bridge's own `symbol`
+    /// field names it — set only for `BRIDGE_SYMBOL_NOT_FOUND` with a symbol,
+    /// so a caller that rolls to the next contract never reads the headline.
+    pub unlisted_symbol: Option<String>,
 }
 
 impl BridgeReport {
@@ -72,6 +76,7 @@ impl BridgeReport {
             headline: headline.into(),
             next_step: None,
             ends_session: false,
+            unlisted_symbol: None,
         }
     }
 
@@ -83,6 +88,7 @@ impl BridgeReport {
             headline: headline.into(),
             next_step: Some(next_step.into()),
             ends_session: true,
+            unlisted_symbol: None,
         }
     }
 
@@ -95,6 +101,7 @@ impl BridgeReport {
             headline: headline.into(),
             next_step: Some(next_step.into()),
             ends_session: false,
+            unlisted_symbol: None,
         }
     }
 }
@@ -163,12 +170,15 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
         "BRIDGE_TERMINAL_ATTACH_FAILED" | "BRIDGE_TERMINAL_LOST" => {
             BridgeReport::fatal(code, TERMINAL_NOT_RUNNING, TERMINAL_NOT_RUNNING_NEXT_STEP)
         }
-        "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport::fatal(
-            code,
-            format!("MetaTrader does not list {symbol}"),
-            "Add the contract to Market Watch, or pick the exact name your \
-             broker uses (front-month contracts look like WINQ26).",
-        ),
+        "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport {
+            unlisted_symbol: field("symbol"),
+            ..BridgeReport::fatal(
+                code,
+                format!("MetaTrader does not list {symbol}"),
+                "Add the contract to Market Watch, or pick the exact name your \
+                 broker uses (front-month contracts look like WINQ26).",
+            )
+        },
         "BRIDGE_SYMBOL_SELECT_FAILED" => BridgeReport::fatal(
             code,
             format!("MetaTrader would not open {symbol}"),
@@ -252,6 +262,35 @@ mod tests {
             "headline was: {}",
             report.headline
         );
+        assert_eq!(
+            report.unlisted_symbol.as_deref(),
+            Some("WINZ99"),
+            "the contract travels as a field, never parsed back out of the words"
+        );
+    }
+
+    #[test]
+    fn only_a_named_missing_contract_is_reported_unlisted() {
+        let unlisted = |line: &str| {
+            report_for_line(line)
+                .expect("a user-visible report")
+                .unlisted_symbol
+        };
+        assert_eq!(
+            unlisted(r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND"}"#),
+            None
+        );
+        assert_eq!(
+            unlisted(r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":""}"#),
+            None
+        );
+        for line in [
+            r#"{"event_code":"BRIDGE_SYMBOL_SELECT_FAILED","symbol":"WINV26"}"#,
+            r#"{"event_code":"BRIDGE_BOOK_SUBSCRIBE_FAILED","symbol":"WINV26"}"#,
+            r#"{"event_code":"BRIDGE_SESSION_STARTED","symbol":"WINV26"}"#,
+        ] {
+            assert_eq!(unlisted(line), None, "line: {line}");
+        }
     }
 
     #[test]

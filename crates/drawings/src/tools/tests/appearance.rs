@@ -115,6 +115,7 @@ fn empty_note_uses_ambient_ink_but_authored_note_keeps_its_font_and_color() {
             text: text.into(),
             size_px: 17.0,
             family: FontFamily::Monospace,
+            ..TextPayload::default()
         };
         let painted = scene(&theme, "text", &payload, false);
         assert!(painted.shapes.iter().any(|shape| matches!(shape, MarkShape::Text { color, font, .. }
@@ -135,6 +136,28 @@ fn ruler_uses_the_same_configured_font_for_plate_measurement_and_paint() {
             .iter()
             .any(|shape| matches!(shape, MarkShape::Rect { fill, .. }
         if *fill == theme.color(Token::DrawingReadoutPlate)))
+    );
+}
+
+/// Light paints a measurement's readout on the paper plate the trader picked
+/// for the ruler: no other drawing label has a plate on Light, but the ruler's
+/// readout does.
+#[test]
+fn light_ruler_readout_sits_on_the_paper_plate() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let plate = light.color(Token::DrawingReadoutPlate);
+    let painted = scene(&light, "measure", &NoPayload, false);
+    assert!(
+        painted
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, MarkShape::Text { .. }))
+    );
+    assert!(
+        painted
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, MarkShape::Rect { fill, .. } if *fill == plate))
     );
 }
 
@@ -263,7 +286,7 @@ fn painted_colors(scene: &MarkScene) -> Vec<PremultipliedRgba> {
             MarkShape::Path { fill, stroke, .. }
             | MarkShape::Rect { fill, stroke, .. }
             | MarkShape::Circle { fill, stroke, .. } => vec![*fill, stroke.color],
-            MarkShape::Text { color, .. } => vec![*color],
+            MarkShape::Text { color, .. } | MarkShape::NoteText { color, .. } => vec![*color],
         })
         .collect()
 }
@@ -317,10 +340,138 @@ fn a_flat_readout_reads_against_its_plate() {
     };
     let (on_dark, on_light) = (text(&dark), text(&light));
     assert!(!on_dark.is_empty() && on_dark.iter().all(|color| *color == near_white));
+    // Light writes a readout with no direction in its primary ink.
     assert!(!on_light.is_empty());
     assert!(
         on_light
             .iter()
-            .all(|color| *color == light.legible_readout(light.legible_drawing(near_white)))
+            .all(|color| *color == light.color(Token::TextPrimary))
     );
+}
+
+#[test]
+fn rich_notes_preserve_the_authored_foreground_background_pair_on_every_theme() {
+    let ink = PremultipliedRgba::from_rgb(243, 247, 255);
+    let payload = TextPayload {
+        text: "authored pair".into(),
+        appearance: crate::text::TextAppearance {
+            background: Some([20, 30, 40, 255]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap(),
+    ] {
+        let scene = scene_in(&theme, "text", &payload, false, ink);
+        assert!(scene.shapes.iter().any(|shape| matches!(
+            shape, MarkShape::NoteText { color, .. } if *color == ink
+        )));
+    }
+}
+
+/// A level ruler (Shift copies the price) has no move to ink: Light writes
+/// its bars and time in the primary ink inside the grey edge.
+#[test]
+fn light_level_ruler_reads_in_the_primary_ink() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let (texts, edges) = ruler_readout(&light, [50.0, 50.0]);
+    assert_eq!(texts.len(), 1, "bars and time only: {texts:?}");
+    assert!(texts[0].0.contains("bars"), "{texts:?}");
+    assert_eq!(texts[0].1, light.color(Token::TextPrimary));
+    assert_eq!(
+        edges,
+        vec![Stroke::new(1.0, light.color(Token::ReadoutEdge))]
+    );
+}
+
+/// The ruler's texts and the stroke of its plate's edge, measured from
+/// `prices[0]` at bar 1 to `prices[1]` at bar 5.
+fn ruler_readout(
+    theme: &ResolvedTheme,
+    prices: [f64; 2],
+) -> (Vec<(String, PremultipliedRgba)>, Vec<Stroke>) {
+    let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
+    let point = |bar, price| ChartPoint {
+        bar,
+        price,
+        time_ms: None,
+    };
+    let anchors = [point(1.0, prices[0]), point(5.0, prices[1])];
+    let style = DrawingStyle::default();
+    let ctxt = DrawContext {
+        appearance: theme,
+        payload: &NoPayload,
+        anchors: &anchors,
+        scale: &scale,
+        px_per_bar: 10.0,
+        unit: ValueUnit::Price,
+        primary_band: true,
+        style,
+        selected: false,
+        halo: false,
+        content_editing: false,
+        text: &Metrics,
+    };
+    let mut painted = MarkScene::default();
+    tool("measure").paint(
+        &mut painted,
+        PxRect::from_min_max(Px::ZERO, pos2(900.0, 500.0)),
+        style,
+        &[pos2(100.0, 400.0), pos2(500.0, 100.0)],
+        &ctxt,
+        false,
+    );
+    let texts = painted
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            MarkShape::Text { text, color, .. } => Some((text.clone(), *color)),
+            _ => None,
+        })
+        .collect();
+    let edges = painted
+        .shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            MarkShape::Rect { stroke, .. } if stroke.width > 0.0 => Some(*stroke),
+            _ => None,
+        })
+        .collect();
+    (texts, edges)
+}
+
+/// Light's ruler readout is a white plate edged in neutral grey: the points
+/// and percent line in the chart's gain or loss ink, the bars and time in
+/// the primary ink. Dark keeps its unedged plate, every line in the move's
+/// colour.
+#[test]
+fn light_ruler_readout_is_edged_and_inks_only_the_signed_line() {
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let dark = ResolvedTheme::bundled_dark();
+    for rising in [true, false] {
+        let prices = if rising { [20.0, 80.0] } else { [80.0, 20.0] };
+        let (texts, edges) = ruler_readout(&light, prices);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        let (price, time) = (&texts[0], &texts[1]);
+        assert!(price.0.contains("pts"), "{price:?}");
+        let signed = if rising {
+            Token::BuyInk
+        } else {
+            Token::LossInk
+        };
+        assert_eq!(price.1, light.color(signed), "rising {rising}");
+        assert_eq!(time.1, light.color(Token::TextPrimary));
+        assert_eq!(
+            edges,
+            vec![Stroke::new(1.0, light.color(Token::ReadoutEdge))],
+            "one grey edge"
+        );
+
+        let (texts, edges) = ruler_readout(dark, prices);
+        let side = if rising { Token::Buy } else { Token::Sell };
+        assert!(texts.iter().all(|(_, color)| *color == dark.color(side)));
+        assert!(edges.is_empty(), "Dark draws no readout edge");
+    }
 }

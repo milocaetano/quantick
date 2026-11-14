@@ -1,5 +1,9 @@
 {
   "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -8,8 +12,27 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "opacity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Sphere fill opacity, a canonical decimal from 0.05 to 1; omitted keeps\nthe preset's own. Needs a preset.",
+      "x-unit": "ratio"
+    },
     "pane_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "peak_spheres": {
+      "description": "Divide the preset's zoom regions at the peaks of their volume profile\n(true) or not (false); omitted keeps the preset's own. Needs a preset.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "preset": {
       "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.",

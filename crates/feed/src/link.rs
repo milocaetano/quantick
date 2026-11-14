@@ -6,14 +6,34 @@
 //! here is plain state over the [`FeedHandle`] it was built from; the wall
 //! clock is always handed in, so the judgements below stay deterministic.
 
+use quantick_sources::recovery::AutoRoll;
 use tokio::sync::{mpsc, watch};
 
 use crate::config::{FeedCapabilities, ProviderKind};
+use crate::notice_report::{NoticeAction, RollNote};
 use crate::stall::{self, Stall, StallInput};
 use crate::{
     DepthEvent, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedIntegrity,
     FeedLatency, FeedNotice, ReplayLink,
 };
+
+/// Why a tab shows another contract than it was opened on: it rolled off one
+/// the venue no longer lists onto the one its feed config names next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rolled {
+    /// The contract the venue does not list.
+    pub from: String,
+    /// The contract the tab shows now.
+    pub to: String,
+}
+
+impl Rolled {
+    /// What the trader reads beside the status word.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        quantick_sources::recovery::rolled_sentence(&self.from, &self.to)
+    }
+}
 
 /// The feed half of a tab: its session's channels, notices and transport
 /// state, and the newest live trade it has seen.
@@ -26,6 +46,17 @@ pub struct FeedLink {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     pub notice: FeedNotice,
+    /// The roll the attach that started this session explains, standing
+    /// beside whatever [`Self::notice`] says. Set by the attach that follows
+    /// a roll and replaced by the next attach — a switch, a reconnect, a
+    /// reload — and by nothing the feed says: progress, a connect, a
+    /// reconnect or an attention for the new contract describe the present
+    /// and leave the roll that led there true.
+    pub rolled: Option<Rolled>,
+    /// Whether this tab, opened from a saved workspace, rolls itself off a
+    /// contract [`Self::notice`] says the venue no longer lists, and the roll
+    /// on offer. Kept across attaches: the roll it makes is one.
+    pub auto_roll: AutoRoll,
     /// Wall clock when the running feed session was attached — the floor for
     /// judging a first connection that never lands.
     pub feed_attached_ms: i64,
@@ -106,6 +137,8 @@ pub struct FeedLink {
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
     pub live_trades: u64,
+    /// A session of this link has connected at least once.
+    connected_once: bool,
 }
 
 impl FeedLink {
@@ -117,6 +150,7 @@ impl FeedLink {
             book_events: feed.book_events,
             notices: feed.notices,
             notice: FeedNotice::Clear,
+            rolled: None,
             feed_attached_ms: now_ms,
             connection_since_ms: now_ms,
             resume_floor_ms: None,
@@ -136,6 +170,8 @@ impl FeedLink {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
+            auto_roll: AutoRoll::default(),
+            connected_once: false,
         }
     }
 
@@ -144,7 +180,9 @@ impl FeedLink {
     ///
     /// The old feed's trouble is not the new feed's, so the notice and the
     /// transport state start clean — switching away from a blocked source must
-    /// not leave its instruction on screen.
+    /// not leave its instruction on screen. A roll off an unlisted contract
+    /// leaves its explanation in [`Self::rolled`], and any other attach
+    /// takes it away.
     pub fn attach(&mut self, handle: FeedHandle, now_ms: i64) {
         self.feed_generation = self.feed_generation.saturating_add(1);
         self.events = handle.events;
@@ -153,6 +191,10 @@ impl FeedLink {
         self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
+        self.rolled = self
+            .auto_roll
+            .take_rolled()
+            .map(|(from, to)| Rolled { from, to });
         self.feed_attached_ms = now_ms;
         self.connection_since_ms = self.feed_attached_ms;
         self.feed_connection = FeedConnectionState::Connecting;
@@ -181,21 +223,85 @@ impl FeedLink {
     /// Level-triggered rather than queued: only the latest state matters, and
     /// a burst of bridge output must not queue up cards to show one by one.
     /// A closed channel (a feed with nothing to report) simply yields nothing.
+    ///
+    /// A contract the venue does not list stays named through the retries
+    /// until a session connects or another attention replaces it: an
+    /// attention names its own contract or none, so the roll off it never
+    /// outlives the report it answers. A roll's explanation is not a notice:
+    /// it stands in [`Self::rolled`], beside every notice this drains.
     pub fn drain_notices_at(&mut self, now_ms: i64) {
         while let Ok(notice) = self.notices.try_recv() {
+            let held = matches!(
+                self.notice,
+                FeedNotice::Attention {
+                    unlisted: Some(_),
+                    ..
+                }
+            );
             let next = match notice {
                 FeedNotice::Connected => {
+                    // A contract that streams is listed: rolls wait for a hand.
+                    self.auto_roll.disarm();
                     self.set_connection(FeedConnectionState::Connected, now_ms);
                     FeedNotice::Clear
                 }
                 FeedNotice::Reconnecting { .. } => {
                     self.set_connection(FeedConnectionState::Reconnecting, now_ms);
+                    if held {
+                        continue;
+                    }
                     notice
                 }
-                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => notice,
-                FeedNotice::Clear => FeedNotice::Clear,
+                FeedNotice::Working { .. } | FeedNotice::Clear if held => continue,
+                FeedNotice::Clear | FeedNotice::Working { .. } | FeedNotice::Attention { .. } => {
+                    notice
+                }
             };
             self.notice = next;
+        }
+    }
+
+    /// A saved workspace opened this tab on `symbol`: it may roll itself off
+    /// it — unless its feed has already connected or streamed here, which
+    /// proves the contract listed, as when an import adopts a live tab.
+    pub fn arm_auto_roll(&mut self, symbol: &str) {
+        let streamed = self.connected_once
+            || self.feed_connection == FeedConnectionState::Connected
+            || self.live_trades > 0;
+        if !streamed {
+            self.auto_roll.arm(symbol);
+        }
+    }
+
+    /// The roll off the unlisted contract the notice names, as the last settle
+    /// found it: the configured next contract, or why it cannot roll now.
+    /// Every surface that offers the roll, and the control plane, read this.
+    #[must_use]
+    pub fn roll_offer(&self) -> Option<Result<&str, &'static str>> {
+        let FeedNotice::Attention {
+            unlisted: Some(from),
+            ..
+        } = &self.notice
+        else {
+            return None;
+        };
+        let offer = self.auto_roll.offer().filter(|offer| &offer.from == from)?;
+        Some(offer.to.as_deref().map_err(|reason| *reason))
+    }
+
+    /// [`Self::roll_offer`] as a report carries it.
+    #[must_use]
+    pub fn roll_note(&self) -> Option<RollNote<'_>> {
+        self.roll_offer().map(RollNote::from)
+    }
+
+    /// The one-click control beside the word and on the empty chart: the roll
+    /// on offer, else Reconnect — what the popup offers first.
+    #[must_use]
+    pub fn quick_action(&self) -> NoticeAction {
+        match self.roll_offer() {
+            Some(Ok(to)) => NoticeAction::Roll(to.to_owned()),
+            _ => NoticeAction::Reconnect,
         }
     }
 
@@ -209,6 +315,7 @@ impl FeedLink {
             self.feed_connection = state;
             self.connection_since_ms = now_ms;
         }
+        self.connected_once |= state == FeedConnectionState::Connected;
     }
 
     /// This link's judgement about a feed that has stopped delivering, or
@@ -294,5 +401,237 @@ impl FeedLink {
             Some(source) => format!("side: {source}"),
             None => "side: not recorded".to_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quantick_sources::recovery::RollOffer;
+
+    /// A link over channels the test speaks on.
+    fn link() -> (FeedLink, mpsc::Sender<FeedNotice>) {
+        let (handle, notices) = handle();
+        (FeedLink::new(handle, 0), notices)
+    }
+
+    fn handle() -> (FeedHandle, mpsc::Sender<FeedNotice>) {
+        let (notices, notice_rx) = mpsc::channel(16);
+        let handle = FeedHandle {
+            events: mpsc::channel(1).1,
+            book_events: mpsc::channel(1).1,
+            notices: notice_rx,
+            capabilities: crate::fixed_capabilities(FeedCapabilities::none()),
+            latency: crate::unsplit_latency(),
+            commands: mpsc::channel(1).0,
+            replay: None,
+        };
+        (handle, notices)
+    }
+
+    fn unlisted(symbol: &str) -> FeedNotice {
+        FeedNotice::attention(format!("MetaTrader does not list {symbol}"), "Add it.")
+            .with_unlisted(Some(symbol.to_owned()))
+    }
+
+    fn say(link: &mut FeedLink, notices: &mpsc::Sender<FeedNotice>, notice: FeedNotice) {
+        notices.try_send(notice).expect("room on the channel");
+        link.drain_notices_at(1);
+    }
+
+    #[test]
+    fn an_unlisted_contract_stays_named_through_retries_and_the_give_up() {
+        let (mut link, notices) = link();
+        say(&mut link, &notices, unlisted("WINV26"));
+        link.auto_roll
+            .set_offer(Some(offer("WINV26", Ok("WINZ26"))));
+        assert_eq!(link.quick_action(), NoticeAction::Roll("WINZ26".to_owned()));
+
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::working("starting the MetaTrader bridge"),
+        );
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+        );
+        say(&mut link, &notices, FeedNotice::Clear);
+        assert_eq!(link.notice, unlisted("WINV26"), "a retry says nothing new");
+        assert_eq!(link.feed_connection, FeedConnectionState::Reconnecting);
+
+        // The bridge's give-up names the contract its last attempt reported.
+        say(
+            &mut link,
+            &notices,
+            FeedNotice::attention("the MetaTrader bridge would not stay running", "Fix it.")
+                .with_unlisted(Some("WINV26".to_owned())),
+        );
+        assert_eq!(link.notice.unlisted_symbol(), Some("WINV26"));
+        assert_eq!(link.roll_offer(), Some(Ok("WINZ26")));
+        assert_eq!(link.roll_note(), Some(RollNote::To("WINZ26")));
+
+        say(&mut link, &notices, FeedNotice::Connected);
+        assert_eq!(
+            link.notice,
+            FeedNotice::Clear,
+            "a session that connects ends it"
+        );
+        assert_eq!(link.roll_offer(), None);
+        assert_eq!(link.quick_action(), NoticeAction::Reconnect);
+    }
+
+    fn offer(from: &str, to: Result<&str, &'static str>) -> RollOffer {
+        RollOffer {
+            from: from.to_owned(),
+            to: to.map(str::to_owned),
+        }
+    }
+
+    /// SELECT_FAILED proves the contract is listed: it takes the unlisted
+    /// contract, its roll and the licence's target away, whatever clears later.
+    #[test]
+    fn any_other_attention_drops_the_unlisted_contract_and_its_roll() {
+        let (mut link, notices) = link();
+        link.arm_auto_roll("WINV26");
+        say(&mut link, &notices, unlisted("WINV26"));
+        link.auto_roll.set_offer(Some(offer(
+            "WINV26",
+            Err("Finish the drawing gesture first"),
+        )));
+        assert_eq!(link.notice.unlisted_symbol(), Some("WINV26"));
+        for other in [
+            FeedNotice::attention("MetaTrader would not open WINV26", "Retry."),
+            FeedNotice::attention("MetaTrader 5 is not running", "Start it."),
+        ] {
+            say(&mut link, &notices, unlisted("WINV26"));
+            say(&mut link, &notices, other.clone());
+            assert_eq!(link.notice, other);
+            // The refusal clears: the next settle finds the roll again.
+            link.auto_roll
+                .set_offer(Some(offer("WINV26", Ok("WINZ26"))));
+            assert_eq!(
+                link.notice.unlisted_symbol(),
+                None,
+                "no contract to roll from"
+            );
+            assert_eq!(link.roll_offer(), None, "no roll_to");
+            assert_eq!(link.quick_action(), NoticeAction::Reconnect);
+            say(&mut link, &notices, FeedNotice::Clear);
+            assert_eq!(link.notice, FeedNotice::Clear, "nothing holds it any more");
+        }
+    }
+
+    /// An import that adopts a tab whose feed already connected or streamed
+    /// does not license it to roll itself; a fresh restored tab is licensed.
+    #[test]
+    fn a_link_that_streamed_is_not_armed() {
+        let (mut fresh, _notices) = link();
+        fresh.arm_auto_roll("WINV26");
+        assert!(fresh.auto_roll.armed_for("WINV26"));
+
+        let (mut live, notices) = link();
+        say(&mut live, &notices, FeedNotice::Connected);
+        say(
+            &mut live,
+            &notices,
+            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+        );
+        live.arm_auto_roll("WINV26");
+        assert!(!live.auto_roll.is_armed(), "it connected once");
+
+        let (mut streaming, _notices) = link();
+        streaming.live_trades = 1;
+        streaming.arm_auto_roll("WINV26");
+        assert!(!streaming.auto_roll.is_armed(), "it streamed");
+    }
+
+    #[test]
+    fn an_offer_about_another_contract_is_not_offered() {
+        let (mut link, notices) = link();
+        say(&mut link, &notices, unlisted("WINV26"));
+        link.auto_roll
+            .set_offer(Some(offer("WINQ26", Ok("WINV26"))));
+        assert_eq!(link.roll_offer(), None);
+        link.auto_roll.set_offer(Some(offer(
+            "WINV26",
+            Err("Finish the drawing gesture first"),
+        )));
+        assert_eq!(
+            link.roll_note(),
+            Some(RollNote::Refused("Finish the drawing gesture first"))
+        );
+        assert_eq!(link.quick_action(), NoticeAction::Reconnect);
+    }
+
+    fn rolled_note() -> Option<Rolled> {
+        Some(Rolled {
+            from: "WINV26".to_owned(),
+            to: "WINZ26".to_owned(),
+        })
+    }
+
+    /// A link that just rolled WINV26 to WINZ26, speaking for the new feed.
+    fn rolled_link() -> (FeedLink, mpsc::Sender<FeedNotice>) {
+        let (mut link, _old) = link();
+        link.auto_roll.rolling("WINV26", "WINZ26", true);
+        let (next, notices) = handle();
+        link.attach(next, 5);
+        assert_eq!(link.notice, FeedNotice::Clear, "the new feed starts clean");
+        assert_eq!(link.rolled, rolled_note());
+        (link, notices)
+    }
+
+    /// The note and the notice are two slots: every notice the new feed
+    /// says reaches the notice, before and after its connect, and none of
+    /// them takes the note away.
+    #[test]
+    fn a_roll_note_stands_beside_every_notice() {
+        let (mut link, notices) = rolled_link();
+        for notice in [
+            FeedNotice::working("waiting for a MetaTrader bridge on 127.0.0.1:5555"),
+            FeedNotice::working("waiting for the MetaTrader bridge to connect"),
+            FeedNotice::Clear,
+            FeedNotice::Connected,
+            FeedNotice::working("loading WINZ26 history"),
+            FeedNotice::reconnecting("MetaTrader 5 disconnected"),
+            FeedNotice::attention("MetaTrader is not running", "Start it."),
+            FeedNotice::Clear,
+        ] {
+            say(&mut link, &notices, notice.clone());
+            let shown = match notice {
+                FeedNotice::Connected => FeedNotice::Clear,
+                other => other,
+            };
+            assert_eq!(link.notice, shown, "the notice says what the feed said");
+            assert_eq!(link.rolled, rolled_note(), "the note stands");
+        }
+        assert_eq!(
+            link.rolled.as_ref().map(Rolled::sentence).as_deref(),
+            Some("WINV26 is no longer listed; rolled to WINZ26")
+        );
+        assert_eq!(link.notice.unlisted_symbol(), None, "the note is no report");
+    }
+
+    /// The next attach — a switch, a reconnect, a reload — takes the note
+    /// away; the attach after another roll explains that one.
+    #[test]
+    fn the_next_attach_replaces_the_roll_note() {
+        let (mut link, _notices) = rolled_link();
+        let (next, _notices) = handle();
+        link.attach(next, 7);
+        assert_eq!(link.rolled, None, "an attach that rolled nothing is clean");
+
+        link.auto_roll.rolling("WINZ26", "WING27", true);
+        let (next, _notices) = handle();
+        link.attach(next, 9);
+        assert_eq!(
+            link.rolled,
+            Some(Rolled {
+                from: "WINZ26".to_owned(),
+                to: "WING27".to_owned(),
+            })
+        );
     }
 }

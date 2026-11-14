@@ -104,3 +104,16 @@ fn every_channel_registers_into_a_generic_registry() {
         .collect();
     assert_eq!(ids, ["notify.popup", "notify.sound", "notify.toast"]);
 }
+
+/// Sound needs a scope of its own; the toast and the popup do not.
+#[test]
+fn only_the_sound_asks_for_its_own_scope() {
+    let mut registry = ActionRegistry::<FakeWindow, FakeAccess>::new();
+    register(&mut registry).expect("the notify descriptors are valid");
+    let sound = quantick_control::id::PermissionId::new(NOTIFY_SOUND_PERMISSION_ID).unwrap();
+    for descriptor in registry.descriptors() {
+        let id = descriptor.id.as_str();
+        let needs_sound = descriptor.required_permissions.contains(&sound);
+        assert_eq!(needs_sound, id == SOUND_CAPABILITY_ID, "{id}");
+    }
+}

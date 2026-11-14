@@ -388,6 +388,14 @@ impl ChartPane {
     /// back into one. Closed bars stay per trade — each is a distinct event
     /// the indicators have to see.
     pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
+        self.ingest_live_trade_observed(trade, &mut |_, _, _| {});
+    }
+
+    pub(crate) fn ingest_live_trade_observed(
+        &mut self,
+        trade: &quantick_engine::Trade,
+        closed_observer: &mut dyn FnMut(&Self, &quantick_engine::Bar, usize),
+    ) {
         if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
         }
@@ -408,6 +416,11 @@ impl ChartPane {
         // One print can close several bars — a Renko print clearing several
         // levels — and each is an event.
         for index in live_from..self.state.bars().len() {
+            closed_observer(
+                self,
+                &self.state.bars()[index],
+                self.history_prefix.len() + index,
+            );
             let closed = self.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker
@@ -463,3 +476,6 @@ impl ChartPane {
         self.history_worker.fail = true;
     }
 }
+
+#[cfg(test)]
+mod alert_observation_tests;

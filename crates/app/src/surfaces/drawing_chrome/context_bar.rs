@@ -39,34 +39,53 @@ pub(crate) fn bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> e
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
 }
 
-/// Repair either automatic or parked placement around the measured legend.
-/// Four bounded candidates keep the lane constraint; no paint shapes are scanned.
-fn avoid_legend(
+/// Repair automatic or parked placement around measured panels.
+/// Bounded candidates keep the lane constraint; no paint shapes are scanned.
+fn avoid_panels(
     position: egui::Pos2,
     size: egui::Vec2,
     reachable: egui::Rect,
-    legend: Option<egui::Rect>,
+    panels: [Option<egui::Rect>; 2],
+    object: Option<egui::Rect>,
 ) -> egui::Pos2 {
     let position = clamp_into_chart(position, size, reachable);
-    let Some(legend) = legend else {
-        return position;
-    };
     let gap = drawings::context_bar::OBJECT_GAP_PX;
-    let excluded = legend.expand(gap);
-    if !egui::Rect::from_min_size(position, size).intersects(excluded) {
+    if !panels
+        .into_iter()
+        .flatten()
+        .any(|rect| egui::Rect::from_min_size(position, size).intersects(rect.expand(gap)))
+    {
         return position;
     }
-    [
-        egui::pos2(position.x, excluded.bottom()),
-        egui::pos2(excluded.right(), position.y),
-        egui::pos2(position.x, excluded.top() - size.y),
-        egui::pos2(excluded.left() - size.x, position.y),
-    ]
-    .into_iter()
-    .map(|candidate| clamp_into_chart(candidate, size, reachable))
-    .filter(|candidate| !egui::Rect::from_min_size(*candidate, size).intersects(legend))
-    .min_by(|a, b| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
-    .unwrap_or(position)
+    let around = |rect: egui::Rect| {
+        [
+            egui::pos2(position.x, rect.bottom()),
+            egui::pos2(rect.right(), position.y),
+            egui::pos2(position.x, rect.top() - size.y),
+            egui::pos2(rect.left() - size.x, position.y),
+        ]
+    };
+    panels
+        .into_iter()
+        .flatten()
+        .flat_map(|rect| around(rect.expand(gap)))
+        .chain(object.into_iter().flat_map(|rect| around(rect.expand(gap))))
+        .map(|candidate| clamp_into_chart(candidate, size, reachable))
+        .filter(|candidate| {
+            panels
+                .into_iter()
+                .flatten()
+                .all(|rect| !egui::Rect::from_min_size(*candidate, size).intersects(rect))
+        })
+        .min_by(|a, b| {
+            let covers_object = |point| {
+                object.is_some_and(|rect| egui::Rect::from_min_size(point, size).intersects(rect))
+            };
+            covers_object(*a)
+                .cmp(&covers_object(*b))
+                .then_with(|| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
+        })
+        .unwrap_or(position)
 }
 
 /// Draw this frame.
@@ -83,13 +102,28 @@ pub(crate) fn draw(
         return ask;
     };
     let index = selected.index;
+    if env.linked_alerts > 0
+        && let Some(bounds) = env.selected_bbox
+    {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(("drawing_alert_marker", env.pane_id)),
+        ));
+        painter.text(
+            bounds.right_top(),
+            egui::Align2::RIGHT_BOTTOM,
+            egui_phosphor::regular::BELL,
+            egui::FontId::proportional(16.0),
+            ctx.style().visuals.selection.stroke.color,
+        );
+    }
     // An armed tool means the trader is drawing, not editing. The bar is
     // opaque to the pointer, so leaving it up would let it eat the click that
     // places the next object — the selection it belongs to is the one they
     // just finished, not the one they are starting.
-    // The manager already exposes these actions. Keep the parked position,
-    // but give its footer the pointer until it closes.
-    if env.drawing_tool_armed || chrome.manager_open() {
+    // The manager (or an open Alerts surface) owns the pointer until it closes;
+    // the bar keeps its parked position.
+    if env.drawing_tool_armed || chrome.manager_open() || chrome.surface_over {
         return ask;
     }
     // Suppressed means suppressed: nothing below this line runs, so the bar
@@ -103,7 +137,7 @@ pub(crate) fn draw(
     } else {
         env.chart_area
     };
-    let (Some(chart), Some(bbox)) = (chart_area, env.selected_bbox) else {
+    let (Some(mut chart), Some(bbox)) = (chart_area, env.selected_bbox) else {
         return ask;
     };
     // Read the object, never clone it, on the way in. This runs every frame
@@ -136,15 +170,56 @@ pub(crate) fn draw(
         settings_available: !chrome.shared.pinned,
         confirming_delete: chrome.shared.delete_confirm && locked,
         tool_name: tool.name(),
-        draw_again: tool.freehand().then(|| drawings::context_bar::DrawAgain {
-            glyph: tool.icon(),
-            hover: tool.hover_text(),
+        draw_again: (tool.freehand() || tool.holds_text()).then(|| {
+            drawings::context_bar::DrawAgain {
+                glyph: tool.icon(),
+                hover: tool.hover_text(),
+            }
         }),
     };
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
         drawings::context_bar::capabilities(&object),
     ));
-    let placement = Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, size);
+    let mut occupied = size;
+    if drawing.supports_alert_target() {
+        occupied.y += ctx.style().spacing.interact_size.y;
+        // Keep the action clear of the chart's bottom annotation line.
+        chart.max.y -= ctx.style().spacing.interact_size.y;
+    }
+    let inspector = (chrome.shared.open && !chrome.shared.pinned)
+        .then(|| ctx.memory(|memory| memory.area_rect(egui::Id::new(super::INSPECTOR_AREA_ID))))
+        .flatten();
+    let placement = Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, occupied, inspector);
+    if inspector.is_some_and(|rect| {
+        rect.intersects(egui::Rect::from_min_size(placement.position, occupied))
+    }) {
+        // The open inspector already owns the drawing controls. In a cramped
+        // pane keep only the distinct alert action, without moving the parked bar.
+        if drawing.supports_alert_target() {
+            let style = ctx.style();
+            let compact_size = ctx.fonts(|fonts| {
+                fonts
+                    .layout_no_wrap(
+                        "Create alert".into(),
+                        egui::TextStyle::Body.resolve(&style),
+                        style.visuals.text_color(),
+                    )
+                    .size()
+            }) + egui::vec2(2.0 * style.spacing.button_padding.x, 0.0);
+            let compact =
+                Placement::resolve(&chrome.view.bar.bar, env, chart, bbox, compact_size, inspector);
+            let compact_rect = egui::Rect::from_min_size(compact.position, compact_size);
+            if chart.contains_rect(compact_rect)
+                && inspector.is_none_or(|rect| !rect.intersects(compact_rect))
+                && env
+                    .legends
+                    .is_none_or(|rect| !rect.intersects(compact_rect))
+            {
+                alert_action(ctx, env, compact.position, drawing.id.0, &mut ask);
+            }
+        }
+        return ask;
+    }
     let intent = drawings::context_bar::show(
         &mut chrome.view.bar.bar,
         ctx,
@@ -152,6 +227,15 @@ pub(crate) fn draw(
         placement.popover_bounds,
         &mut object,
     );
+    if drawing.supports_alert_target() {
+        alert_action(
+            ctx,
+            env,
+            placement.position + egui::vec2(0.0, size.y),
+            drawing.id.0,
+            &mut ask,
+        );
+    }
     let glyph_after = object.glyph_size;
     #[cfg(test)]
     {
@@ -188,9 +272,45 @@ pub(crate) fn draw(
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {
         ask.draw_again = Some(tool);
+        ask.merge(chrome.emit(super::Intent::RepeatEndsInline));
     }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
+}
+
+fn alert_action(
+    ctx: &egui::Context,
+    env: &DrawingEnv<'_>,
+    position: egui::Pos2,
+    drawing_id: u64,
+    ask: &mut DrawingChromeAsk,
+) {
+    egui::Area::new(egui::Id::new(("drawing_alert", env.pane_id)))
+        .fixed_pos(position)
+        .show(ctx, |ui| {
+            if env.linked_alerts > 0 {
+                ui.label(format!(
+                    "{} {} alerts",
+                    egui_phosphor::regular::BELL,
+                    env.linked_alerts
+                ));
+            }
+            if ui
+                .add(
+                    egui::Button::new("Create alert")
+                        .small()
+                        .selected(env.linked_alerts > 0),
+                )
+                .clicked()
+            {
+                let readbacks = ask.readbacks.get_or_insert_with(Default::default);
+                readbacks.alert_target = Some(quantick_control_schema::alerts::DrawingSelector {
+                    tab_id: env.tab,
+                    pane_id: env.pane_id,
+                    drawing_id,
+                });
+            }
+        });
 }
 
 /// The raw input that decides whether the bar stands down this frame.
@@ -271,6 +391,7 @@ impl Placement {
         chart: egui::Rect,
         bbox: egui::Rect,
         size: egui::Vec2,
+        inspector: Option<egui::Rect>,
     ) -> Self {
         // The live lane is off limits to the bar however it got where it is:
         // that strip is where the price the trader is reading is being
@@ -304,7 +425,10 @@ impl Placement {
         // reachable with a full-height profile on a narrow split. It also
         // keeps the popover bound below honest, which is derived from where
         // the bar ends up.
-        let position = avoid_legend(position, size, reachable, env.legends);
+        // Automatic legend repair must keep the entire action footprint off
+        // the drawing too; a manually parked bar keeps the trader's choice.
+        let object = bar.manual_position().is_none().then_some(bbox);
+        let position = avoid_panels(position, size, reachable, [env.legends, inspector], object);
         // What the popovers are clamped into: the same rectangle *without*
         // the bar's width floor, but never narrower than the bar that was
         // actually drawn.

@@ -25,6 +25,9 @@ use egui_phosphor::regular as icons;
 use quantick_chart_interaction::panel_placement::{Area, NEIGHBOURHOOD_PX, PanelPlacement};
 
 mod sections;
+#[cfg(test)]
+#[path = "inspector/tests/text_layout.rs"]
+mod text_layout_tests;
 
 use sections::body;
 

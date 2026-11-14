@@ -78,7 +78,13 @@ fn minimize_strip_and_maximize_restore() {
         .collect();
     assert_eq!(
         rows,
-        ["Minimize", "Maximize", "Open in new window", "Remove chart"]
+        [
+            "Minimize",
+            "Maximize",
+            "Float",
+            "Open in new window",
+            "Remove chart"
+        ]
     );
     let output = press(&mut app, &ctx, &format!("pane_menu.{time}.minimize"));
     assert_eq!(mode(&app, time), Some(PaneMode::Minimized));

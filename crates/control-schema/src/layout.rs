@@ -631,3 +631,17 @@ pub const READBACKS: &[Readback] = &[
         LAYOUT_TAB_PROOF,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Resizing a context pair is a layout call: the cockpit scope alone
+    /// does not reach it.
+    #[test]
+    fn resizing_a_pair_needs_the_layout_scope() {
+        let needed = resize_pair_descriptor().required_permissions;
+        assert_eq!(needed, layout_permissions());
+        assert!(needed.contains(&PermissionId::new(COCKPIT_LAYOUT_PERMISSION_ID).unwrap()));
+    }
+}

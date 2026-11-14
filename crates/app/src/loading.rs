@@ -26,8 +26,6 @@ const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
 const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
-/// The label a press on the overlay answers to: same word as the popup's.
-pub const RECONNECT_LABEL: &str = "Reconnect";
 
 /// The chip: 10 pt monospace in a 1 px pill.
 const CHIP_PT: f32 = 10.0;
@@ -205,7 +203,7 @@ fn lay_out_overlay(
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
-    with_control: bool,
+    control: Option<&str>,
 ) -> OverlayGroup {
     let palette = crate::theme::get(ctx);
     let mut title = egui::text::LayoutJob::default();
@@ -227,9 +225,9 @@ fn lay_out_overlay(
         (
             fonts.layout_job(title),
             steady(meta_ink, fonts, &words.meta, mono, rect.width()),
-            with_control.then(|| {
+            control.map(|label| {
                 fonts.layout_no_wrap(
-                    RECONNECT_LABEL.to_owned(),
+                    label.to_owned(),
                     palette.body_font(CONTROL_PT),
                     egui::Color32::PLACEHOLDER,
                 )
@@ -260,14 +258,15 @@ fn lay_out_overlay(
     }
 }
 
-/// A clipped control is omitted; the status bar then offers Reconnect instead.
+/// A clipped control is omitted; the status bar then offers it instead.
 pub fn reconnect_fits(
     ctx: &egui::Context,
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
+    label: &str,
 ) -> bool {
-    lay_out_overlay(ctx, rect, symbol, words, true)
+    lay_out_overlay(ctx, rect, symbol, words, Some(label))
         .control
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
@@ -279,13 +278,14 @@ pub fn draw_overlay(
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
+    label: &str,
     (now_ms, tab): (i64, u64),
 ) -> (Option<egui::Rect>, bool) {
     let palette = crate::theme::get(ui.ctx());
     let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
-    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
-    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
+    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words, label);
+    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits.then_some(label));
     let mut y = group.top;
     let centred = |width: f32| rect.center().x - width / 2.0;
     let size = group.title.size();
