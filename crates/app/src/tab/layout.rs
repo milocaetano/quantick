@@ -115,11 +115,11 @@ impl TabCanvas {
             return None;
         }
         // `apply_preset` opened every fold. Leaving the column collapsed
-        // meant the cell lit, two panes were
-        // promised, and an 8 px rail arrived instead. Before the early return,
-        // because picking the arrangement that is *already* selected is
-        // exactly how a trader asks for the charts they can see promised in a
-        // lit cell — and a return above this line answered that with the rail.
+        // meant the cell lit, two panes were promised, and an 8 px rail
+        // arrived instead. Before the early return, because picking the
+        // arrangement that is *already* selected is exactly how a trader asks
+        // for the charts they can see promised in a lit cell — and a return
+        // above this line answered that with the rail.
         self.expand_context_stack();
         self.seats.clear();
         if layout == previous {

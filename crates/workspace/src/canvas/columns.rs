@@ -1,36 +1,11 @@
-//! The column painter's own decisions over a canvas: which column a fold
-//! puts away, which pane a layout switch reveals, and whether the column
+//! The column painter's own decisions over a canvas: what a divider drag
+//! asks for, which pane a layout switch reveals, and whether the column
 //! painter draws a canvas at all. The window keeps the flags and the focus;
 //! what they become is decided here.
 
+use super::metrics::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX};
 use super::presets::{LayoutPreset, PaneKind};
-use super::rail::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX};
 use super::state::CanvasState;
-
-/// Put one column away (`collapsed`) or bring it back, `other` being the
-/// column across the divider. Answers whether anything changed.
-///
-/// **The one collapse path.** The divider drag, the rail, the View menu,
-/// `Ctrl+0` and `layout.pane.collapse` all arrive here. Before it existed the
-/// only way a *trader* could collapse the context column was a mouse drag,
-/// while an assistant had a named call for it: the second operator holding a
-/// capability the first could not reach from the keyboard, which is the rule
-/// inverted.
-///
-/// The two columns never fold together, so folding one opens the other. The
-/// split's width is deliberately not here: it is what the column springs back
-/// to, and spending it would hand back a different chart from the one that
-/// was put away.
-pub fn fold_column(folded: &mut bool, other: &mut bool, collapsed: bool) -> bool {
-    if *folded == collapsed && (!collapsed || !*other) {
-        return false;
-    }
-    *folded = collapsed;
-    if collapsed {
-        *other = false;
-    }
-    true
-}
 
 /// The kind of pane a switch from `previous` to `next` reveals, which takes
 /// the focus: the pane that just appeared is the one the trader asked to work
@@ -68,12 +43,11 @@ impl CanvasState {
     /// Anything else is painted from the tree, the same rail kept.
     #[must_use]
     pub fn column_painted(&self, preset: &LayoutPreset, column: bool) -> bool {
-        let (context, flow) = self.flow_side_folds();
         column
             && self.floating().is_empty()
             && self.maximized().is_none()
-            && self.minimized() == self.railed()
-            && (self.railed().is_empty() || context || flow)
+            && self.minimized().is_empty()
+            && self.one_side_railed()
             && self.preset() == Some(preset)
     }
 }

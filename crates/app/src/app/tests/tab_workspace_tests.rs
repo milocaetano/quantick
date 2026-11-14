@@ -1055,3 +1055,33 @@ fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
         "the edit stays held"
     );
 }
+
+/// A workspace saved before rails carried its column fold only as a flag, no
+/// canvas: applied to a tab it lands as one rail and the tab reads clean.
+#[test]
+fn an_old_folded_recipe_lands_as_one_rail_and_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-old-fold", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 4);
+    let mut old = live_recipe(&app.runtime, first).expect("an open tab");
+    (old.canvas, old.context_collapsed, old.flow_collapsed) = (None, true, false);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &old).expect("held");
+    book.save_as(first, "Folded").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Folded").expect("a known workspace");
+    frames(&mut app, 5);
+    let tab = app.runtime.tabs.by_id(second).expect("an open tab");
+    assert_eq!(tab.canvas.folds(), (true, false), "the column is folded");
+    assert!(
+        tab.canvas.column_painted(),
+        "on the column painter's own rail"
+    );
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Folded".to_owned(), false),
+        "and the tab reads clean"
+    );
+}

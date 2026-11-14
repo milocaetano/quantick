@@ -33,6 +33,10 @@
         "mode": {
           "$ref": "#/$defs/CanvasPaneMode"
         },
+        "railed": {
+          "description": "A `minimized` chart a seam drag or a collapse call folded to a rail,\nnot to its menu strip; absent otherwise.",
+          "type": "boolean"
+        },
         "slot": {
           "format": "uint32",
           "minimum": 0,

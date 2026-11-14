@@ -67,9 +67,10 @@ mod shared_routing_tests {
     #[test]
     fn collapsing_a_column_keeps_the_width_it_springs_back_to() {
         let mut tab = tab_with_context_panes(1);
+        tab.set_layout(CanvasLayout::TimeAndFlow);
         tab.canvas.split_fraction = 0.42;
 
-        tab.canvas.fold(false, true);
+        assert!(tab.canvas.fold(false, true), "a column to fold");
         assert_eq!(
             tab.canvas.split_fraction, 0.42,
             "the collapse spent the width it was supposed to remember"
@@ -523,10 +524,11 @@ mod collapse_path_tests {
     #[test]
     fn collapsing_never_spends_the_remembered_width() {
         let mut tab = tab();
+        tab.set_layout(CanvasLayout::TimeAndFlow);
         tab.canvas.split_fraction = 0.42;
         for _ in 0..3 {
-            tab.canvas.fold(false, true);
-            tab.canvas.fold(false, false);
+            assert!(tab.canvas.fold(false, true), "it folds");
+            assert!(tab.canvas.fold(false, false), "and opens");
         }
         assert_eq!(
             tab.canvas.split_fraction, 0.42,
@@ -676,10 +678,10 @@ mod collapse_path_tests {
             300,
             crate::time_header::DEFAULT_INTERVAL_MS,
         ));
-        tab.canvas.layout = CanvasLayout::Time;
-        tab.canvas.state =
-            quantick_workspace::canvas::CanvasState::from_preset(tab.canvas.layout.preset());
-        tab.canvas.fold(false, true);
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        tab.focus = PaneSide::Flow;
+        // The flow pane folded leaves the timeframe chart the only one drawn.
+        assert!(tab.canvas.fold(true, true));
 
         assert_eq!(
             tab.focused_side(),

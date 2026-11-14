@@ -263,5 +263,7 @@ pub(super) fn recipe_layout(recipe: &WorkspaceRecipe) -> CanvasLayout {
 #[must_use]
 pub(super) fn recipe_state(recipe: &WorkspaceRecipe) -> CanvasState {
     let (preset, split) = (recipe_layout(recipe).preset(), recipe.split_fraction);
-    (recipe.canvas.clone()).unwrap_or_else(|| CanvasState::from_preset_split(preset, split))
+    let folds = (recipe.context_collapsed, recipe.flow_collapsed);
+    let rebuilt = || CanvasState::from_preset_split(preset, split).with_folds(folds.0, folds.1);
+    (recipe.canvas.clone()).unwrap_or_else(rebuilt)
 }

@@ -10,11 +10,12 @@ use quantick_control_schema::canvas::CanvasDimension;
 use quantick_control_schema::canvas::{
     ADD_WIDGET_CAPABILITY_ID, AddWidgetInput, CanvasCorner, CanvasEdge, CanvasRectDto,
     CanvasResult, DOCK_CAPABILITY_ID, DockPaneInput, FLOAT_CAPABILITY_ID, FloatPaneInput,
-    MAXIMIZE_CAPABILITY_ID, MINIMIZE_CAPABILITY_ID, OPEN_WINDOW_MENU_CAPABILITY_ID,
-    PARK_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID, POP_OUT_CAPABILITY_ID, PaneInput, ParkPaneInput,
-    PickLayoutInput, PopOutInput, REMOVE_CAPABILITY_ID, RESIZE_CAPABILITY_ID,
-    RESTORE_CAPABILITY_ID, RETURN_CAPABILITY_ID, RemovePaneInput, ResizePaneInput,
-    SHARE_DECIMAL_PLACES, WindowMenuInput, WindowMenuResult, descriptor,
+    MAX_SEAM_TRAVEL_PT, MAXIMIZE_CAPABILITY_ID, MINIMIZE_CAPABILITY_ID,
+    OPEN_WINDOW_MENU_CAPABILITY_ID, PARK_CAPABILITY_ID, PICK_LAYOUT_CAPABILITY_ID,
+    POP_OUT_CAPABILITY_ID, PaneInput, ParkPaneInput, PickLayoutInput, PopOutInput,
+    REMOVE_CAPABILITY_ID, RESIZE_CAPABILITY_ID, RESTORE_CAPABILITY_ID, RETURN_CAPABILITY_ID,
+    RemovePaneInput, ResizePaneInput, SEAM_DRAG_CAPABILITY_ID, SHARE_DECIMAL_PLACES, SeamDragInput,
+    WindowMenuInput, WindowMenuResult, descriptor,
 };
 use quantick_control_schema::canvas::{
     CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
@@ -78,6 +79,13 @@ pub enum CanvasAct {
         dimension: CanvasDimension,
         share: f32,
     },
+    /// The hand's drag of the seam after child `index` of the split at
+    /// `path`, `travel` points; `travel` is already checked finite.
+    SeamDrag {
+        path: Vec<u32>,
+        index: u32,
+        travel: f32,
+    },
 }
 
 /// A tab's canvas as the window draws it: its area, and whether the column
@@ -137,7 +145,8 @@ pub fn register<H: CanvasHost + ?Sized, A>(
     registry.register(described(PARK_CAPABILITY_ID), park)?;
     registry.register(described(POP_OUT_CAPABILITY_ID), pop_out)?;
     registry.register(described(RETURN_CAPABILITY_ID), return_to_canvas)?;
-    registry.register(described(RESIZE_CAPABILITY_ID), resize)
+    registry.register(described(RESIZE_CAPABILITY_ID), resize)?;
+    registry.register(described(SEAM_DRAG_CAPABILITY_ID), seam_drag)
 }
 
 fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, ControlError> {
@@ -349,6 +358,35 @@ fn resize<H: CanvasHost + ?Sized, A>(
     )
 }
 
+fn seam_drag<H: CanvasHost + ?Sized, A>(
+    app: &mut H,
+    _: &mut A,
+    _: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let SeamDragInput {
+        path,
+        index,
+        travel,
+    } = parse(value)?;
+    let travel: Decimal = (travel.as_str().parse())
+        .map_err(|error| ControlError::invalid_request(format!("travel: {error}")))?;
+    if travel.scale() > SHARE_DECIMAL_PLACES || travel.abs() > Decimal::from(MAX_SEAM_TRAVEL_PT) {
+        return Err(ControlError::invalid_request(format!(
+            "travel must be at most {MAX_SEAM_TRAVEL_PT} points either way, with at most six decimal places"
+        )));
+    }
+    let travel = travel.to_f32().unwrap_or_default();
+    answer(
+        app,
+        CanvasAct::SeamDrag {
+            path,
+            index,
+            travel,
+        },
+    )
+}
+
 /// A share a resize can take: strictly between 0 and 1, at most
 /// [`SHARE_DECIMAL_PLACES`] places, so what is sent is what reads back.
 fn share_of(text: &str) -> Result<f32, ControlError> {
@@ -503,6 +541,22 @@ pub fn act(
         } => state
             .resize_pane(slot, axis_of(dimension), share, area)
             .map(on(slot)),
+        CanvasAct::SeamDrag {
+            path,
+            index,
+            travel,
+        } => {
+            // The pointer's own path: pressed, moved, released.
+            let path = path.iter().map(|at| *at as usize).collect();
+            let seam = canvas::SeamAddress {
+                path,
+                index: index as usize,
+            };
+            let (before, mut held) = (state.railed().clone(), None);
+            let moved = state.step_seam_drag(&mut held, (&seam, travel, true), area);
+            let flipped = before.symmetric_difference(state.railed()).next().copied();
+            moved.map(|changed| (changed, flipped))
+        }
     };
     acted.map_err(|refusal| refused(&refusal))
 }
@@ -827,6 +881,7 @@ pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
             width_share: share_on(state, slot, CanvasDimension::Width, drawn),
             height_share: share_on(state, slot, CanvasDimension::Height, drawn),
             slot,
+            railed: state.railed().contains(&slot),
             kind: match kind {
                 PaneKind::Time => CanvasPaneKind::Time,
                 _ => CanvasPaneKind::Flow,

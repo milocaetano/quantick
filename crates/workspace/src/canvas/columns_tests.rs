@@ -10,31 +10,6 @@ fn layout(id: &str) -> &'static LayoutPreset {
 }
 
 #[test]
-fn folding_one_column_opens_the_other() {
-    let (mut context, mut flow) = (false, true);
-    assert!(fold_column(&mut context, &mut flow, true));
-    assert_eq!((context, flow), (true, false));
-    assert!(fold_column(&mut flow, &mut context, true));
-    assert_eq!((context, flow), (false, true));
-}
-
-#[test]
-fn a_fold_already_in_place_changes_nothing() {
-    let (mut context, mut flow) = (true, false);
-    assert!(!fold_column(&mut context, &mut flow, true));
-    let (mut open, mut other) = (false, true);
-    assert!(!fold_column(&mut open, &mut other, false));
-    assert_eq!((open, other), (false, true));
-}
-
-#[test]
-fn opening_a_folded_column_leaves_the_other_alone() {
-    let (mut context, mut flow) = (true, false);
-    assert!(fold_column(&mut context, &mut flow, false));
-    assert_eq!((context, flow), (false, false));
-}
-
-#[test]
 fn a_switch_reveals_the_pane_that_appeared() {
     let (flow, time, split) = (layout("flow"), layout("time"), layout("time+flow"));
     assert_eq!(revealed(time, flow), Some(PaneKind::Flow));
@@ -126,4 +101,16 @@ fn a_menu_strip_keeps_the_tree_painting() {
     let mut state = CanvasState::from_preset(preset);
     state.minimize(0).unwrap();
     assert!(!state.column_painted(preset, true));
+}
+
+/// A chart docked beside the flow pane while the charts there are folded:
+/// the readback still says the context is folded while any rail stands.
+#[test]
+fn the_context_readback_agrees_with_a_rail_after_a_dock() {
+    let mut state = CanvasState::from_preset(layout("time+flow"));
+    assert!(state.fold_flow_side(false, true));
+    let float = state.add(PaneKind::Time, AREA).unwrap();
+    state.dock(float, DockTarget::Canvas(Edge::Right)).unwrap();
+    assert_eq!(tree_rails(&state, AREA, CANVAS_DIVIDER_PX).len(), 1);
+    assert_eq!(state.flow_side_folds(), (true, false));
 }

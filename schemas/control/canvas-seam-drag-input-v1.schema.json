@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Drag one seam of the docked tree, as the hand drags it: pressed, moved\n`travel` points along its split, released.",
+  "properties": {
+    "index": {
+      "description": "The seam after child `index` of that split.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "path": {
+      "default": [],
+      "description": "The child indices from the root down to the split the seam divides,\nas the scene's `pane_menu.<slot>.rail` neighbours and `tree_seams` list\nthem; empty for the root split.",
+      "items": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxItems": 8,
+      "type": "array"
+    },
+    "travel": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "Points along the split, a decimal string of at most six places and\nat most [`MAX_SEAM_TRAVEL_PT`] either way: positive moves the seam\nright or down. Within the collapse threshold of the pair's edge that\nside folds to its rail; dragged from a rail back past it, it reopens."
+    }
+  },
+  "required": [
+    "index",
+    "travel"
+  ],
+  "title": "SeamDragInput",
+  "type": "object"
+}

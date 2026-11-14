@@ -941,6 +941,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.maximize", 1, Value::Null, Readback::Moves),
         ("canvas.pane.restore", 1, Value::Null, Readback::Moves),
         ("canvas.pane.resize", 1, Value::Null, Readback::Moves),
+        ("canvas.seam.drag", 1, Value::Null, Readback::Moves),
         (
             "canvas.widget.add",
             1,
@@ -1308,6 +1309,22 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 // The first docked chart; the float leaves the layout.
                 let state = &app.active_tab().canvas.state;
                 json!({ "slot": state.tree().panes()[0].0 })
+            }
+            "canvas.seam.drag" => {
+                // The first seam that moves, dragged shut.
+                let canvas = &app.active_tab().canvas;
+                let at = canvas.last_canvas;
+                let whole = quantick_workspace::canvas::CanvasRect::new(
+                    at.left(),
+                    at.top(),
+                    at.width(),
+                    at.height(),
+                );
+                let seams = quantick_workspace::canvas::tree_seams(&canvas.state, whole, 4.0);
+                let seam = (seams.into_iter())
+                    .find(|seam| seam.resizable)
+                    .expect("a seam to drag");
+                json!({ "path": seam.address.path, "index": seam.address.index, "travel": "-4000" })
             }
             "canvas.pane.resize" => {
                 // The first docked chart, wider within its row.
@@ -2231,3 +2248,31 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
 
 #[path = "native_indicator_control_tests.rs"]
 mod native_indicator_control;
+
+/// On the flow pane alone there is nothing to fold: the context and the flow
+/// collapse calls both refuse with one code, never a silent `changed: false`.
+#[test]
+fn a_collapse_with_nothing_to_fold_is_refused_with_one_code() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-nothing-to-fold");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    for capability in ["layout.pane.collapse", "layout.flow.collapse"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        let error = response_error(&answer);
+        let code = error
+            .context
+            .details
+            .as_ref()
+            .map(|details| details["refusal"].clone());
+        assert_eq!(code, Some(json!("layout.nothing_to_fold")), "{capability}");
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}

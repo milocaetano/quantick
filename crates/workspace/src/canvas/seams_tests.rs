@@ -311,6 +311,10 @@ fn a_restore_opens_a_rail_at_its_pre_drag_shares() {
     assert!((before[0] - after[0]).abs() < 1e-5 && (before[1] - after[1]).abs() < 1e-5);
     drag(&mut state, &root(0), -AREA.w);
     assert_eq!(state.maximize(0), Ok(true));
+    assert_eq!(state.mode(0), Some(PaneMode::Maximized));
+    assert_eq!(state.restore(0), Ok(true), "back from maximized");
+    assert!(state.railed().contains(&0), "folded, as it was before");
+    assert_eq!(state.restore(0), Ok(true), "a second restore opens it");
     assert!(state.railed().is_empty() && state.minimized().is_empty());
 }
 
@@ -704,4 +708,64 @@ fn the_column_split_mirrors_the_tree_share() {
         "another layout's tree is not this split"
     );
     assert_eq!(other, 0.5);
+}
+
+/// A save naming a rail on a pane the tree lost, or leaving no pane open, is
+/// healed as it is read, so a column layout is never kept on the tree.
+#[test]
+fn a_stale_rail_in_a_save_is_healed_on_load() {
+    let mut state = canvas("time+flow");
+    assert!(state.fold_flow_side(true, true));
+    let saved = toml::to_string(&state).unwrap();
+    let stale = saved.replace("railed = [1]", "railed = [1, 9]");
+    assert_ne!(stale, saved, "the save names its rail");
+    let back: CanvasState = toml::from_str(&stale).unwrap();
+    assert_eq!(back.railed().iter().copied().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(back.minimized().len(), 0, "a rail needs no strip");
+    assert!(back.column_painted(preset("time+flow").unwrap(), true));
+    let everything = saved.replace("railed = [1]", "railed = [0, 1]");
+    let back: CanvasState = toml::from_str(&everything).unwrap();
+    assert!(
+        back.railed().is_empty(),
+        "no pane left open: the rail is dropped"
+    );
+}
+
+/// A chart minimized from its menu inside a node a drag folds comes back a
+/// strip when the node reopens, never open.
+#[test]
+fn a_menu_strip_inside_a_folded_node_comes_back_a_strip() {
+    let mut state = canvas("grid4+flow");
+    state.minimize(1).unwrap();
+    let mut held = None;
+    let seam = root(0);
+    for by in [-AREA.w, AREA.w] {
+        let pressed = held.is_none();
+        state
+            .step_seam_drag(&mut held, (&seam, by, pressed), AREA)
+            .unwrap();
+        if by < 0.0 {
+            assert_eq!(state.railed().len(), 4, "the grid folded whole");
+        }
+    }
+    assert!(state.railed().is_empty(), "the grid reopened");
+    assert_eq!(
+        state.mode(1),
+        Some(PaneMode::Minimized),
+        "chart 1 is a strip again"
+    );
+    assert_eq!(rect_of(&state, 1).w, MINIMIZED_STRIP_PX);
+    assert_eq!(state.mode(0), Some(PaneMode::Docked));
+}
+
+/// Rails wider than a narrow canvas never leave a chart a negative extent.
+#[test]
+fn rails_wider_than_the_canvas_never_go_negative() {
+    let mut state = canvas("time+time+flow");
+    assert!(state.fold_flow_side(false, true));
+    let narrow = CanvasRect::new(0.0, 0.0, 20.0, 900.0);
+    for (slot, rect) in state.rects(narrow) {
+        assert!(rect.w >= 0.0, "{slot}: {rect:?}");
+        assert!(rect.x + rect.w <= narrow.w + EPS, "{slot}: {rect:?}");
+    }
 }

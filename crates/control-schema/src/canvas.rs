@@ -31,6 +31,9 @@ pub const PARK_CAPABILITY_ID: &str = "canvas.pane.park";
 pub const POP_OUT_CAPABILITY_ID: &str = "canvas.pane.pop_out";
 pub const RETURN_CAPABILITY_ID: &str = "canvas.pane.return";
 pub const RESIZE_CAPABILITY_ID: &str = "canvas.pane.resize";
+pub const SEAM_DRAG_CAPABILITY_ID: &str = "canvas.seam.drag";
+/// The longest seam drag a call takes, in points either way.
+pub const MAX_SEAM_TRAVEL_PT: u32 = 100_000;
 
 /// Decimal places a pane's share is written and accepted with: the same as
 /// `workspace.summary`'s split fraction, so a sent share reads back as sent.
@@ -51,6 +54,7 @@ pub const CANVAS_CAPABILITY_IDS: &[&str] = &[
     POP_OUT_CAPABILITY_ID,
     RETURN_CAPABILITY_ID,
     RESIZE_CAPABILITY_ID,
+    SEAM_DRAG_CAPABILITY_ID,
 ];
 
 /// A side of the canvas, or of a docked chart, a floating chart docks at.
@@ -220,6 +224,26 @@ pub struct ResizePaneInput {
     pub share: CanonicalDecimal,
 }
 
+/// Drag one seam of the docked tree, as the hand drags it: pressed, moved
+/// `travel` points along its split, released.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SeamDragInput {
+    /// The child indices from the root down to the split the seam divides,
+    /// as the scene's `pane_menu.<slot>.rail` neighbours and `tree_seams` list
+    /// them; empty for the root split.
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub path: Vec<u32>,
+    /// The seam after child `index` of that split.
+    pub index: u32,
+    /// Points along the split, a decimal string of at most six places and
+    /// at most [`MAX_SEAM_TRAVEL_PT`] either way: positive moves the seam
+    /// right or down. Within the collapse threshold of the pair's edge that
+    /// side folds to its rail; dragged from a rail back past it, it reopens.
+    pub travel: CanonicalDecimal,
+}
+
 /// One pane of the canvas after the call.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CanvasPaneDto {
@@ -233,6 +257,10 @@ pub struct CanvasPaneDto {
     /// The same along the nearest split laying them top to bottom.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height_share: Option<CanonicalDecimal>,
+    /// A `minimized` chart a seam drag or a collapse call folded to a rail,
+    /// not to its menu strip; absent otherwise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub railed: bool,
 }
 
 /// One tab's canvas as the workspace summary reads it: the readback every
@@ -366,6 +394,11 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
             "Return a chart to the canvas",
             "Brings a chart from its own window back over the canvas, floating and centred.",
         ),
+        SEAM_DRAG_CAPABILITY_ID => canvas_descriptor::<SeamDragInput, CanvasResult>(
+            id,
+            "Drag a seam between docked charts",
+            "Runs the hand's seam drag: the seam after child index of the split at path moves travel points; within the collapse threshold of the pair's edge that side folds to its rail (the result's panes read railed), and travel back past it from a rail reopens it. slot names the first chart that folded or reopened. Refused with canvas.no_seam while a chart is maximized or the seam does not exist.",
+        ),
         RESIZE_CAPABILITY_ID => canvas_descriptor::<ResizePaneInput, CanvasResult>(
             id,
             "Resize a docked chart",
@@ -408,6 +441,10 @@ pub const READBACKS: &[Readback] = &[
     edit(
         RESIZE_CAPABILITY_ID,
         "the pane's width_share or height_share reads the applied share",
+    ),
+    edit(
+        SEAM_DRAG_CAPABILITY_ID,
+        "the folded side reads railed, or the reopened side no longer does",
     ),
 ];
 
@@ -466,6 +503,10 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
         (
             "canvas-resize-input-v1.schema.json",
             schema::<ResizePaneInput>(),
+        ),
+        (
+            "canvas-seam-drag-input-v1.schema.json",
+            schema::<SeamDragInput>(),
         ),
         ("canvas-result-v1.schema.json", schema::<CanvasResult>()),
     ]

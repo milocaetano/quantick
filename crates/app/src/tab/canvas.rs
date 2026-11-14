@@ -1054,6 +1054,9 @@ impl Tab {
 
         let edge_x = if right { rail.left() } else { rail.right() };
         paint_rail(ui.painter(), rail, (edge_x, false), response.hovered());
+        if let Some(id) = self.canvas.state.side_rail_id(right) {
+            self.canvas.menus.publish_rail(id, rail);
+        }
         let drawn_width = if right {
             rail.left() - canvas.left()
         } else {
@@ -1103,13 +1106,12 @@ impl Tab {
         drawn_width: f32,
         canvas_width: f32,
     ) {
-        let start = (drawn_width, self.canvas.folds());
-        if response.drag_started() {
-            self.canvas.drag = Some(start);
+        if response.drag_started() || (response.dragged() && self.canvas.drag.is_none()) {
+            self.canvas.drag = Some((drawn_width, self.canvas.folds()));
         }
         let step = response.drag_delta().x;
-        if response.dragged() && step.abs() > f32::EPSILON && canvas_width > 0.0 {
-            let held = self.canvas.drag.get_or_insert(start);
+        let held = self.canvas.drag.as_mut().filter(|_| response.dragged());
+        if let Some(held) = held.filter(|_| step.abs() > f32::EPSILON && canvas_width > 0.0) {
             held.0 += step;
             let asked = column_drag(held.0, canvas_width, held.1);
             if let ColumnDrag::Open(fraction) = asked {

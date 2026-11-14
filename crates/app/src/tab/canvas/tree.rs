@@ -8,11 +8,10 @@
 
 use eframe::egui;
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
-use quantick_control_handlers::canvas::item_capability;
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_workspace::canvas::{
-    CanvasRect, FloatHost, PaneKind, PaneMenuItem, PaneSlot, SplitAxis, slot_seat, strip_label,
-    tree_bands, tree_rails, tree_seams,
+    CanvasRect, FloatHost, PaneKind, PaneSlot, SplitAxis, slot_seat, strip_label, tree_bands,
+    tree_rails, tree_seams,
 };
 use smallvec::SmallVec;
 
@@ -155,10 +154,7 @@ impl Tab {
             let row = seam.axis == SplitAxis::Row;
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
             let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
-            let mut handle = ui.interact(grab, id, egui::Sense::drag());
-            if seam.rail.is_some() {
-                handle = handle.on_hover_text("drag to show the folded chart again");
-            }
+            let handle = ui.interact(grab, id, egui::Sense::drag());
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
                 hot = hot.or(seam.rail.map(|rail| rail.slot));
@@ -178,8 +174,7 @@ impl Tab {
             let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
             let edge = (edges[usize::from(rail.meets_after)], across);
             super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
-            let restore = Some(item_capability(PaneMenuItem::Restore));
-            (self.canvas.menus).publish(rail.control_id(), "Restore", at, restore);
+            self.canvas.menus.publish_rail(rail.control_id(), at);
         }
     }
 

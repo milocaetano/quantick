@@ -67,7 +67,8 @@ pub trait LayoutTab {
     fn set_split_fraction(&mut self, fraction: f32) -> bool;
     /// The divider drag's, the rail's and the menu's collapse.
     fn set_context_collapsed(&mut self, collapsed: bool) -> bool;
-    /// Whether this layout gives the flow pane a right rail to collapse to.
+    /// Whether the flow pane stands docked beside charts, so either side of
+    /// it has a rail to fold to.
     fn flow_has_rail(&self) -> bool;
     /// The flow pane's collapse.
     fn set_flow_collapsed(&mut self, collapsed: bool) -> bool;
@@ -419,8 +420,12 @@ fn set_collapsed<H: LayoutHost + ?Sized>(
     collapsed: bool,
 ) -> Result<Value, ControlError> {
     let index = tab_index(app, parse(input)?)?;
+    let tab = tab_at(app, index)?;
+    if !tab.flow_has_rail() {
+        return Err(nothing_to_fold());
+    }
     // The same call the divider drag, the rail and the menu take.
-    let changed = tab_at(app, index)?.set_context_collapsed(collapsed);
+    let changed = tab.set_context_collapsed(collapsed);
     result(app, index, changed)
 }
 
@@ -450,12 +455,23 @@ fn set_flow_collapsed<H: LayoutHost + ?Sized>(
     let index = tab_index(app, parse(input)?)?;
     let tab = tab_at(app, index)?;
     if !tab.flow_has_rail() {
-        return Err(ControlError::invalid_request(
-            "the flow pane has no right rail in this layout",
-        ));
+        return Err(nothing_to_fold());
     }
     let changed = tab.set_flow_collapsed(collapsed);
     result(app, index, changed)
+}
+
+/// A collapse with no second side to fold: the flow pane alone, floating,
+/// or not on the canvas. Coded, so "already folded" (`changed` false) and
+/// "nothing to fold" never read alike.
+fn nothing_to_fold() -> ControlError {
+    let mut error = ControlError::invalid_request(
+        "nothing to fold: the flow pane does not stand docked beside other charts",
+    );
+    error.context.details = Some(serde_json::json!({ "refusal": "layout.nothing_to_fold" }));
+    error.context.next_steps =
+        vec!["Pick a layout with the flow pane beside charts (layout.preset.apply).".to_owned()];
+    error
 }
 
 fn focus<H: LayoutHost + ?Sized, A>(

@@ -5,8 +5,8 @@
 //! live canvas (owned, edited by docking and removing), so a canvas and the
 //! preset it came from are compared by one rule: [`PaneTree::shape`].
 
+use super::metrics::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX};
 use super::presets::PaneKind;
-use super::rail::{CANVAS_DIVIDER_PX, COLLAPSED_PANE_WIDTH_PX};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -238,6 +238,14 @@ impl PaneTree {
         out
     }
 
+    /// Whether any pane this node holds passes `test`, without allocating.
+    pub(crate) fn any_pane(&self, test: &dyn Fn(PaneSlot) -> bool) -> bool {
+        match self {
+            Self::Pane { slot, .. } => test(*slot),
+            Self::Split { children, .. } => children.iter().any(|child| child.any_pane(test)),
+        }
+    }
+
     /// Whether every pane this node holds is folded to a rail: the node is
     /// one rail, however many panes it lays out.
     pub(crate) fn railed(&self, pin: &dyn Fn(PaneSlot) -> Pin) -> bool {
@@ -314,11 +322,14 @@ impl PaneTree {
                 };
                 pinned_before(&pinned, index) + free * spent_share
             };
+            // Rails wider than a narrow canvas end at its edge, never past
+            // it or before their own start.
             let end = if index + 1 == children.len() {
                 extent
             } else {
-                end
-            };
+                end.min(extent)
+            }
+            .max(start);
             let piece = match axis {
                 SplitAxis::Row => CanvasRect::new(area.x + start, area.y, end - start, area.h),
                 SplitAxis::Column => CanvasRect::new(area.x, area.y + start, area.w, end - start),

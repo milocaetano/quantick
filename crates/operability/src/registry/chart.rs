@@ -285,6 +285,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         )],
         mapping: capability!("canvas.pane.resize"),
     },
+    UiBehaviour {
+        id: "canvas.seam.drag",
+        title: "Fold a docked chart to its rail, or reopen it, by its seam",
+        reach: "drag a seam of a layout the canvas tree lays out to the canvas edge, or a rail back",
+        keys: &[(
+            Source::Authored,
+            "a drag on a seam or rail the canvas model's `tree_seams` lists",
+        )],
+        mapping: capability!("canvas.seam.drag"),
+    },
 ];
 
 /// What a drag on a floating chart's grip is keyed by.

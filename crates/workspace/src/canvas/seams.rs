@@ -10,10 +10,10 @@
 //! open child past it, and the strip slides along.
 
 use super::bands::inset_seams;
-use super::presets::{LayoutPreset, PaneKind};
-use super::rail::COLLAPSED_HIT_PX;
+use super::metrics::COLLAPSED_HIT_PX;
 #[cfg(doc)]
-use super::rail::COLLAPSED_PANE_WIDTH_PX;
+use super::metrics::COLLAPSED_PANE_WIDTH_PX;
+use super::presets::{LayoutPreset, PaneKind};
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
 
@@ -227,11 +227,11 @@ fn rail_of(
     }
 }
 
-/// Whether `child` is folded to a strip its split holds: a folded pane, or a
-/// split whose every pane is folded.
+/// Whether `child` is folded: a pane minimized to its strip or railed, or a
+/// split whose every pane is.
 pub(super) fn pinned(state: &CanvasState, child: &PaneTree) -> bool {
     match child {
-        PaneTree::Pane { slot, .. } => state.minimized().contains(slot),
+        PaneTree::Pane { slot, .. } => state.folded(*slot),
         PaneTree::Split { children, .. } => children.iter().all(|child| pinned(state, child)),
     }
 }
@@ -544,7 +544,10 @@ impl CanvasState {
     pub fn saved_form(&self, preset: &LayoutPreset, split: f32, columns: bool) -> Option<Self> {
         let (mut state, mut split) = (self.clone(), split);
         state.mirror_split(preset, &mut split, columns);
-        let plain = columns && state == Self::from_preset_split(preset, Some(split));
+        // A column fold is the save's own two flags: rebuilt, not carried.
+        let (context, flow) = state.flow_side_folds();
+        let rebuilt = Self::from_preset_split(preset, Some(split)).with_folds(context, flow);
+        let plain = columns && state == rebuilt;
         (!plain).then_some(state)
     }
 

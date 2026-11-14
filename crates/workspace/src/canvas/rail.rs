@@ -5,8 +5,11 @@
 //! the tree fold a side within [`COLLAPSE_AT_PX`] of the pair's edge to a
 //! [`COLLAPSED_PANE_WIDTH_PX`] rail a pointer finds over [`COLLAPSED_HIT_PX`],
 //! and open it again when dragged back past the threshold. The constants have
-//! this one owner; `canvas_layout` re-exports them for the column painter.
+//! their one owner in [`super::metrics`]; `canvas_layout` re-exports them.
 
+use super::metrics::COLLAPSE_AT_PX;
+#[cfg(doc)]
+use super::metrics::{COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX};
 use super::presets::PaneKind;
 use super::seams::{
     MIN_TREE_PANE_PX, SeamAddress, along, bounds, extent, node_at, node_at_mut, partners, pinned,
@@ -14,81 +17,6 @@ use super::seams::{
 };
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
-
-/// Width of the draggable divider between two panes, in pixels.
-pub const CANVAS_DIVIDER_PX: f32 = 4.0;
-
-/// Width of a collapsed pane, in pixels.
-///
-/// **Never zero.** The vertical axis already settled this question — see
-/// `quantick_chart::indicator_views::COLLAPSED_PANE_HEIGHT_PX`, "a pane that vanished would be an
-/// indicator the user added and the chart silently dropped" — and the answer
-/// is the same here: a pane with no width has no handle, and a pane with no
-/// handle cannot be brought back from the canvas it left.
-///
-/// The two axes differ in pixels because they differ in what they must hold. A
-/// collapsed indicator pane keeps a readable row of text, so it needs 20 px of
-/// height; a collapsed chart pane keeps only a grip, so 8 px of width is
-/// enough. What they share — and what may not drift — is the rule that
-/// collapse leaves something to click.
-pub const COLLAPSED_PANE_WIDTH_PX: f32 = 8.0;
-
-/// How narrow a divider drag has to get before the pane is dismissed rather
-/// than squeezed.
-///
-/// **In pixels, deliberately, and below [`MIN_PANE_WIDTH_PX`].** A share of
-/// the canvas cannot be both: a fraction that sits under the floor on a
-/// trading monitor sits over it on a laptop, and over it the floor never
-/// binds — the pane would be dismissed while it still had room to be a chart,
-/// and every width between the threshold and the floor would be unreachable.
-///
-/// Half the floor is the gesture: drag to the minimum and the pane holds
-/// there; keep going, well past the point it stopped narrowing, and it is
-/// dismissed. The travel past the floor is what makes the dismissal
-/// deliberate.
-pub const COLLAPSE_AT_PX: f32 = MIN_PANE_WIDTH_PX / 2.0;
-
-/// How wide the collapsed rail's *hit* area is, against the
-/// [`COLLAPSED_PANE_WIDTH_PX`] it paints.
-///
-/// The rail gives up almost all its width and keeps all of its reachability:
-/// the extra reaches into the neighbouring chart, where it costs nothing but
-/// the pointer's first few pixels. 24 px is the floor a pointer target is held
-/// to, and a rail that photographed well but could not be hit would be a
-/// picture of an affordance rather than one.
-pub const COLLAPSED_HIT_PX: f32 = 24.0;
-
-/// Narrowest the column painter squeezes a pane to while it is still open.
-///
-/// A pane is not all chart. The price axis takes `plot_area`'s gutter constant (64 px)
-/// off its right edge before a single candle is drawn, and the flow pane's
-/// tape takes more. This was 120 px and the doc said "below this a chart stops
-/// being one" — which was true of 120 px itself: a floored pane came out with
-/// **22 px** of chart on a 1124 px canvas, the axis having claimed the rest.
-/// The number has to leave a chart behind, not just a pane.
-///
-/// A trader who wants less than this wants the pane collapsed, which is a
-/// different request with a different affordance — and, at half this width,
-/// one the same drag reaches by carrying on.
-pub const MIN_PANE_WIDTH_PX: f32 = 240.0;
-
-/// The floor a pointer target is held to, checked where it cannot be missed.
-///
-/// A compile error rather than a failing test: this is a property of the
-/// constant above, and a reader lowering it should be stopped by the build
-/// rather than by a test run they might not reach.
-const _: () = assert!(
-    COLLAPSED_HIT_PX >= 24.0,
-    "the collapsed rail's hit area is under the minimum size a pointer target is held to"
-);
-const _: () = assert!(
-    COLLAPSE_AT_PX > 0.0,
-    "a collapse threshold at zero can never be crossed, so the pane could never be dismissed"
-);
-const _: () = assert!(
-    COLLAPSE_AT_PX < MIN_PANE_WIDTH_PX,
-    "a collapse threshold at or above the pane's own floor makes the floor unreachable:      the pane would be dismissed while it still had room to be a chart"
-);
 
 /// A seam drag in flight: the seam, where the first of its pair ended at the
 /// press, the pointer's travel since, and the split's shares then.
@@ -344,7 +272,7 @@ impl CanvasState {
         }
         let mut next = self.clone();
         next.set_railed(&other, false);
-        if other.iter().all(|slot| next.minimized().contains(slot)) {
+        if other.iter().all(|slot| next.folded(*slot)) {
             return false;
         }
         next.set_railed(&fold, true);
@@ -353,15 +281,77 @@ impl CanvasState {
         changed
     }
 
-    /// Whether the charts beside the flow pane, and the flow pane itself, are
-    /// folded to their rails: what [`Self::fold_flow_side`] reads back.
+    /// The split holding the docked flow pane and its index there, found
+    /// without allocating: what every frame's fold readback walks.
+    fn flow_split(&self) -> Option<(&[PaneTree], usize)> {
+        fn find(node: &PaneTree) -> Option<(&[PaneTree], usize)> {
+            let PaneTree::Split { children, .. } = node else {
+                return None;
+            };
+            let flow = |child: &PaneTree| matches!(child, PaneTree::Pane { kind, .. } if *kind == PaneKind::Flow);
+            (children
+                .iter()
+                .position(flow)
+                .map(|index| (&children[..], index)))
+            .or_else(|| children.iter().find_map(find))
+        }
+        find(self.tree())
+    }
+
+    /// Whether the flow pane stands docked beside charts, so either side of
+    /// it can fold.
+    #[must_use]
+    pub fn has_flow_sides(&self) -> bool {
+        self.flow_split().is_some()
+    }
+
+    /// Whether any chart beside the flow pane, and the flow pane itself,
+    /// is on a rail: what [`Self::fold_flow_side`] reads back.
     #[must_use]
     pub fn flow_side_folds(&self) -> (bool, bool) {
-        let railed = |side: &[PaneSlot]| {
-            !side.is_empty() && side.iter().all(|slot| self.railed().contains(slot))
+        let Some((children, index)) = self.flow_split() else {
+            return (false, false);
         };
-        self.flow_sides().map_or((false, false), |(own, context)| {
-            (railed(&context), railed(&own))
-        })
+        let any = |child: &PaneTree| child.any_pane(&|slot| self.railed().contains(&slot));
+        let context = (children.iter().enumerate()).any(|(at, child)| at != index && any(child));
+        (context, any(&children[index]))
+    }
+
+    /// Whether the rails, if any, are exactly one whole side of the flow
+    /// pane: the fold the column painter draws as its own.
+    pub(super) fn one_side_railed(&self) -> bool {
+        if self.railed().is_empty() {
+            return true;
+        }
+        let Some((children, index)) = self.flow_split() else {
+            return false;
+        };
+        let whole = |child: &PaneTree| child.railed(&|slot| self.pin(slot));
+        let beside = (children.iter().enumerate()).filter(|(at, _)| *at != index);
+        let (context, flow) = self.flow_side_folds();
+        let context_whole = beside.clone().all(|(_, child)| whole(child));
+        let held: usize = beside.map(|(_, child)| child.len()).sum();
+        (flow && !context && whole(&children[index]) && self.railed().len() == 1)
+            || (context && !flow && context_whole && self.railed().len() == held)
+    }
+
+    /// The scene's name for the rail of one side of the flow pane, the flow
+    /// pane's own (`flow`) or the charts beside it, while it is folded.
+    #[must_use]
+    pub fn side_rail_id(&self, flow: bool) -> Option<String> {
+        let (own, context) = self.flow_sides()?;
+        let side = if flow { own } else { context };
+        let first = side.into_iter().find(|slot| self.railed().contains(slot))?;
+        Some(format!("pane_menu.{first}.rail"))
+    }
+
+    /// This canvas with the column painter's two flags folded in: what a
+    /// save keeping only a preset, a split and the flags rebuilds.
+    #[must_use]
+    pub fn with_folds(mut self, context: bool, flow: bool) -> Self {
+        if context || flow {
+            self.fold_flow_side(!context, true);
+        }
+        self
     }
 }
