@@ -850,8 +850,14 @@ fn a_seam_drag_call_folds_past_the_threshold_and_reopens_back() {
     assert_eq!(folded, (true, Some(1)), "past it the far chart folds");
     assert!(state.railed().contains(&1));
     let panes = crate::canvas::view(&state, drawn).panes;
-    let railed: Vec<_> = (panes.iter()).map(|pane| (pane.slot, pane.railed)).collect();
-    assert_eq!(railed, [(0, false), (1, true)], "the readback names the rail");
+    let railed: Vec<_> = (panes.iter())
+        .map(|pane| (pane.slot, pane.railed))
+        .collect();
+    assert_eq!(
+        railed,
+        [(0, false), (1, true)],
+        "the readback names the rail"
+    );
     let back = act(&mut state, None, drawn, drag(-400.0)).unwrap();
     assert_eq!(back, (true, Some(1)), "dragged back it reopens");
     assert!(state.railed().is_empty());
