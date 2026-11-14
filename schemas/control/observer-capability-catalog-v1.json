@@ -10929,7 +10929,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Runs the hand's seam drag: the seam after child index of the split at path moves travel points; within the collapse threshold of the pair's edge that side folds to its rail (the result's panes read railed), and travel back past it from a rail reopens it. slot names the first chart that folded or reopened. Refused with canvas.no_seam while a chart is maximized or the seam does not exist.",
+      "description": "Runs the hand's seam drag: the seam after child index of the split at path (workspace.summary lists each tab's canvas.seams with both) moves travel points; within the collapse threshold of the pair's edge that side folds to its rail (the result's panes read railed), and travel back past it from a rail reopens it. slot names the first chart that folded or reopened. Refused with canvas.no_seam while a chart is maximized or the seam does not exist.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10959,7 +10959,7 @@
           },
           "path": {
             "default": [],
-            "description": "The child indices from the root down to the split the seam divides,\nas the scene's `pane_menu.<slot>.rail` neighbours and `tree_seams` list\nthem; empty for the root split.",
+            "description": "The child indices from the root down to the split the seam divides,\nas `workspace.summary` lists each tab's `canvas.seams`; empty for the\nroot split.",
             "items": {
               "format": "uint32",
               "minimum": 0,
@@ -36675,6 +36675,21 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "CanvasDimension": {
+            "description": "Which way a docked chart is resized.",
+            "oneOf": [
+              {
+                "const": "width",
+                "description": "Along a split that lays charts left to right.",
+                "type": "string"
+              },
+              {
+                "const": "height",
+                "description": "Along a split that lays charts top to bottom.",
+                "type": "string"
+              }
+            ]
+          },
           "CanvasLayoutDto": {
             "enum": [
               "flow",
@@ -36791,6 +36806,51 @@
             ],
             "type": "object"
           },
+          "CanvasSeamDto": {
+            "description": "One seam of the docked tree: what `canvas.seam.drag` takes as `path` and\n`index`, which way it moves, and the rail beside it.",
+            "properties": {
+              "dimension": {
+                "$ref": "#/$defs/CanvasDimension",
+                "description": "What a drag of it trades: the widths of charts side by side, or the\nheights of charts stacked."
+              },
+              "index": {
+                "description": "It lies after child `index` of that split.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "description": "The child indices from the root down to the split it divides; empty\nfor the root split.",
+                "items": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "rail_slot": {
+                "description": "The first chart of the rail folded right beside it, which dragging\nthe seam back reopens; absent with no rail there.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "resizable": {
+                "description": "Whether a drag moves it: false beside menu strips up to the split's\nend.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "index",
+              "dimension",
+              "resizable"
+            ],
+            "type": "object"
+          },
           "CanvasView": {
             "description": "One tab's canvas as the workspace summary reads it: the readback every\ncanvas edit reconciles against.",
             "properties": {
@@ -36815,6 +36875,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "seams": {
+                "description": "Every seam between docked panes, as `canvas.seam.drag` addresses it:\nthe root split's first, then each child split's, depth first. One\nfewer than the docked panes at most; none while a chart is maximized.",
+                "items": {
+                  "$ref": "#/$defs/CanvasSeamDto"
+                },
+                "type": "array"
               }
             },
             "required": [

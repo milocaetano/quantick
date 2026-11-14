@@ -17,9 +17,11 @@ use super::seams::{
 };
 use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
+use serde::{Deserialize, Serialize};
 
 /// A seam drag in flight: the seam, where the first of its pair ended at the
-/// press, the pointer's travel since, and the split's shares then.
+/// press, the pointer's travel since, the split's shares then, and the
+/// pair's shares before any fold of it: what a fold keeps for a restore.
 ///
 /// Every step lays the pair out afresh from the press, so travel is never
 /// lost against a floor, and a drag that comes back to where it started puts
@@ -30,15 +32,22 @@ pub struct SeamDrag {
     origin: f32,
     travel: f32,
     shares: Vec<f32>,
+    open: [f32; 2],
+}
+
+/// What a seam fold took from its open partner: the folded node's first
+/// slot, the partner's, and the two shares they had before the fold. A
+/// restore puts those two back and leaves the split's other children alone;
+/// the fold had to grow the partner's share, in their units, to fill the
+/// space.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Reopen {
+    pub(super) folded: PaneSlot,
+    partner: PaneSlot,
+    shares: [f32; 2],
 }
 
 impl SeamDrag {
-    /// The seam held.
-    #[must_use]
-    pub fn seam(&self) -> &SeamAddress {
-        &self.seam
-    }
-
     /// Add the pointer's `delta` points along the split to the travel.
     pub fn travel_by(&mut self, delta: f32) {
         if delta.is_finite() {
@@ -66,12 +75,20 @@ impl CanvasState {
         seam: &SeamAddress,
         area: CanvasRect,
     ) -> Result<SeamDrag, CanvasRefusal> {
-        let (axis, _, [first, _], shares) = self.drag_pair(seam)?;
+        let (axis, at, [first, second], shares) = self.drag_pair(seam)?;
         let origin = extent(bounds(&first, &self.rects(area)), axis);
+        let (one, two) = (slots(&first)[0], slots(&second)[0]);
+        // A pair already folded opens, and folds again, at its pre-fold shares.
+        let kept = (self.reopen.iter()).find_map(|kept| match (kept.folded, kept.partner) {
+            pair if pair == (one, two) => Some(kept.shares),
+            pair if pair == (two, one) => Some([kept.shares[1], kept.shares[0]]),
+            _ => None,
+        });
         Ok(SeamDrag {
             seam: seam.clone(),
             origin,
             travel: 0.0,
+            open: kept.unwrap_or([shares[at[0]], shares[at[1]]]),
             shares,
         })
     }
@@ -154,7 +171,13 @@ impl CanvasState {
             } else {
                 (&two, press.0, press.1)
             };
+            let (kept, partner) = if fold_first { (0, 1) } else { (1, 0) };
             next.set_railed(&slots(folded), true);
+            next.reopen.push(Reopen {
+                folded: slots(folded)[0],
+                partner: slots([&one, &two][partner])[0],
+                shares: [drag.open[kept], drag.open[partner]],
+            });
             let rail = extent(bounds(folded, &next.rects(area)), axis);
             let open = paid(pair_px - rail, open_press);
             let kept = if open_press > f32::EPSILON {
@@ -209,19 +232,31 @@ impl CanvasState {
         }
     }
 
-    /// Open the rail `slot` folded to, every pane of it; answers whether it
-    /// was folded to one.
+    /// Open the rail `slot` folded to, every pane of it, giving the pair a
+    /// seam fold traded between the shares it had before; answers whether
+    /// it was folded to one.
     pub(super) fn unrail(&mut self, slot: PaneSlot) -> bool {
-        let mut node = self.tree();
+        let (mut node, mut path) = (self.tree(), Vec::new());
         while let PaneTree::Split { children, .. } = node {
-            let Some(child) = children.iter().find(|child| child.holds(slot)) else {
+            let Some(index) = children.iter().position(|child| child.holds(slot)) else {
                 return false;
             };
-            if railed(self, child) {
-                let folded = slots(child);
+            if railed(self, &children[index]) {
+                let folded = slots(&children[index]);
+                let kept = self.reopen.iter().find(|kept| kept.folded == folded[0]);
+                let back = kept.and_then(|kept| {
+                    let partner = children
+                        .iter()
+                        .position(|child| child.holds(kept.partner))?;
+                    (!pinned(self, &children[partner])).then_some((partner, kept.shares))
+                });
+                if let Some((partner, [one, two])) = back {
+                    self.set_pair_shares(&path, [index, partner], (one, two));
+                }
                 return self.set_railed(&folded, false);
             }
-            node = child;
+            path.push(index);
+            node = &children[index];
         }
         false
     }
@@ -305,16 +340,21 @@ impl CanvasState {
         self.flow_split().is_some()
     }
 
-    /// Whether any chart beside the flow pane, and the flow pane itself,
-    /// is on a rail: what [`Self::fold_flow_side`] reads back.
+    /// Whether every chart on one side of the flow pane in its split, and
+    /// the flow pane itself, is on a rail: what [`Self::fold_flow_side`]
+    /// reads back, and the column painter's two flags. A chart folded inside
+    /// the stack or the grid beside the flow, with others there open, is no
+    /// context fold.
     #[must_use]
     pub fn flow_side_folds(&self) -> (bool, bool) {
-        let Some((children, index)) = self.flow_split() else {
+        let split = self.flow_split().filter(|_| !self.railed().is_empty());
+        let Some((children, index)) = split else {
             return (false, false);
         };
-        let any = |child: &PaneTree| child.any_pane(&|slot| self.railed().contains(&slot));
-        let context = (children.iter().enumerate()).any(|(at, child)| at != index && any(child));
-        (context, any(&children[index]))
+        let whole = |child: &PaneTree| child.railed(&|slot| self.pin(slot));
+        let side = |side: &[PaneTree]| !side.is_empty() && side.iter().all(whole);
+        let context = side(&children[..index]) || side(&children[index + 1..]);
+        (context, whole(&children[index]))
     }
 
     /// Whether the rails, if any, are exactly one whole side of the flow
@@ -337,19 +377,32 @@ impl CanvasState {
 
     /// The scene's name for the rail of one side of the flow pane, the flow
     /// pane's own (`flow`) or the charts beside it, while it is folded.
+    /// Walks the tree without allocating: only the name is built.
     #[must_use]
     pub fn side_rail_id(&self, flow: bool) -> Option<String> {
-        let (own, context) = self.flow_sides()?;
-        let side = if flow { own } else { context };
-        let first = side.into_iter().find(|slot| self.railed().contains(slot))?;
-        Some(format!("pane_menu.{first}.rail"))
+        fn first(node: &PaneTree, railed: &dyn Fn(PaneSlot) -> bool) -> Option<PaneSlot> {
+            match node {
+                PaneTree::Pane { slot, .. } => railed(*slot).then_some(*slot),
+                PaneTree::Split { children, .. } => {
+                    children.iter().find_map(|child| first(child, railed))
+                }
+            }
+        }
+        let (children, index) = self.flow_split()?;
+        let railed = |slot: PaneSlot| self.railed().contains(&slot);
+        let mut side = (children.iter().enumerate()).filter(|(at, _)| (*at == index) == flow);
+        let slot = side.find_map(|(_, child)| first(child, &railed))?;
+        Some(format!("pane_menu.{slot}.rail"))
     }
 
     /// This canvas with the column painter's two flags folded in: what a
-    /// save keeping only a preset, a split and the flags rebuilds.
+    /// save keeping only a preset, a split and the flags rebuilds, and what a
+    /// save from before rails holds beside a canvas (the flags outlived a
+    /// maximize, a float or an add there). A canvas holding a rail already
+    /// says its own folds, and is kept as it is.
     #[must_use]
     pub fn with_folds(mut self, context: bool, flow: bool) -> Self {
-        if context || flow {
+        if (context || flow) && self.railed().is_empty() {
             self.fold_flow_side(!context, true);
         }
         self

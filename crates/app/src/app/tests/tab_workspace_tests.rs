@@ -1100,7 +1100,9 @@ fn an_old_folded_recipe_with_a_canvas_lands_as_one_rail_and_reads_clean() {
     frames(&mut app, 4);
     let mut old = live_recipe(&app.runtime, first).expect("an open tab");
     let preset = crate::canvas_layout::preset("time+flow").expect("registered");
-    let mut canvas = quantick_workspace::canvas::CanvasState::from_preset(preset);
+    // As the base saved it: the tree's shares mirror the column split.
+    let mut canvas =
+        quantick_workspace::canvas::CanvasState::from_preset_split(preset, old.split_fraction);
     assert_eq!(canvas.maximize(1), Ok(true), "the flow chart maximized");
     (old.canvas, old.context_collapsed, old.flow_collapsed) = (Some(canvas), true, false);
     // Read back as the base wrote it.

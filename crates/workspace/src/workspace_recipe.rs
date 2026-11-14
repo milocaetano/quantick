@@ -123,6 +123,7 @@ pub struct ContextPaneRecipe {
 
 /// One saved way of reading a market.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "StoredRecipe")]
 pub struct WorkspaceRecipe {
     /// Which charts the canvas shows.
     pub layout: DeclaredLayout,
@@ -167,6 +168,74 @@ pub struct WorkspaceRecipe {
     /// `layout` names, as [`Self::canvas_state`] reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canvas: Option<CanvasState>,
+}
+
+/// A recipe as a save holds it, healed as it is read: a canvas saved before
+/// rails, beside a column fold flag that outlived a maximize, a float or an
+/// add, carries that fold as its rail, so the tab it opens and the save read
+/// alike ([`CanvasState::with_folds`]).
+#[derive(Deserialize)]
+struct StoredRecipe {
+    layout: DeclaredLayout,
+    #[serde(default)]
+    split_fraction: Option<f32>,
+    #[serde(default)]
+    context_collapsed: bool,
+    #[serde(default)]
+    flow_collapsed: bool,
+    #[serde(default)]
+    context_heights: Vec<f32>,
+    #[serde(default)]
+    context_panes_collapsed: Vec<bool>,
+    #[serde(default)]
+    flow_indicators: Vec<SavedIndicator>,
+    #[serde(default)]
+    context_panes: Vec<ContextPaneRecipe>,
+    #[serde(default)]
+    layers: BTreeMap<String, bool>,
+    #[serde(default)]
+    footprint_style: Option<String>,
+    #[serde(default)]
+    flow_bars: Option<String>,
+    #[serde(default, rename = "context_bars")]
+    legacy_context_bars: Vec<String>,
+    #[serde(default)]
+    canvas: Option<CanvasState>,
+}
+
+impl From<StoredRecipe> for WorkspaceRecipe {
+    fn from(stored: StoredRecipe) -> Self {
+        let StoredRecipe {
+            layout,
+            split_fraction,
+            context_collapsed,
+            flow_collapsed,
+            context_heights,
+            context_panes_collapsed,
+            flow_indicators,
+            context_panes,
+            layers,
+            footprint_style,
+            flow_bars,
+            legacy_context_bars,
+            canvas,
+        } = stored;
+        Self {
+            layout,
+            split_fraction,
+            context_collapsed,
+            flow_collapsed,
+            context_heights,
+            context_panes_collapsed,
+            flow_indicators,
+            context_panes,
+            layers,
+            footprint_style,
+            flow_bars,
+            legacy_context_bars,
+            canvas: canvas.map(|canvas| canvas.with_folds(context_collapsed, flow_collapsed)),
+        }
+    }
 }
 
 impl Default for WorkspaceRecipe {

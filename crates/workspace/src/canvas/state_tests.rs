@@ -475,3 +475,38 @@ fn a_second_flow_pane_is_refused() {
     assert_eq!(why(&state), Ok(()));
     assert!(state.add(PaneKind::Flow, CANVAS).is_ok());
 }
+
+/// A recipe saved before rails holds a canvas *and* a column fold flag the
+/// canvas lost (a maximize kept the canvas, the flag stayed): read back, the
+/// fold is a rail on its canvas, so it reads as the tab it opens. A canvas
+/// that already holds a rail is kept as it is.
+#[test]
+fn an_old_fold_flag_beside_a_canvas_reads_back_as_a_rail() {
+    let preset = crate::canvas::preset("time+flow").unwrap();
+    let mut canvas = CanvasState::from_preset(preset);
+    canvas.maximize(1).unwrap();
+    let old = WorkspaceRecipe {
+        layout: DeclaredLayout::TimeAndFlow,
+        context_collapsed: true,
+        canvas: Some(canvas.clone()),
+        ..WorkspaceRecipe::default()
+    };
+    let read: WorkspaceRecipe = toml::from_str(&toml::to_string(&old).unwrap()).unwrap();
+    let held = read.canvas.clone().expect("the canvas");
+    assert_eq!(held.flow_side_folds(), (true, false), "the fold is a rail");
+    assert_eq!(held.maximized(), Some(1), "under the maximized chart");
+    assert_eq!(
+        toml::from_str::<WorkspaceRecipe>(&toml::to_string(&read).unwrap()).unwrap(),
+        read,
+        "and it reads back as itself"
+    );
+    let mut grid = CanvasState::from_preset(crate::canvas::preset("grid4+flow").unwrap());
+    assert!(grid.fold_flow_side(true, true));
+    let railed = WorkspaceRecipe {
+        context_collapsed: true,
+        canvas: Some(grid.clone()),
+        ..WorkspaceRecipe::default()
+    };
+    let read: WorkspaceRecipe = toml::from_str(&toml::to_string(&railed).unwrap()).unwrap();
+    assert_eq!(read.canvas, Some(grid), "its own rail wins");
+}

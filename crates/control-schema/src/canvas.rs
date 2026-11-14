@@ -230,8 +230,8 @@ pub struct ResizePaneInput {
 #[serde(deny_unknown_fields)]
 pub struct SeamDragInput {
     /// The child indices from the root down to the split the seam divides,
-    /// as the scene's `pane_menu.<slot>.rail` neighbours and `tree_seams` list
-    /// them; empty for the root split.
+    /// as `workspace.summary` lists each tab's `canvas.seams`; empty for the
+    /// root split.
     #[serde(default)]
     #[schemars(length(max = 8))]
     pub path: Vec<u32>,
@@ -276,6 +276,33 @@ pub struct CanvasView {
     /// on `monitor` for one in its own window.
     #[serde(default)]
     pub floating: Vec<CanvasPlaceDto>,
+    /// Every seam between docked panes, as `canvas.seam.drag` addresses it:
+    /// the root split's first, then each child split's, depth first. One
+    /// fewer than the docked panes at most; none while a chart is maximized.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seams: Vec<CanvasSeamDto>,
+}
+
+/// One seam of the docked tree: what `canvas.seam.drag` takes as `path` and
+/// `index`, which way it moves, and the rail beside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CanvasSeamDto {
+    /// The child indices from the root down to the split it divides; empty
+    /// for the root split.
+    #[schemars(length(max = 8))]
+    pub path: Vec<u32>,
+    /// It lies after child `index` of that split.
+    pub index: u32,
+    /// What a drag of it trades: the widths of charts side by side, or the
+    /// heights of charts stacked.
+    pub dimension: CanvasDimension,
+    /// Whether a drag moves it: false beside menu strips up to the split's
+    /// end.
+    pub resizable: bool,
+    /// The first chart of the rail folded right beside it, which dragging
+    /// the seam back reopens; absent with no rail there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rail_slot: Option<u32>,
 }
 
 /// A floating pane's place, rounded to whole points.
@@ -397,7 +424,7 @@ pub fn descriptor(id: &str) -> Option<CapabilityDescriptor> {
         SEAM_DRAG_CAPABILITY_ID => canvas_descriptor::<SeamDragInput, CanvasResult>(
             id,
             "Drag a seam between docked charts",
-            "Runs the hand's seam drag: the seam after child index of the split at path moves travel points; within the collapse threshold of the pair's edge that side folds to its rail (the result's panes read railed), and travel back past it from a rail reopens it. slot names the first chart that folded or reopened. Refused with canvas.no_seam while a chart is maximized or the seam does not exist.",
+            "Runs the hand's seam drag: the seam after child index of the split at path (workspace.summary lists each tab's canvas.seams with both) moves travel points; within the collapse threshold of the pair's edge that side folds to its rail (the result's panes read railed), and travel back past it from a rail reopens it. slot names the first chart that folded or reopened. Refused with canvas.no_seam while a chart is maximized or the seam does not exist.",
         ),
         RESIZE_CAPABILITY_ID => canvas_descriptor::<ResizePaneInput, CanvasResult>(
             id,

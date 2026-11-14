@@ -8,6 +8,7 @@
 
 use super::drop::{Corner, DockTarget, park_rect};
 use super::presets::{LayoutPreset, MAX_CANVAS_PANES, PaneKind, matching_preset, timeframes_with};
+use super::rail::Reopen;
 use super::tree::{CanvasRect, PaneSlot, PaneTree, Pin};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -134,6 +135,10 @@ pub struct CanvasState {
     /// rail is a strip again when the rail opens.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     railed: BTreeSet<PaneSlot>,
+    /// What each seam fold took from its open partner, which a restore
+    /// gives back ([`super::rail`]); only while that rail stands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) reopen: Vec<Reopen>,
     tree: PaneTree,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     floating: Vec<FloatingPane>,
@@ -148,6 +153,7 @@ impl CanvasState {
             maximized: None,
             minimized: BTreeSet::new(),
             railed: BTreeSet::new(),
+            reopen: Vec::new(),
             tree: preset.tree.clone(),
             floating: Vec::new(),
         }
@@ -196,7 +202,14 @@ impl CanvasState {
                 self.railed.remove(slot)
             };
         }
+        self.prune_reopen();
         changed
+    }
+
+    /// Forget what a fold took for every rail that no longer stands.
+    fn prune_reopen(&mut self) {
+        let railed = &self.railed;
+        self.reopen.retain(|reopen| railed.contains(&reopen.folded));
     }
 
     /// Whether `slot` is folded, to its strip or to a rail.
@@ -327,6 +340,7 @@ impl CanvasState {
         self.maximized = None;
         self.minimized.clear();
         self.railed.clear();
+        self.reopen.clear();
         changed
     }
 
@@ -336,7 +350,9 @@ impl CanvasState {
     /// Not docked, or the last unfolded pane.
     pub fn minimize(&mut self, slot: PaneSlot) -> Result<bool, CanvasRefusal> {
         self.docked(slot)?;
-        if self.minimized.contains(&slot) {
+        // On a rail it is already put away: nothing to do, whatever else
+        // stands open.
+        if self.minimized.contains(&slot) || self.railed.contains(&slot) {
             return Ok(false);
         }
         if self.open_count() <= 1 {
@@ -491,6 +507,7 @@ impl CanvasState {
                 let tree = self.tree.replaced(&swapped);
                 self.minimized.remove(&other);
                 self.railed.remove(&other);
+                self.prune_reopen();
                 let (slot, kind) = (other, other_kind);
                 self.floating.push(FloatingPane { slot, kind, host });
                 tree
@@ -656,6 +673,7 @@ impl CanvasState {
             self.minimized.clear();
             self.railed.clear();
         }
+        self.prune_reopen();
         Ok(kind)
     }
 
@@ -708,6 +726,8 @@ struct Stored {
     minimized: BTreeSet<PaneSlot>,
     #[serde(default)]
     railed: BTreeSet<PaneSlot>,
+    #[serde(default)]
+    reopen: Vec<Reopen>,
     tree: PaneTree,
     #[serde(default)]
     floating: Vec<FloatingPane>,
@@ -720,6 +740,7 @@ impl From<Stored> for CanvasState {
             maximized: stored.maximized,
             minimized: stored.minimized,
             railed: stored.railed,
+            reopen: stored.reopen,
             tree: stored.tree,
             floating: stored.floating,
         };
@@ -728,6 +749,7 @@ impl From<Stored> for CanvasState {
         if state.open_count() == 0 {
             state.railed.clear();
         }
+        state.prune_reopen();
         state
     }
 }

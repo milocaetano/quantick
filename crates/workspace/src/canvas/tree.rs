@@ -238,14 +238,6 @@ impl PaneTree {
         out
     }
 
-    /// Whether any pane this node holds passes `test`, without allocating.
-    pub(crate) fn any_pane(&self, test: &dyn Fn(PaneSlot) -> bool) -> bool {
-        match self {
-            Self::Pane { slot, .. } => test(*slot),
-            Self::Split { children, .. } => children.iter().any(|child| child.any_pane(test)),
-        }
-    }
-
     /// Whether every pane this node holds is folded to a rail: the node is
     /// one rail, however many panes it lays out.
     pub(crate) fn railed(&self, pin: &dyn Fn(PaneSlot) -> Pin) -> bool {

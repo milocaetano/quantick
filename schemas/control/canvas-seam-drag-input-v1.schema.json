@@ -17,7 +17,7 @@
     },
     "path": {
       "default": [],
-      "description": "The child indices from the root down to the split the seam divides,\nas the scene's `pane_menu.<slot>.rail` neighbours and `tree_seams` list\nthem; empty for the root split.",
+      "description": "The child indices from the root down to the split the seam divides,\nas `workspace.summary` lists each tab's `canvas.seams`; empty for the\nroot split.",
       "items": {
         "format": "uint32",
         "minimum": 0,

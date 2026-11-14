@@ -308,7 +308,7 @@ declares nothing here is a guard failure.
 | `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.resize` | a drag on a seam the canvas model's `tree_seams` lists |
-| `canvas.seam.drag` | a drag on a seam or rail the canvas model's `tree_seams` lists |
+| `canvas.seam.drag` | a drag on a seam or rail, as workspace.summary lists each tab's canvas.seams |
 | `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |

@@ -2249,10 +2249,12 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
 #[path = "native_indicator_control_tests.rs"]
 mod native_indicator_control;
 
-/// On the flow pane alone there is nothing to fold: the context and the flow
-/// collapse calls both refuse with one code, never a silent `changed: false`.
+/// On the flow pane alone there is nothing to fold, and the four collapse
+/// calls answer as they always have: the context column's two succeed with
+/// `changed: false`, the flow pane's two refuse as a bad request. No new
+/// refusal reaches a v2 caller (contract section 4).
 #[test]
-fn a_collapse_with_nothing_to_fold_is_refused_with_one_code() {
+fn a_collapse_with_nothing_to_fold_answers_as_before() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
@@ -2263,15 +2265,27 @@ fn a_collapse_with_nothing_to_fold_is_refused_with_one_code() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    for capability in ["layout.pane.collapse", "layout.flow.collapse"] {
+    for capability in ["layout.pane.collapse", "layout.pane.expand"] {
         let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        let ResponseOutcome::Success { result } = &answer.outcome else {
+            panic!("{capability} answers success: {:?}", answer.outcome);
+        };
+        assert_eq!(result["changed"], json!(false), "{capability}");
+        assert_eq!(result["collapsed"], json!(false), "{capability}");
+    }
+    for capability in ["layout.flow.collapse", "layout.flow.expand"] {
+        let (answer, _) = unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, json!({}));
+        assert_eq!(
+            error_code(&answer),
+            Some(codes::INVALID_REQUEST),
+            "{capability}"
+        );
         let error = response_error(&answer);
-        let code = error
-            .context
-            .details
-            .as_ref()
-            .map(|details| details["refusal"].clone());
-        assert_eq!(code, Some(json!("layout.nothing_to_fold")), "{capability}");
+        assert_eq!(
+            error.message,
+            "the flow pane has no right rail in this layout"
+        );
+        assert_eq!(error.context.details, None, "{capability}: no refusal code");
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();

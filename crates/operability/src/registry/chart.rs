@@ -291,7 +291,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         reach: "drag a seam of a layout the canvas tree lays out to the canvas edge, or a rail back",
         keys: &[(
             Source::Authored,
-            "a drag on a seam or rail the canvas model's `tree_seams` lists",
+            "a drag on a seam or rail, as workspace.summary lists each tab's canvas.seams",
         )],
         mapping: capability!("canvas.seam.drag"),
     },

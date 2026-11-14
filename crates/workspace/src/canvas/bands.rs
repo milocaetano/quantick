@@ -64,7 +64,8 @@ pub struct TreeBand {
     /// Folded to its strip by the canvas model.
     pub minimized: bool,
     /// Folded with its node to one rail ([`super::tree_rails`] paints it),
-    /// so there is no strip to draw: `minimized` too.
+    /// so there is no strip to draw. Never while it is maximized: then it
+    /// draws its chart over the canvas, and goes back to the rail on restore.
     pub railed: bool,
 }
 
@@ -91,7 +92,7 @@ pub fn tree_bands(
                 seat: seat(slot)?,
                 rect: inset_seams(rect, area, divider),
                 minimized: state.mode(slot) == Some(PaneMode::Minimized),
-                railed: state.railed().contains(&slot),
+                railed: state.railed().contains(&slot) && state.maximized() != Some(slot),
             })
         })
         .collect()
@@ -255,8 +256,9 @@ fn share_bits(tree: &PaneTree, out: &mut Vec<u32>) {
 }
 
 /// `state` with its slots renumbered in reading order: the tree, the folded
-/// and maximized panes by rank, and how many float.
-fn arrangement(state: &CanvasState) -> (PaneTree, Vec<usize>, Option<usize>, usize) {
+/// panes by rank (each a menu strip or a rail, `true`), the maximized pane by
+/// rank, and how many float.
+fn arrangement(state: &CanvasState) -> (PaneTree, Vec<(usize, bool)>, Option<usize>, usize) {
     let order: Vec<u32> = (state.tree().panes().into_iter())
         .map(|(slot, _)| slot)
         .collect();
@@ -266,7 +268,9 @@ fn arrangement(state: &CanvasState) -> (PaneTree, Vec<usize>, Option<usize>, usi
             .unwrap_or(usize::MAX)
     };
     let tree = state.tree().relabelled(&|slot| rank(slot) as u32);
-    let mut folded: Vec<usize> = state.minimized().iter().map(|slot| rank(*slot)).collect();
+    let strips = state.minimized().iter().map(|slot| (rank(*slot), false));
+    let rails = state.railed().iter().map(|slot| (rank(*slot), true));
+    let mut folded: Vec<(usize, bool)> = strips.chain(rails).collect();
     folded.sort_unstable();
     let maximized = state.maximized().map(rank);
     (tree, folded, maximized, state.floating().len())

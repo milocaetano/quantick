@@ -168,6 +168,7 @@ impl Tab {
                 let pressed = (&seam.address, step, handle.drag_started());
                 let _ = state.step_seam_drag(held, pressed, canvas);
             }
+            self.canvas.seam_drag.take_if(|_| handle.drag_stopped());
         }
         for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
             let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);

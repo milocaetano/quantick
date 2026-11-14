@@ -829,3 +829,39 @@ fn one_chart_folded_beside_the_flow_is_no_context_fold() {
         assert_eq!(state.flow_side_folds(), (true, false), "{id}");
     }
 }
+
+/// A drag fold marks the layout changed as a menu minimize does, even where
+/// the shares come out as they were; a minimize asked of a chart already on
+/// a rail changes nothing and refuses nothing.
+#[test]
+fn a_drag_fold_reads_as_a_layout_change_and_a_railed_chart_does_not_minimize() {
+    let saved = canvas("charts-2");
+    let mut live = saved.clone();
+    drag(&mut live, &root(0), AREA.w);
+    assert_eq!(
+        shares_of(&live),
+        shares_of(&saved),
+        "the pair's shares kept"
+    );
+    assert!(!same_layout(&saved, &live), "but the layout reads changed");
+    live.restore(1).unwrap();
+    assert!(same_layout(&saved, &live));
+
+    let mut grid = canvas("grid4+flow");
+    drag(&mut grid, &root(0), AREA.w);
+    assert_eq!(grid.railed().len(), 1, "the flow folded");
+    assert_eq!(grid.minimize(4), Ok(false), "on a rail already");
+    let mut grid = canvas("grid4+flow");
+    drag(&mut grid, &root(0), -AREA.w);
+    assert_eq!(grid.railed().len(), 4, "the whole grid folded");
+    assert_eq!(grid.minimize(0), Ok(false), "no refusal: nothing to do");
+    let mut cell = canvas("grid4+flow");
+    let seam = SeamAddress {
+        path: vec![0, 0],
+        index: 0,
+    };
+    drag(&mut cell, &seam, -AREA.w);
+    let before = cell.clone();
+    assert_eq!(cell.minimize(0), Ok(false), "one cell on its rail");
+    assert_eq!(cell, before, "nothing changed");
+}

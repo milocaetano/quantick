@@ -18,7 +18,7 @@ use quantick_control_schema::canvas::{
     WindowMenuInput, WindowMenuResult, descriptor,
 };
 use quantick_control_schema::canvas::{
-    CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasView,
+    CanvasPaneDto, CanvasPaneKind, CanvasPaneMode, CanvasPlaceDto, CanvasSeamDto, CanvasView,
 };
 use quantick_workspace::canvas::{
     self, CanvasRect, CanvasRefusal, CanvasState, Corner, DockTarget, DropOutcome, DropTarget,
@@ -912,10 +912,22 @@ pub fn view(state: &CanvasState, drawn: Drawn) -> CanvasView {
             }
         })
         .collect();
+    let seams = canvas::tree_seams(state, drawn.area, canvas::CANVAS_DIVIDER_PX).into_iter();
+    let seams = seams.map(|seam| CanvasSeamDto {
+        path: seam.address.path.iter().map(|at| *at as u32).collect(),
+        index: seam.address.index as u32,
+        dimension: match seam.axis {
+            SplitAxis::Row => CanvasDimension::Width,
+            SplitAxis::Column => CanvasDimension::Height,
+        },
+        resizable: seam.resizable,
+        rail_slot: seam.rail.map(|rail| rail.slot),
+    });
     CanvasView {
         preset_id: state.preset().map(|preset| preset.id.to_owned()),
         panes,
         floating,
+        seams: seams.collect(),
     }
 }
 

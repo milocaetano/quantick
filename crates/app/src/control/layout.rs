@@ -98,7 +98,8 @@ impl LayoutTab for Tab {
         self.canvas.fold(false, collapsed)
     }
     fn flow_has_rail(&self) -> bool {
-        self.canvas.state.has_flow_sides()
+        let layout = self.canvas.layout;
+        (layout.shows_flow() && layout.shows_time()) || self.canvas.state.has_flow_sides()
     }
     fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
         self.canvas.fold(true, collapsed)
