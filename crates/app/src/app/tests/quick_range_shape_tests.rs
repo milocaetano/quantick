@@ -24,17 +24,15 @@ fn ruler(levelled: bool) -> Ruler {
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
     let (_, start, end) = quick_range_ends(&app);
     if levelled {
-        let shift = egui::Modifiers::SHIFT;
-        let moves = [
+        for events in [
             vec![
                 egui::Event::PointerMoved(start),
                 secondary_button(start, true),
             ],
             vec![egui::Event::PointerMoved(end)],
             vec![egui::Event::PointerMoved(end), secondary_button(end, false)],
-        ];
-        for events in moves {
-            run_frame_with_modifiers(&mut app, &ctx, events, shift);
+        ] {
+            run_frame_with_modifiers(&mut app, &ctx, events, egui::Modifiers::SHIFT);
         }
     } else {
         drag_quick_range(&mut app, &ctx, start, end);
@@ -80,7 +78,12 @@ fn rectangle_and_trend_line_take_the_legs_two_anchors() {
             _commands,
             ..
         } = ruler(false);
-        let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+        let leg = app
+            .surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .unwrap();
         click_quick_range_action(&mut app, &ctx, action);
         let placed = drawings(&app);
         assert_eq!(placed.len(), 1, "{action:?}");
@@ -94,43 +97,36 @@ fn rectangle_and_trend_line_take_the_legs_two_anchors() {
 }
 
 #[test]
-fn horizontal_marks_the_ranges_top_and_bottom() {
-    let Ruler {
-        ctx,
-        mut app,
-        _commands,
-        ..
-    } = ruler(false);
-    let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
-    click_quick_range_action(&mut app, &ctx, Action::Horizontal);
-    let prices: Vec<f64> = drawings(&app).iter().map(|d| d.points[0].price).collect();
-    assert!(
-        drawings(&app)
-            .iter()
-            .all(|d| d.tool.id() == "horizontal-line")
-    );
-    let (top, bottom) = (
-        leg[0].price.max(leg[1].price),
-        leg[0].price.min(leg[1].price),
-    );
-    assert!(top > bottom);
-    assert_eq!(prices.len(), 2);
-    assert!(same_price(prices[0], top) && same_price(prices[1], bottom));
-}
-
-#[test]
-fn a_levelled_range_marks_one_horizontal_line() {
-    let Ruler {
-        ctx,
-        mut app,
-        _commands,
-        ..
-    } = ruler(true);
-    let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
-    assert_eq!(leg[0].price, leg[1].price);
-    click_quick_range_action(&mut app, &ctx, Action::Horizontal);
-    assert_eq!(drawings(&app).len(), 1);
-    assert!(same_price(drawings(&app)[0].points[0].price, leg[0].price));
+fn horizontal_row_places_each_distinct_anchor_price() {
+    for levelled in [false, true] {
+        let Ruler {
+            ctx,
+            mut app,
+            _commands,
+            ..
+        } = ruler(levelled);
+        let leg = app
+            .surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .unwrap();
+        let top = leg[0].price.max(leg[1].price);
+        let bottom = leg[0].price.min(leg[1].price);
+        assert_eq!(top == bottom, levelled);
+        click_quick_range_action(&mut app, &ctx, Action::Horizontal);
+        let placed = drawings(&app);
+        assert_eq!(placed.len(), if levelled { 1 } else { 2 });
+        assert!(
+            placed
+                .iter()
+                .all(|drawing| drawing.tool.id() == "horizontal-line")
+        );
+        assert!(same_price(placed[0].points[0].price, top));
+        if !levelled {
+            assert!(same_price(placed[1].points[0].price, bottom));
+        }
+    }
 }
 
 #[test]
@@ -143,7 +139,12 @@ fn the_channel_keeps_the_leg_and_takes_its_width_from_the_next_click() {
             end,
             _commands,
         } = ruler(false);
-        let leg = app.drawings.chrome.quick_range.paint_anchors().unwrap();
+        let leg = app
+            .surfaces
+            .drawing_chrome
+            .quick_range_read()
+            .paint_anchors()
+            .unwrap();
         click_quick_range_action(&mut app, &ctx, Action::Channel);
         run_frame(&mut app, &ctx);
         let pane = &app.active_tab().flow_pane;

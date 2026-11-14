@@ -1,75 +1,68 @@
-//! The indicator-preview watermark, as a [`Surface`].
-//!
-//! While a settings dialog is previewing a draft, the chart under it is
-//! showing numbers that are **not** the ones on disk. A full SELL triangle
-//! drawn from a slider mid-drag must never wear the authority of a committed
-//! signal (trader-ux review), and a trader glancing at the pane a second
-//! later has no way to tell — so the pane says so itself: one line, over the
-//! chart the preview is being judged on. The legend chip says the same thing
-//! in the corner; this says it where the signals are.
-//!
-//! It owns no state at all — what to say is entirely a function of what the
-//! host is previewing, which arrives through [`SurfaceEnv`]. That makes it
-//! the smallest possible member of the registry, and a useful shape to have
-//! in it: a surface may be a painter with nothing to remember, and still
-//! belongs here rather than in the trunk, because the constants and the
-//! placement rule are its own.
-
-use eframe::egui;
-
-use super::{Surface, SurfaceEnv, SurfaceResponse};
+//! Watermark painting over the host's authoritative preview rectangle.
+use super::{SurfaceEnv, SurfaceResponse, ViewContext};
 use crate::theme;
+use eframe::egui;
+use quantick_ui_model::indicator_preview::{Intent, Model, State, Target};
 
-/// Distance below the pane's top edge, in pixels — below the top-centre toast
-/// lane ("loading venue history"), so the two never overprint each other.
 const WATERMARK_TOP_OFFSET_PX: f32 = 34.0;
-
-/// Watermark font size, in pixels: larger than a legend chip, far from a
-/// headline.
 const WATERMARK_FONT_PX: f32 = 13.0;
-
-/// What the watermark says. One sentence, and the dash rather than a colon
-/// because the second half is the consequence, not a list.
 const WATERMARK_TEXT: &str = "PREVIEW — settings not applied";
 
-/// The banner over a pane whose indicator is showing an unapplied draft.
 #[derive(Default)]
-pub(crate) struct IndicatorPreviewSurface {
-    /// The capture hook: paint the watermark over the focused pane even
-    /// though no dialog is previewing.
-    ///
-    /// Without it this surface would be photographable only by driving an
-    /// unrelated dialog into preview state, which is exactly the
-    /// "reachable by hook" rule's reason for existing — a surface nobody can
-    /// stage is a surface nobody checks.
-    forced: bool,
-}
+pub(crate) struct View;
 
-impl Surface for IndicatorPreviewSurface {
+impl super::View<Model> for View {
     fn id(&self) -> &'static str {
         "indicator-preview-watermark"
     }
 
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        self.forced = crate::hooks::captured::var("QUANTICK_INDICATOR_PREVIEW")
-            .is_some_and(|value| value == "1");
+    fn apply_env_hook(&mut self, _: &SurfaceEnv<'_>) -> Option<Intent> {
+        Some(Intent::Force(
+            crate::hooks::captured::var("QUANTICK_INDICATOR_PREVIEW")
+                .is_some_and(|value| value == "1"),
+        ))
     }
 
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        let palette = theme::get(ctx);
-        // The real preview wins over the hook: a capture that stages one and
-        // then also forces the banner must photograph the pane the
-        // application actually chose, not the focused one.
-        let area = env
-            .indicator_preview_area
-            .or_else(|| self.forced.then_some(env.focused_chart_area).flatten());
-        let Some(rect) = area else {
-            return SurfaceResponse::default();
+    fn paint_updated(
+        &mut self,
+        session: &mut quantick_ui_model::UpdateSession<'_, Model>,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
+    ) {
+        let Some(env) = env else {
+            return;
         };
-        // A painter on its own layer rather than an `Area`: the watermark is
-        // a label over the chart with nothing to interact with, and a layer
-        // painter costs no hit-test rectangle for the pointer to snag on.
+        let preview_available = env.indicator_preview_area.is_some();
+        let focused_available = env.focused_chart_area.is_some();
+        if (
+            session.state().preview_available,
+            session.state().focused_available,
+        ) != (preview_available, focused_available)
+        {
+            session.update(Intent::Refresh {
+                preview_available,
+                focused_available,
+            });
+        }
+        self.paint(session.state(), target, Some(env));
+    }
+
+    fn paint(
+        &mut self,
+        state: &State,
+        target: &mut ViewContext<'_>,
+        env: Option<&SurfaceEnv<'_>>,
+    ) -> Option<Intent> {
+        let env = env?;
+        let rect = match state.target {
+            Target::None => None,
+            Target::Preview => env.indicator_preview_area,
+            Target::Focused => env.focused_chart_area,
+        }?;
+        let ctx = target.context();
+        let palette = theme::get(ctx);
+        // A label-only layer introduces no pointer hit-test rectangle.
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Middle,
             egui::Id::new(self.id()),
@@ -81,8 +74,12 @@ impl Surface for IndicatorPreviewSurface {
             palette.body_font(WATERMARK_FONT_PX),
             palette.accent(),
         );
-        SurfaceResponse::default()
+        None
     }
+}
+
+pub(crate) fn effects(_: ()) -> SurfaceResponse {
+    SurfaceResponse::default()
 }
 
 #[cfg(any(feature = "scenario-harness", test))]
@@ -90,65 +87,52 @@ crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PREVIEW"];
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::time::Instant;
 
-    use super::*;
-
-    fn env(preview: Option<egui::Rect>, focused: Option<egui::Rect>) -> SurfaceEnv<'static> {
-        SurfaceEnv {
-            indicator_preview_area: preview,
-            focused_chart_area: focused,
-            ..SurfaceEnv::quiet(Instant::now())
+    #[test]
+    fn registered_preview_paints_words_and_authoritative_geometry_in_same_frame() {
+        let focused = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 300.0));
+        let preview = focused.translate(egui::vec2(400.0, 0.0));
+        // Preserve all four original painted-word cases, plus real-over-forced precedence.
+        for (forced, real, focus, expected) in [
+            (false, None, Some(focused), None),
+            (false, Some(preview), None, Some(preview)),
+            (true, None, Some(focused), Some(focused)),
+            (true, None, None, None),
+            (true, Some(preview), Some(focused), Some(preview)),
+        ] {
+            let ctx = egui::Context::default();
+            let mut registry = super::super::Surfaces::default();
+            crate::hooks::captured::set_on_this_thread(Some(&[(
+                "QUANTICK_INDICATOR_PREVIEW",
+                if forced { "1" } else { "0" },
+            )]));
+            let output = ctx.run(Default::default(), |ctx| {
+                registry.draw_all(
+                    ctx,
+                    &SurfaceEnv {
+                        indicator_preview_area: real,
+                        focused_chart_area: focus,
+                        ..SurfaceEnv::quiet(Instant::now())
+                    },
+                );
+            });
+            crate::hooks::captured::set_on_this_thread(None);
+            let painted = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text() == WATERMARK_TEXT => Some(text),
+                    _ => None,
+                });
+            assert_eq!(painted.is_some(), expected.is_some());
+            if let Some(rect) = expected {
+                let text = painted.unwrap();
+                let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                assert!((bounds.center().x - rect.center().x).abs() < 1.0);
+                assert!((bounds.top() - rect.top() - WATERMARK_TOP_OFFSET_PX).abs() < 1.0);
+            }
         }
-    }
-
-    fn pane() -> egui::Rect {
-        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 300.0))
-    }
-
-    /// Painting is a side effect on the context, so the test asks egui what
-    /// actually landed rather than trusting the call was made — and asks for
-    /// the *words*, which is what a trader reads, rather than for a layer id
-    /// a refactor could keep while the text stopped being drawn.
-    fn painted(surface: &mut IndicatorPreviewSurface, env: &SurfaceEnv<'_>) -> bool {
-        let ctx = egui::Context::default();
-        let output = ctx.run(Default::default(), |ctx| {
-            surface.draw(ctx, env);
-        });
-        output.shapes.iter().any(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) => text.galley.text() == WATERMARK_TEXT,
-            _ => false,
-        })
-    }
-
-    /// No preview, no hook: the pane is showing what is on disk, and a
-    /// watermark saying otherwise would be the lie.
-    #[test]
-    fn a_pane_with_nothing_previewed_gets_no_watermark() {
-        let mut surface = IndicatorPreviewSurface::default();
-        assert!(!painted(&mut surface, &env(None, Some(pane()))));
-    }
-
-    /// A live preview marks the pane it is being judged on.
-    #[test]
-    fn a_previewed_pane_is_marked() {
-        let mut surface = IndicatorPreviewSurface::default();
-        assert!(painted(&mut surface, &env(Some(pane()), None)));
-    }
-
-    /// The hook stages the banner without a dialog, so a capture can
-    /// photograph it.
-    #[test]
-    fn the_hook_marks_the_focused_pane() {
-        let mut surface = IndicatorPreviewSurface { forced: true };
-        assert!(painted(&mut surface, &env(None, Some(pane()))));
-    }
-
-    /// Forced or not, a pane that has never been laid out has no rectangle to
-    /// paint on, and the surface returns rather than inventing one.
-    #[test]
-    fn a_pane_that_never_drew_is_left_alone() {
-        let mut surface = IndicatorPreviewSurface { forced: true };
-        assert!(!painted(&mut surface, &env(None, None)));
     }
 }

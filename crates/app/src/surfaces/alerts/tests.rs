@@ -1,4 +1,34 @@
+use super::super::Surface as _;
 use super::*;
+use quantick_alerts::{
+    AlertBook, AlertCommand, AlertError, AlertId, AlertStatus, DurableDrawingRef, MarketRef,
+    Operator, SourceContext, TargetKind, TargetRef,
+};
+use quantick_control_schema::alerts::DrawingSelector;
+
+/// An open surface; with `context`, its new draft too.
+fn surface(context: Option<&Context>) -> AlertSurface {
+    let mut surface = new_surface();
+    let _ = surface.update(Intent::Apply(Box::new(Request {
+        open: true,
+        ..Request::default()
+    })));
+    if let Some(context) = context {
+        let _ = surface.update(Intent::Create {
+            context: Box::new(context.clone()),
+            target: None,
+        });
+    }
+    surface
+}
+fn edit(surface: &mut AlertSurface, change: impl FnOnce(&mut Draft)) {
+    let mut draft = surface.model_state.draft().cloned().expect("a draft is open");
+    change(&mut draft);
+    let _ = surface.update(Intent::Edit(Box::new(draft)));
+}
+fn draft(surface: &AlertSurface) -> &Draft {
+    surface.model_state.draft().expect("a draft is open")
+}
 #[cfg(test)]
 mod confirmation {
     use super::*;
@@ -74,15 +104,13 @@ mod confirmation {
     #[test]
     fn alert_delete_requires_confirmation_and_escape_keeps_draft() {
         let ctx = egui::Context::default();
-        let mut surface = AlertSurface {
-            open: true,
-            ..Default::default()
-        };
-        surface.create(&context(), None);
-        surface.draft.as_mut().unwrap().revision = Some(3);
-        surface.draft.as_mut().unwrap().spec.id = AlertId(7);
+        let mut surface = surface(Some(&context()));
+        edit(&mut surface, |draft| {
+            draft.revision = Some(3);
+            draft.spec.id = AlertId(7);
+        });
         assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
-        assert!(surface.draft.as_ref().unwrap().confirming_delete);
+        assert!(draft(&surface).confirming_delete);
         let (_, response) = frame(
             &mut surface,
             &ctx,
@@ -95,10 +123,10 @@ mod confirmation {
             }],
         );
         assert!(response.alerts.is_none());
-        assert!(!surface.draft.as_ref().unwrap().confirming_delete);
+        assert!(!draft(&surface).confirming_delete);
         assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
         assert!(click(&mut surface, &ctx, "Keep alert").alerts.is_none());
-        assert!(!surface.draft.as_ref().unwrap().confirming_delete);
+        assert!(!draft(&surface).confirming_delete);
         assert!(click(&mut surface, &ctx, "Delete").alerts.is_none());
         let response = click(&mut surface, &ctx, "Confirm delete");
         assert_eq!(
@@ -162,12 +190,8 @@ fn alert_target_controls_keep_operators_compatible() {
             kind,
             name: "Region fixture".into(),
         });
-        let mut surface = AlertSurface {
-            open: true,
-            ..Default::default()
-        };
-        surface.create(&context, None);
-        surface.draft.as_mut().unwrap().spec.conditions[0].operator = initial;
+        let mut surface = surface(Some(&context));
+        edit(&mut surface, |draft| draft.spec.conditions[0].operator = initial);
         assert!(
             confirmation::click(&mut surface, &ctx, "Value")
                 .alerts
@@ -178,7 +202,7 @@ fn alert_target_controls_keep_operators_compatible() {
             .unwrap();
         assert_eq!(request.resolve, Some(selector));
         surface.settle_target(Ok(target.clone()));
-        let condition = &surface.draft.as_ref().unwrap().spec.conditions[0];
+        let condition = &draft(&surface).spec.conditions[0];
         assert_eq!(condition.target, TargetRef::Drawing(target));
         assert_eq!(condition.operator, expected);
         assert!(
@@ -191,7 +215,7 @@ fn alert_target_controls_keep_operators_compatible() {
                 .alerts
                 .is_none()
         );
-        let condition = &surface.draft.as_ref().unwrap().spec.conditions[0];
+        let condition = &draft(&surface).spec.conditions[0];
         assert!(matches!(condition.target, TargetRef::Value(_)));
         assert_eq!(
             condition.operator,
@@ -203,7 +227,7 @@ fn alert_target_controls_keep_operators_compatible() {
         );
         assert!(
             AlertBook::default()
-                .validate(&surface.draft.as_ref().unwrap().spec)
+                .validate(&draft(&surface).spec)
                 .is_ok()
         );
     }
@@ -214,10 +238,7 @@ fn alert_target_controls_keep_operators_compatible() {
 fn alert_storage_error_never_renders_an_empty_manager() {
     let ctx = egui::Context::default();
     let book = AlertBook::default();
-    let mut surface = AlertSurface {
-        open: true,
-        ..Default::default()
-    };
+    let mut surface = surface(None);
     for problem in [
         AlertError::UnsupportedVersion(0),
         AlertError::Invalid {
@@ -232,13 +253,12 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         };
         for _ in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                surface.draw_manager_panel(ctx, &book, env.alert_error, None);
+                draw_manager_panel(&mut surface, ctx, &book, env.alert_error, None);
             });
         }
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(
-                surface
-                    .draw_manager_panel(ctx, &book, env.alert_error, None)
+                draw_manager_panel(&mut surface, ctx, &book, env.alert_error, None)
                     .alerts
                     .is_none()
             );
@@ -263,29 +283,9 @@ fn alert_storage_error_never_renders_an_empty_manager() {
         ..SurfaceEnv::quiet(std::time::Instant::now())
     };
     let output = ctx.run(egui::RawInput::default(), |ctx| {
-        surface.draw_manager_panel(ctx, &book, env.alert_error, None);
+        draw_manager_panel(&mut surface, ctx, &book, env.alert_error, None);
     });
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().starts_with("No alerts."))));
-}
-#[test]
-fn alert_editor_workflows() {
-    let context = context();
-    let book = AlertBook::default();
-    let mut surface = AlertSurface::default();
-    surface.create(&context, None);
-    let draft = surface.draft.as_mut().unwrap();
-    draft.spec.message = "Preserve me".into();
-    draft.subview = Subview::Notifications;
-    draft.spec.notification.sound = Some(sound::AlertSound::Beep.token().into());
-    draft.subview = Subview::Conditions;
-    draft.spec.frequency = Frequency::PerBarClose;
-    assert!(book.validate(&draft.spec).is_ok());
-    assert_eq!(draft.spec.message, "Preserve me");
-    surface.settle_command(Err("Disk is full".into()));
-    assert_eq!(surface.draft.as_ref().unwrap().spec.message, "Preserve me");
-    assert_eq!(surface.error.as_deref(), Some("Disk is full"));
-    surface.settle_command(Ok(()));
-    assert!(surface.draft.is_none());
 }
 #[test]
 fn alert_surface_harness() {
@@ -304,11 +304,7 @@ fn alert_surface_harness() {
                 alert_context: Some(&context),
                 ..SurfaceEnv::quiet(std::time::Instant::now())
             };
-            let mut surface = AlertSurface {
-                open: true,
-                ..Default::default()
-            };
-            surface.create(&context, None);
+            let mut surface = surface(Some(&context));
             let output = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -322,7 +318,7 @@ fn alert_surface_harness() {
                 },
             );
             assert!(!output.shapes.is_empty());
-            assert_eq!(surface.draft.as_ref().unwrap().spec.market, context.market);
+            assert_eq!(draft(&surface).spec.market, context.market);
             let _ = ctx.run(
                 egui::RawInput {
                     events: vec![egui::Event::Key {
@@ -338,9 +334,9 @@ fn alert_surface_harness() {
                     surface.draw(ctx, &env);
                 },
             );
-            assert!(surface.draft.is_none());
+            assert!(surface.model_state.draft().is_none());
             assert!(
-                surface.open,
+                surface.is_open(),
                 "Escape returns to the manager before closing it"
             );
         }
@@ -362,12 +358,13 @@ fn alert_editor_displays_exact_threshold() {
             alert_context: Some(&context),
             ..SurfaceEnv::quiet(std::time::Instant::now())
         };
-        let mut surface = AlertSurface::default();
-        surface.create(&context, None);
+        let surface = surface(Some(&context));
+        let mut copy = draft(&surface).clone();
         let ctx = egui::Context::default();
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                surface.draw_editor(ui, &book, &env, &mut SurfaceResponse::default());
+                let failure = env.alert_failure;
+                editor::draw_editor(ui, &mut copy, None, &book, failure, &mut Vec::new());
             });
         });
         let labels: Vec<_> = output
@@ -387,7 +384,7 @@ fn alert_editor_displays_exact_threshold() {
         );
         assert!(labels.contains(&"Replay · trades.csv · TEST · tick:100"));
         assert_eq!(
-            surface.draft.as_ref().unwrap().spec.conditions[0].target,
+            draft(&surface).spec.conditions[0].target,
             TargetRef::Value(value)
         );
     }
@@ -478,10 +475,7 @@ fn alerts_parity_surface_harness() {
             } else {
                 egui::Visuals::light()
             });
-            let mut surface = AlertSurface {
-                open: true,
-                ..Default::default()
-            };
+            let mut surface = surface(None);
             let book = AlertBook::default();
             let context = context();
             for _ in 0..3 {
@@ -491,7 +485,7 @@ fn alerts_parity_surface_harness() {
                         ..Default::default()
                     },
                     |ctx| {
-                        surface.draw_manager_panel(ctx, &book, None, Some(&context));
+                        draw_manager_panel(&mut surface, ctx, &book, None, Some(&context));
                         assert!(
                             ctx.available_rect().width() >= size.x * 0.4,
                             "manager reserves readable chart space"

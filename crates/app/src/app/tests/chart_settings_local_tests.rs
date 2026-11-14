@@ -230,9 +230,9 @@ fn local_candles_closed_startup_never_pins_a_ghost_editor_across_replay_and_tab_
     let (mut app, _commands) = app_with_history(20);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     assert!(app.surfaces.hooks_pending());
-    assert!(!app.surfaces.chart_settings.is_open());
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
     run_frame(&mut app, &ctx);
-    assert_eq!(app.surfaces.chart_settings.editor.target, None);
+    assert_eq!(app.surfaces.chart_settings.model_state.editor.target, None);
     let flow = target(&app, 0, PaneSide::Flow);
     let time = target(&app, 0, PaneSide::Time(0));
     let session = quantick_replay::Session::from_text(
@@ -269,9 +269,9 @@ fn local_candles_closed_startup_never_pins_a_ghost_editor_across_replay_and_tab_
         call(&mut app, json!({"action":"inspect", "target":flow}))["target"],
         flow
     );
-    assert!(!app.surfaces.chart_settings.is_open());
-    assert_eq!(app.surfaces.chart_settings.editor.target, None);
-    assert!(!app.surfaces.chart_settings.editor.stale);
+    assert!(!app.surfaces.chart_settings.model_state.is_open());
+    assert_eq!(app.surfaces.chart_settings.model_state.editor.target, None);
+    assert!(!app.surfaces.chart_settings.model_state.editor.stale);
 }
 
 #[test]
@@ -290,14 +290,21 @@ fn local_candles_first_frame_hook_pins_only_the_opened_chart_and_captures_its_st
     crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_STYLE_PANEL", "1")]));
     run_frame(&mut app, &ctx);
     crate::hooks::captured::set_on_this_thread(None);
-    assert!(app.surfaces.chart_settings.is_open());
+    assert!(app.surfaces.chart_settings.model_state.is_open());
     assert_eq!(
-        serde_json::to_value(app.surfaces.chart_settings.editor.target.map(|target| {
-            quantick_control_schema::chart_settings::ChartSettingsTarget {
-                tab_id: quantick_control::wire::WireU64(target.tab_id),
-                pane_id: quantick_control::wire::WireU64(target.pane_id),
-            }
-        }))
+        serde_json::to_value(
+            app.surfaces
+                .chart_settings
+                .model_state
+                .editor
+                .target
+                .map(|target| {
+                    quantick_control_schema::chart_settings::ChartSettingsTarget {
+                        tab_id: quantick_control::wire::WireU64(target.tab_id),
+                        pane_id: quantick_control::wire::WireU64(target.pane_id),
+                    }
+                })
+        )
         .unwrap(),
         flow
     );
@@ -333,13 +340,13 @@ fn local_candles_source_retarget_invalidates_the_sitting_until_explicit_reopen()
         .is_err()
     );
     run_frame(&mut app, &ctx);
-    assert!(app.surfaces.chart_settings.editor.stale);
+    assert!(app.surfaces.chart_settings.model_state.editor.stale);
     assert!(dispatch(&mut app, json!({"action":"reset_candles"})).is_err());
     let reopened = call(
         &mut app,
         json!({"action":"open", "tab":"candles", "target":selected}),
     );
-    assert!(!app.surfaces.chart_settings.editor.stale);
+    assert!(!app.surfaces.chart_settings.model_state.editor.stale);
     let applied = call(
         &mut app,
         json!({"action":"apply_candle_preset", "name":"glass"}),
@@ -484,4 +491,40 @@ fn local_candles_legacy_global_settings_seed_every_unedited_pane_without_rgb_inf
         assert_eq!(actual["canvas"]["background"], json!([211, 212, 213]));
     }
     assert_eq!(app.runtime.style, legacy);
+}
+
+#[test]
+fn local_candles_hooks_capture_source_before_an_immediate_retarget() {
+    for hook in ["QUANTICK_STYLE_PANEL", "QUANTICK_FOOTPRINT_PANEL"] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(20);
+        let selected = target(&app, 0, PaneSide::Flow);
+        crate::hooks::captured::set_on_this_thread(Some(&[(hook, "1")]));
+        run_frame(&mut app, &ctx);
+        crate::hooks::captured::set_on_this_thread(None);
+        // No intervening frame or control call may initialize the old context.
+        app.active_tab_mut().symbol = "ETHUSDT".into();
+        let (tab, config) = app.active_with_config();
+        tab.maybe_switch_feed(config);
+        assert!(
+            dispatch(
+                &mut app,
+                json!({"action":"apply_candle_preset", "name":"glass"})
+            )
+            .is_err()
+        );
+        assert!(dispatch(&mut app, json!({"action":"reset_candles"})).is_err());
+        assert!(app.surfaces.chart_settings.model_state.editor.stale);
+        let reopened = call(
+            &mut app,
+            json!({"action":"open", "tab":"candles", "target":selected}),
+        );
+        let applied = call(
+            &mut app,
+            json!({"action":"apply_candle_preset", "name":"glass"}),
+        );
+        assert_eq!(applied["target"], selected);
+        let reset = call(&mut app, json!({"action":"reset_candles"}));
+        assert_eq!(reset["effective_style"], reopened["effective_style"]);
+    }
 }

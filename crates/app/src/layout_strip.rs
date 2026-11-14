@@ -54,23 +54,14 @@ pub struct StripModel<'a> {
     pub active: LayoutId,
     /// The layout under rename and its draft when this pane owns the editor.
     /// Other pane strips keep drawing the shared catalogue normally.
-    pub rename: Option<(LayoutId, &'a mut String)>,
+    pub rename: Option<(LayoutId, String)>,
     /// Whether another layout may be added.
     pub can_add: bool,
     /// Whether a layout may be deleted (never the last).
     pub can_delete: bool,
 }
 
-/// What the strip asked for this frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StripAction {
-    Switch(LayoutId),
-    Create,
-    BeginRename(LayoutId),
-    CommitRename(LayoutId, String),
-    CancelRename,
-    Delete(LayoutId),
-}
+pub use quantick_ui_model::layout_dialogs::StripAction;
 
 /// Draw one pane-local strip and collect what it asked for.
 ///
@@ -81,6 +72,7 @@ pub fn draw(
     rect: egui::Rect,
     salt: u64,
     mut model: StripModel<'_>,
+    session: &mut quantick_ui_model::UpdateSession<'_, quantick_ui_model::layout_dialogs::Model>,
 ) -> Vec<StripAction> {
     let palette = theme::get(ui.ctx());
     let mut actions = Vec::new();
@@ -120,7 +112,7 @@ pub fn draw(
                         .is_some_and(|(id, _)| *id == layout.id);
                     if renaming {
                         let (_, draft) = model.rename.as_mut().expect("rename checked above");
-                        draw_rename_box(ui, layout.id, draft, &mut actions);
+                        draw_rename_box(ui, draft, session);
                     } else {
                         draw_tab(
                             ui,
@@ -236,9 +228,8 @@ fn draw_tab(
 
 fn draw_rename_box(
     ui: &mut egui::Ui,
-    id: LayoutId,
     draft: &mut String,
-    actions: &mut Vec<StripAction>,
+    session: &mut quantick_ui_model::UpdateSession<'_, quantick_ui_model::layout_dialogs::Model>,
 ) {
     let edit = egui::TextEdit::singleline(draft)
         .desired_width(RENAME_WIDTH_PX)
@@ -254,9 +245,15 @@ fn draw_rename_box(
     let escape = ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let enter =
         !escape && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-    if escape {
-        actions.push(StripAction::CancelRename);
-    } else if enter || response.lost_focus() {
-        actions.push(StripAction::CommitRename(id, draft.clone()));
+    use quantick_ui_model::layout_dialogs::Intent;
+    if response.changed() {
+        session.update(Intent::Edit(draft.clone()));
+    }
+    if escape || enter || response.lost_focus() {
+        session.update(Intent::Finish {
+            escaped: escape,
+            enter,
+            lost_focus: response.lost_focus(),
+        });
     }
 }

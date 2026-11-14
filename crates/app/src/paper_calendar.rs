@@ -271,9 +271,6 @@ const DAY_NUMBER_BASELINE_PX: f32 = 11.0;
 const DAY_COUNT_BASELINE_PX: f32 = 7.0;
 
 #[cfg(test)]
-pub(crate) use quantick_civil::DateRange;
-
-#[cfg(test)]
 mod day_tint_tests {
     use super::*;
     use rust_decimal::Decimal;

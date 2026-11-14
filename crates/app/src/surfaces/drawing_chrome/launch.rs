@@ -6,8 +6,9 @@ use std::ffi::OsString;
 
 use eframe::egui;
 
-use super::{DrawingChromeSurface, InspectorTab};
-use crate::drawings::ChartPoint;
+use super::{Chrome, InspectorTab};
+use quantick_ui_model::drawing_chrome::scenario;
+use scenario::{DrawingDraft, DrawingsDemo, FrvpDemo};
 
 #[derive(Default)]
 pub(crate) struct DrawingChromeLaunch {
@@ -50,110 +51,51 @@ impl DrawingChromeLaunch {
             bar_position,
         }
     }
-
-    fn apply(self, chrome: &mut DrawingChromeSurface) {
-        chrome.scenario.demos.install(self.demos);
-        if self.manager {
-            chrome.manager.open = true;
+}
+impl Chrome<'_> {
+    pub fn queue_launch(&mut self, input: DrawingChromeLaunch) {
+        self.view.rejected_tab = input.rejected_tab;
+        self.emit(super::Intent::Scenario(scenario::Intent::QueueLaunch(
+            scenario::Launch {
+                demos: input.demos.into(),
+                manager: input.manager,
+                inspector: input.inspector,
+                note: input.note,
+                tab: input.tab,
+                inspector_position: input.inspector_position.map(|p| [p.x, p.y]),
+                bar_position: input.bar_position.map(|p| [p.x, p.y]),
+            },
+        )));
+    }
+    pub fn apply_launch(&mut self) {
+        let mut effects = self.emit(super::Intent::Scenario(scenario::Intent::ApplyLaunch));
+        if let Some(scenario::Effect::Launch {
+            inspector_position,
+            bar_position,
+        }) = effects.take_scenario()
+        {
+            if inspector_position.is_some() {
+                self.view.inspector.max_width = None;
+            }
+            if let Some([x, y]) = bar_position {
+                self.view.bar.bar.set_manual(egui::pos2(x, y));
+            }
         }
-        if self.inspector {
-            chrome.shared.open = true;
-        }
-        if self.note {
-            chrome.scenario.request_note(true);
-        }
-        if let Some(tab) = self.tab {
-            chrome.inspector.tab = tab;
-        }
-        if let Some(tab) = self.rejected_tab {
+        if let Some(tab) = self.view.rejected_tab.take() {
             tracing::warn!(tab, "unknown drawing inspector tab");
         }
-        if let Some(position) = self.inspector_position {
-            chrome.inspector.place_by_hand(position);
-        }
-        if let Some(position) = self.bar_position {
-            chrome.bar.bar.set_manual(position);
-        }
     }
 }
-
-#[derive(Default)]
-pub(crate) struct DrawingScenario {
-    demos: super::demo::DrawingDemoState,
-    pending_launch: Option<DrawingChromeLaunch>,
-    pending_note: bool,
-}
-
-impl DrawingScenario {
-    pub fn request_note(&mut self, pending: bool) {
-        self.pending_note = pending;
-    }
-    pub fn note_requested(&self) -> bool {
-        self.pending_note
-    }
-    /// Placement success consumes the request even if no editor was opened.
-    pub fn acknowledge_placement(&mut self, placed: bool) {
-        if placed {
-            self.pending_note = false;
-        }
-    }
-}
-
-impl DrawingChromeSurface {
-    pub fn demos(&self) -> &super::demo::DrawingDemoState {
-        &self.scenario.demos
-    }
-    pub fn demos_mut(&mut self) -> &mut super::demo::DrawingDemoState {
-        &mut self.scenario.demos
-    }
-    pub fn queue_launch(&mut self, input: DrawingChromeLaunch) {
-        self.scenario.pending_launch = Some(input);
-    }
-
-    pub fn apply_launch(&mut self) {
-        if let Some(input) = self.scenario.pending_launch.take() {
-            input.apply(self);
-        }
-    }
-}
-
-/// The note scenario's existing visible-window span, in chart slots.
-const NOTE_VISIBLE_SLOTS: usize = 90;
-
-pub(crate) struct NotePlacement {
-    pub slot: usize,
-    price: f64,
-}
-
+/// Binds the model's note plan to the host's timestamp vocabulary.
+pub(crate) struct NotePlacement;
 impl NotePlacement {
-    /// The existing first text-capable tool, never a fallback substitute.
+    pub fn point(plan: scenario::NotePlacement, time: Option<i64>) -> crate::drawings::ChartPoint {
+        crate::drawings::ChartPoint::at_time(plan.slot as f32 + 0.5, plan.price, time)
+    }
     pub fn tool() -> Option<crate::drawings::DrawingTool> {
         crate::drawings::DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.holds_text())
-    }
-
-    /// Preserve the existing arithmetic, including its permissive range test.
-    /// The host projects the selected slot's timestamp after this decision.
-    pub fn plan(
-        chart_available: bool,
-        slots: usize,
-        close: Option<f64>,
-        range: Option<(f64, f64)>,
-    ) -> Option<Self> {
-        if !chart_available || slots == 0 {
-            return None;
-        }
-        let price = range
-            .filter(|(lo, hi)| hi > lo)
-            .map_or(close.unwrap_or(1.0), |(lo, hi)| (lo + hi) / 2.0);
-        let visible = NOTE_VISIBLE_SLOTS.min(slots);
-        let slot = (slots - visible / 2).min(slots.saturating_sub(1));
-        Some(Self { slot, price })
-    }
-
-    pub fn point(&self, time: Option<i64>) -> ChartPoint {
-        ChartPoint::at_time(self.slot as f32 + 0.5, self.price, time)
     }
 }
 
@@ -204,22 +146,39 @@ mod tests {
                 "QUANTICK_DRAWING_CONSTRAIN"
             ]
         );
-        let mut chrome = DrawingChromeSurface::default();
+        let mut owner = super::super::new_owner();
+        let mut chrome = super::super::borrow(&mut owner);
         chrome.queue_launch(input);
-        assert!(!chrome.manager.open && !chrome.shared.open && !chrome.scenario.note_requested());
+        assert!(
+            !chrome.manager.open
+                && !chrome.shared.open
+                && !chrome.state().scenario.note_requested()
+        );
         chrome.apply_launch();
-        assert!(chrome.manager.open && chrome.shared.open && chrome.scenario.note_requested());
-        assert!(matches!(chrome.inspector.tab, InspectorTab::Coordinates));
-        assert_eq!(chrome.inspector.remembered_position(), Some([-4.0, 200.5]));
+        assert!(
+            chrome.manager.open && chrome.shared.open && chrome.state().scenario.note_requested()
+        );
+        assert!(matches!(
+            chrome.state().inspector.tab,
+            InspectorTab::Coordinates
+        ));
         assert_eq!(
-            chrome.bar.bar.manual_position(),
+            chrome.state().inspector.remembered_position(),
+            Some([-4.0, 200.5])
+        );
+        assert_eq!(
+            chrome.view.bar.bar.manual_position(),
             Some(egui::pos2(0.0, -8.0))
         );
-        chrome.manager.open = false;
-        chrome.shared.open = false;
+        chrome.set_manager_open(false);
+        chrome.emit(super::super::Intent::InspectorOpen(false));
         chrome.note_text_note_placed();
         chrome.apply_launch();
-        assert!(!chrome.manager.open && !chrome.shared.open && !chrome.scenario.note_requested());
+        assert!(
+            !chrome.manager.open
+                && !chrome.shared.open
+                && !chrome.state().scenario.note_requested()
+        );
     }
 
     #[test]
@@ -279,7 +238,8 @@ mod tests {
             let input = DrawingChromeLaunch::capture(|name| {
                 (name == "QUANTICK_DRAWING_INSPECTOR_TAB").then(|| " unknown ".into())
             });
-            let mut chrome = DrawingChromeSurface::default();
+            let mut owner = super::super::new_owner();
+            let mut chrome = super::super::borrow(&mut owner);
             chrome.queue_launch(input);
             assert!(
                 bytes.lock().unwrap().is_empty(),
@@ -317,53 +277,74 @@ mod tests {
     }
 
     #[test]
-    fn note_geometry_preserves_original_slot_range_and_fallback_law() {
-        assert!(NotePlacement::plan(false, 100, Some(10.0), None).is_none());
-        assert!(NotePlacement::plan(true, 0, Some(10.0), None).is_none());
-        for (slots, slot) in [(1, 0), (2, 1), (89, 45), (90, 45), (100, 55)] {
-            let plan = NotePlacement::plan(true, slots, None, None).unwrap();
-            assert_eq!(plan.slot, slot);
-            assert_eq!(plan.price, 1.0);
-            assert_eq!(
-                plan.point(Some(123)),
-                ChartPoint::at_time(slot as f32 + 0.5, 1.0, Some(123))
-            );
-        }
+    fn note_timestamp_binding_preserves_the_selected_slot() {
         assert_eq!(
-            NotePlacement::plan(true, 2, Some(7.0), Some((5.0, 3.0)))
-                .unwrap()
-                .price,
-            7.0
-        );
-        assert_eq!(
-            NotePlacement::plan(true, 2, Some(7.0), Some((2.0, 4.0)))
-                .unwrap()
-                .price,
-            3.0
-        );
-        assert!(
-            NotePlacement::plan(true, 2, None, Some((0.0, f64::INFINITY)))
-                .unwrap()
-                .price
-                .is_infinite()
-        );
-        assert!(
-            NotePlacement::plan(true, 2, None, Some((f64::NEG_INFINITY, f64::INFINITY)))
-                .unwrap()
-                .price
-                .is_nan()
+            NotePlacement::point(
+                scenario::NotePlacement {
+                    slot: 55,
+                    price: 1.0
+                },
+                Some(123)
+            ),
+            crate::drawings::ChartPoint::at_time(55.5, 1.0, Some(123))
         );
     }
+}
 
-    #[test]
-    fn placement_acknowledgement_depends_only_on_placed_not_editor_state() {
-        let mut scenario = DrawingScenario::default();
-        scenario.request_note(true);
-        scenario.acknowledge_placement(false);
-        assert!(scenario.note_requested());
-        scenario.acknowledge_placement(true);
-        assert!(!scenario.note_requested());
-        scenario.acknowledge_placement(false);
-        assert!(!scenario.note_requested());
+#[derive(Default)]
+pub(crate) struct DrawingDemoLaunch {
+    pub(super) gallery: Option<DrawingsDemo>,
+    pub(super) recut: bool,
+    pub(super) profile: Option<FrvpDemo>,
+    pub(super) avwap: bool,
+    pub(super) draft: Option<DrawingDraft>,
+}
+impl DrawingDemoLaunch {
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<OsString>) -> Self {
+        let mut read = |name| lookup(name).and_then(|value| value.into_string().ok());
+        let gallery = read("QUANTICK_DRAWINGS_DEMO")
+            .filter(|value| matches!(value.as_str(), "1" | "bands"))
+            .map(|value| DrawingsDemo {
+                bands: value == "bands",
+                shared: read("QUANTICK_DRAWINGS_DEMO_SHARED")
+                    .filter(|value| value == "0" || value == "1")
+                    .map(|value| value == "1"),
+                select_tool: read("QUANTICK_DRAWINGS_DEMO_SELECT"),
+            });
+        let recut = read("QUANTICK_DRAWINGS_DEMO_RECUT").is_some_and(|value| value == "1");
+        let profile = read("QUANTICK_FRVP_DEMO")
+            .filter(|value| matches!(value.trim(), "1" | "compare" | "stress"))
+            .map(|value| FrvpDemo {
+                compare: value.trim() == "compare",
+                stress: value.trim() == "stress",
+                select: read("QUANTICK_FRVP_DEMO_SELECT").is_some_and(|value| value.trim() == "1"),
+            });
+        let avwap = read("QUANTICK_AVWAP_DEMO").is_some_and(|value| value.trim() == "1");
+        let draft = read("QUANTICK_DRAWING_DRAFT")
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|anchors| *anchors > 0)
+            .map(|anchors| DrawingDraft {
+                anchors,
+                constrain: read("QUANTICK_DRAWING_CONSTRAIN").is_some_and(|value| value == "1"),
+            });
+        Self {
+            gallery,
+            recut,
+            profile,
+            avwap,
+            draft,
+        }
+    }
+}
+
+impl From<DrawingDemoLaunch> for scenario::DrawingDemoLaunch {
+    fn from(input: DrawingDemoLaunch) -> Self {
+        Self {
+            gallery: input.gallery,
+            recut: input.recut,
+            profile: input.profile,
+            avwap: input.avwap,
+            draft: input.draft,
+        }
     }
 }

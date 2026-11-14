@@ -81,7 +81,7 @@ fn bundle_menu_baseline_empty_recent_cannot_open_an_entry() {
     );
     assert!(app.runtime.workspace.recent_on_disk().is_empty());
     assert!(app.runtime.workspace.session().recent().is_empty());
-    assert_eq!(app.surfaces.toast.message(), None);
+    assert_eq!(app.surfaces.toast.model_state.message(), None);
     assert!(!app.runtime.workspace.picker_open());
 }
 
@@ -110,6 +110,7 @@ fn bundle_menu_baseline_recent_click_imports_the_real_file() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .contains("0 settings groups restored")
@@ -144,6 +145,7 @@ fn bundle_menu_baseline_duplicate_opens_preserve_original_channel_and_intent() {
     assert!(
         app.surfaces
             .toast
+            .model_state
             .message()
             .unwrap()
             .starts_with("Workspace exported to ")

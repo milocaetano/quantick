@@ -454,7 +454,6 @@ pub(crate) struct ControlAccess {
     lifecycle_rx: Receiver<LifecycleEvent>,
     connections: BTreeMap<ConnectionId, ConnectedClient>,
     revoked_connections: BTreeSet<ConnectionId>,
-    show_panel: bool,
     notice: Option<String>,
     last_drain: DrainObservation,
     #[cfg(test)]
@@ -520,7 +519,6 @@ impl ControlAccess {
             lifecycle_rx,
             connections: BTreeMap::new(),
             revoked_connections: BTreeSet::new(),
-            show_panel: false,
             notice: None,
             last_drain: DrainObservation::default(),
             #[cfg(test)]
@@ -808,15 +806,10 @@ impl ControlAccess {
         !matches!(self.state, AccessState::Disabled)
     }
 
-    pub fn open_panel(&mut self) {
-        self.show_panel = true;
-    }
-
     /// Grant exactly these scopes to the next connection.
     ///
-    /// The panel's checkboxes write the same set; this is the named call
-    /// behind them, so a scripted run, a test and a later operator reach the
-    /// grant without a mouse.
+    /// Launch configuration uses normalization and permission floors; the
+    /// panel checkboxes instead request one membership edit while disabled.
     ///
     /// Three shorthands, and nothing else is special: `all-reads` is the safe
     /// default grant, `annotate-tier` is every scope of the annotate tier,

@@ -3,16 +3,15 @@
 
 use super::{
     BAND_ARROW_GLYPH_PX, BAND_ARROW_LENGTH_PX, BandWindow, FAVORITE_BADGE_INSET_PX,
-    FAVORITE_BADGE_PX, RailSlot, TOOLBOX_ITEM_GAP_PX, Tool, ToolRail, band_max_offset,
+    FAVORITE_BADGE_PX, Intent, RailPaint, RailSlot, TOOLBOX_ITEM_GAP_PX, Tool, band_max_offset,
     band_scroll_step, band_viewport, band_visible_items,
 };
-use crate::drawings::Drawings;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-impl ToolRail {
+impl RailPaint<'_, '_> {
     /// The pinned section at the tool end of the rail: a separator, then one
     /// button per starred tool in star order. One click arms; unstarring
     /// lives only on the star in the tool's own flyout row, so a pinned
@@ -21,24 +20,19 @@ impl ToolRail {
         &mut self,
         ui: &mut egui::Ui,
         vertical: bool,
-        drawings: &Drawings,
+
         range: std::ops::Range<usize>,
     ) {
         if range.is_empty() {
             return;
         }
         self.draw_separator(ui, vertical);
-        self.draw_favorite_buttons(ui, drawings, range);
+        self.draw_favorite_buttons(ui, range);
     }
 
     /// The pinned buttons themselves, without the section separator — the
     /// band reuses this for favorites that spilled past the anchored head.
-    fn draw_favorite_buttons(
-        &mut self,
-        ui: &mut egui::Ui,
-        drawings: &Drawings,
-        range: std::ops::Range<usize>,
-    ) {
+    fn draw_favorite_buttons(&mut self, ui: &mut egui::Ui, range: std::ops::Range<usize>) {
         let palette = theme::get(ui.ctx());
         // Indexed so the loop never clones the list on the per-frame path;
         // `DrawingTool` is `Copy` and arming cannot reorder favorites.
@@ -51,7 +45,7 @@ impl ToolRail {
                 .active_marker(super::marker_edge(self.dock))
                 .hover_text(tool.hover_text())
                 .show(ui);
-            self.paint_draft_badge(ui, &response, Tool::Drawing(tool), drawings);
+            self.paint_draft_badge(ui, &response, Tool::Drawing(tool));
             if ui.is_rect_visible(response.rect) {
                 // The corner star names the section: this button is a pin,
                 // not a second registry slot.
@@ -67,7 +61,7 @@ impl ToolRail {
                 );
             }
             #[cfg(test)]
-            self.favorite_rects.push((tool, response.rect));
+            self.view.favorite_rects.push((tool, response.rect));
             if response.clicked() {
                 self.arm(Tool::Drawing(tool));
             }
@@ -82,7 +76,7 @@ impl ToolRail {
         &mut self,
         ui: &mut egui::Ui,
         vertical: bool,
-        drawings: &Drawings,
+
         slots: &'static [RailSlot],
         anchored: usize,
         available: f32,
@@ -95,15 +89,15 @@ impl ToolRail {
         // has a real slot. Only on the frame it was armed: past that, the
         // band stays wherever the trader put it.
         if self.reveal_armed {
-            self.reveal_armed = false;
+            self.update(Intent::AcknowledgeReveal);
             if let Some(index) = self.armed_band_index(slots, spilled) {
                 let span = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
                 let visible = band_visible_items(viewport);
-                let first = (self.band_offset / span).round() as usize;
+                let first = (self.view.band_offset / span).round() as usize;
                 if index < first {
-                    self.band_target = Some(index as f32 * span);
+                    self.view.band_target = Some(index as f32 * span);
                 } else if index >= first + visible {
-                    self.band_target = Some((index + 1 - visible) as f32 * span);
+                    self.view.band_target = Some((index + 1 - visible) as f32 * span);
                 }
             }
         }
@@ -111,13 +105,19 @@ impl ToolRail {
         // both chevrons and the band read one offset. Taking it from last
         // frame instead would leave the way-back arrow a frame stale — dead
         // on the very click that opened it.
-        let target = self.band_target.take().map(|at| at.clamp(0.0, max_offset));
-        let offset = target.unwrap_or(self.band_offset).clamp(0.0, max_offset);
-        self.band_offset = offset;
+        let target = self
+            .view
+            .band_target
+            .take()
+            .map(|at| at.clamp(0.0, max_offset));
+        let offset = target
+            .unwrap_or(self.view.band_offset)
+            .clamp(0.0, max_offset);
+        self.view.band_offset = offset;
         let step = band_scroll_step(viewport);
 
         if self.draw_chevron(ui, vertical, true, offset > 0.0) {
-            self.band_target = Some(offset - step);
+            self.view.band_target = Some(offset - step);
         }
 
         let mut area = egui::ScrollArea::new([!vertical, vertical])
@@ -162,14 +162,14 @@ impl ToolRail {
                         ui.spacing_mut().item_spacing =
                             egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
                         let favorites = self.favorites.len();
-                        self.draw_favorite_buttons(ui, drawings, anchored..favorites);
+                        self.draw_favorite_buttons(ui, anchored..favorites);
                         for slot in slots {
                             match slot {
                                 RailSlot::Single(tool) => {
-                                    self.draw_button(ui, Tool::Drawing(*tool), drawings);
+                                    self.draw_button(ui, Tool::Drawing(*tool));
                                 }
                                 RailSlot::Family { family, members } => {
-                                    self.draw_family_slot(ui, *family, members, drawings);
+                                    self.draw_family_slot(ui, *family, members);
                                 }
                             }
                         }
@@ -179,7 +179,7 @@ impl ToolRail {
             .inner;
         #[cfg(test)]
         {
-            self.band_rect = Some(output.inner_rect);
+            self.view.band_rect = Some(output.inner_rect);
         }
         // The wheel moves the band without asking us, so the offset is read
         // back rather than assumed.
@@ -188,25 +188,25 @@ impl ToolRail {
         } else {
             output.state.offset.x
         };
-        self.band_offset = scrolled.clamp(0.0, max_offset);
+        self.view.band_offset = scrolled.clamp(0.0, max_offset);
         // The window this draw actually showed, written down for the same
         // reason the stage is: a reader that is not looking at the screen
         // cannot re-derive it, because it depends on the extent the layout
         // handed the rail and on wherever the trader last scrolled to.
         let span = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
-        self.last_band = Some(BandWindow {
+        self.view.last_band = Some(BandWindow {
             anchored,
-            first: (self.band_offset / span).round() as usize,
+            first: (self.view.band_offset / span).round() as usize,
             visible: band_visible_items(viewport),
         });
 
-        if self.draw_chevron(ui, vertical, false, self.band_offset < max_offset) {
-            self.band_target = Some(self.band_offset + step);
+        if self.draw_chevron(ui, vertical, false, self.view.band_offset < max_offset) {
+            self.view.band_target = Some(self.view.band_offset + step);
         }
         // The trailing chevron sits past the band, so its click can only be
         // honoured next frame. Ask for that frame: without it a click on a
         // still chart reads as a dead button.
-        if self.band_target.is_some() {
+        if self.view.band_target.is_some() {
             ui.ctx().request_repaint();
         }
     }
@@ -256,9 +256,9 @@ impl ToolRail {
         let (rect, response) = ui.allocate_exact_size(size, sense);
         #[cfg(test)]
         if leading {
-            self.band_leading_arrow = Some((rect, live));
+            self.view.band_leading_arrow = Some((rect, live));
         } else {
-            self.band_trailing_arrow = Some((rect, live));
+            self.view.band_trailing_arrow = Some((rect, live));
         }
         if ui.is_rect_visible(rect) {
             let glyph = match (vertical, leading) {

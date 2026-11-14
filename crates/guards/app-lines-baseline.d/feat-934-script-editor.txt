@@ -1,0 +1,5 @@
+# #934: synchronous boxed-editor dispatch/settlement, typed effects and cached view buffer.
+# Independently verified scope and exact measured cost authorized on issue #934 by #920 coordinator.
+# Original feature production and app-test reduction targets remain unchanged.
+crates/app +74
+!budget +74

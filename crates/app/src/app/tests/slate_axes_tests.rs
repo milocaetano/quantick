@@ -146,7 +146,7 @@ fn slate_crosshair_keeps_plot_lines_and_light_axis_tags_separate() {
         .appearance
         .apply_candidate(quantick_appearance::LIGHT, false)
         .unwrap();
-    app.toolrail.arm(crate::toolrail::Tool::Crosshair);
+    app.surfaces.toolrail.arm(crate::toolrail::Tool::Crosshair);
     run_frame(&mut app, &ctx);
     let output = settled_flow_frame(&mut app, &ctx);
     assert_boundaries(&app, &ctx, &output);
@@ -242,7 +242,7 @@ fn authored_dark_axes_keep_their_surface_ink_and_timestamp_backing() {
         "authored axis ticks: {ticks:?}"
     );
 
-    app.toolrail.arm(crate::toolrail::Tool::Crosshair);
+    app.surfaces.toolrail.arm(crate::toolrail::Tool::Crosshair);
     let point = app
         .active_tab()
         .flow_pane

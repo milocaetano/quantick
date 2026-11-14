@@ -28,9 +28,7 @@ const HOVER: &str = "Add to canvas";
 /// frame, and every row as drawn, for the scene.
 #[derive(Default)]
 pub(crate) struct AddMenu {
-    pub(crate) open: bool,
     pub(crate) door: Option<Rect>,
-    pub(crate) picked: Option<&'static WidgetSpec>,
     pub(crate) drawn: Vec<DrawnControl>,
     /// The launch hooks were read.
     #[cfg(any(feature = "scenario-harness", test))]
@@ -64,9 +62,14 @@ pub(crate) fn button(ui: &mut egui::Ui, open: bool) -> egui::Response {
 /// The menu under the + at `door`, its right edge on the door's; `rows` say
 /// what each entry is and whether it can be added now, or why not. A press
 /// outside, Esc or a row closes it.
-pub(crate) fn hang(ctx: &egui::Context, rows: &[AddRow], menu: &mut AddMenu) {
+pub(crate) fn hang(
+    ctx: &egui::Context,
+    rows: &[AddRow],
+    menu: &mut AddMenu,
+    session: &mut quantick_ui_model::UpdateSession<'_, quantick_ui_model::canvas_popovers::Model>,
+) {
     menu.drawn.clear();
-    let Some(door) = menu.door.filter(|_| menu.open) else {
+    let Some(door) = menu.door.filter(|_| session.state().projection().add_open) else {
         return;
     };
     let muted = theme::get(ctx).text_muted();
@@ -82,7 +85,12 @@ pub(crate) fn hang(ctx: &egui::Context, rows: &[AddRow], menu: &mut AddMenu) {
                     let font = egui::FontId::proportional(11.0);
                     ui.label(egui::RichText::new(HEADING).font(font).color(muted));
                     for (widget, ready) in rows {
-                        row(ui, widget, ready.as_ref().err(), menu);
+                        if row(ui, widget, ready.as_ref().err(), menu) {
+                            session.update(quantick_ui_model::canvas_popovers::Intent::Pick {
+                                widget,
+                                available: ready.is_ok(),
+                            });
+                        }
                     }
                 });
         });
@@ -90,12 +98,20 @@ pub(crate) fn hang(ctx: &egui::Context, rows: &[AddRow], menu: &mut AddMenu) {
     let pointer = ctx.pointer_latest_pos().unwrap_or_default();
     let outside = !shown.response.contains_pointer() && !door.contains(pointer);
     let escape = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    menu.open &= !((pressed && outside) || escape || menu.picked.is_some());
+    session.update(quantick_ui_model::canvas_popovers::Intent::DismissAdd {
+        outside: pressed && outside,
+        escaped: escape,
+    });
 }
 
 /// One row: its miniature, title and line; greyed and inert, saying `why`
 /// on hover, when it cannot be added now.
-fn row(ui: &mut egui::Ui, widget: &'static WidgetSpec, why: Option<&String>, menu: &mut AddMenu) {
+fn row(
+    ui: &mut egui::Ui,
+    widget: &'static WidgetSpec,
+    why: Option<&String>,
+    menu: &mut AddMenu,
+) -> bool {
     let ready = why.is_none();
     let palette = theme::get(ui.ctx());
     let sense = Sense {
@@ -156,9 +172,7 @@ fn row(ui: &mut egui::Ui, widget: &'static WidgetSpec, why: Option<&String>, men
         selected: false,
         capability: Some(capability),
     });
-    if ready && response.clicked() {
-        menu.picked = Some(widget);
-    }
+    ready && response.clicked()
 }
 
 /// The glyph a widget's miniature wears.

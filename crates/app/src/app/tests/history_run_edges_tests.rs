@@ -246,10 +246,15 @@ fn esc_disarms_a_drawing_tool_before_it_cancels_a_run() {
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
     assert!(app.active_tab().session.history_reach_running());
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-    assert_eq!(app.toolrail.tool(), Tool::Pointer, "the tool went down");
+    assert_eq!(
+        app.surfaces.toolrail.tool(),
+        Tool::Pointer,
+        "the tool went down"
+    );
     assert!(
         app.active_tab().session.history_reach_running(),
         "the run kept loading"

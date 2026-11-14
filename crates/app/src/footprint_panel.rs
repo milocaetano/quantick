@@ -14,8 +14,6 @@
 //! explaining itself in full — this window is where a newcomer learns what a
 //! POC or a diagonal imbalance is, without a manual.
 
-use std::path::Path;
-
 use eframe::egui;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -23,7 +21,6 @@ use crate::footprint_config::{
     DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
     NUMBER_ROW_PX_RANGE, PROFILE_ROW_PX_RANGE,
 };
-use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
 
 /// The number a pinned imbalance floor starts from when the trader unticks
@@ -36,12 +33,6 @@ pub struct PanelInput<'a> {
     /// The focused chart's effective config (its own, or the window default
     /// it still follows).
     pub config: &'a mut FootprintConfig,
-    pub presets: &'a mut PresetStore,
-    pub presets_path: &'a Path,
-    /// The "save as" field's text, kept across frames by the app.
-    pub name_draft: &'a mut String,
-    /// Which chart these knobs belong to, for the title.
-    pub target: &'a str,
     /// Whether this chart has already diverged from the window default.
     pub customized: bool,
 }
@@ -63,36 +54,9 @@ pub enum PanelOutcome {
 /// it draws and answers whether one of them moved. A new knob docks in the
 /// section it belongs to, and the section order is read here in one place.
 pub fn draw(ui: &mut egui::Ui, input: PanelInput<'_>) -> PanelOutcome {
-    let palette = theme::get(ui.ctx());
-    let PanelInput {
-        config,
-        presets,
-        presets_path,
-        name_draft,
-        target,
-        customized,
-    } = input;
+    let PanelInput { config, customized } = input;
     let mut outcome = PanelOutcome::Untouched;
     let mut changed = false;
-    ui.label(
-        egui::RichText::new(format!(
-            "{target}: {}",
-            if customized {
-                "these knobs are this chart's own"
-            } else {
-                "this chart follows your last setup"
-            }
-        ))
-        .font(palette.body_font(10.5))
-        .color(palette.text_muted()),
-    );
-    changed |= PresetsSection {
-        config,
-        presets,
-        presets_path,
-        name_draft,
-    }
-    .show(ui);
     changed |= StyleSection { config }.show(ui);
     changed |= RowsSection { config }.show(ui);
     changed |= DetailSection { config }.show(ui);
@@ -123,90 +87,6 @@ fn caption(ui: &mut egui::Ui, text: &str) {
             .font(palette.body_font(11.0))
             .color(palette.text_muted()),
     );
-}
-
-/// Named setups: load, delete and save the knobs as one stance.
-struct PresetsSection<'a> {
-    config: &'a mut FootprintConfig,
-    presets: &'a mut PresetStore,
-    presets_path: &'a Path,
-    name_draft: &'a mut String,
-}
-
-impl PresetsSection<'_> {
-    fn show(self, ui: &mut egui::Ui) -> bool {
-        let palette = theme::get(ui.ctx());
-        let Self {
-            config,
-            presets,
-            presets_path,
-            name_draft,
-        } = self;
-        let mut changed = false;
-        section_heading(ui, "Presets");
-        ui.horizontal_wrapped(|ui| {
-            let names: Vec<String> = presets.names().map(str::to_owned).collect();
-            if names.is_empty() {
-                ui.label(
-                    egui::RichText::new("none saved yet")
-                        .font(palette.body_font(11.0))
-                        .color(palette.text_faint()),
-                );
-            }
-            for name in names {
-                let selected = presets.get(&name) == Some(&*config);
-                let response = ui
-                    .selectable_label(selected, &name)
-                    .on_hover_text("click to load · right-click to delete");
-                if response.clicked()
-                    && let Some(preset) = presets.get(&name)
-                    && *config != *preset
-                {
-                    *config = preset.clone();
-                    changed = true;
-                }
-                // Right-click deletes: a preset row with its own delete
-                // button would double the width of every entry.
-                if response.secondary_clicked() && presets.remove(&name) {
-                    presets.save(presets_path);
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            let full = presets.is_full();
-            let hint = crate::theme::supporting_text(ui, "name this setup");
-            crate::theme::preset_input(
-                ui,
-                egui::TextEdit::singleline(name_draft)
-                    .desired_width(150.0)
-                    .char_limit(MAX_NAME_LEN)
-                    .hint_text(hint),
-            );
-            let can_save = !name_draft.trim().is_empty();
-            let save = ui.add_enabled(can_save, egui::Button::new("save preset"));
-            if save
-                .on_hover_text(
-                    "store these knobs under that name; a name you already \
-                     used is overwritten",
-                )
-                .clicked()
-            {
-                if presets.insert(name_draft, config) {
-                    presets.save(presets_path);
-                    name_draft.clear();
-                } else if full {
-                    // The store refuses to evict someone else's stance;
-                    // say so rather than dropping the click silently.
-                    ui.label(
-                        egui::RichText::new("preset list is full")
-                            .font(palette.body_font(10.5))
-                            .color(palette.warn()),
-                    );
-                }
-            }
-        });
-        changed
-    }
 }
 
 /// The style row, and the knobs of the style in force.

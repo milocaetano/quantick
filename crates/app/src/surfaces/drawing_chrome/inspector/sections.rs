@@ -8,7 +8,7 @@ use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::super::{
-    BAR_DRAG_SPEED, DrawingChromeSurface, DrawingEnv, InspectorActions, InspectorTab,
+    BAR_DRAG_SPEED, Chrome as DrawingChromeSurface, DrawingEnv, InspectorActions, InspectorTab,
     PRICE_DRAG_STEPS, RecordingPresetHost, SavedDefault,
 };
 use crate::drawings::{
@@ -52,14 +52,18 @@ pub(super) fn body(
     }
     ui.separator();
 
+    let mut tab = chrome.state().inspector.tab;
     TabStrip {
-        tab: &mut chrome.inspector.tab,
+        tab: &mut tab,
         tool,
     }
     .show(ui);
+    if tab != chrome.state().inspector.tab {
+        chrome.emit(quantick_ui_model::drawing_chrome::Intent::InspectorTab(tab));
+    }
     ui.separator();
 
-    match chrome.inspector.tab {
+    match chrome.state().inspector.tab {
         InspectorTab::Extra => {
             actions.edited |= crate::drawings::draw_extra_tab(tool, ui, edited, presets);
         }

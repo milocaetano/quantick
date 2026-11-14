@@ -1,0 +1,42 @@
+[package]
+name = "quantick-ui-model"
+description = "Headless UI model contract and shared surface catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+quantick-alerts = { path = "../alerts" }
+quantick-control = { path = "../control" }
+quantick-strategy = { path = "../strategy" }
+quantick-indicators = { path = "../indicators" }
+quantick-drawings = { path = "../drawings" }
+quantick-appearance = { path = "../appearance" }
+toml.workspace = true
+quantick-control-handlers = { path = "../control-handlers" }
+quantick-chart-interaction = { path = "../chart-interaction" }
+quantick-stores = { path = "../stores" }
+quantick-control-schema = { path = "../control-schema" }
+quantick-session = { path = "../session" }
+quantick-chart = { path = "../chart" }
+quantick-engine = { path = "../engine" }
+quantick-orderflow = { path = "../orderflow" }
+
+quantick-civil = { path = "../civil" }
+quantick-paper = { path = "../paper" }
+quantick-replay = { path = "../replay" }
+quantick-sources = { path = "../sources" }
+quantick-workspace = { path = "../workspace" }
+
+[dev-dependencies]
+quantick-trading = { path = "../trading" }
+quantick-sim = { path = "../sim" }
+rust_decimal.workspace = true
+quantick-drawings = { path = "../drawings", features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -59,7 +59,7 @@ mod placement_characterization {
         assert_eq!(slot_of(drawing.points[0].bar), slot);
         assert_eq!(drawing.points[0].time_ms, Some(expected_time));
         assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
-        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+        assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
         let closed = run_frame(&mut app, &ctx);
         assert!(
             !painted_text(&closed)
@@ -124,7 +124,7 @@ mod placement_characterization {
         assert_eq!(pane.drawings.items()[0].points.len(), 3);
         assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
         assert_eq!(pane.drawings.draft_len(), 0);
-        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+        assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
     }
 
     #[test]
@@ -477,7 +477,10 @@ fn shift_levels_a_secondary_drag_and_never_rests_an_order() {
         ],
     );
     frame(&mut app, vec![egui::Event::PointerMoved(elsewhere)]);
-    assert!(app.drawings.chrome.quick_range.held(), "a live range");
+    assert!(
+        app.surfaces.drawing_chrome.quick_range_read().held(),
+        "a live range"
+    );
     for pressed in [true, false] {
         frame(&mut app, vec![pointer_button(elsewhere, pressed)]);
     }
@@ -546,7 +549,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         revision: pane.pagination_revision(),
         layout: pane.layout_id().map(|id| id.0),
     };
-    let quick = &mut app.drawings.chrome.quick_range;
+    let mut quick = app.surfaces.drawing_chrome.quick_range();
     quick.press(
         owner,
         egui::pos2(1.0, 1.0),
@@ -584,7 +587,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         )
         .is_none()
     );
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         DrawingChromeAsk {
             place_quick_range: Some(placement),
@@ -593,14 +596,14 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         Instant::now(),
     );
     assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
-    assert!(app.surfaces.toast.message().is_none());
+    assert!(app.surfaces.toast.model_state.message().is_none());
     let retry = app
-        .drawings
-        .chrome
-        .quick_range
+        .surfaces
+        .drawing_chrome
+        .quick_range()
         .convert(QuickRangeAction::Profile)
         .expect("serialization refusal restores the same range to Ready");
-    app.drawings.chrome.quick_range.finish_conversion(
+    app.surfaces.drawing_chrome.quick_range().finish_conversion(
         retry.conversion,
         quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::InputInvalid,
     );
@@ -615,13 +618,13 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
     let (_, start, end) = quick_range_ends(&app);
     drag_quick_range(&mut app, &ctx, start, end);
     let placement = app
-        .drawings
-        .chrome
-        .quick_range
+        .surfaces
+        .drawing_chrome
+        .quick_range()
         .convert(QuickRangeAction::Profile)
         .unwrap();
     app.active_tab_mut().flow_pane.rebuild_bars();
-    app.surfaces.toast.clear();
+    app.surfaces.toast.model_state = Default::default();
     app.resolve_drawing_response(
         DrawingChromeAsk {
             place_quick_range: Some(placement),
@@ -631,7 +634,7 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
     );
     assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("The drawing could not be placed; the temporary range is still available.")
     );
     run_frame(&mut app, &ctx);
@@ -1609,7 +1612,9 @@ fn the_style_tab_offers_line_width_only_to_tools_that_have_a_stroke() {
     run_frame(&mut app, &ctx);
 
     let style_tab_labels = |app: &mut QuantickApp, ctx: &egui::Context| -> Vec<String> {
-        app.drawings.chrome.set_inspector_tab(InspectorTab::Style);
+        app.surfaces
+            .drawing_chrome
+            .set_inspector_tab(InspectorTab::Style);
         open_inspector(app, ctx);
         painted_text(&run_frame(app, ctx))
     };
@@ -1843,7 +1848,7 @@ fn holding_shift_lays_a_channel_dead_level() {
 fn shift_levels_the_armed_ruler_to_the_exact_price() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     run_frame(&mut app, &ctx);
 
     let y = price_y(&app, PaneSide::Flow, 100.0);
@@ -2328,8 +2333,8 @@ fn the_coordinates_tab_offers_sharing_across_charts() {
 
     arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .set_inspector_tab(InspectorTab::Coordinates);
     open_inspector(&mut app, &ctx);
     let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -2501,8 +2506,8 @@ fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
 
     // Pinned, and the user has expressed the preference — the exact
     // state the report was in.
-    app.drawings.chrome.set_inspector_pinned(true);
-    app.drawings.chrome.set_inspector_pin_touched(true);
+    app.surfaces.drawing_chrome.set_inspector_pinned(true);
+    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     app.active_tab_mut().flow_pane.drawings.select(None);
     run_frame(&mut app, &ctx);
     let wide = app
@@ -2870,7 +2875,7 @@ fn every_toolbox_drawing_can_be_plotted_on_the_chart() {
             })
     );
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "placing a complete drawing restores navigation"
     );
@@ -2881,7 +2886,8 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -2925,7 +2931,8 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let anchor = egui::pos2(700.0, 300.0);
     click_chart(&mut app, &ctx, anchor);
@@ -2939,11 +2946,13 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     let inspector = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
         .expect("placing the selected line opens its inspector");
-    app.drawings.chrome.set_inspector_moved(true);
-    app.drawings.chrome.set_inspector_pos(Some(egui::pos2(
-        inspector.left(),
-        anchor.y - inspector.height() / 2.0,
-    )));
+    app.surfaces.drawing_chrome.set_inspector_moved(true);
+    app.surfaces
+        .drawing_chrome
+        .set_inspector_pos(Some(egui::pos2(
+            inspector.left(),
+            anchor.y - inspector.height() / 2.0,
+        )));
     run_frame(&mut app, &ctx);
     let inspector = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -2975,7 +2984,8 @@ fn a_canvas_drag_keeps_running_while_crossing_the_inspector() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3007,7 +3017,8 @@ fn drawing_actions_visible_without_scroll_at_360px() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
@@ -3090,13 +3101,13 @@ fn pinning_the_inspector_docks_it_and_frees_the_canvas() {
         .expect("chart laid out");
 
     let pin = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inspector_pin_rect()
         .expect("pin button rendered");
     click_chart(&mut app, &ctx, pin.center());
     assert!(
-        app.drawings.chrome.inspector_pinned(),
+        app.surfaces.drawing_chrome.inspector_pinned(),
         "clicking Pin docks the inspector"
     );
     run_frame(&mut app, &ctx);
@@ -3122,7 +3133,8 @@ fn double_clicking_the_title_bar_returns_to_automatic_placement() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3133,7 +3145,7 @@ fn double_clicking_the_title_bar_returns_to_automatic_placement() {
         .expect("the inspector is open");
     let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
     drag_chart(&mut app, &ctx, bar, bar + egui::vec2(120.0, 90.0));
-    assert!(app.drawings.chrome.inspector_moved());
+    assert!(app.surfaces.drawing_chrome.inspector_moved());
 
     let inspector = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -3151,7 +3163,7 @@ fn double_clicking_the_title_bar_returns_to_automatic_placement() {
         ],
     );
     assert!(
-        !app.drawings.chrome.inspector_moved(),
+        !app.surfaces.drawing_chrome.inspector_moved(),
         "double-click on the title bar re-arms automatic placement"
     );
 }
@@ -3177,29 +3189,29 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
 
     // A finished object with the tool disarmed is what a trader has in
     // hand when they reach for the bar.
-    app.toolrail.arm(Tool::Pointer);
+    app.surfaces.toolrail.arm(Tool::Pointer);
     app.drawing_pane_mut().drawings.select(Some(avwap));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let bar = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("the selection raised the bar");
     let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
     drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-180.0, 200.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar()
             .manual_position()
             .is_some(),
         "the grip drag records a hand-placed position"
     );
     let parked = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("still up")
         .min;
@@ -3209,12 +3221,12 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     // the host's early returns clear it — so a stale value would answer
     // for a bar that stopped appearing, which is the regression this test
     // exists to catch. Blank it and let the frame fill it in.
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar_rect()
             .expect("the next object raises it too")
             .min,
@@ -3238,7 +3250,11 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     for _ in 0..quiet_frames {
         run_frame(&mut app, &ctx);
     }
-    let bar = app.drawings.chrome.context_bar_rect().expect("still up");
+    let bar = app
+        .surfaces
+        .drawing_chrome
+        .context_bar_rect()
+        .expect("still up");
     let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
     // The hand reaches the grip before it clicks. The drag above left the
     // pointer where it ended, and egui hit-tests a press against the last
@@ -3256,10 +3272,10 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
             pointer_button(grip, false),
         ],
     );
-    app.drawings.chrome.forget_context_bar_rect();
+    app.surfaces.drawing_chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.context_bar().manual_position(),
+        app.surfaces.drawing_chrome.context_bar().manual_position(),
         None,
         "the double-click hands placement back to the rule"
     );
@@ -3269,8 +3285,8 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     // parked state, and a door that clears the flag while leaving the bar
     // in a third place would be no door at all.
     let placed = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar_rect()
         .expect("the bar is still up");
     let chart = app
@@ -3287,6 +3303,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
             .candles_right
             .unwrap_or(chart.right()),
         app.drawings
+            .with(&mut app.surfaces.drawing_chrome)
             .drawing_bbox_on_screen(
                 &crate::app::drawing_controller::DrawingReadAccess::new(&app.runtime.tabs),
                 chart,
@@ -3361,18 +3378,17 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("demo-inspector"));
-    app.drawings
-        .chrome
-        .demos_mut()
-        .arm_drawings_demo(DrawingsDemo::default());
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces
+        .drawing_chrome
+        .scenario(quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(DrawingsDemo::default()));
+    app.surfaces.drawing_chrome.set_inspector_open(true);
 
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
 
     assert!(
-        !app.drawings.chrome.demos().gallery_requested(),
+        !app.surfaces.drawing_chrome.demos().gallery_requested(),
         "the demo has run"
     );
     assert!(
@@ -3384,7 +3400,7 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
         "and left an object selected, which is what closes the panel"
     );
     assert!(
-        app.drawings.chrome.inspector_open(),
+        app.surfaces.drawing_chrome.inspector_open(),
         "the panel the hook asked for survives the demo's own selection"
     );
 }
@@ -3416,20 +3432,19 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("hook-inspector"));
-    app.drawings
-        .chrome
-        .demos_mut()
-        .arm_drawings_demo(DrawingsDemo::default());
+    app.surfaces
+        .drawing_chrome
+        .scenario(quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(DrawingsDemo::default()));
 
     assert!(
-        app.drawings.chrome.inspector_open(),
+        app.surfaces.drawing_chrome.inspector_open(),
         "the hook is read at launch, before any frame the demo runs in"
     );
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
     assert!(
-        !app.drawings.chrome.demos().gallery_requested(),
+        !app.surfaces.drawing_chrome.demos().gallery_requested(),
         "the demo has run"
     );
     assert!(
@@ -3441,7 +3456,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
         "and left an object selected, which is what closes the panel"
     );
     assert!(
-        app.drawings.chrome.inspector_open(),
+        app.surfaces.drawing_chrome.inspector_open(),
         "the panel the hook asked for survives the demo's own selection"
     );
 }
@@ -3459,34 +3474,35 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
             .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
         "this proof needs a chart narrower than the auto-pin threshold"
     );
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, narrow, egui::pos2(600.0, 300.0));
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     // The auto-pin is about the *panel*, and the panel now opens on
     // request: asking for it on a chart this narrow is what trips the
     // rule, because a 320 px floating window has nowhere to go here.
-    app.drawings.chrome.set_inspector_open(true);
+    app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     assert!(
-        app.drawings.chrome.inspector_pinned(),
+        app.surfaces.drawing_chrome.inspector_pinned(),
         "opening the panel on a narrow chart opens it pinned"
     );
 
     // The user unpins: their preference holds from here on.
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     let pin = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inspector_pin_rect()
         .expect("the panel renders its pin");
     click_sized(&mut app, &ctx, narrow, pin.center());
     assert!(
-        !app.drawings.chrome.inspector_pinned(),
+        !app.surfaces.drawing_chrome.inspector_pinned(),
         "the pin toggles the panel off"
     );
     assert!(
-        app.drawings.chrome.inspector_pin_touched(),
+        app.surfaces.drawing_chrome.inspector_pin_touched(),
         "the preference is recorded"
     );
 
@@ -3525,7 +3541,7 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
     click_sized(&mut app, &ctx, narrow, egui::pos2(500.0, 300.0));
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     assert!(
-        !app.drawings.chrome.inspector_pinned(),
+        !app.surfaces.drawing_chrome.inspector_pinned(),
         "once touched, the auto-pin width rule stops firing"
     );
 }
@@ -3535,7 +3551,8 @@ fn hovering_the_inspector_sets_no_chart_cursor() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -3546,11 +3563,13 @@ fn hovering_the_inspector_sets_no_chart_cursor() {
         .expect("the inspector is open");
     // Parked over the stroke by hand: automatic placement now clears the
     // object on purpose (§D3), and this proof needs the overlap.
-    app.drawings.chrome.set_inspector_moved(true);
-    app.drawings.chrome.set_inspector_pos(Some(egui::pos2(
-        inspector.left(),
-        300.0 - inspector.height() / 2.0,
-    )));
+    app.surfaces.drawing_chrome.set_inspector_moved(true);
+    app.surfaces
+        .drawing_chrome
+        .set_inspector_pos(Some(egui::pos2(
+            inspector.left(),
+            300.0 - inspector.height() / 2.0,
+        )));
     run_frame(&mut app, &ctx);
     let inspector = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -3576,11 +3595,12 @@ fn the_object_manager_opens_beside_the_rail() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let objects = app
+        .surfaces
         .toolrail
         .objects_button_rect()
         .expect("the rail shows the Objects entry");
     click_chart(&mut app, &ctx, objects.center());
-    assert!(app.drawings.chrome.manager_open());
+    assert!(app.surfaces.drawing_chrome.manager_open());
     run_frame(&mut app, &ctx);
 
     let manager = ctx
@@ -3658,7 +3678,7 @@ fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
         .last()
         .map(|mark| mark.points[0].price);
 
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
     click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
     assert_eq!(
@@ -3764,14 +3784,14 @@ fn placing_a_text_note_opens_the_editor_in_the_note_itself() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    assert_eq!(app.drawings.chrome.inline_text_editing(), None);
+    assert_eq!(app.surfaces.drawing_chrome.inline_text_editing(), None);
 
     arm_drawing_from_toolbox(&mut app, &ctx, "text");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("the one tool that arrives empty takes the caret");
     assert_eq!(
@@ -3783,7 +3803,7 @@ fn placing_a_text_note_opens_the_editor_in_the_note_itself() {
         "the field opens focused: a caret nobody can see is a click nobody was told about"
     );
     assert!(
-        !app.drawings.chrome.inspector_open(),
+        !app.surfaces.drawing_chrome.inspector_open(),
         "the panel is no longer how a note is written"
     );
 
@@ -3793,7 +3813,7 @@ fn placing_a_text_note_opens_the_editor_in_the_note_itself() {
     click_chart(&mut app, &ctx, egui::pos2(640.0, 320.0));
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inline_text_editing(),
+        app.surfaces.drawing_chrome.inline_text_editing(),
         None,
         "a line is complete when it is drawn; it gets the bar, not a caret"
     );
@@ -3810,8 +3830,8 @@ fn undo_after_typing_takes_the_whole_note_back() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("the editor is open");
 
@@ -3820,8 +3840,8 @@ fn undo_after_typing_takes_the_whole_note_back() {
     }
     run_frame(&mut app, &ctx);
     // Close the editor: the typing gesture commits with it.
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .commit_inline_text(&mut app.runtime.tabs);
     assert!(app.active_tab_mut().flow_pane.drawings.undo());
     let drawing = &app.active_tab().flow_pane.drawings.items()[index];
@@ -3845,7 +3865,7 @@ fn the_note_stops_painting_itself_while_its_editor_is_open() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let painted = painted_text(&run_frame(&mut app, &ctx));
     assert!(
-        app.drawings.chrome.inline_text_editing().is_some(),
+        app.surfaces.drawing_chrome.inline_text_editing().is_some(),
         "the editor is open"
     );
     assert!(
@@ -3855,8 +3875,8 @@ fn the_note_stops_painting_itself_while_its_editor_is_open() {
 
     // Closed again, the object is the only thing holding the words — so
     // an empty note goes back to saying it is there.
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .commit_inline_text(&mut app.runtime.tabs);
     let painted = painted_text(&run_frame(&mut app, &ctx));
     assert!(
@@ -3883,7 +3903,7 @@ fn the_field_stays_anchored_when_a_note_has_no_room_above_it() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, chart.top() + 2.0));
     let output = run_frame(&mut app, &ctx);
     assert!(
-        app.drawings.chrome.inline_text_editing().is_some(),
+        app.surfaces.drawing_chrome.inline_text_editing().is_some(),
         "the editor is open"
     );
 
@@ -3921,12 +3941,12 @@ fn a_double_click_on_a_note_opens_its_editor_again() {
         &ctx,
         vec![egui::Event::Text("swing high".to_owned())],
     );
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .commit_inline_text(&mut app.runtime.tabs);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inline_text_editing(),
+        app.surfaces.drawing_chrome.inline_text_editing(),
         None,
         "the editor is closed"
     );
@@ -3947,8 +3967,8 @@ fn a_double_click_on_a_note_opens_its_editor_again() {
     click_chart(&mut app, &ctx, position);
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("a double click on the note reopens its editor");
     let drawing = &app.active_tab().flow_pane.drawings.items()[index];
@@ -3972,14 +3992,14 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::Text("mine".to_owned())]);
-    assert!(app.drawings.chrome.inline_text_editing().is_some());
+    assert!(app.surfaces.drawing_chrome.inline_text_editing().is_some());
     let home = app.runtime.tabs.active_id();
 
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawings.chrome.inline_text_editing(),
+        app.surfaces.drawing_chrome.inline_text_editing(),
         None,
         "the editor does not follow the trader to another tab"
     );
@@ -4025,11 +4045,11 @@ fn the_text_note_hook_opens_the_editor_without_a_click() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.drawings.chrome.set_pending_text_note(true);
+    app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let index = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .inline_text_editing()
         .expect("the hook opened the editor");
     assert_eq!(
@@ -4065,7 +4085,7 @@ fn the_pencil_draws_a_path_from_one_held_drag() {
         "the whole stroke is one undo entry, not one per captured point"
     );
     assert_eq!(
-        app.toolrail.tool(),
+        app.surfaces.toolrail.tool(),
         Tool::Pointer,
         "finishing the stroke restores navigation, like every other tool"
     );
@@ -4089,8 +4109,8 @@ fn the_bar_pencil_rearms_the_pencil_for_the_next_stroke() {
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
 
     let pencil = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .draw_again_rect()
         .expect("a finished stroke's bar offers the pencil");
@@ -4102,7 +4122,10 @@ fn the_bar_pencil_rearms_the_pencil_for_the_next_stroke() {
     );
     click_chart(&mut app, &ctx, pencil.center());
     run_frame(&mut app, &ctx);
-    assert_eq!(app.toolrail.tool(), Tool::Drawing(drawing_tool("brush")));
+    assert_eq!(
+        app.surfaces.toolrail.tool(),
+        Tool::Drawing(drawing_tool("brush"))
+    );
 
     drag_chart(
         &mut app,
@@ -4121,14 +4144,15 @@ fn a_level_bar_has_no_pencil() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
-    assert!(app.drawings.chrome.context_bar_rect().is_some());
+    assert!(app.surfaces.drawing_chrome.context_bar_rect().is_some());
     assert!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar()
             .draw_again_rect()
             .is_none()
@@ -4198,14 +4222,15 @@ fn selecting_a_drawing_raises_the_context_bar_not_the_panel() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     let texts = painted_text(&run_frame(&mut app, &ctx));
 
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
     assert!(
-        app.drawings.chrome.context_bar_rect().is_some(),
+        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
         "the selection raises the context bar"
     );
     for absent in ["Horizontal line settings", "Delete drawing", "Style"] {
@@ -4229,7 +4254,8 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
@@ -4239,8 +4265,8 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
 
     let swatch = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .color_rect()
         .expect("the bar renders its colour slot");
@@ -4250,8 +4276,8 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     // The palette's fourth entry is BUY — "this is the buy zone" is the
     // reason a level gets recoloured at all.
     let buy = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .swatch_rect(3)
         .expect("the palette opened under the slot");
@@ -4294,8 +4320,8 @@ fn a_recoloured_stroke_sets_the_next_pencil_stroke() {
     run_frame(&mut app, &ctx);
 
     let slot = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .color_rect()
         .expect("the stroke's bar renders its colour slot");
@@ -4308,8 +4334,8 @@ fn a_recoloured_stroke_sets_the_next_pencil_stroke() {
     click_chart(&mut app, &ctx, slot.center());
     run_frame(&mut app, &ctx);
     let buy = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .swatch_rect(3)
         .expect("the palette opened under the slot");
@@ -4346,13 +4372,14 @@ fn the_gear_on_the_context_bar_opens_the_inspector() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let gear = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .gear_rect()
         .expect("the bar rendered its gear");
@@ -4360,7 +4387,7 @@ fn the_gear_on_the_context_bar_opens_the_inspector() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        app.drawings.chrome.inspector_open(),
+        app.surfaces.drawing_chrome.inspector_open(),
         "the gear opens the panel"
     );
     let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -4380,14 +4407,15 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
 
     let sharing = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .sharing_rect()
         .expect("a shareable drawing renders the all-charts button");
@@ -4404,13 +4432,13 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
         drawings::DrawingScope::ThisChart
     );
     assert!(
-        !app.drawings.chrome.inspector_open(),
+        !app.surfaces.drawing_chrome.inspector_open(),
         "the quick action must not open the inspector"
     );
 
     let sharing = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .sharing_rect()
         .expect("the active all-charts button remains available");
@@ -4430,7 +4458,8 @@ fn a_locked_drawing_asks_before_it_goes_from_the_bar() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -4522,7 +4551,8 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -4648,11 +4678,12 @@ fn escape_walks_confirm_draft_selection_then_pointer() {
         app.active_tab().flow_pane.drawings.draft().is_none(),
         "Esc cancels the draft"
     );
-    assert_eq!(app.toolrail.tool(), Tool::Pointer);
+    assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
 
     // A locked selection with a pending confirmation: Esc peels one
     // layer per press — confirm, then selection, then nothing new.
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     app.active_tab_mut()
@@ -4661,13 +4692,13 @@ fn escape_walks_confirm_draft_selection_then_pointer() {
         .set_selected_locked(true);
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
     assert!(
-        app.drawings.chrome.delete_confirm(),
+        app.surfaces.drawing_chrome.delete_confirm(),
         "the confirmation is pending"
     );
 
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
     assert!(
-        !app.drawings.chrome.delete_confirm(),
+        !app.surfaces.drawing_chrome.delete_confirm(),
         "first Esc cancels the confirm"
     );
     assert!(
@@ -4731,7 +4762,9 @@ fn the_fib_inspector_mounts_its_level_editor_tab() {
         "the tool-owned tab is offered by name; painted: {texts:?}"
     );
 
-    app.drawings.chrome.set_inspector_tab(InspectorTab::Extra);
+    app.surfaces
+        .drawing_chrome
+        .set_inspector_tab(InspectorTab::Extra);
     run_frame(&mut app, &ctx);
     // The level editor is taller than the window. Everything in it must
     // still be *reachable* — which is what the panel's scroll is for, and
@@ -4864,20 +4897,44 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
     assert!(
-        app.runtime.indicators.indicator_settings.is_some(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some(),
         "the dialog opened"
     );
 
-    if let Some(dialog) = app.runtime.indicators.indicator_settings.as_mut()
-        && let Some(quantick_indicators::InputValue::Int(len)) = dialog.draft.first_mut()
+    if app
+        .surfaces
+        .indicator_settings
+        .model_state
+        .dialog()
+        .is_some_and(|dialog| {
+            matches!(
+                dialog.draft.first(),
+                Some(quantick_indicators::InputValue::Int(_))
+            )
+        })
     {
-        *len = 21;
+        update_indicator_settings(
+            &mut app,
+            quantick_ui_model::indicator_settings::Intent::EditInput {
+                index: 0,
+                value: quantick_indicators::InputValue::Int(21),
+            },
+        );
     }
-    let change = app.runtime.indicators.apply_settings();
-    app.indicator_wiring()
-        .apply_indicator_settings_change(change);
+    update_indicator_settings(
+        &mut app,
+        quantick_ui_model::indicator_settings::Intent::Apply,
+    );
     assert!(
-        app.runtime.indicators.indicator_settings.is_some(),
+        app.surfaces
+            .indicator_settings
+            .model_state
+            .dialog()
+            .is_some(),
         "Apply keeps the dialog open for the next nudge"
     );
     settle_indicators(&mut app);
@@ -5686,7 +5743,8 @@ fn a_drawing_lands_on_the_pane_under_the_cursor() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
@@ -5705,7 +5763,8 @@ fn a_drawing_lands_on_the_pane_under_the_cursor() {
         "and nowhere else"
     );
 
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
@@ -5732,7 +5791,8 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
 
     // A mark kept to each pane, so an index means something on both.
     for side in [PaneSide::Time(0), PaneSide::Flow] {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = pane_point(&app, side);
         click_chart(&mut app, &ctx, point);
@@ -5750,8 +5810,8 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
     // the object (the store records an entry only if something moved).
     let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
     let tab_id = app.runtime.tabs.active_id();
-    app.drawings
-        .chrome
+    app.surfaces
+        .drawing_chrome
         .open_edit_gesture(tab_id, PaneSide::Time(0), 0, before);
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
@@ -6005,7 +6065,7 @@ fn the_same_handler_places_the_traders_object_and_the_agents() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     // The trader's own: the note hook takes the click path's own door.
-    app.drawings.chrome.set_pending_text_note(true);
+    app.surfaces.drawing_chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let after_trader = app.active_tab().drawing_pane().drawings.items().len();
     assert_eq!(after_trader, 1, "the trader placed one object");
@@ -6275,9 +6335,9 @@ fn drawing_controller_registered_conversion_precedes_ordinary_deletion() {
     // The same owner command the real button calls, after a real range drag.
     // Full-frame clicked conversion remains covered by the existing UI cases.
     let request = app
-        .drawings
-        .chrome
-        .quick_range
+        .surfaces
+        .drawing_chrome
+        .quick_range()
         .convert(QuickRangeAction::Retracement)
         .expect("the ready range emits a conversion request");
     let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk {

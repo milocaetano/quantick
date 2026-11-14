@@ -3,11 +3,11 @@
 //! applying what a click on it asked for.
 
 use super::LayoutAdapter;
-use crate::app::chrome::LayoutRename;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::layouts::{self, LayoutBook, LayoutError, LayoutId};
 use crate::pane::PaneSide;
 use quantick_stores::market_settings;
+use quantick_ui_model::layout_dialogs::{Effects, Intent};
 use smallvec::SmallVec;
 use std::time::Instant;
 
@@ -66,8 +66,7 @@ impl LayoutAdapter<'_> {
         );
         self.store.set_book(book);
         self.store.set_blocked(blocked || market_kept_back);
-        *self.rename = None;
-        *self.delete_confirm = None;
+        self.dialogs.update(Intent::Reload);
         self.seed_new_panes();
         // Last, after the seeding, and `LayoutStore::settle` says why.
         self.store
@@ -98,12 +97,14 @@ impl LayoutAdapter<'_> {
 
     /// Open one pane footer's rename box on `id`.
     fn begin_layout_rename_at(&mut self, tab: u64, pane: PaneSide, id: LayoutId) {
-        if let Some(layout) = self.layouts().get(id) {
-            *self.rename = Some(LayoutRename {
+        if self.pane_is_real(tab, pane)
+            && let Some(layout) = self.layouts().get(id)
+        {
+            self.dialogs.update(Intent::BeginRename {
                 tab,
                 pane,
                 layout: id,
-                draft: layout.name.clone(),
+                name: layout.name.clone(),
             });
         }
     }
@@ -111,7 +112,11 @@ impl LayoutAdapter<'_> {
     /// Draw one strip in every visible pane footer and apply their addressed
     /// actions after the shared catalogue borrow is released.
     pub(in crate::app) fn draw_layout_strips(&mut self, ui: &mut eframe::egui::Ui) {
-        for (tab, pane, action) in pane_strip_actions(self, ui) {
+        let (actions, effects) = pane_strip_actions(self, ui);
+        for effect in effects {
+            self.apply_dialog_effect(effect);
+        }
+        for (tab, pane, action) in actions {
             self.apply_strip_action_at(tab, pane, action);
         }
     }
@@ -136,11 +141,14 @@ impl LayoutAdapter<'_> {
     /// consumed here, so neither reaches the chart's own key handling —
     /// and nothing else on the window is touched while it is up.
     pub(in crate::app) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
-        let Some(id) = *self.delete_confirm else {
+        let Some(id) = self.dialogs.model_state.pending_delete() else {
             return;
         };
         let Some(layout) = self.layouts().get(id) else {
-            *self.delete_confirm = None;
+            self.dialogs.update(Intent::RequestDelete {
+                layout: id,
+                exists: false,
+            });
             return;
         };
         let name = layout.name.clone();
@@ -148,19 +156,60 @@ impl LayoutAdapter<'_> {
         // the number is read.
         let showing = self.panes_on_count(id);
         let prompt = quantick_session::prompt::Prompt::layout_delete(&name, showing);
-        match crate::widgets::ask(ctx, &prompt) {
-            Some(0) => self.confirm_layout_delete(),
-            Some(_) => *self.delete_confirm = None,
+        let answer = self
+            .dialogs
+            .with_pass(
+                quantick_ui_model::Slot::Overlay,
+                |_| {},
+                |view, _| view.confirm(ctx, &prompt),
+            )
+            .flatten();
+        match answer {
+            Some(true) => self.confirm_layout_delete(),
+            Some(false) => {
+                self.dialogs.update(Intent::AnswerDelete(false));
+            }
             None => {}
         }
     }
 
     /// The confirmed half of a delete: what the dialog's Delete button does.
     pub(crate) fn confirm_layout_delete(&mut self) {
-        let Some(id) = self.delete_confirm.take() else {
-            return;
+        let response = self.dialogs.update(Intent::AnswerDelete(true));
+        self.apply_dialog_response(response);
+    }
+    fn apply_dialog_response(&mut self, response: crate::surfaces::SurfaceResponse) {
+        for effect in response.model_effects {
+            if let quantick_ui_model::HostEffect::LayoutDialogs(effect) = effect {
+                self.apply_dialog_effect(effect);
+            }
+        }
+    }
+    fn apply_dialog_effect(&mut self, effect: Effects) {
+        let result = match effect {
+            Effects::None => return,
+            Effects::Focus { tab, pane } => {
+                if let Some(tab) = self.tabs.by_id_mut(tab) {
+                    tab.focus = pane;
+                }
+                return;
+            }
+            Effects::Rename {
+                layout,
+                name,
+                target,
+            } => {
+                if let Some((tab, pane)) = target {
+                    self.apply_dialog_effect(Effects::Focus { tab, pane });
+                }
+                match layouts::clean_name(&name) {
+                    Some(_) => self.rename_layout(layout, &name).map(|_| ()),
+                    None => Ok(()),
+                }
+            }
+            Effects::Delete(id) => self.delete_layout(id).map(|_| ()),
         };
-        if let Err(error) = self.delete_layout(id) {
+        if let Err(error) = result {
             self.note_workspace(error.to_string());
         }
     }
@@ -174,7 +223,7 @@ type PaneStripTarget = (u64, PaneSide, u64, eframe::egui::Rect, LayoutId);
 fn pane_strip_actions(
     app: &mut LayoutAdapter<'_>,
     ui: &mut eframe::egui::Ui,
-) -> Vec<AddressedStripAction> {
+) -> (Vec<AddressedStripAction>, Vec<Effects>) {
     let targets: SmallVec<[PaneStripTarget; MAX_CANVAS_PANES]> = {
         let tab_id = app.tabs.active_id();
         let tab = app.active_tab();
@@ -188,33 +237,45 @@ fn pane_strip_actions(
     };
     let can_add = app.layouts().layouts().len() < layouts::MAX_LAYOUTS;
     let can_delete = app.layouts().layouts().len() > 1;
-    let LayoutAdapter {
-        rename: layout_rename,
-        store,
-        ..
-    } = app;
+    let LayoutAdapter { dialogs, store, .. } = app;
     let layouts = store.book().layouts();
     let mut addressed = Vec::new();
+    let mut requests = Vec::new();
     for (tab, pane, pane_id, rect, active) in targets {
-        let rename = layout_rename
-            .as_mut()
-            .filter(|rename| rename.tab == tab && rename.pane == pane)
-            .map(|rename| (rename.layout, &mut rename.draft));
-        let actions = crate::layout_strip::draw(
-            ui,
-            rect,
-            pane_id,
-            crate::layout_strip::StripModel {
-                layouts,
-                active,
-                rename,
-                can_add,
-                can_delete,
+        let actions = dialogs.with_updates(
+            |response| {
+                for effect in response.model_effects {
+                    if let quantick_ui_model::HostEffect::LayoutDialogs(effect) = effect
+                        && effect != Effects::None
+                    {
+                        requests.push(effect);
+                    }
+                }
+            },
+            |_, session| {
+                let rename = session
+                    .state()
+                    .rename()
+                    .filter(|rename| rename.tab == tab && rename.pane == pane)
+                    .map(|rename| (rename.layout, rename.draft.clone()));
+                crate::layout_strip::draw(
+                    ui,
+                    rect,
+                    pane_id,
+                    crate::layout_strip::StripModel {
+                        layouts,
+                        active,
+                        rename,
+                        can_add,
+                        can_delete,
+                    },
+                    session,
+                )
             },
         );
         addressed.extend(actions.into_iter().map(|action| (tab, pane, action)));
     }
-    addressed
+    (addressed, requests)
 }
 
 /// Dispatch one pane-local strip action after the drawing borrow ends.
@@ -240,20 +301,18 @@ fn apply_addressed_strip_action(
             Ok(())
         }
         StripAction::CommitRename(id, name) => {
-            *app.rename = None;
-            match layouts::clean_name(&name) {
-                Some(_) => app.rename_layout(id, &name).map(|_| ()),
-                None => Ok(()),
-            }
+            let response = app.dialogs.update(Intent::Commit { layout: id, name });
+            app.apply_dialog_response(response);
+            Ok(())
         }
         StripAction::CancelRename => {
-            *app.rename = None;
+            app.dialogs.update(Intent::CancelRename);
             Ok(())
         }
         StripAction::Delete(id) => {
-            if app.layouts().get(id).is_some() {
-                *app.delete_confirm = Some(id);
-            }
+            let exists = app.layouts().get(id).is_some();
+            app.dialogs
+                .update(Intent::RequestDelete { layout: id, exists });
             Ok(())
         }
     };
