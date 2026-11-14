@@ -44,6 +44,34 @@ fn resizing_one_pair_keeps_its_neighbor_and_short_columns_stay_put() {
     }
 }
 
+/// A drag that stays clear of both folds trades height between the pair in
+/// the direction it moves: up shrinks the upper chart and grows the lower,
+/// down gives it back.
+#[test]
+fn a_boundary_drag_trades_height_in_the_direction_it_moves() {
+    let column = CanvasRect::new(0.0, 40.0, 600.0, 900.0);
+    let mut stack = stack(2);
+    let lengths = |stack: &ContextStack| {
+        let split = carve(column, &stack.heights);
+        [length(split.panes[0]), length(split.panes[1])]
+    };
+    let equal = lengths(&stack);
+    for (step, upward) in [(-60.0, true), (120.0, false)] {
+        let before = lengths(&stack);
+        let dividers = carve(column, &stack.heights).dividers().to_vec();
+        let wanted = split::centre(dividers[0]) + step;
+        let moved = stack.resize(0, wanted, column, &dividers, FOOTER_PX);
+        assert!(moved.unwrap().changed);
+        let after = lengths(&stack);
+        assert_eq!(
+            (after[0] < before[0], after[1] > before[1]),
+            (upward, upward),
+            "{step} px: {before:?} -> {after:?}"
+        );
+    }
+    assert!(lengths(&stack)[0] > equal[0], "the net drag was downward");
+}
+
 /// Fold either chart against its edge and reopen it, over and over; a short
 /// column reopens to past the fold threshold, a tall one to the full floor.
 #[test]

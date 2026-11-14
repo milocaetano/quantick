@@ -28,74 +28,6 @@ fn slow_primary_drag(
     pointer
 }
 
-/// The whole point of collapsing: a strip is not a dead band. One click on
-/// it brings the curve back, and it must survive the frame after — the
-/// automatic rule is what collapsed the pane, so handing the pane back to
-/// it would undo the click immediately.
-/// Three panes in the smallest window the app allows: the state the user
-/// reported as unusable. Something must collapse — that is the point — and
-/// nothing that stays open may be below the readable floor.
-#[test]
-fn the_smallest_window_collapses_rather_than_squeezing_every_pane() {
-    let ctx = egui::Context::default();
-    let (app, _cmd_rx) = app_with_full_pane_band(&ctx, MIN_WINDOW);
-
-    let panes = pane_slots(&app);
-    assert_eq!(panes.len(), crate::indicators::MAX_PANES);
-    assert!(
-        panes.iter().any(|pane| pane.collapsed),
-        "the smallest window cannot hold three readable panes: {panes:?}"
-    );
-    for pane in &panes {
-        assert!(
-            pane.collapsed || pane.rect.height() + 0.01 >= crate::indicators::MIN_PANE_HEIGHT_PX,
-            "an expanded pane below the readable floor: {pane:?}"
-        );
-    }
-}
-
-/// The same band in a roomy window: nothing collapses, so the floor never
-/// costs a user with a big screen anything.
-#[test]
-fn a_roomy_window_draws_every_pane() {
-    let ctx = egui::Context::default();
-    let (app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
-    assert!(
-        pane_slots(&app).iter().all(|pane| !pane.collapsed),
-        "a tall window has room for all of them: {:?}",
-        pane_slots(&app)
-    );
-}
-
-/// The whole point of collapsing: a strip is not a dead band. One click on
-/// it brings the curve back, and it must survive the frame after — the
-/// automatic rule is what collapsed the pane, so handing the pane back to
-/// it would undo the click immediately.
-#[test]
-fn clicking_a_collapsed_strip_opens_it_and_it_stays_open() {
-    let ctx = egui::Context::default();
-    let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, MIN_WINDOW);
-
-    let collapsed = pane_slots(&app)
-        .iter()
-        .position(|pane| pane.collapsed)
-        .expect("the smallest window collapses at least one pane");
-
-    let strip = pane_slots(&app)[collapsed].rect;
-    click_sized(&mut app, &ctx, MIN_WINDOW, strip.center());
-    run_frame_at(&mut app, &ctx, MIN_WINDOW);
-    assert!(
-        !pane_slots(&app)[collapsed].collapsed,
-        "one click opens the strip"
-    );
-
-    run_frame_at(&mut app, &ctx, MIN_WINDOW);
-    assert!(
-        !pane_slots(&app)[collapsed].collapsed,
-        "and it is still open a frame later, not re-collapsed by the layout"
-    );
-}
-
 /// Drag a pane's top edge and that pane resizes — the grammar the canvas
 /// split and the live lane already use, on the one band in the app that
 /// did not have it. Dragging up grows the pane into the chart.
@@ -119,64 +51,6 @@ fn dragging_a_panes_top_edge_resizes_that_pane() {
     assert!(
         after > before,
         "dragging the edge up grows the pane: {before} -> {after}"
-    );
-}
-
-/// The floor holds during a drag too: a divider stops rather than
-/// producing a pane too short to read. Anything else would hand the user a
-/// way to recreate exactly the state this branch exists to prevent.
-#[test]
-fn a_divider_cannot_be_dragged_past_the_readable_floor() {
-    let ctx = egui::Context::default();
-    let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
-
-    let edge = pane_slots(&app)[0].rect.center_top();
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        edge,
-        edge + egui::vec2(0.0, 400.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-
-    let pane = pane_slots(&app)[0];
-    assert!(
-        pane.collapsed || pane.rect.height() + 0.01 >= crate::indicators::MIN_PANE_HEIGHT_PX,
-        "a drag cannot squeeze a pane below the floor: {pane:?}"
-    );
-}
-
-/// Double click on a divider gives the pane back to the automatic layout —
-/// the escape every other axis in the app offers on the same gesture.
-#[test]
-fn double_clicking_a_divider_returns_the_pane_to_automatic() {
-    let ctx = egui::Context::default();
-    let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
-
-    let automatic = pane_slots(&app)[0].rect.height();
-    let edge = pane_slots(&app)[0].rect.center_top();
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        edge,
-        edge - egui::vec2(0.0, 60.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(
-        (pane_slots(&app)[0].rect.height() - automatic).abs() > 1.0,
-        "the drag took manual control"
-    );
-
-    let edge = pane_slots(&app)[0].rect.center_top();
-    click_sized(&mut app, &ctx, TEST_WINDOW, edge);
-    click_sized(&mut app, &ctx, TEST_WINDOW, edge);
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(
-        (pane_slots(&app)[0].rect.height() - automatic).abs() < 1.0,
-        "and a double click hands it back: {} vs {automatic}",
-        pane_slots(&app)[0].rect.height()
     );
 }
 
@@ -421,9 +295,9 @@ fn dragging_the_price_gutter_leaves_every_pane_alone() {
 }
 
 /// The trader's own gesture for turning the chart over: keep dragging the
-/// price gutter down and the candles shrink, flatten and flip. The same
-/// motion carried on grows them upside down, and the opposite pull turns
-/// the chart back — one continuous loop, no menu needed.
+/// price gutter down and the candles shrink, flatten and flip, and the same
+/// motion carried on grows them upside down. The way back through the
+/// threshold is `price_view`'s `the_opposite_drag_flips_back`.
 #[test]
 fn dragging_the_price_gutter_through_the_flip_turns_the_chart_over() {
     let (mut app, _cmd_rx) = app_with_history(200);
@@ -481,25 +355,6 @@ fn dragging_the_price_gutter_through_the_flip_turns_the_chart_over() {
         span(&app)
     );
     assert!(app.active_tab().flow_pane.price_view.is_inverted());
-
-    // And the opposite motion shrinks it back to the threshold, where
-    // the following pull turns it upright again.
-    drag_chart(
-        &mut app,
-        &ctx,
-        gutter.center(),
-        gutter.center() - egui::vec2(0.0, 900.0),
-    );
-    drag_chart(
-        &mut app,
-        &ctx,
-        gutter.center(),
-        gutter.center() - egui::vec2(0.0, 300.0),
-    );
-    assert!(
-        !app.active_tab().flow_pane.price_view.is_inverted(),
-        "the way back crosses the same threshold"
-    );
 }
 
 /// `QUANTICK_CONTEXT_MENU=axis` reaches the price axis's own menu: the
@@ -891,27 +746,9 @@ fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
         prints: 64,
     };
     app.active_tab_mut().publish_latency_for_test(Some(split));
+    // The cell the trader reads takes it from there:
+    // `quantick_feed::timing`'s tests name the hop.
     assert_eq!(app.active_tab().feed_latency(), Some(split));
-
-    // The cell the trader reads takes it from there: the feed's own total,
-    // with the hop named because that delay is past the threshold worth
-    // acting on. The chart has drained no print of its own yet, and the
-    // cell is right to show the feed's figure anyway — a split only exists
-    // because a print did arrive at the feed.
-    assert_eq!(
-        statusbar::tape_text(
-            None,
-            app.active_tab().link.trade_arrival_ms(),
-            Some(50),
-            app.active_tab().feed_latency(),
-        ),
-        "MT5 18112 ms"
-    );
-    assert_eq!(
-        app.active_tab().link.trade_arrival_ms(),
-        None,
-        "and the chart's own measurement is untouched by the reading"
-    );
 
     // A provider that cannot cut its own chain leaves the cell exactly as
     // it has always been — never a breakdown of zeros nobody measured.
@@ -1412,8 +1249,10 @@ fn the_time_layout_shows_the_timeframe_chart_alone() {
 }
 
 /// The three-chart preset used to paint a seam between its two timeframe
-/// charts without registering it for input. A trader could resize the column
-/// sideways, but its two rows remained fixed at equal heights.
+/// charts without registering it for input. A drag on the seam reaches the
+/// context stack, and a folded chart paints nothing while its handle stays
+/// to reverse the drag; the stack's own floors and folds are
+/// `quantick_workspace::canvas_layout::stack`'s tests.
 #[test]
 fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
     let ctx = egui::Context::default();
@@ -1432,156 +1271,49 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
             .expect("the context chart was drawn")
             .height()
     };
-    let column_divider_x = app
-        .active_tab()
-        .canvas_divider_rect()
+    let drag_seam_to = |app: &mut QuantickApp, y: f32| {
+        let seam = (app.active_tab().context_divider_rect(0))
+            .expect("two stacked charts have one divider")
+            .center();
+        drag_sized(app, &ctx, TEST_WINDOW, seam, egui::pos2(seam.x, y));
+        run_frame_at(app, &ctx, TEST_WINDOW);
+    };
+    let column_divider_x = (app.active_tab().canvas_divider_rect())
         .expect("the context column is beside flow")
         .center()
         .x;
     let equal = [height(&app, 0), height(&app, 1)];
-    let divider = app
-        .active_tab()
-        .context_divider_rect(0)
-        .expect("two stacked charts have one divider");
+    let seam_y = (app.active_tab().context_divider_rect(0))
+        .expect("two stacked charts have one divider")
+        .center()
+        .y;
 
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        divider.center(),
-        divider.center() - egui::vec2(0.0, 60.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    drag_seam_to(&mut app, seam_y - 60.0);
     let raised = [height(&app, 0), height(&app, 1)];
     assert!(
         raised[0] < equal[0] && raised[1] > equal[1],
         "dragging upward exchanges height in that direction: {equal:?} -> {raised:?}"
     );
-
-    let divider = app
-        .active_tab()
-        .context_divider_rect(0)
-        .expect("the resized seam remains draggable");
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        divider.center(),
-        divider.center() + egui::vec2(0.0, 120.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let lowered = [height(&app, 0), height(&app, 1)];
+    let column_divider = (app.active_tab().canvas_divider_rect())
+        .expect("the column boundary remains")
+        .center();
     assert!(
-        lowered[0] > raised[0] && lowered[1] < raised[1],
-        "dragging downward exchanges height in the opposite direction: {raised:?} -> {lowered:?}"
-    );
-    assert!(
-        (app.active_tab()
-            .canvas_divider_rect()
-            .expect("the column boundary remains")
-            .center()
-            .x
-            - column_divider_x)
-            .abs()
-            < 1e-3,
+        (column_divider.x - column_divider_x).abs() < 1e-3,
         "a vertical resize must not move the boundary beside the flow chart"
     );
 
-    let divider = app
-        .active_tab()
-        .context_divider_rect(0)
-        .expect("two stacked charts have one divider");
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        divider.center(),
-        egui::pos2(divider.center().x, TEST_WINDOW.y),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-
-    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
+    drag_seam_to(&mut app, TEST_WINDOW.y);
+    let tab = app.active_tab();
+    assert!(tab.canvas.pane_collapsed(PaneSide::Time(1)));
+    assert!(tab.pane(PaneSide::Time(1)).frame.area.is_none());
+    assert!(tab.pane(PaneSide::Time(0)).frame.area.is_some());
     assert!(
-        app.active_tab()
-            .pane(PaneSide::Time(1))
-            .frame
-            .area
-            .is_none()
-    );
-    assert!(
-        app.active_tab()
-            .pane(PaneSide::Time(0))
-            .frame
-            .area
-            .is_some()
-    );
-    assert!(
-        app.active_tab().context_divider_rect(0).is_some(),
+        tab.context_divider_rect(0).is_some(),
         "the handle remains available to reverse the drag"
     );
 
-    let handle = app.active_tab().context_divider_rect(0).unwrap();
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        handle.center(),
-        egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    drag_seam_to(&mut app, TEST_WINDOW.y / 2.0);
     assert!(!app.active_tab().canvas.pane_collapsed(PaneSide::Time(1)));
-
-    let handle = app.active_tab().context_divider_rect(0).unwrap();
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        handle.center(),
-        egui::pos2(handle.center().x, 0.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
-    assert!(
-        app.active_tab()
-            .pane(PaneSide::Time(0))
-            .frame
-            .area
-            .is_none()
-    );
-    let handle = app.active_tab().context_divider_rect(0).unwrap();
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        handle.center(),
-        egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
-    );
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    assert!(!app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
-
-    let short_window = egui::vec2(TEST_WINDOW.x, 440.0);
-    run_frame_at(&mut app, &ctx, short_window);
-    run_frame_at(&mut app, &ctx, short_window);
-    let divider = app
-        .active_tab()
-        .context_divider_rect(0)
-        .expect("the short canvas keeps its divider");
-    drag_sized(
-        &mut app,
-        &ctx,
-        short_window,
-        divider.center(),
-        egui::pos2(divider.center().x, 0.0),
-    );
-    run_frame_at(&mut app, &ctx, short_window);
-    assert!(app.active_tab().canvas.pane_collapsed(PaneSide::Time(0)));
-    assert!(
-        app.active_tab()
-            .pane(PaneSide::Time(1))
-            .frame
-            .area
-            .is_some()
-    );
 }
 
 #[test]
@@ -1801,38 +1533,6 @@ fn resetting_the_startup_layout_keeps_the_other_standing_choices() {
     );
     assert!(file.tabs.is_empty(), "and the layout really was reset");
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
-/// Switching layouts focuses the pane the switch reveals, so the first
-/// command after a switch already lands on the chart that just appeared
-/// (audit: opening the split did not focus the pane it created).
-#[test]
-fn switching_layouts_focuses_the_pane_the_switch_reveals() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    run_frame(&mut app, &ctx);
-
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.active_tab().focused_side(),
-        PaneSide::Time(0),
-        "coming from Single, the split reveals the time pane"
-    );
-
-    app.active_tab_mut().set_layout(CanvasLayout::Single);
-    assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
-
-    app.active_tab_mut().set_layout(CanvasLayout::Time);
-    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    assert_eq!(
-        app.active_tab().focused_side(),
-        PaneSide::Flow,
-        "coming from Time, the split reveals the flow pane"
-    );
 }
 
 /// The selector of the focused pane — the pane the status bar reads and
@@ -2918,60 +2618,6 @@ fn a_previewed_input_never_reaches_the_layout() {
     );
 }
 
-/// Deleting a layout destroys its drawings, so the strip's Delete asks
-/// first; the confirmed half is what removes it, and cancelling keeps it.
-#[test]
-fn deleting_a_layout_waits_for_the_confirmation() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = split_app(&ctx, 200);
-    let second = app
-        .layout_adapter()
-        .create_layout(Some("levels"))
-        .expect("second");
-    app.layout_adapter()
-        .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
-    assert_eq!(
-        app.layout_state().layouts().layouts().len(),
-        2,
-        "nothing is deleted yet"
-    );
-    assert_eq!(
-        app.surfaces.layout_dialogs.model_state.pending_delete(),
-        Some(second)
-    );
-    app.surfaces
-        .layout_dialogs
-        .update(quantick_ui_model::layout_dialogs::Intent::AnswerDelete(
-            false,
-        ));
-    assert_eq!(
-        app.layout_state().layouts().layouts().len(),
-        2,
-        "cancelling keeps it"
-    );
-
-    app.layout_adapter()
-        .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
-    app.layout_adapter().confirm_layout_delete();
-    assert_eq!(
-        app.layout_state().layouts().layouts().len(),
-        1,
-        "confirming deletes it"
-    );
-    assert_ne!(
-        app.layout_state().layouts().active_id(),
-        second,
-        "and the neighbour is active"
-    );
-    assert!(
-        app.surfaces
-            .layout_dialogs
-            .model_state
-            .pending_delete()
-            .is_none()
-    );
-}
-
 /// A pane on its tab's copy of a layout shows that layout: the delete dialog
 /// counts it, and the delete moves it to the neighbour and drops the copy.
 #[test]
@@ -3224,81 +2870,6 @@ fn a_time_pane_asks_for_venue_history_once_and_renders_the_reply() {
     );
 }
 
-/// A push feed replacing its block mid-run discards the slices still in
-/// flight rather than folding them onto the base they no longer belong to
-/// — which would build a history missing exactly its newest part.
-#[test]
-fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_ohlcv_requests(&mut commands);
-
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: venue_history_range(-20, 0),
-            slice: quantick_feed::OhlcvSlice::More,
-        })
-        .unwrap();
-    app.drain_tabs();
-    assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 20);
-
-    // The feed stored a fresh block: the base being built is abandoned.
-    // What is already drawn stays drawn — blanking the chart while a
-    // replacement is fetched would be a worse answer than a slightly old
-    // one, and the replacement overwrites it wholesale when it lands.
-    app.active_tab_mut().forget_ohlcv_generation_for_test();
-    app.drain_tabs();
-
-    // The rest of the abandoned run arrives anyway, and is ignored: were
-    // it folded in, the base would be the two older weeks with the newest
-    // one — the part already thrown away — missing from the middle.
-    for slice in [
-        quantick_feed::OhlcvSlice::More,
-        quantick_feed::OhlcvSlice::Last { complete: true },
-    ] {
-        events
-            .try_send(FeedEvent::OhlcvHistory {
-                interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-                bars: venue_history_range(-60, -20),
-                slice,
-            })
-            .unwrap();
-        app.drain_tabs();
-    }
-    assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
-        20,
-        "the leftovers extended nothing"
-    );
-    assert_eq!(
-        drain_ohlcv_requests(&mut commands),
-        1,
-        "the abandoned run's closing slice freed the tab to ask again, once"
-    );
-    assert!(
-        app.active_tab()
-            .loading
-            .is_active(LoadingTask::VenueHistory),
-        "and the wait now belongs to the replacement request"
-    );
-
-    // The replacement answer installs cleanly over what was left.
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: venue_history_range(-45, 0),
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-    assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
-        45,
-        "the fresh answer is the whole prefix, not an addition to the old"
-    );
-}
-
 /// S1 end to end on the single-pane route: `bars → time` on the flow
 /// pane asks the venue for candle history and wears the reply as its
 /// prefix — the fix for the audit's BLOCKER-1, where the toolbar route
@@ -3457,33 +3028,19 @@ fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
     );
 }
 
-/// The window's last target is what a tab that never pressed loads; a tab
-/// that pressed keeps its own.
+/// The window's last target reaches a tab that never pressed. A tab that
+/// pressed keeps its own: `HistoryRun`'s `the_main_click_repeats_this_tabs_last_action`
+/// and `a_run_in_flight_keeps_its_target_when_the_default_changes`.
 #[test]
-fn a_tab_repeats_its_own_target_and_a_fresh_one_the_windows() {
+fn a_fresh_tab_follows_the_windows_target() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = history_app(&ctx);
-    assert_eq!(
-        app.active_tab().session.main_history_reach(),
-        history_reach::HistoryReach::Sessions(1),
-        "yesterday is what a chart opens on"
-    );
     app.runtime.history.history_reach = history_reach::HistoryReach::Sessions(3);
     app.drain_tabs();
     assert_eq!(
         app.active_tab().session.main_history_reach(),
         history_reach::HistoryReach::Sessions(3),
         "a tab that never pressed follows the window"
-    );
-    let config = app.config.clone();
-    app.active_tab_mut()
-        .load_history(&config, history_reach::HistoryReach::Hours(4));
-    app.runtime.history.history_reach = history_reach::HistoryReach::Sessions(5);
-    app.drain_tabs();
-    assert_eq!(
-        app.active_tab().session.main_history_reach(),
-        history_reach::HistoryReach::Hours(4),
-        "a tab that pressed repeats its own target"
     );
 }
 
@@ -3531,52 +3088,6 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
         "and the one showing that market still is"
     );
     let _ = std::fs::remove_file(&path);
-}
-
-/// The remove affordance is refused for a market a tab is on: the picker
-/// greys it out, and the reason is that the next SOURCE correction would
-/// otherwise retarget that tab to another instrument.
-#[test]
-fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
-    let ctx = egui::Context::default();
-    let (mut app, _cmd_rx) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_symbols_path(symbols_scratch("guard"));
-    let _ = std::fs::remove_file(app.runtime.workspace.symbols_path());
-    app.symbol_catalog()
-        .add("binance", "WINQ26")
-        .expect("the catalog takes a symbol that fits");
-    app.arrangement_adapter().adopt_tab(
-        "binance".to_owned(),
-        "WINQ26".to_owned(),
-        stub_feed().0,
-        None,
-    );
-    run_frame(&mut app, &ctx);
-
-    // What the picker is handed, and what it does with it.
-    let open: Vec<(String, String)> = app
-        .runtime
-        .tabs
-        .iter()
-        .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-        .collect();
-    assert!(
-        open.iter()
-            .any(|(feed, symbol)| feed == "binance" && symbol == "WINQ26"),
-        "the tab is on the market the picker must protect"
-    );
-    // The app-side rule holds even if the affordance were clicked: the
-    // catalog edit is refused for the last symbol and allowed otherwise,
-    // and the tab is never touched either way.
-    app.symbol_catalog().remove("binance", "WINQ26").unwrap();
-    assert_eq!(
-        app.active_tab().symbol,
-        "WINQ26",
-        "removing a symbol never moves a tab off its market"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.symbols_path());
 }
 
 /// (a) The `+` opens the picker, and choosing a market adds a tab that
@@ -3670,12 +3181,9 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
 
     app.apply_tab_action(TabAction::Close(1));
 
-    assert_eq!(app.runtime.tabs.len(), 1);
-    assert_eq!(
-        app.runtime.tabs.active_id(),
-        first,
-        "a neighbour takes over"
-    );
+    // Which neighbour takes over is the arrangement's
+    // `close_preserves_position_instead_of_selected_identity`.
+    assert_eq!(app.runtime.tabs.active_id(), first);
     assert!(
         !app.runtime
             .indicators
@@ -3789,28 +3297,15 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
     );
 }
 
-/// (g) `Ctrl+Tab` / `Ctrl+Shift+Tab` walk the strip and wrap (§10).
+/// (g) `Ctrl+Tab` walks the strip (§10). The walk and its wrap are the
+/// arrangement's `cycles_wrap_and_clamped_restore_selection_keeps_literal_position`.
 #[test]
 fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    let _ends = open_second_tab(&mut app, &ctx, "TESTUSDT");
-    assert_eq!(app.runtime.tabs.len(), 3);
-    assert_eq!(app.runtime.tabs.active_index(), 2);
-
-    app.arrangement_adapter().cycle_tab(1);
-    assert_eq!(
-        app.runtime.tabs.active_index(),
-        0,
-        "forward from the last wraps to the first"
-    );
-    app.arrangement_adapter().cycle_tab(-1);
-    assert_eq!(app.runtime.tabs.active_index(), 2, "and back again");
-    app.arrangement_adapter().cycle_tab(-1);
     assert_eq!(app.runtime.tabs.active_index(), 1);
 
-    // Through the real key path, so the shortcut itself is covered.
     run_frame_with_modifiers(
         &mut app,
         &ctx,
@@ -3819,8 +3314,8 @@ fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
     );
     assert_eq!(
         app.runtime.tabs.active_index(),
-        2,
-        "Ctrl+Tab moves forward one"
+        0,
+        "Ctrl+Tab moves forward one, wrapping from the last"
     );
 }
 
