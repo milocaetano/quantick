@@ -178,7 +178,9 @@ impl Desk {
     /// The window's frame start: the copies follow the workspaces.
     fn share(&mut self) -> OwnedCopies {
         let holdings = tab_holdings((&self.book, &self.sync));
-        self.session.hold_workspaces(holdings);
+        let book = &self.book;
+        self.session
+            .hold_workspaces(holdings, |tab| book.differs(tab));
         let panes: Vec<(u64, u64)> = (self.tabs.iter())
             .flat_map(|tab| panes(*tab).map(|pane| (*tab, pane)))
             .collect();

@@ -273,6 +273,39 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
             host.apply_recipe_indicators(id, &recipe);
         }
         settle(host, id);
+        if !arrived {
+            share_shown_sets(host, id);
+        }
+    }
+}
+
+/// After `landed` took its recipe, which may repaint the other tabs on its
+/// workspace: each that stands is read again, as no edit. Where any tab
+/// there holds an edit, the sets shown are that edit, the workspace's, and
+/// every one of them holds it ([`WorkspaceBook::hold_shown`]): each reads
+/// held, a save from any writes it, and a discard on one leaves it with the
+/// rest. With no edit held a landing's heal stays out of every copy.
+fn share_shown_sets<H: TabRecipeHost + ?Sized>(host: &mut H, landed: u64) {
+    let book = host.recipe_book().0;
+    let Some(state) = book.tab_state(landed) else {
+        return;
+    };
+    let tabs = book.tabs_on(state.workspace);
+    let held = tabs.iter().any(|tab| book.differs(*tab));
+    for tab in tabs {
+        let sync = host.recipe_book().1;
+        if sync.is_pending(tab) || !sync.is_settled(tab) {
+            continue;
+        }
+        let signal = host.recipe_signal(tab);
+        let Some(live) = host.live_recipe(tab) else {
+            continue;
+        };
+        let (book, sync) = host.recipe_book_mut();
+        if held {
+            book.hold_shown(tab, &live);
+        }
+        sync.reread(tab, live, signal);
     }
 }
 

@@ -3,9 +3,11 @@
 //! Every tab is one market and uses one workspace, and holds its own copy of
 //! that recipe. An edit changes only the copy, so it reaches no other tab until
 //! [`WorkspaceBook::save_to`]; the indicators are the exception: every tab on
-//! one workspace shows one set per strip layout (`session::LayoutSession`), so
-//! an indicator edit is on each of them at once, and each copy reads it. Whether a copy differs is derived by comparing it
-//! to the recipe, never stored, so a flag and the truth cannot disagree.
+//! one workspace shows one set per strip layout (`session::LayoutSession`),
+//! an indicator edit is on each of them at once, and each copy reads it, so
+//! a held indicator edit is the workspace's, not one tab's. Whether a copy
+//! differs is derived by comparing it to the recipe, never stored, so a flag
+//! and the truth cannot disagree.
 //!
 //! With [`WorkspaceBook::autosave`] on (the default) the window writes every
 //! edit through after a quiet second, so no tab reads as holding edits unless
@@ -420,7 +422,9 @@ impl WorkspaceBook {
             .map_or_else(|| FACTORY_SUMMARY.to_owned(), WorkspaceRecipe::summary)
     }
 
-    fn tabs_on(&self, name: &str) -> Vec<u64> {
+    /// The tabs on workspace `name`, by id.
+    #[must_use]
+    pub fn tabs_on(&self, name: &str) -> Vec<u64> {
         self.tabs
             .iter()
             .filter(|(_, state)| state.workspace == name)
@@ -443,6 +447,21 @@ impl WorkspaceBook {
         copy.flow_indicators.clone_from(&shown.flow_indicators);
         for (pane, seen) in copy.context_panes.iter_mut().zip(&shown.context_panes) {
             pane.indicators.clone_from(&seen.indicators);
+        }
+    }
+
+    /// A landing showed `shown` on the tab while its workspace holds an edit,
+    /// which these sets are: the copy takes them, as [`Self::take_sets`], and
+    /// reads held. With autosave on a copy that comes to differ this way is
+    /// [`Unsynced::Outvoted`]: the edit is the tab's that made it, never
+    /// written from here unasked.
+    pub fn hold_shown(&mut self, tab: u64, shown: &WorkspaceRecipe) {
+        let was = self.differs(tab);
+        self.take_sets(tab, shown);
+        if !self.differs(tab) {
+            self.unsynced.remove(&tab);
+        } else if self.autosave && !was {
+            self.unsynced.insert(tab, Unsynced::Outvoted);
         }
     }
 
@@ -888,7 +907,12 @@ impl WorkspaceBook {
                 dropped_edits: false,
             });
         }
-        let dropped_edits = self.is_modified(state);
+        // An edit another tab there still holds is not dropped: it is theirs too.
+        let others = (self.tabs.iter()).filter(|(other, _)| **other != tab);
+        let shared = others
+            .filter(|(_, held)| held.workspace == state.workspace)
+            .any(|(_, held)| self.is_modified(held));
+        let dropped_edits = self.is_modified(state) && !shared;
         self.tabs.insert(tab, TabWorkspace::on(name, recipe));
         self.unsynced.remove(&tab);
         Ok(SetOutcome {

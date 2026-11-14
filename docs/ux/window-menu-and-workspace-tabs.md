@@ -166,7 +166,11 @@ snapshot reads it as `auto_save`.
   auto save off: marked, never written unasked (not by a later edit, a
   close, a switch or the exit), closing it or exiting asks, a switch drops it
   with the "changes dropped" toast, and its Save is the trader's choice.
-- **Off:** the change is held on the tab. The cell wears the amber mark and a
+- **Off:** the change is held on the tab. An indicator change is the
+  exception: every tab on the workspace whose panes show that strip layout
+  shows it at once and holds it too, so each is marked, a save from any of
+  them writes it, and it stays until the last of them saves it, switches
+  away or closes without saving. The cell wears the amber mark and a
   blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the tab's own drawing sets
@@ -300,7 +304,9 @@ on today's model; phase 3 is the model change.
 ## Open decisions recorded here
 
 - Save model: copy on the tab with explicit "Save to" (chosen); shared-live
-  with an Undo toast (rejected).
+  with an Undo toast (rejected). Indicator sets are the exception (the
+  trader's rule, 2026-11-14): tabs on one workspace show one set per strip
+  layout, live; tabs on two workspaces never share one.
 - Window-level name: Desk (chosen); Session (rejected for collisions).
 - The per-pane layout strip (Fluxo / Force Bar Only) becomes workspace
   content; whether to rename it ("Indicator sets") is a separate decision.

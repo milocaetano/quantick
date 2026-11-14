@@ -151,8 +151,9 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
 }
 
 /// The footprint style and the layers are the tab's: an edit on one tab
-/// reaches another on the same workspace only by Save to. The indicators are
-/// the workspace's: see `two_tabs_on_one_workspace_show_one_set_per_layout`.
+/// reaches another on the same workspace only by Save to. So do indicators on
+/// a strip layout the other tab does not show; on one it shows they are the
+/// workspace's: see `an_indicator_added_on_a_flow_pane_reaches_every_pane…`.
 #[test]
 fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     let layouts = crate::scratch::ScratchFile::new("workspace-no-leak-all", "layouts.toml");
@@ -163,6 +164,12 @@ fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     frames(&mut app, 3);
     let edited = app.runtime.tabs.active_id();
     let other = if edited == first { second } else { first };
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    let apart = session.create(Some("Apart")).expect("a free name");
+    app.layout_adapter()
+        .switch_pane_layout(other, PaneSide::Flow, apart)
+        .expect("a known layout");
+    frames(&mut app, 2);
     let before = live_recipe(&app.runtime, other).expect("an open tab");
 
     let window = app.runtime.footprint_config.clone();
@@ -173,6 +180,8 @@ fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     let change = crate::footprint_config::FootprintConfig { style, ..window };
     app.layer_wiring()
         .apply_footprint_change(crate::surfaces::FootprintChange::Applied(Box::new(change)));
+    app.layout_adapter()
+        .show_pane_indicators(edited, PaneSide::Flow, &[ema()]);
     let (layer, on) = some_layer(&app, edited, 0);
     let tab = app.runtime.tabs.by_id_mut(edited).expect("an open tab");
     tab.flow_pane
@@ -191,6 +200,7 @@ fn footprint_style_and_layers_stay_on_their_tab_until_save_to() {
     frames(&mut app, 3);
     let followed = live_recipe(&app.runtime, other).expect("an open tab");
     assert_eq!(followed.footprint_style.as_deref(), Some(style.id()));
+    assert_eq!(followed.flow_indicators, [ema()]);
     assert_eq!(followed.layers.get(layer.id()), Some(&!on));
     assert!(!app.runtime.workspace.book.tab_row(other).1);
 }
@@ -1859,9 +1869,10 @@ fn scope_kinds(app: &QuantickApp, tab: u64) -> Vec<Vec<String>> {
         .unwrap();
     let tabs = capture.scopes[&scope].value["tabs"].clone();
     let tabs = tabs.as_array().expect("tabs");
+    let id = tab.to_string();
     let entry = tabs
         .iter()
-        .find(|entry| entry["tab_id"] == tab.to_string())
+        .find(|entry| entry["tab_id"] == id.as_str())
         .expect("the tab");
     let panes = entry["panes"].as_array().expect("panes").iter();
     panes

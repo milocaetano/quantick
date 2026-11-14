@@ -524,6 +524,10 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
         .clone()
         .save_as(tab, name)
         .map_err(|refusal| refused(&refusal))?;
+    // What its panes show, held edits of the workspace's included.
+    if let Some(store) = app.workspace_store() {
+        store.take_shown_sets(tab);
+    }
     let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
     outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
     Ok(outcome)

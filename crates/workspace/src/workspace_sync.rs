@@ -99,6 +99,15 @@ impl TabRecipeSync {
         self.seen.get(&tab).map(|seen| &seen.last)
     }
 
+    /// The tab was read again, showing `live` with change signal `signal`,
+    /// and that is no edit: a landing on another tab repainted it.
+    pub fn reread(&mut self, tab: u64, live: WorkspaceRecipe, signal: u64) {
+        if let Some(seen) = self.seen.get_mut(&tab) {
+            seen.last = live;
+            seen.signal = Some(signal);
+        }
+    }
+
     /// Whether a desk's word on this tab is still to be read.
     #[must_use]
     pub fn has_arrival(&self, tab: u64) -> bool {

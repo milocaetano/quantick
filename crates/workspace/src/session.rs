@@ -133,9 +133,16 @@ pub struct LayoutSession {
     /// The workspace each tab is on, by its number in `workspace_ids`, as
     /// [`Self::hold_workspaces`] was last told. A tab missing is on none yet.
     workspace_of: BTreeMap<u64, u64>,
-    /// Every workspace name told, numbered in the order first told: a number
-    /// is never reused, so a renamed workspace is a new holder.
+    /// The workspace names told that a tab is on or a copy belongs to,
+    /// numbered in the order first told: a number is never reused, so a
+    /// renamed workspace is a new holder.
     workspace_ids: BTreeMap<String, u64>,
+    next_workspace_id: u64,
+    /// The tabs holding edits of their own when their workspace last moved:
+    /// the copies they bring along meet a standing one as twins.
+    edited_tabs: BTreeSet<u64>,
+    /// The open tabs in strip order, as [`Self::own_copies`] last met them.
+    strip: Vec<u64>,
     /// The tabs whose panes stand on what their workspace showed them: what
     /// they show is what a tab landing there takes.
     settled_tabs: BTreeSet<u64>,
@@ -164,6 +171,9 @@ impl LayoutSession {
             kept: BTreeMap::new(),
             workspace_of: BTreeMap::new(),
             workspace_ids: BTreeMap::new(),
+            next_workspace_id: 0,
+            edited_tabs: BTreeSet::new(),
+            strip: Vec::new(),
             settled_tabs: BTreeSet::new(),
             left: BTreeMap::new(),
         }
@@ -382,9 +392,13 @@ impl LayoutSession {
     /// tabs show where it has. Slots and entries keep their positions.
     pub fn own_copies(&mut self, panes: impl IntoIterator<Item = (u64, u64)>) -> OwnedCopies {
         self.tab_of.clear();
+        self.strip.clear();
         let mut seeded = Vec::new();
         for (tab, pane) in panes {
             self.tab_of.insert(pane, tab);
+            if self.strip.last() != Some(&tab) {
+                self.strip.push(tab);
+            }
             if let Some(layout) = self.held(pane) {
                 seeded.push((tab, pane, layout));
             }
@@ -432,8 +446,10 @@ impl LayoutSession {
     }
     /// A tab that left a workspace no tab stands on any more takes its copies
     /// along, where its new one held no copy of that strip layout before this
-    /// pass: a rename, or the first tab onto a workspace. Tabs that arrive in
-    /// one pass bring twins, which [`Self::merge_twins`] joins by fullness; a
+    /// pass (a rename, or the first tab onto a workspace), or where the tab
+    /// holds edits of its own (a deleted workspace's tab keeping them). Tabs
+    /// that arrive in one pass, or with edits where a copy stands, bring
+    /// twins, which [`Self::merge_twins`] joins by fullness and logs; a clean
     /// tab arriving where a copy stands moves onto it instead, in
     /// [`Self::own_copies`]. Answers whether any copy changed hands.
     fn bring_copies(&mut self, seeded: &[(u64, u64, LayoutId)]) -> bool {
@@ -451,7 +467,8 @@ impl LayoutSession {
             let origin = self.book.origin_of(layout);
             let standing_copy = (self.copies_of(holder))
                 .any(|copy| self.book.origin_of(copy) == origin && !brought.contains(&copy));
-            if self.left.get(&tab) == Some(&from) && !self.standing(from) && !standing_copy {
+            let keeps = !standing_copy || self.edited_tabs.contains(&tab);
+            if self.left.get(&tab) == Some(&from) && !self.standing(from) && keeps {
                 self.owner.insert(layout, holder);
                 brought.push(layout);
             }
@@ -608,9 +625,11 @@ impl LayoutSession {
     /// Tell which workspace each open tab is on, as `(tab, workspace,
     /// settled)`: a tab missing is on none yet. `settled`: its panes stand on
     /// what its workspace showed it, so a tab landing there takes their sets.
-    /// The copies follow at the next [`Self::own_copies`]. An unchanged
-    /// telling, every quiet frame's, compares and allocates nothing.
-    pub fn hold_workspaces<'a, I>(&mut self, tabs: I)
+    /// `edited`: whether a tab holds edits of its own, asked only of a telling
+    /// that moved something. The copies follow at the next
+    /// [`Self::own_copies`]. An unchanged telling, every quiet frame's,
+    /// compares and allocates nothing.
+    pub fn hold_workspaces<'a, I>(&mut self, tabs: I, edited: impl Fn(u64) -> bool)
     where
         I: IntoIterator<Item = (u64, &'a str, bool)>,
         I::IntoIter: Clone,
@@ -633,7 +652,9 @@ impl LayoutSession {
             let id = match self.workspace_ids.get(name) {
                 Some(id) => *id,
                 None => {
-                    let id = u64::try_from(self.workspace_ids.len()).unwrap_or(u64::MAX);
+                    let id = self.next_workspace_id;
+                    self.next_workspace_id =
+                        id.checked_add(1).expect("workspace numbers exhausted");
                     self.workspace_ids.insert(name.to_owned(), id);
                     id
                 }
@@ -653,6 +674,20 @@ impl LayoutSession {
                 self.left.entry(*tab).or_insert(Holder::Tab(*tab));
             }
         }
+        self.edited_tabs = workspace_of
+            .keys()
+            .copied()
+            .filter(|tab| edited(*tab))
+            .collect();
+        // A name no tab is on and no copy belongs to is forgotten; a number
+        // is never given twice, so nothing can mistake a later one for it.
+        let owner = &self.owner;
+        self.workspace_ids.retain(|_, id| {
+            workspace_of.values().any(|on| on == id)
+                || owner
+                    .values()
+                    .any(|holder| *holder == Holder::Workspace(*id))
+        });
         self.workspace_of = workspace_of;
         self.settled_tabs = settled_tabs;
     }
@@ -671,13 +706,16 @@ impl LayoutSession {
     }
     /// What a recipe landing on one tab shows, given as `(pane, set)` in pane
     /// order, the landing tab's panes alone: each pane and the set it is to
-    /// show. A copy a settled tab's pane shows keeps its set: a tab landing
-    /// on a workspace another tab holds takes what that tab shows, and where
-    /// the recipe names another set, what is not shown is logged. Every
-    /// other copy is [`Self::shared_sets`]'s, and any pane of another tab on
-    /// it whose set that changes is listed too, so no pane ever shows a set
-    /// its copy no longer holds. Call after [`Self::own_copies`], once per
-    /// landing; sets are cloned only here.
+    /// show, one per copy. A tab switched onto a workspace a settled tab
+    /// holds takes what that tab shows. A tab coming back (one not settled
+    /// yet, as a desk brings back) takes the fullest of the sets it brings
+    /// and the set the other tabs on the copy show, see [`fullness`], a tie
+    /// going to the first tab in strip order, then the first pane: a restore
+    /// lands the fullest whatever order the tabs land in. Otherwise the
+    /// fullest the recipe gives, as [`Self::shared_sets`]. Every set not
+    /// shown is logged. Any pane of another tab on a copy whose set changes
+    /// is listed too, so no pane shows a set its copy no longer holds. Call
+    /// after [`Self::own_copies`], once per landing; sets are cloned only here.
     #[must_use]
     pub fn landing_sets<'a>(
         &self,
@@ -688,51 +726,68 @@ impl LayoutSession {
             .first()
             .and_then(|(pane, _)| self.tab_of.get(pane))
             .copied();
+        let back = !tab.is_some_and(|tab| self.settled_tabs.contains(&tab));
+        let place = |tab: u64| self.strip.iter().position(|open| *open == tab);
         let set_of = |copy| {
             self.book
                 .get(copy)
                 .map_or(&[][..], |layout| &layout.indicators)
         };
-        let elsewhere = |copy: LayoutId| {
-            self.tab_of.iter().any(|(pane, other)| {
-                Some(*other) != tab
-                    && self.settled_tabs.contains(other)
-                    && self.held(*pane) == Some(copy)
-            })
-        };
-        let (kept, free): (Vec<_>, Vec<_>) =
-            (wanted.iter().copied()).partition(|(pane, _)| self.held(*pane).is_some_and(elsewhere));
-        let mut logged = Vec::new();
-        for &(pane, _) in &kept {
-            let Some(copy) = self.held(pane).filter(|copy| !logged.contains(copy)) else {
+        let mut decided: Vec<(LayoutId, &[SavedIndicator])> = Vec::new();
+        for &(pane, _) in &wanted {
+            let Some(copy) = self
+                .held(pane)
+                .filter(|copy| decided.iter().all(|(on, _)| on != copy))
+            else {
                 continue;
             };
-            logged.push(copy);
-            let given = kept.iter().filter(|(by, _)| self.held(*by) == Some(copy));
+            let given = (wanted.iter()).filter(|(by, _)| self.held(*by) == Some(copy));
             let given = given.map(|(_, set)| *set);
-            self.log_joined(tab, copy, set_of(copy), given, "shown_set_kept");
+            let others = (self.tab_of.iter())
+                .filter(|(by, other)| Some(**other) != tab && self.held(**by) == Some(copy))
+                .map(|(_, other)| *other);
+            let first = others.clone().min_by_key(|other| place(*other));
+            let settled = others
+                .clone()
+                .any(|other| self.settled_tabs.contains(&other));
+            let current = set_of(copy);
+            let (winner, action) = if !back && settled {
+                (current, "shown_set_kept")
+            } else {
+                let at = tab.and_then(place);
+                let mut candidates: Vec<(Option<usize>, &[SavedIndicator])> =
+                    given.clone().map(|set| (at, set)).collect();
+                if let Some(first) = first.filter(|_| back) {
+                    candidates.push((place(first), current));
+                }
+                candidates.sort_by_key(|(at, _)| at.unwrap_or(usize::MAX));
+                let mut best = candidates.first().map_or(current, |(_, set)| *set);
+                for (_, set) in &candidates {
+                    if fullness(set) > fullness(best) {
+                        best = set;
+                    }
+                }
+                (best, "fullest_set_shown")
+            };
+            let others_show = first.map(|_| current);
+            self.log_joined(tab, copy, winner, given.chain(others_show), action);
+            decided.push((copy, winner));
         }
-        let joined = self.shared_sets(free);
-        let joined_on = |copy| {
-            (joined.iter())
-                .find(|(pane, _)| self.held(*pane) == Some(copy))
+        let decision = |copy: Option<LayoutId>| {
+            let copy = copy?;
+            decided
+                .iter()
+                .find(|(on, _)| *on == copy)
                 .map(|(_, set)| *set)
         };
         let mut shown: Vec<(u64, Vec<SavedIndicator>)> = (wanted.iter())
-            .map(|&(pane, set)| {
-                let joined = joined
-                    .iter()
-                    .find(|(by, _)| *by == pane)
-                    .map(|(_, set)| *set);
-                let held = self.held(pane).map(set_of);
-                (pane, joined.or(held).unwrap_or(set).to_vec())
-            })
+            .map(|&(pane, set)| (pane, decision(self.held(pane)).unwrap_or(set).to_vec()))
             .collect();
         for (pane, other) in &self.tab_of {
-            let Some(copy) = self.held(*pane).filter(|_| Some(*other) != tab) else {
-                continue;
-            };
-            if let Some(set) = joined_on(copy).filter(|set| *set != set_of(copy)) {
+            let copy = self.held(*pane).filter(|_| Some(*other) != tab);
+            if let Some(set) =
+                decision(copy).filter(|set| copy.is_some_and(|copy| *set != set_of(copy)))
+            {
                 shown.push((*pane, set.to_vec()));
             }
         }

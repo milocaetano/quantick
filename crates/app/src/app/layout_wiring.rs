@@ -363,8 +363,8 @@ impl LayoutAdapter<'_> {
     /// Every seeded pane on its workspace's copy of its strip layout; see
     /// [`quantick_workspace::session::LayoutSession::own_copies`].
     pub(in crate::app) fn own_indicator_copies(&mut self) {
-        let held = self.book.tab_holdings();
-        self.store.session_mut().hold_workspaces(held);
+        let (held, book) = (self.book.tab_holdings(), self.book.book());
+        (self.store.session_mut()).hold_workspaces(held, |tab| book.differs(tab));
         let panes = self
             .tabs
             .iter_with_ids()
