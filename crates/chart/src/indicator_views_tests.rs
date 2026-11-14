@@ -446,3 +446,31 @@ fn a_view_paints_the_ink_of_the_surface_it_paints_on() {
     views.view_mut(slot).unwrap().style.set(0, over);
     assert_eq!(color(&views), Rgba8::opaque(1, 2, 3));
 }
+
+/// A pane's ordinal is the key its drawings are filed under, so it is fixed
+/// at birth: two of one kind are told apart in add order, removing one never
+/// renumbers the survivor, a re-added one takes back the ordinal the removed
+/// one left, and another kind counts its own.
+#[test]
+fn an_ordinal_is_the_lowest_one_no_live_view_of_the_kind_holds() {
+    let mut views = IndicatorViews::new();
+    let add = |views: &mut IndicatorViews, kind: &str| {
+        let slot = views.allocate_slot(kind);
+        views.apply(rebuilt(slot, descriptor(false, 1), vec![vec![0.0]]));
+        slot
+    };
+    let ordinal = |views: &IndicatorViews, slot: SlotId| {
+        let view = views.all().iter().find(|view| view.slot == slot);
+        view.expect("live").ordinal
+    };
+    let first = add(&mut views, "native.cvd");
+    let second = add(&mut views, "native.cvd");
+    assert_eq!((ordinal(&views, first), ordinal(&views, second)), (0, 1));
+
+    views.remove(first);
+    assert_eq!(ordinal(&views, second), 1, "the survivor keeps its key");
+    let readded = add(&mut views, "native.cvd");
+    assert_eq!(ordinal(&views, readded), 0, "the re-added pane comes home");
+    let other = add(&mut views, "script.zigzag.pine");
+    assert_eq!(ordinal(&views, other), 0, "each kind counts its own");
+}

@@ -352,7 +352,7 @@ fn a_band_too_short_for_a_tag_centres_it_instead_of_panicking() {
 
 /// Prices 80..120 over pixels 0..400, high at the top: the chart the host's
 /// own tests draw, so y 250 is price 95 here as it is there.
-struct LinearAxis;
+pub(super) struct LinearAxis;
 
 impl PriceAxis for LinearAxis {
     fn y(&self, price: f64) -> f32 {
@@ -368,7 +368,7 @@ impl PriceAxis for LinearAxis {
     }
 }
 
-fn print(agg_id: u64, price: i64) -> Trade {
+pub(super) fn print(agg_id: u64, price: i64) -> Trade {
     Trade {
         agg_id,
         timestamp_ms: i64::try_from(agg_id).expect("small test ids") * 1000,
@@ -379,19 +379,19 @@ fn print(agg_id: u64, price: i64) -> Trade {
 }
 
 /// An account marked at 100, in a folder of its own.
-fn marked_account(dir: &ScratchDir) -> PaperAccount {
+pub(super) fn marked_account(dir: &ScratchDir) -> PaperAccount {
     let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
     account.set_symbol("DESKX");
     account.seed(&print(0, 100));
     account
 }
 
-fn chart() -> Bounds {
+pub(super) fn chart() -> Bounds {
     Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(800.0, 400.0))
 }
 
 /// One frame with the pointer at `pointer`, Shift held when `aiming`.
-fn frame(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
+pub(super) fn frame(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
     ChartFrame {
         chart: chart(),
         aim_area: chart(),
@@ -1371,7 +1371,7 @@ fn the_aim_says_what_each_leg_is_worth_and_never_its_price() {
 }
 
 /// A frame where the primary button is held at `pointer`, or let go there.
-fn held(pointer: Point, down: bool, released: bool) -> ChartFrame {
+pub(super) fn held(pointer: Point, down: bool, released: bool) -> ChartFrame {
     ChartFrame {
         primary_down: down,
         primary_released: released,

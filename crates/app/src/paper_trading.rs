@@ -727,12 +727,6 @@ impl PaperTrading {
         self.account().ready()
     }
 
-    /// How far one notch walks this instrument's ruler, in points.
-    #[must_use]
-    pub(crate) fn ruler_step(&self) -> Decimal {
-        self.desk.ruler_step(&self.account)
-    }
-
     /// Name this instrument's step, in points. A value that is not positive
     /// clears it, which puts the instrument back on the derived default.
     pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {

@@ -34,6 +34,8 @@ pub mod ticket;
 mod trade_bar;
 
 #[cfg(test)]
+mod flow_tests;
+#[cfg(test)]
 mod tests;
 
 pub use aim_echo::AimPaint;
