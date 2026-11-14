@@ -1914,8 +1914,8 @@ fn native(id: &str) -> quantick_workspace::indicator_document::SavedIndicator {
 
 /// Tab `a` holds an unsaved CVD on its layout; tab `b`, on a workspace of its
 /// own with two kinds there, is put on `a`'s. Through real frames `b` shows
-/// what `a` shows, as the `analysis.indicators` scope reads both, and the
-/// stored recipe stays as saved: a landing is no edit.
+/// what `a` shows, as the `analysis.indicators` scope reads both, the stored
+/// recipe stays as saved, and the held edit, the workspace's, marks both.
 #[test]
 fn a_tab_put_on_a_held_workspace_shows_what_its_tab_shows() {
     let layouts = crate::scratch::ScratchFile::new("workspace-land-on-held", "layouts.toml");
@@ -1957,7 +1957,7 @@ fn a_tab_put_on_a_held_workspace_shows_what_its_tab_shows() {
     let store = &app.runtime.workspace.book;
     assert_eq!(store.book().recipe("Pair").cloned(), stored, "as saved");
     assert!(store.tab_row(a).1, "the held edit is a's");
-    assert!(!store.tab_row(b).1, "the landing is no edit");
+    assert!(store.tab_row(b).1, "and the workspace's, held on b too");
 }
 
 /// The defect the report's reproduction found: a save from the second tab of
