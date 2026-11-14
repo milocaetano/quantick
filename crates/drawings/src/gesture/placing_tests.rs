@@ -233,3 +233,106 @@ fn the_magnet_previews_and_commits_a_snap_on_the_forming_bar() {
         assert_eq!(draft.points[0].price, 40.0, "the commit");
     });
 }
+
+/// A held stroke takes its last allowed point and refuses the next.
+#[test]
+fn a_freehand_stroke_stops_at_its_point_cap() {
+    with_projection(|projection, bands| {
+        let (mut gestures, mut store) = (PaneGestures::default(), Marks::default());
+        let at = |gestures: &mut PaneGestures, store: &mut Marks, x: f32, released: bool| {
+            let pressed = x == 10.0;
+            let frame = frame(bands, pos2(x, 100.0), pressed, released);
+            update(gestures, store, projection, frame, "brush");
+        };
+        at(&mut gestures, &mut store, 10.0, false);
+        let origin = store.draft().unwrap().points[0];
+        let brush = DrawingTool::by_id("brush").unwrap();
+        for index in 1..FREEHAND_MAX_POINTS - 1 {
+            let bar = origin.bar + index as f32 * 0.01;
+            assert!(!store.place(brush, ChartPoint { bar, ..origin }));
+        }
+        for x in [14.0, 18.0] {
+            at(&mut gestures, &mut store, x, false);
+            assert_eq!(store.draft_len(), FREEHAND_MAX_POINTS, "at {x}");
+        }
+        at(&mut gestures, &mut store, 18.0, true);
+        assert_eq!(store.items()[0].points.len(), FREEHAND_MAX_POINTS);
+    });
+}
+
+/// A pencil press released where it began is a click that missed: it leaves
+/// neither an object nor a draft behind.
+#[test]
+fn a_freehand_click_that_never_moved_leaves_nothing() {
+    with_projection(|projection, bands| {
+        let (mut gestures, mut store) = (PaneGestures::default(), Marks::default());
+        let at = pos2(100.0, 100.0);
+        for (pressed, released) in [(true, false), (false, true)] {
+            let frame = frame(bands, at, pressed, released);
+            update(&mut gestures, &mut store, projection, frame, "brush");
+        }
+        assert!(store.items().is_empty());
+        assert!(store.draft().is_none());
+    });
+}
+
+/// A stroke belongs to the band its first point landed in: a hand that runs
+/// off it is held to the band's edge, never read in another band's units.
+#[test]
+fn a_freehand_stroke_stays_on_the_band_it_started_in() {
+    with_projection(|projection, bands| {
+        let (mut gestures, mut store) = (PaneGestures::default(), Marks::default());
+        let path = [
+            (100.0, 100.0),
+            (130.0, 600.0),
+            (160.0, 600.0),
+            (190.0, 600.0),
+        ];
+        for (index, (x, y)) in path.into_iter().enumerate() {
+            let frame = frame(bands, pos2(x, y), index == 0, false);
+            update(&mut gestures, &mut store, projection, frame, "brush");
+        }
+        let release = frame(bands, pos2(220.0, 110.0), false, true);
+        update(&mut gestures, &mut store, projection, release, "brush");
+        let prices: Vec<f64> = store.items()[0].points.iter().map(|p| p.price).collect();
+        assert_eq!(prices.len(), 4, "{prices:?}");
+        assert!(
+            prices[1..].iter().all(|price| price.abs() < 1e-6),
+            "{prices:?}"
+        );
+    });
+}
+
+/// Shift lays a dragged ruler level to the bit: the far end copies the near
+/// price rather than reading it back off the screen, where the magnet would
+/// pull it onto the print under it.
+#[test]
+fn a_levelled_ruler_copies_its_near_price_under_the_magnet() {
+    let tape: Vec<i64> = [50; 20].into_iter().chain([46; 10]).collect();
+    with_prints(&tape, |projection, bands| {
+        let (mut gestures, mut store) = (PaneGestures::default(), Marks::default());
+        let total = projection.series.slots();
+        let x = |bar: f32| projection.viewport.x_at_bar_position(bar, 400.0, total);
+        let y = bands[0].scale.as_ref().unwrap().y(50.0);
+        for (at, pressed) in [(pos2(x(0.5), y), true), (pos2(x(2.5), y - 60.0), false)] {
+            gestures.update_placement(
+                &mut store,
+                projection,
+                frame(bands, at, pressed, !pressed),
+                PlacementOptions {
+                    tool: DrawingTool::by_id("measure"),
+                    magnet: true,
+                    constrain: Constrain::Level,
+                    parked_position: None,
+                },
+                PlacementDefaults {
+                    presets: &NullPresetHost,
+                    repeat: false,
+                },
+            );
+        }
+        let points = &store.items()[0].points;
+        assert_eq!(points[0].price, points[1].price, "{points:?}");
+        assert!(points[1].bar > points[0].bar, "{points:?}");
+    });
+}

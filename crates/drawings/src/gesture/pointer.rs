@@ -862,6 +862,27 @@ mod tests {
         });
     }
 
+    /// A press that wobbles under the drag threshold is still a click: it
+    /// selects, and the geometry stays where the trader put it.
+    #[test]
+    fn a_wobble_under_the_drag_threshold_selects_without_moving() {
+        with_projection(|projection, bands| {
+            let mut store = local_line();
+            let original = store.items()[0].points.clone();
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(crate::pos2(100.0, 100.0), bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(103.0, 100.0));
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            (pointer.down, pointer.released) = (false, true);
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(store.items()[0].points, original);
+            assert_eq!(store.selected(), Some(0));
+        });
+    }
+
     /// A horizontal line at 30 grabbed by its body far from its handle, then
     /// carried through `stops` one frame each, each a pointer y and, when the
     /// axis rescaled under it, the price at the band's top: the line's price
