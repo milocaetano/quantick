@@ -17,8 +17,6 @@
 // code that read them moved to the siblings, so only the tests still need
 // them here.
 #[cfg(test)]
-use crate::bands::BandLabel;
-#[cfg(test)]
 use crate::drawings;
 #[cfg(test)]
 use crate::drawings::{ChartPoint, DrawingBand};

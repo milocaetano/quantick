@@ -305,6 +305,60 @@ fn a_time_pane_asks_for_candles_once_and_installs_what_arrives() {
     );
 }
 
+/// A push feed replacing its block mid-run: the slices of the abandoned answer
+/// still in flight are dropped rather than folded onto a base they no longer
+/// belong to, what is drawn stays drawn, and only the abandoned run's closing
+/// slice frees the tab to ask again — once.
+#[test]
+fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[None, Some(MINUTE)]);
+    let now = Instant::now();
+    let minutes = |from: i64, to: i64| -> Vec<Bar> {
+        (from..to)
+            .map(|minute| candle(19 * DAY + minute * MINUTE))
+            .collect()
+    };
+    let reply = |bars, slice| Act::CandleReply {
+        tab_id: TAB,
+        interval_ms: quantick_sources::ohlcv::OHLCV_BASE_INTERVAL_MS,
+        bars,
+        slice,
+    };
+    shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
+    shell.dispatch(&mut session, reply(minutes(40, 60), OhlcvSlice::More), now);
+    assert_eq!(shell.prefixes, [0, 20]);
+
+    // The feed stored a fresh block: the base being built is abandoned.
+    session.forget_candle_generations();
+    shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
+    for slice in [OhlcvSlice::More, OhlcvSlice::Last { complete: true }] {
+        shell.dispatch(&mut session, reply(minutes(0, 40), slice), now);
+        shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
+    }
+    assert_eq!(shell.prefixes, [0, 20], "the leftovers extended nothing");
+    assert_eq!(
+        shell.sent.len(),
+        2,
+        "the abandoned run's closing slice freed the tab to ask again, once"
+    );
+    assert!(
+        session.snapshot().candles_pending,
+        "and the wait now belongs to the replacement request"
+    );
+
+    shell.dispatch(
+        &mut session,
+        reply(minutes(15, 60), OhlcvSlice::Last { complete: true }),
+        now,
+    );
+    assert_eq!(
+        shell.prefixes,
+        [0, 45],
+        "the fresh answer is the whole prefix, not an addition to the old"
+    );
+}
+
 #[test]
 fn load_older_candles_says_why_it_cannot_and_reaches_behind_the_oldest_when_it_can() {
     let mut session = TabSession::new();

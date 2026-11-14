@@ -405,7 +405,7 @@ fn the_tape_intents_write_the_lanes_own_fields() {
 
 #[test]
 fn a_place_arms_the_pointer_and_opens_the_caret_as_before() {
-    let mut pane = pane_of_seconds(20);
+    let mut pane = pane_of_prints(20, 1);
     with_chrome(Tool::Crosshair, |chrome| {
         pane.apply_menu_intent(
             PaneMenuIntent::Place {

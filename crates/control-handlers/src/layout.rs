@@ -65,7 +65,9 @@ pub trait LayoutTab {
     fn pick_preset(&mut self, preset: &'static LayoutPreset) -> bool;
     /// Store the context column's share; answers whether it changed.
     fn set_split_fraction(&mut self, fraction: f32) -> bool;
-    /// The divider drag's, the rail's and the menu's collapse.
+    /// The context column's fold (`CanvasState::fold_context`): the
+    /// menu's and the divider's beside a flow pane; with none, an expand
+    /// opens every rail as a restore does.
     fn set_context_collapsed(&mut self, collapsed: bool) -> bool;
     /// Whether this layout gives the flow pane a rail to collapse to: it
     /// holds charts beside the flow pane, or the flow pane stands docked
@@ -421,7 +423,8 @@ fn set_collapsed<H: LayoutHost + ?Sized>(
     collapsed: bool,
 ) -> Result<Value, ControlError> {
     let index = tab_index(app, parse(input)?)?;
-    // The same call the divider drag, the rail and the menu take.
+    // The canvas model's context fold: the menu's and the divider's beside a
+    // flow pane; with none, an expand opens every rail as a restore does.
     let changed = tab_at(app, index)?.set_context_collapsed(collapsed);
     result(app, index, changed)
 }

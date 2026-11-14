@@ -32,8 +32,8 @@ pub struct TabCanvas {
     pub split_fraction: f32,
     /// Retained context heights and the geometry of their last drawn stack.
     pub(super) context_stack: ContextStack,
-    /// Pixel width and opening direction of the divider drag in flight.
-    pub(super) drag: Option<(f32, (bool, bool))>,
+    /// The divider or rail drag in flight.
+    pub(super) drag: Option<quantick_workspace::canvas::ColumnHold>,
     /// The tree seam drag in flight, its travel counted from the press.
     pub(super) seam_drag: Option<quantick_workspace::canvas::SeamDrag>,
     /// The canvas the last drawn frame used. See `Tab::last_canvas_width`.
