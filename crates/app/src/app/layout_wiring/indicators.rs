@@ -274,6 +274,15 @@ impl LayoutAdapter<'_> {
         self.mark_layouts_dirty();
     }
 
+    /// Each pane named shows its set, in whichever tab it stands.
+    pub(in crate::app) fn show_sets(&mut self, sets: Vec<(u64, Vec<SavedIndicator>)>) {
+        for (pane, set) in sets {
+            if let Some((tab, side)) = self.pane_address(pane) {
+                self.show_pane_indicators(tab, side, &set);
+            }
+        }
+    }
+
     /// Bind one saved entry's inputs, hide flag and style onto a slot.
     fn apply_saved_entry(&mut self, owner: TabSlot, entry: &SavedIndicator) {
         let values: Vec<_> = entry

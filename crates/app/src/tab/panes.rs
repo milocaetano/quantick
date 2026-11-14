@@ -142,15 +142,14 @@ impl Tab {
 
     /// Whether any context chart is actually on screen.
     ///
-    /// The layout has to *hold* one, the tab has to have *built* one, and the
-    /// column must not be collapsed. Three conditions that chrome kept
-    /// re-deriving one variant at a time — and got wrong twice: the legend
-    /// gate matched `TimeAndFlow` alone, so the stacked charts drew no legend
-    /// and a collapsed column drew one over the flow chart against a stale
-    /// rect.
+    /// Asked of what is drawn ([`Self::drawn_panes`]), never of a collapse
+    /// flag: chrome re-deriving it one variant at a time got it wrong three
+    /// times — the legend gate matched `TimeAndFlow` alone, a collapsed column
+    /// drew one over the flow chart against a stale rect, and one chart folded
+    /// in a grid hid every other chart's legend.
     #[must_use]
     pub fn shows_context_charts(&self) -> bool {
-        self.canvas.shows_context_charts(&self.time_panes)
+        matches!(self.drawn_panes().first(), Some(PaneSide::Time(_)))
     }
 
     /// The pane the chrome speaks for. Only a split canvas has a choice to
@@ -861,8 +860,8 @@ impl Tab {
         // Assigned before, a workspace saved with its charts put away reopened
         // with them out — and the next `capture_arrangement` wrote that over
         // the trader's choice.
-        self.canvas.context_collapsed = collapse.context;
-        self.canvas.flow_collapsed = collapse.flow && !collapse.context;
+        self.canvas.fold(false, collapse.context);
+        self.canvas.fold(true, collapse.flow && !collapse.context);
         self.canvas
             .restore_context_heights(collapse.heights, collapse.collapsed_slots);
         if let Some(fraction) = split_fraction {

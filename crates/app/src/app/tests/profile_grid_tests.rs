@@ -130,7 +130,7 @@ fn assert_market_grid(app: &QuantickApp) {
 fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
     let ctx = egui::Context::default();
     let mut app = profile_fixture_unadopted(&ctx, false);
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    app.active_tab_mut().canvas.fold(true, true);
     let before = app.active_tab_mut().tape_mut().base_capture_grouping();
     assert_ne!(before, Decimal::from(5), "the view mirror must start stale");
     for side in [PaneSide::Time(0), PaneSide::Time(1)] {
@@ -296,7 +296,7 @@ fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
             .is_none()
     );
     assert_market_grid(&app);
-    app.active_tab_mut().canvas.set_context_collapsed(false);
+    app.active_tab_mut().canvas.fold(false, false);
     run_frame(&mut app, &ctx);
     assert!(
         app.active_tab()
@@ -309,7 +309,7 @@ fn restored_collapsed_contexts_inherit_grid_before_they_draw_and_after_recut() {
     app.active_tab_mut()
         .canvas
         .restore_context_heights(&[0.4, 0.6], &[false, false]);
-    app.active_tab_mut().canvas.set_flow_collapsed(true);
+    app.active_tab_mut().canvas.fold(true, true);
     for spec in ["tick:3", "renko:3"] {
         app.active_tab_mut()
             .set_pane_bar_spec(2, BUILTIN_BARS.parse(spec).unwrap())

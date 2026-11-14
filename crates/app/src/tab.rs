@@ -448,7 +448,8 @@ impl Tab {
 
     pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
         self.canvas
-            .flow_collapsed
+            .folds()
+            .1
             .then_some(self.collapsed_rail)
             .flatten()
     }

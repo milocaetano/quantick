@@ -103,8 +103,8 @@ impl TabRecipeHost for BookTabs<'_> {
         if let Some(tab) = app.runtime.tabs.by_id(id) {
             let canvas = (
                 quantick_workspace::canvas::signal(&tab.canvas.state),
-                tab.canvas.context_collapsed,
-                tab.canvas.flow_collapsed,
+                tab.canvas.folds().0,
+                tab.canvas.folds().1,
             );
             (canvas, tab.canvas.split_fraction.to_bits()).hash(&mut hash);
             tab.canvas.context_collapsed_slots().hash(&mut hash);
@@ -233,17 +233,12 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
 }
 
 fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &WorkspaceRecipe) {
-    let sides: Vec<_> = (layouts.tabs.by_id(id).into_iter())
-        .flat_map(|tab| tab.panes().map(|(pane, side)| (pane.id, side)))
-        .collect();
     layouts.own_indicator_copies();
-    let sets = sides
-        .iter()
-        .map(|(pane, side)| (*pane, recipe.for_pane(side.index()).0));
-    layouts.store.session_mut().part_copies(sets);
-    for (_, side) in sides {
-        layouts.show_pane_indicators(id, side, recipe.for_pane(side.index()).0);
-    }
+    let panes = layouts.tabs.by_id(id).map(|tab| tab.panes());
+    let sets = panes.into_iter().flatten();
+    let sets = sets.map(|(pane, side)| (pane.id, recipe.for_pane(side.index()).0));
+    let shown = layouts.store.session_mut().landing_sets(sets);
+    layouts.show_sets(shown);
 }
 
 /// Carry out what a workspace row or the toolbar asked for, on what the active

@@ -2,7 +2,10 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_control_schema::window_menu::{self as menu, RowId};
-use quantick_ui_model::chrome_menu_bar::{Door, Effects, Event, Intent, Model, Node, State};
+use quantick_session::workspace_menu::{MenuMetrics, WorkspaceCommand, list_cap};
+use quantick_ui_model::chrome_menu_bar::{
+    Action, Door, Effects, Event, Intent, Model, Node, State,
+};
 #[derive(Default)]
 pub(crate) struct View {
     pub door: Option<egui::Rect>,
@@ -52,7 +55,7 @@ impl View {
         level: usize,
         corner: egui::Pos2,
         events: &mut Vec<Event>,
-    ) {
+    ) -> egui::LayerId {
         let rightwards = state
             .snapshot
             .as_ref()
@@ -74,105 +77,123 @@ impl View {
                     ui.set_min_width(240.0);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         flat_rows(ui);
-                        for node in nodes {
-                            let response = match node {
-                                Node::Separator => {
-                                    ui.separator();
-                                    None
-                                }
-                                Node::Caption(text) => {
-                                    ui.label(crate::theme::supporting_text(ui, *text));
-                                    None
-                                }
-                                Node::Row(row) => {
-                                    let response = if row.checkbox {
-                                        let mut selected = row.selected;
-                                        ui.add_enabled(
-                                            row.enabled,
-                                            egui::Checkbox::new(&mut selected, &row.label),
-                                        )
-                                    } else {
-                                        let keys = row
-                                            .shortcut
-                                            .and_then(|key| {
-                                                self.shortcuts
-                                                    .iter()
-                                                    .find(|(held, _)| *held == key)
-                                                    .map(|(_, text)| text.clone())
-                                            })
-                                            .unwrap_or_else(|| row.beside.clone());
-                                        ui.add_enabled(
-                                            row.enabled,
-                                            egui::Button::new(&row.label)
-                                                .selected(row.selected)
-                                                .shortcut_text(crate::theme::supporting_text(
-                                                    ui, keys,
-                                                )),
-                                        )
-                                    }
-                                    .on_hover_text(&row.hover)
-                                    .on_disabled_hover_text(&row.disabled_hover);
-                                    if row.action
-                                        == quantick_ui_model::chrome_menu_bar::Action::Row(
-                                            RowId::Settings,
-                                        )
-                                    {
-                                        crate::theme::choice::record(&response, "Settings");
-                                    }
-                                    if response.clicked() {
-                                        events.push(Event::Activate(row.action.clone()));
-                                    }
-                                    Some(response)
-                                }
-                                Node::Submenu {
-                                    id,
-                                    enabled,
-                                    hover,
-                                    nodes,
-                                } => {
-                                    let caret = if rightwards {
-                                        icons::CARET_RIGHT
-                                    } else {
-                                        icons::CARET_LEFT
+                        // The workspaces scroll past twelve, so the rows after stay on screen.
+                        for run in nodes.chunk_by(|a, b| listed(a) == listed(b)) {
+                            let mut paint = |ui: &mut egui::Ui| {
+                                for node in run {
+                                    let response = match node {
+                                        Node::Separator => {
+                                            ui.separator();
+                                            None
+                                        }
+                                        Node::Caption(text) => {
+                                            ui.label(crate::theme::supporting_text(ui, *text));
+                                            None
+                                        }
+                                        Node::Row(row) => {
+                                            let response = if row.checkbox {
+                                                let mut selected = row.selected;
+                                                ui.add_enabled(
+                                                    row.enabled,
+                                                    egui::Checkbox::new(&mut selected, &row.label),
+                                                )
+                                            } else {
+                                                let keys = row
+                                                    .shortcut
+                                                    .and_then(|key| {
+                                                        self.shortcuts
+                                                            .iter()
+                                                            .find(|(held, _)| *held == key)
+                                                            .map(|(_, text)| text.clone())
+                                                    })
+                                                    .unwrap_or_else(|| row.beside.clone());
+                                                ui.add_enabled(
+                                                    row.enabled,
+                                                    egui::Button::new(&row.label)
+                                                        .selected(row.selected)
+                                                        .shortcut_text(
+                                                            crate::theme::supporting_text(ui, keys),
+                                                        ),
+                                                )
+                                            }
+                                            .on_hover_text(&row.hover)
+                                            .on_disabled_hover_text(&row.disabled_hover);
+                                            if row.action
+                                                == quantick_ui_model::chrome_menu_bar::Action::Row(
+                                                    RowId::Settings,
+                                                )
+                                            {
+                                                crate::theme::choice::record(&response, "Settings");
+                                            }
+                                            if response.clicked() {
+                                                events.push(Event::Activate(row.action.clone()));
+                                            }
+                                            Some(response)
+                                        }
+                                        Node::Submenu {
+                                            id,
+                                            enabled,
+                                            hover,
+                                            nodes,
+                                        } => {
+                                            let caret = if rightwards {
+                                                icons::CARET_RIGHT
+                                            } else {
+                                                icons::CARET_LEFT
+                                            };
+                                            let response = ui
+                                                .add_enabled(
+                                                    *enabled,
+                                                    egui::Button::new(menu::submenu(*id).0)
+                                                        .selected(
+                                                            state.path.get(level)
+                                                                == Some(&Some(*id)),
+                                                        )
+                                                        .shortcut_text(
+                                                            crate::theme::supporting_text(
+                                                                ui, caret,
+                                                            ),
+                                                        ),
+                                                )
+                                                .on_disabled_hover_text(*hover);
+                                            over_submenu |= response.hovered();
+                                            if response.hovered() || response.clicked() {
+                                                events.push(Event::OpenSubmenu(
+                                                    level,
+                                                    *id,
+                                                    response.clicked()
+                                                        && !response.clicked_by(
+                                                            egui::PointerButton::Primary,
+                                                        ),
+                                                ));
+                                            }
+                                            if state.path.get(level) == Some(&Some(*id)) {
+                                                let corner = if rightwards {
+                                                    response.rect.right_top()
+                                                        + egui::vec2(2.0, -6.0)
+                                                } else {
+                                                    response.rect.left_top()
+                                                        + egui::vec2(-2.0, -6.0)
+                                                };
+                                                child = Some((nodes, corner));
+                                            }
+                                            Some(response)
+                                        }
                                     };
-                                    let response = ui
-                                        .add_enabled(
-                                            *enabled,
-                                            egui::Button::new(menu::submenu(*id).0)
-                                                .selected(state.path.get(level) == Some(&Some(*id)))
-                                                .shortcut_text(crate::theme::supporting_text(
-                                                    ui, caret,
-                                                )),
-                                        )
-                                        .on_disabled_hover_text(*hover);
-                                    over_submenu |= response.hovered();
-                                    if response.hovered() || response.clicked() {
-                                        events.push(Event::OpenSubmenu(
-                                            level,
-                                            *id,
-                                            response.clicked()
-                                                && !response
-                                                    .clicked_by(egui::PointerButton::Primary),
-                                        ));
+                                    if wants_focus
+                                        && let Some(response) =
+                                            response.filter(|response| response.enabled())
+                                    {
+                                        response.request_focus();
+                                        wants_focus = false;
+                                        events.push(Event::FocusTaken(level));
                                     }
-                                    if state.path.get(level) == Some(&Some(*id)) {
-                                        let corner = if rightwards {
-                                            response.rect.right_top() + egui::vec2(2.0, -6.0)
-                                        } else {
-                                            response.rect.left_top() + egui::vec2(-2.0, -6.0)
-                                        };
-                                        child = Some((nodes, corner));
-                                    }
-                                    Some(response)
                                 }
                             };
-                            if wants_focus
-                                && let Some(response) =
-                                    response.filter(|response| response.enabled())
-                            {
-                                response.request_focus();
-                                wants_focus = false;
-                                events.push(Event::FocusTaken(level));
+                            if run.first().is_some_and(listed) {
+                                scrolled(list_cap(run.len(), metrics(ui)), ui, paint);
+                            } else {
+                                paint(ui);
                             }
                         }
                     });
@@ -185,9 +206,35 @@ impl View {
             child = None;
         }
         if let Some((nodes, corner)) = child {
-            self.pane(ctx, state, nodes, level + 1, corner, events);
+            let below = self.pane(ctx, state, nodes, level + 1, corner, events);
+            // The menu stays over the edge its first submenu tucks under.
+            if level == 0 {
+                ctx.set_sublayer(below, area.response.layer_id);
+            }
         }
+        area.response.layer_id
     }
+}
+
+/// A row of the Workspace submenu's list, the part of a pane that scrolls.
+const fn listed(node: &Node) -> bool {
+    matches!(node, Node::Row(row) if matches!(row.action, Action::Workspace(WorkspaceCommand::Set(_))))
+}
+
+/// The menu's heights as `ui`'s style draws them.
+pub(crate) fn metrics(ui: &egui::Ui) -> MenuMetrics {
+    let (sp, text) = (ui.spacing(), ui.text_style_height(&egui::TextStyle::Button));
+    let button = text + 2.0 * sp.button_padding.y;
+    MenuMetrics::of(button, sp.item_spacing.y, sp.menu_margin.sum().y)
+}
+
+/// Workspace rows no taller than `height`, the bar shown and measured while they scroll.
+pub(crate) fn scrolled(height: f32, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    use egui::scroll_area::ScrollBarVisibility as Bar;
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
+    let bar = [Bar::AlwaysHidden, Bar::AlwaysVisible][usize::from(height.is_finite())];
+    let list = egui::ScrollArea::vertical().max_height(height);
+    list.scroll_bar_visibility(bar).show(ui, add);
 }
 pub(crate) fn effects(effects: Effects) -> crate::surfaces::SurfaceResponse {
     crate::surfaces::SurfaceResponse {

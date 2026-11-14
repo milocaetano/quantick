@@ -6,7 +6,7 @@
 
 use crate::market_settings::DrawingKey;
 use crate::market_settings_store::MarketSettingsStore;
-use crate::workspace_book::{SeedTab, WorkspaceBook};
+use crate::workspace_book::{DEFAULT_WORKSPACE, SeedTab, WorkspaceBook};
 use crate::workspace_recipe::WorkspaceRecipe;
 use crate::workspace_sync::{TabAdoption, TabRecipeSync};
 use std::time::Instant;
@@ -240,6 +240,9 @@ fn settle<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
     book.settle_tab(id, &live);
     sync.settle(id, live);
     sync.note_signal(id, signal);
+    if let Some(state) = book.tab_state(id) {
+        sync.settled_on(id, state.workspace);
+    }
 }
 
 /// Queue `recipe` for a tab and carry it as far as the panes allow. The
@@ -257,7 +260,10 @@ pub fn show_recipe<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, recipe: &Wo
 /// Carry each recipe on its way as far as the tab's panes allow.
 pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
     for id in host.recipe_book().1.pending_tabs() {
-        let arrived = host.tab_settled(id)
+        let (book, sync) = host.recipe_book();
+        let on = book.tab_state(id).map(|state| state.workspace);
+        let arrived = sync.stands_on(id, on)
+            && host.tab_settled(id)
             && host.live_recipe(id).as_ref() == host.recipe_book().1.pending_recipe(id);
         if !arrived && let Some(recipe) = host.recipe_book_mut().1.take_canvas(id) {
             host.apply_recipe_canvas(id, &recipe);
@@ -273,6 +279,41 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
             host.apply_recipe_indicators(id, &recipe);
         }
         settle(host, id);
+        if !arrived {
+            share_shown_sets(host, id);
+        }
+    }
+}
+
+/// After `landed` took its recipe, which may repaint the other tabs on its
+/// workspace: each that stands is read again, as no edit. Where any tab
+/// there holds an indicator edit (another kind of edit stays its tab's, so a
+/// heal beside it marks no one), the sets shown are that edit, the
+/// workspace's, and
+/// every one of them holds it ([`WorkspaceBook::hold_shown`]): each reads
+/// held, a save from any writes it, and a discard on one leaves it with the
+/// rest. With no edit held a landing's heal stays out of every copy.
+fn share_shown_sets<H: TabRecipeHost + ?Sized>(host: &mut H, landed: u64) {
+    let book = host.recipe_book().0;
+    let Some(state) = book.tab_state(landed) else {
+        return;
+    };
+    let tabs = book.tabs_on(state.workspace);
+    let held = tabs.iter().any(|tab| book.holds_set_edit(*tab));
+    for tab in tabs {
+        let sync = host.recipe_book().1;
+        if sync.is_pending(tab) || !sync.is_settled(tab) {
+            continue;
+        }
+        let signal = host.recipe_signal(tab);
+        let Some(live) = host.live_recipe(tab) else {
+            continue;
+        };
+        let (book, sync) = host.recipe_book_mut();
+        if held {
+            book.hold_shown(tab, &live);
+        }
+        sync.reread(tab, live, signal);
     }
 }
 
@@ -306,6 +347,35 @@ pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) -> bool {
     // The tab was just found in the book, so observe cannot refuse.
     sync.observe(id, live, copy)
         .is_some_and(|edit| book.observe(id, &edit).unwrap_or(false))
+}
+
+/// Each open tab's workspace, as `(tab, workspace, settled)` in tab id
+/// order, for [`crate::session::LayoutSession::hold_workspaces`]: the book's
+/// word, or for a tab the book has not adopted yet the desk's, followed
+/// through a rename and `Default` for one deleted since, as the book will
+/// restore it. So tabs a desk brings back share their workspace's copies
+/// from their first frame. `settled`: the tab's panes stand on what its
+/// workspace showed it, no recipe on its way.
+pub fn tab_holdings<'a>(
+    (book, sync): (&'a WorkspaceBook, &'a TabRecipeSync),
+) -> impl Iterator<Item = (u64, &'a str, bool)> + Clone + 'a {
+    let settled = move |tab| sync.is_settled(tab) && !sync.is_pending(tab);
+    let held = (book.tab_workspaces()).map(move |(tab, name)| (tab, name, settled(tab)));
+    let arriving = (sync.arriving())
+        .filter(move |(tab, _)| book.tab_state(*tab).is_none())
+        .map(move |(tab, name)| (tab, book.resolve(name).unwrap_or(DEFAULT_WORKSPACE), false));
+    held.chain(arriving)
+}
+
+/// Before a save: the tab's copy takes the indicator sets its panes showed
+/// when last read, so a save writes what every tab on the workspace shows, a
+/// set healed on landing included, and nothing else of the copy moves. A
+/// heal alone never reaches a recipe this way: autosave and a flush write a
+/// tab only once its copy differs.
+pub fn take_shown_sets(book: &mut WorkspaceBook, sync: &TabRecipeSync, tab: u64) {
+    if let Some(shown) = sync.shown(tab).filter(|_| !sync.is_pending(tab)) {
+        book.take_sets(tab, shown);
+    }
 }
 
 #[cfg(test)]

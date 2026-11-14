@@ -35,7 +35,7 @@ pub(super) fn show_stack(
 impl TabCanvas {
     /// See `Tab::shows_context_charts`: held, built, and not collapsed.
     pub(crate) fn shows_context_charts(&self, time_panes: &[ChartPane]) -> bool {
-        self.layout.shows_time() && !time_panes.is_empty() && !self.context_collapsed
+        self.layout.shows_time() && !time_panes.is_empty() && !self.folds().0
     }
 
     /// Folded by the canvas model, or by the column flags while they draw.
@@ -46,9 +46,9 @@ impl TabCanvas {
         }
         let heights = &self.context_stack.heights;
         match side {
-            PaneSide::Flow => self.flow_collapsed && self.layout.shows_time(),
+            PaneSide::Flow => self.folds().1 && self.layout.shows_time(),
             PaneSide::Time(slot) => {
-                (self.context_collapsed && self.layout.shows_flow())
+                (self.folds().0 && self.layout.shows_flow())
                     || heights
                         .get(slot)
                         .is_some_and(|height| height.is_collapsed())

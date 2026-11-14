@@ -58,6 +58,8 @@ struct SeenTab {
     last: WorkspaceRecipe,
     /// The window's cheap change signal when `last` was read.
     signal: Option<u64>,
+    /// The workspace the tab settled on, once told.
+    on: Option<String>,
 }
 
 /// The window's side of the book, kept apart from the recipes: none of it is
@@ -84,6 +86,27 @@ impl TabRecipeSync {
     pub fn join(&mut self, tab: u64, workspace: Option<String>) {
         if workspace.is_some() {
             self.arrive(tab, workspace, None);
+        }
+    }
+
+    /// The tabs a desk's word puts on a workspace, still to be read, by id.
+    pub fn arriving(&self) -> impl Iterator<Item = (u64, &str)> + Clone {
+        (self.arrivals.iter())
+            .filter_map(|(tab, (workspace, _))| Some((*tab, workspace.as_deref()?)))
+    }
+
+    /// What the tab showed when it was last read.
+    #[must_use]
+    pub fn shown(&self, tab: u64) -> Option<&WorkspaceRecipe> {
+        self.seen.get(&tab).map(|seen| &seen.last)
+    }
+
+    /// The tab was read again, showing `live` with change signal `signal`,
+    /// and that is no edit: a landing on another tab repainted it.
+    pub fn reread(&mut self, tab: u64, live: WorkspaceRecipe, signal: u64) {
+        if let Some(seen) = self.seen.get_mut(&tab) {
+            seen.last = live;
+            seen.signal = Some(signal);
         }
     }
 
@@ -172,8 +195,25 @@ impl TabRecipeSync {
                 baseline: live.clone(),
                 last: live,
                 signal: None,
+                on: None,
             },
         );
+    }
+
+    /// The tab settled on `workspace`.
+    pub fn settled_on(&mut self, tab: u64, workspace: &str) {
+        if let Some(seen) = self.seen.get_mut(&tab) {
+            seen.on = Some(workspace.to_owned());
+        }
+    }
+
+    /// Whether the tab's panes stand where `workspace` puts them: it settled
+    /// there, or was never told where it settled. A tab moved to another
+    /// workspace shows another workspace's sets until its recipe lands.
+    #[must_use]
+    pub fn stands_on(&self, tab: u64, workspace: Option<&str>) -> bool {
+        let on = self.seen.get(&tab).and_then(|seen| seen.on.as_deref());
+        on.is_none_or(|on| Some(on) == workspace)
     }
 
     /// Whether a recipe has settled on this tab since it joined.

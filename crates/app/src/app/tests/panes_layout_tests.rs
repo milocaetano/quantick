@@ -1664,7 +1664,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
             .area
             .is_none()
     );
-    app.active_tab_mut().canvas.set_context_collapsed(true);
+    app.active_tab_mut().canvas.fold(false, true);
     assert!(
         app.control_action(
             "layout.pane.resize_pair",
@@ -2055,11 +2055,11 @@ fn dragging_the_divider_resizes_then_collapses_the_flow_pane() {
             divider.center() + egui::vec2(400.0, 0.0),
         );
         run_frame(&mut app, &ctx);
-        if app.active_tab().canvas.flow_collapsed {
+        if app.active_tab().canvas.folds().1 {
             break;
         }
     }
-    assert!(app.active_tab().canvas.flow_collapsed);
+    assert!(app.active_tab().canvas.folds().1);
     assert!(app.active_tab().flow_pane.frame.area.is_none());
     assert!(app.active_tab().flow_rail_rect().is_some());
 }
@@ -2069,14 +2069,14 @@ fn a_right_rail_reopens_the_flow_chart_by_dragging_left() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let restore = app.active_tab().canvas.split_fraction;
-    assert!(app.active_tab_mut().canvas.set_flow_collapsed(true));
+    assert!(app.active_tab_mut().canvas.fold(true, true));
     run_frame(&mut app, &ctx);
     let rail = app.active_tab().flow_rail_rect().expect("right rail drawn");
     assert!(rail.width() >= crate::canvas_layout::COLLAPSED_PANE_WIDTH_PX - 1.0);
     assert!(app.active_tab().flow_pane.frame.area.is_none());
     slow_primary_drag(&mut app, &ctx, rail.center(), egui::vec2(-20.0, 0.0), 18);
     run_frame(&mut app, &ctx);
-    assert!(!app.active_tab().canvas.flow_collapsed);
+    assert!(!app.active_tab().canvas.folds().1);
     assert!(app.active_tab().flow_pane.frame.area.is_some());
     assert!(app.active_tab().canvas.split_fraction < restore + 0.5);
 }
@@ -2086,7 +2086,7 @@ fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     app.active_tab_mut().canvas.split_fraction = 0.072;
-    app.active_tab_mut().canvas.set_context_collapsed(true);
+    app.active_tab_mut().canvas.fold(false, true);
     run_frame(&mut app, &ctx);
     let rail = app
         .active_tab()
@@ -2097,7 +2097,7 @@ fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.active_tab().canvas.context_collapsed,
+        !app.active_tab().canvas.folds().0,
         "dragging opens the rail"
     );
     let divider_x = app
@@ -2129,7 +2129,7 @@ fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.active_tab().canvas.context_collapsed,
+        !app.active_tab().canvas.folds().0,
         "a stale fraction must not snap an open column shut"
     );
     let after = app
@@ -2148,7 +2148,7 @@ fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
 fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().canvas.set_context_collapsed(true);
+    app.active_tab_mut().canvas.fold(false, true);
     run_frame(&mut app, &ctx);
     let rail = app
         .active_tab()
@@ -2156,11 +2156,11 @@ fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
         .expect("the collapsed column leaves a rail");
     click_chart(&mut app, &ctx, rail.center());
     assert!(
-        app.active_tab().canvas.context_collapsed,
+        app.active_tab().canvas.folds().0,
         "a rail click opened the column"
     );
 
-    app.active_tab_mut().canvas.set_context_collapsed(false);
+    app.active_tab_mut().canvas.fold(false, false);
     run_frame(&mut app, &ctx);
     let divider = app
         .active_tab()
@@ -2168,7 +2168,7 @@ fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
         .expect("the open column has a divider");
     click_chart(&mut app, &ctx, divider.center());
     assert!(
-        !app.active_tab().canvas.context_collapsed,
+        !app.active_tab().canvas.folds().0,
         "a divider click closed the column"
     );
 }
@@ -2185,7 +2185,7 @@ fn a_slow_left_drag_past_the_threshold_magnetically_closes_the_column() {
     slow_primary_drag(&mut app, &ctx, divider.center(), egui::vec2(-20.0, 0.0), 20);
 
     assert!(
-        app.active_tab().canvas.context_collapsed,
+        app.active_tab().canvas.folds().0,
         "crossing the collapse threshold should snap the column shut"
     );
 }
@@ -2195,7 +2195,7 @@ fn ctrl_zero_reopens_a_stale_fraction_at_the_drawn_floor() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     app.active_tab_mut().canvas.split_fraction = 0.072;
-    app.active_tab_mut().canvas.set_context_collapsed(true);
+    app.active_tab_mut().canvas.fold(false, true);
     run_frame(&mut app, &ctx);
 
     run_frame_with_modifiers(
@@ -2207,10 +2207,7 @@ fn ctrl_zero_reopens_a_stale_fraction_at_the_drawn_floor() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert!(
-        !tab.canvas.context_collapsed,
-        "Ctrl+0 remains the reopen path"
-    );
+    assert!(!tab.canvas.folds().0, "Ctrl+0 remains the reopen path");
     assert!(
         tab.canvas.split_fraction * tab.last_canvas_width()
             >= crate::canvas_layout::MIN_PANE_WIDTH_PX - 1.0,
@@ -2234,7 +2231,7 @@ fn dragging_the_divider_to_the_edge_collapses_the_column() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     assert!(
-        !app.active_tab().canvas.context_collapsed,
+        !app.active_tab().canvas.folds().0,
         "the split opens with its context column shown"
     );
 
@@ -2248,7 +2245,7 @@ fn dragging_the_divider_to_the_edge_collapses_the_column() {
     }
 
     assert!(
-        app.active_tab().canvas.context_collapsed,
+        app.active_tab().canvas.folds().0,
         "dragging the divider to the edge must dismiss the column, not              stall against a floor the gesture can never cross"
     );
     // And the width it springs back to survived the gesture that put it

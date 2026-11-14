@@ -119,7 +119,7 @@ fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Snapshot {
         active_layout: Some(layout.focused_pane_layout()),
         preset: tab.canvas.layout.preset().id.into(),
         context_column: tab.canvas.layout.shows_time() && tab.canvas.layout.shows_flow(),
-        context_collapsed: tab.canvas.context_collapsed,
+        context_collapsed: !tab.shows_context_charts(),
         context_panes: tab.pane_count().saturating_sub(1),
         legend_collapsed: tab.focused_pane().legend_collapsed,
         legend_side: tab

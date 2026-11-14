@@ -51,6 +51,11 @@ impl PaneMenus {
         };
         self.drawn.push(control);
     }
+
+    /// A rail as drawn, named `id`: its restore, as a strip's is.
+    pub(crate) fn publish_rail(&mut self, id: String, rect: Rect) {
+        self.publish(id, "Restore", rect, Some(item_capability(Item::Restore)));
+    }
 }
 
 /// `text` centred on `at`, `size` points high, in `ink`.

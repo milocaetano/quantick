@@ -67,7 +67,9 @@ pub trait LayoutTab {
     fn set_split_fraction(&mut self, fraction: f32) -> bool;
     /// The divider drag's, the rail's and the menu's collapse.
     fn set_context_collapsed(&mut self, collapsed: bool) -> bool;
-    /// Whether this layout gives the flow pane a right rail to collapse to.
+    /// Whether this layout gives the flow pane a rail to collapse to: it
+    /// holds charts beside the flow pane, or the flow pane stands docked
+    /// beside charts.
     fn flow_has_rail(&self) -> bool;
     /// The flow pane's collapse.
     fn set_flow_collapsed(&mut self, collapsed: bool) -> bool;

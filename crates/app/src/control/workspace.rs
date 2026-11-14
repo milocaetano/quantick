@@ -129,8 +129,8 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                         SPLIT_FRACTION_DECIMAL_PLACES,
                     )
                     .expect("the pane split fraction is finite"),
-                    context_collapsed: tab.canvas.context_collapsed,
-                    flow_collapsed: tab.canvas.flow_collapsed,
+                    context_collapsed: tab.canvas.folds().0,
+                    flow_collapsed: tab.canvas.folds().1,
                     panes,
                     venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
                     workspace,
