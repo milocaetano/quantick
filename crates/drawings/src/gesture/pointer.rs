@@ -862,6 +862,86 @@ mod tests {
         });
     }
 
+    /// A press that wobbles under the drag threshold is still a click: it
+    /// selects, and the geometry stays where the trader put it.
+    #[test]
+    fn a_wobble_under_the_drag_threshold_selects_without_moving() {
+        with_projection(|projection, bands| {
+            let mut store = local_line();
+            let original = store.items()[0].points.clone();
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(crate::pos2(100.0, 100.0), bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(103.0, 100.0));
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            (pointer.down, pointer.released) = (false, true);
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(store.items()[0].points, original);
+            assert_eq!(store.selected(), Some(0));
+        });
+    }
+
+    /// A horizontal line at 30 grabbed by its body far from its handle, then
+    /// carried through `stops` one frame each, each a pointer y and, when the
+    /// axis rescaled under it, the price at the band's top: the line's price
+    /// after each.
+    fn body_drag(magnet: bool, stops: &[(f32, Option<f64>)]) -> Vec<f64> {
+        let mut prices = Vec::new();
+        with_projection(|projection, bands| {
+            let mut store = Marks::default();
+            let line = crate::DrawingTool::by_id("horizontal-line").unwrap();
+            assert!(store.place(line, crate::ChartPoint::at(0.0, 30.0)));
+            store.select(None);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(crate::pos2(100.0, 140.0), bands);
+            (pointer.pressed, pointer.magnet) = (true, magnet);
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.pressed = false;
+            for &(y, top) in stops {
+                pointer.position = Some(crate::pos2(100.0, y));
+                let rescaled: Bands = smallvec::smallvec![Band {
+                    key: crate::DrawingBand::Price,
+                    rect: bands[0].rect,
+                    scale: top.map(|top| PriceScale::from_range(0.0, top, 0.0, 200.0)),
+                    label: "price".into(),
+                    refusal: None,
+                }];
+                let frame = if top.is_some() { &rescaled } else { bands };
+                owner_frame(&mut gestures, &mut store, projection, frame, &pointer);
+                prices.push(store.items()[0].points[0].price);
+            }
+        });
+        prices
+    }
+
+    /// A body drag is the grab's whole travel: the magnet holds the line on
+    /// the print at 50, and carried out of reach it lets go exactly where the
+    /// hand is, at 80, with none of the snap's correction left in it.
+    #[test]
+    fn a_body_drag_lets_go_of_the_print_where_the_hand_is() {
+        let [held, away] = body_drag(true, &[(102.0, None), (40.0, None)])[..] else {
+            panic!("two stops");
+        };
+        assert_eq!(held, 50.0, "the magnet held the print");
+        assert!(
+            (away - 80.0).abs() < 1e-4,
+            "the line followed the hand: {away}"
+        );
+    }
+
+    /// Each frame reads its own travel under its own axes: the axis
+    /// rescaling under a hand that holds still moves nothing.
+    #[test]
+    fn a_body_drag_holds_still_while_the_axis_rescales() {
+        let [moved, rescaled] = body_drag(false, &[(120.0, None), (120.0, Some(200.0))])[..] else {
+            panic!("two stops");
+        };
+        assert!((moved - 40.0).abs() < 1e-4, "{moved}");
+        assert_eq!(rescaled, moved, "a still hand under a new axis");
+    }
+
     #[test]
     fn shared_threshold_and_missing_tick_instant_emit_no_fabricated_edit() {
         with_projection(|projection, bands| {
