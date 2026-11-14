@@ -3400,6 +3400,7 @@ dependencies = [
 name = "quantick-ui-model"
 version = "0.1.0"
 dependencies = [
+ "quantick-alerts",
  "quantick-appearance",
  "quantick-chart",
  "quantick-chart-interaction",
