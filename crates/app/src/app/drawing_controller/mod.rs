@@ -11,14 +11,26 @@ pub(crate) use access::{DrawingAccess, DrawingReadAccess};
 #[cfg(test)]
 pub(super) use input::DUPLICATE_OFFSET_BARS;
 
+use crate::toolrail::ToolRailExt as _;
 pub(crate) struct DrawingController {
-    pub(crate) chrome: DrawingChromeSurface,
     pub(crate) presets: drawings::presets::PresetStore,
 }
+pub(crate) struct DrawingControllerAccess<'a> {
+    chrome: &'a mut DrawingChromeSurface,
+    presets: &'a mut drawings::presets::PresetStore,
+}
 impl DrawingController {
+    pub(crate) fn with<'a>(
+        &'a mut self,
+        chrome: &'a mut DrawingChromeSurface,
+    ) -> DrawingControllerAccess<'a> {
+        DrawingControllerAccess {
+            chrome,
+            presets: &mut self.presets,
+        }
+    }
     pub(crate) fn new() -> Self {
         Self {
-            chrome: DrawingChromeSurface::default(),
             presets: drawings::presets::PresetStore::load_from(drawings::presets::default_path()),
         }
     }
@@ -58,9 +70,9 @@ impl DrawingEffects {
         }
         for (message, now, undo) in self.notices {
             if undo {
-                toast.note_with_undo(message, now);
+                crate::surfaces::toast::note_with_undo(toast, message, now);
             } else {
-                toast.note(message, now);
+                crate::surfaces::toast::note(toast, message, now);
             }
         }
     }

@@ -82,7 +82,7 @@ fn bar_x(app: &QuantickApp, bar: f32) -> f32 {
 fn magnet_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let (mut app, commands) = app_with_candles();
     let ctx = egui::Context::default();
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     (app, commands, ctx)
@@ -293,9 +293,9 @@ fn drag_through(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, pa
 /// Place `id` through `anchors` with the magnet off, so the object starts
 /// on free prices, then switch the magnet on for the move under test.
 fn place_free(app: &mut QuantickApp, ctx: &egui::Context, id: &str, anchors: &[egui::Pos2]) {
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     place_drawing(app, ctx, id, anchors);
-    app.toolrail.set_magnet(true);
+    app.surfaces.toolrail.set_magnet(true);
     run_frame(app, ctx);
 }
 
@@ -353,7 +353,7 @@ fn with_the_magnet_off_a_body_drag_stays_free() {
     let (mut app, _commands, ctx) = magnet_app();
     let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
     place_free(&mut app, &ctx, "horizontal-line", &[at]);
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     let grab = egui::pos2(bar_x(&app, 35.0), at.y);
     let [_, _, low_b, _] = ohlc(61);
     let to = egui::pos2(
@@ -406,8 +406,8 @@ fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
     );
     // The selected drawing's context bar can cover the stroke's midpoint.
     assert!(
-        app.drawings
-            .chrome
+        app.surfaces
+            .drawing_chrome
             .context_bar_rect()
             .is_none_or(|rect| !rect.contains(grab)),
         "the body grab must be outside the selected drawing toolbar"
@@ -432,7 +432,7 @@ fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
 #[test]
 fn a_body_drag_survives_history_landing_underneath() {
     let (mut app, _commands, ctx) = magnet_app();
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
     place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
     let placed = last_points(&app)[0];
@@ -476,7 +476,7 @@ fn a_body_drag_survives_history_landing_underneath() {
 #[test]
 fn a_body_drag_holds_still_while_the_axis_rescales() {
     let (mut app, _commands, ctx) = magnet_app();
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
     place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
     let grab = egui::pos2(bar_x(&app, 35.0), at.y);
@@ -521,7 +521,7 @@ fn place_with_own_magnet(
     id: &str,
     anchors: &[egui::Pos2],
 ) -> usize {
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     let index = place_drawing(app, ctx, id, anchors);
     let drawings = &mut app.active_tab_mut().flow_pane.drawings;
     assert!(
@@ -530,7 +530,10 @@ fn place_with_own_magnet(
     );
     assert!(drawings.set_magnet_at(index, true), "the flag moved");
     run_frame(app, ctx);
-    assert!(!app.toolrail.magnet(), "the rail's magnet stays off");
+    assert!(
+        !app.surfaces.toolrail.magnet(),
+        "the rail's magnet stays off"
+    );
     index
 }
 
@@ -613,14 +616,14 @@ fn another_drawing_without_its_own_magnet_stays_free() {
 #[test]
 fn the_context_bar_flips_the_selected_drawings_own_magnet() {
     let (mut app, _commands, ctx) = magnet_app();
-    app.toolrail.set_magnet(false);
+    app.surfaces.toolrail.set_magnet(false);
     let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
     let index = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
     run_frame(&mut app, &ctx);
     for expected in [true, false] {
         let slot = app
-            .drawings
-            .chrome
+            .surfaces
+            .drawing_chrome
             .context_bar()
             .magnet_rect()
             .expect("a pointer-anchored drawing renders the magnet slot");
@@ -630,7 +633,10 @@ fn the_context_bar_flips_the_selected_drawings_own_magnet() {
             app.active_tab().flow_pane.drawings.items()[index].magnet,
             expected
         );
-        assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+        assert!(
+            !app.surfaces.toolrail.magnet(),
+            "the rail's magnet never moves"
+        );
     }
 }
 
@@ -640,7 +646,7 @@ fn the_context_bar_flips_the_selected_drawings_own_magnet() {
 fn shared_mirror_drag(rail: bool, own: bool) -> f64 {
     let ctx = egui::Context::default();
     let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
-    app.toolrail.set_magnet(rail);
+    app.surfaces.toolrail.set_magnet(rail);
     app.active_tab_mut()
         .flow_pane
         .drawings

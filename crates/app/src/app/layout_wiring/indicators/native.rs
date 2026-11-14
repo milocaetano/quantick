@@ -44,7 +44,7 @@ impl quantick_control_handlers::native_indicator::NativePort for LayoutAdapter<'
             .collect())
     }
     fn settings_open(&self) -> bool {
-        self.indicators.indicator_settings.is_some()
+        self.indicator_settings.model_state.dialog().is_some()
     }
     fn apply(
         &mut self,

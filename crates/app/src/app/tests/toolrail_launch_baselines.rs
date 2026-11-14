@@ -104,11 +104,14 @@ fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
         }
         other => panic!("unregistered literal baseline {other}"),
     }
-    assert_eq!(app.toolrail.tool().id(), tool);
-    assert_eq!(app.toolrail.magnet(), magnet);
+    assert_eq!(app.surfaces.toolrail.tool().id(), tool);
+    assert_eq!(app.surfaces.toolrail.magnet(), magnet);
     assert_eq!(app.workspace_state().starred_tool_ids(), favorites);
-    assert_eq!(app.toolrail.dock(), dock);
-    assert_eq!(app.toolrail.launch_pending_for_test(), (target, flyout));
+    assert_eq!(app.surfaces.toolrail.dock(), dock);
+    assert_eq!(
+        app.surfaces.toolrail.launch_pending_for_test(),
+        (target, flyout)
+    );
     assert_eq!(
         app.runtime.workspace.session().favorites_are_staged(),
         staged
@@ -116,9 +119,10 @@ fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
 
     let ctx = egui::Context::default();
     if case.starts_with("scroll-") {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .launch_draw_for_test(&ctx, egui::vec2(560.0, 900.0));
-        let (scrolling, offset, _) = app.toolrail.launch_rendered_for_test();
+        let (scrolling, offset, _) = app.surfaces.toolrail.launch_rendered_for_test();
         assert!(
             scrolling,
             "the actual renderer must exercise its scroll band"
@@ -129,27 +133,33 @@ fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
         } else {
             assert_eq!(offset, 0.0);
         }
-        assert_eq!(app.toolrail.launch_pending_for_test().0, None);
-        app.toolrail
+        assert_eq!(app.surfaces.toolrail.launch_pending_for_test().0, None);
+        app.surfaces
+            .toolrail
             .launch_draw_for_test(&ctx, egui::vec2(560.0, 900.0));
-        assert_eq!(app.toolrail.launch_rendered_for_test().1, offset);
+        assert_eq!(app.surfaces.toolrail.launch_rendered_for_test().1, offset);
     } else {
-        app.toolrail
+        app.surfaces
+            .toolrail
             .launch_draw_for_test(&ctx, egui::vec2(2000.0, 2000.0));
         if case == "valid" {
-            assert_eq!(app.toolrail.launch_pending_for_test().1, None);
-            assert_eq!(app.toolrail.launch_rendered_for_test().2, Some("lines"));
+            assert_eq!(app.surfaces.toolrail.launch_pending_for_test().1, None);
+            assert_eq!(
+                app.surfaces.toolrail.launch_rendered_for_test().2,
+                Some("lines")
+            );
         } else if flyout.is_some() {
-            assert_eq!(app.toolrail.launch_pending_for_test().1, flyout);
-            assert_eq!(app.toolrail.launch_rendered_for_test().2, None);
-            app.toolrail
+            assert_eq!(app.surfaces.toolrail.launch_pending_for_test().1, flyout);
+            assert_eq!(app.surfaces.toolrail.launch_rendered_for_test().2, None);
+            app.surfaces
+                .toolrail
                 .launch_draw_for_test(&ctx, egui::vec2(2000.0, 2000.0));
-            assert_eq!(app.toolrail.launch_pending_for_test().1, flyout);
+            assert_eq!(app.surfaces.toolrail.launch_pending_for_test().1, flyout);
         }
     }
     let path = scratch_ui_state(&format!("literal-launch-favorites-{case}"));
     app.runtime.workspace.set_ui_state_path(path.clone());
-    app.toolrail.toggle_favorite(starrable_tool());
+    app.surfaces.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
     assert_eq!(path.exists(), !staged, "only ordinary stars reach disk");
     if path.exists() {
@@ -175,7 +185,7 @@ fn draft_uses_the_tool_selected_during_construction() {
         ..Default::default()
     };
     let (mut app, _commands) = app_with_history_and_launch(200, launch);
-    assert_eq!(app.toolrail.tool().id(), "parallel-channel");
+    assert_eq!(app.surfaces.toolrail.tool().id(), "parallel-channel");
     app.active_tab_mut().flow_pane.frame.chart_area = Some(egui::Rect::from_min_size(
         egui::pos2(100.0, 100.0),
         egui::vec2(800.0, 400.0),
@@ -187,5 +197,11 @@ fn draft_uses_the_tool_selected_during_construction() {
     let points = &pane.drawings.draft().unwrap().points;
     assert_eq!(points[0], ChartPoint::at_time(141.5, 99.4, Some(15_200)));
     assert_eq!(points[1], ChartPoint::at_time(168.5, 100.6, Some(17_900)));
-    assert!(app.drawings.chrome.demos().draft_requested().is_none());
+    assert!(
+        app.surfaces
+            .drawing_chrome
+            .demos()
+            .draft_requested()
+            .is_none()
+    );
 }

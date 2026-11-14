@@ -44,7 +44,10 @@ fn the_magnet_is_set_by_a_named_call_and_read_back_in_the_scene() {
     ] {
         let (refused, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, invalid);
         assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
-        assert!(!app.toolrail.magnet(), "a refused call changes nothing");
+        assert!(
+            !app.surfaces.toolrail.magnet(),
+            "a refused call changes nothing"
+        );
     }
 
     let (on, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, json!({"enabled": true}));
@@ -52,7 +55,7 @@ fn the_magnet_is_set_by_a_named_call_and_read_back_in_the_scene() {
         success_result(&on),
         json!({"enabled": true, "changed": true})
     );
-    assert!(app.toolrail.magnet());
+    assert!(app.surfaces.toolrail.magnet());
     run_frame(&mut app, &ctx);
     assert!(magnet_control(&app).selected, "the scene reads it on");
 
@@ -67,7 +70,7 @@ fn the_magnet_is_set_by_a_named_call_and_read_back_in_the_scene() {
         success_result(&off),
         json!({"enabled": false, "changed": true})
     );
-    assert!(!app.toolrail.magnet());
+    assert!(!app.surfaces.toolrail.magnet());
     run_frame(&mut app, &ctx);
     assert!(!magnet_control(&app).selected);
     disable_test_gateway(&mut app, &ctx);
@@ -80,7 +83,7 @@ fn the_magnet_is_set_by_a_named_call_and_read_back_in_the_scene() {
 fn the_magnet_reads_back_in_the_snapshot_with_the_rail_hidden() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(20);
-    app.toolrail.set_visible(false);
+    app.surfaces.toolrail.set_visible(false);
     run_frame(&mut app, &ctx);
     assert!(
         crate::control::scene_snapshot(&app)
@@ -122,13 +125,14 @@ fn a_hand_flip_of_the_magnet_journals_like_the_call() {
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     run_frame(&mut app, &ctx);
     let button = app
+        .surfaces
         .toolrail
         .magnet_button_rect()
         .expect("the magnet button rendered")
         .center();
     click_chart(&mut app, &ctx, button);
     run_frame(&mut app, &ctx);
-    assert!(app.toolrail.magnet(), "the click turned it on");
+    assert!(app.surfaces.toolrail.magnet(), "the click turned it on");
     let events = app
         .control
         .control_access
@@ -238,7 +242,7 @@ fn a_drawings_own_magnet_is_set_by_a_named_call_and_read_back() {
     assert_eq!(success_result(&on), answer(true, true));
     assert!(own(&app));
     assert!(
-        !app.toolrail.magnet(),
+        !app.surfaces.toolrail.magnet(),
         "the rail's magnet is another switch"
     );
     assert_eq!(read(&mut app, &mut client), json!(true));
@@ -417,8 +421,8 @@ fn hand_flip_own_magnet(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
     let index = place_drawing(app, ctx, "horizontal-line", &[egui::pos2(700.0, 300.0)]);
     run_frame(app, ctx);
     let slot = app
-        .drawings
-        .chrome
+        .surfaces
+        .drawing_chrome
         .context_bar()
         .magnet_rect()
         .expect("a pointer-anchored drawing renders the magnet slot")
@@ -442,7 +446,10 @@ fn a_hand_flip_of_a_drawings_own_magnet_journals_like_the_call() {
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let index = hand_flip_own_magnet(&mut app, &ctx);
     assert!(own_magnet_at(&app, index), "the click turned it on");
-    assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    assert!(
+        !app.surfaces.toolrail.magnet(),
+        "the rail's magnet never moves"
+    );
     assert_eq!(object_magnet_events(&app), [json!(true)]);
     let event = app
         .control
@@ -478,7 +485,10 @@ fn a_hand_flip_of_a_drawings_own_magnet_lands_without_a_gateway() {
     app.control.control_access = None;
     let index = hand_flip_own_magnet(&mut app, &ctx);
     assert!(own_magnet_at(&app, index), "the click turned it on");
-    assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    assert!(
+        !app.surfaces.toolrail.magnet(),
+        "the rail's magnet never moves"
+    );
     assert!(
         app.drawing_pane_mut().drawings.undo(),
         "the flip is one undo step"

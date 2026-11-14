@@ -82,18 +82,6 @@ pub fn draw_style_contents(
     response
 }
 
-/// The built-in presets, one selectable label each.
-pub fn draw_presets(ui: &mut egui::Ui, style: &mut ChartStyle, response: &mut StylePanelResponse) {
-    for preset in CandlePreset::ALL {
-        let selected = CandlePreset::detect(&style.candles) == Some(preset);
-        if ui.selectable_label(selected, preset.label()).clicked() {
-            style.apply_preset(preset);
-            response.changed = true;
-            response.applied_preset = Some(preset);
-        }
-    }
-}
-
 pub fn draw_body_settings(
     ui: &mut egui::Ui,
     style: &mut CandleStyle,

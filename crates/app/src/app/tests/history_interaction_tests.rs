@@ -59,7 +59,9 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         assert!(!app.active_tab().pane(side).price_view.is_auto());
         // Context charts on one bar rule hold one set: the last pane's line is here too.
         let held = app.active_tab().pane(side).drawings.items().len();
-        app.toolrail.arm(Tool::Drawing(drawing_tool("trend-line")));
+        app.surfaces
+            .toolrail
+            .arm(Tool::Drawing(drawing_tool("trend-line")));
         click_chart(&mut app, &ctx, at);
         let anchor = app
             .active_tab()
@@ -227,7 +229,8 @@ fn history_wait_keeps_chart_drag_zoom_price_and_drawing_input_available() {
         gutter.center() - egui::vec2(0.0, 40.0),
     );
     assert!(!app.active_tab().flow_pane.price_view.is_auto());
-    app.toolrail
+    app.surfaces
+        .toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(
         &mut app,

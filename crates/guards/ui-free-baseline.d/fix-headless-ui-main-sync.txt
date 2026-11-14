@@ -1,0 +1,8 @@
+# Merging origin/main 7d4bdbc3b into feature/headless-ui reconciles two
+# independently green ratchets. From their merge base the feature added 394
+# UI-free app lines under +186 of raises and main added 439 under +295 (net of
+# its -402 tighten); each spent the same base slack, so the union overflows by
+# 131. No line here is new: main's alerts cache, native-indicator adapters and
+# layout wiring plus the feature's catalog wiring, measured as merged.
+crates/app +131
+!budget +131

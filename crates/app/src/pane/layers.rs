@@ -19,6 +19,7 @@ use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, Visibili
 use quantick_stores::pane_style::PanePresentation;
 use std::collections::BTreeMap;
 
+use crate::toolrail::ToolRailExt as _;
 /// The fields every layer answer reads, borrowed one by one so a menu can
 /// hold them beside its own state while the pane lends both out.
 #[derive(Clone, Copy)]

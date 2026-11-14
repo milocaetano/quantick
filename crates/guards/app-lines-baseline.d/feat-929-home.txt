@@ -1,0 +1,6 @@
+# #929: scoped allowance for the Home View, typed effect conversion and shared HomeCanvas adapter.
+# Independent review rejected +57; removing the obsolete helper reduced the actual delta to +50.
+# Authorized scope: https://github.com/milocaetano/quantick/issues/929
+# Original feature production/test-line reduction targets remain unchanged; no other ceiling changes.
+crates/app +50
+!budget +50
