@@ -1,0 +1,7 @@
+# Native indicator control docks through app-owned tabs, pane workers and layout mirroring.
+# Input validation, preparation, readback and transport remain in headless control crates.
+# Inherited main fc18a0091 adds 6 lines in control/tick_bubbles.rs: the app-owned
+# pane adapter accepts and forwards TickTuning; tuning policy stays in orderflow.
+# Reserve those separately from Volume's +17 for the merge tree (base 4671c444).
+crates/app +23
+!budget +23

@@ -14,7 +14,7 @@ use super::{IndicatorView, MAX_PANES, PaneSizing};
 /// Every indicator the UI knows about, in add order, plus the slot counter.
 #[derive(Default)]
 pub struct IndicatorViews {
-    views: Vec<IndicatorView>,
+    pub(super) views: Vec<IndicatorView>,
     next_slot: u64,
     /// Kind of each slot whose first delta has not arrived yet. The view is
     /// born from the worker's `Rebuilt` event, which knows nothing about the

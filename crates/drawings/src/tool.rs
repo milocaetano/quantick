@@ -163,6 +163,15 @@ pub trait MarkTool: Sync {
     fn painted_bounds(&self, anchors: PxRect, _chart: PxRect) -> PxRect {
         anchors
     }
+    /// Painted bounds including tool-owned content, such as a note's words.
+    fn content_bounds(
+        &self,
+        _payload: &dyn DrawingPayload,
+        anchors: PxRect,
+        chart: PxRect,
+    ) -> PxRect {
+        self.painted_bounds(anchors, chart)
+    }
     /// The colour a fresh object of this tool is born in, when the stock
     /// blue would be the wrong answer. `None` — almost every tool — takes
     /// [`DEFAULT_DRAWING_COLOR`].
@@ -510,6 +519,15 @@ impl DrawingTool {
     #[must_use]
     pub fn painted_bounds(self, anchors: PxRect, chart: PxRect) -> PxRect {
         self.0.painted_bounds(anchors, chart)
+    }
+    /// See [`MarkTool::content_bounds`].
+    pub fn content_bounds(
+        self,
+        payload: &dyn DrawingPayload,
+        anchors: PxRect,
+        chart: PxRect,
+    ) -> PxRect {
+        self.0.content_bounds(payload, anchors, chart)
     }
 
     /// See [`MarkTool::axis_levels`].

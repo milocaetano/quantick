@@ -30,7 +30,7 @@
 //! third cycle from being found by hand like the first two.
 
 use eframe::egui::{self, Color32};
-use quantick_appearance::{Token, paper};
+use quantick_appearance::{Token, paper, paper::Plate};
 use rust_decimal::Decimal;
 
 use crate::theme;
@@ -92,11 +92,22 @@ pub(crate) fn financial_text(
     font: egui::FontId,
     color: egui::Color32,
 ) -> egui::text::LayoutJob {
+    financial_text_on(palette, paper::INSET, (text, font, color))
+}
+
+/// [`financial_text`] `on` a plate: Light's words in its ink, its figures in
+/// [`paper::plate_pnl_ink`]; Dark writes it all in `color`.
+pub(crate) fn financial_text_on(
+    palette: &theme::Palette,
+    on: Plate,
+    (text, font, color): (&str, egui::FontId, egui::Color32),
+) -> egui::text::LayoutJob {
     if palette.resolved.dark {
         return signed_text(text, font, color, |_| color);
     }
-    signed_text(text, font, palette.text_primary(), |value| {
-        points_color(palette, value)
+    signed_text(text, font, *palette.get(on.ink), |value| {
+        let sign = value.cmp(&Decimal::ZERO);
+        *palette.get(paper::plate_pnl_ink(&palette.resolved, on.fill, sign))
     })
 }
 

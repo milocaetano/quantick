@@ -17,6 +17,7 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
 }
 
 pub(crate) struct WorkspaceBundleAdapter<'a> {
+    pub(super) alerts: &'a mut quantick_stores::alerts::AlertRuntime,
     /// The tab strip and chrome ports an import restores, borrowed once.
     pub(super) arrangement: super::arrangement_adapter::ArrangementAdapter<'a>,
     pub(super) indicator_settings:
@@ -95,6 +96,7 @@ impl WorkspaceBundleAdapter<'_> {
         // export is the one moment worth paying it immediately, or the
         // bundle would carry the layouts as they stood a second ago.
         self.layout_adapter().flush_layouts();
+        let _ = self.alerts.flush();
         self.maintain_chart_layers();
         let tabs = self.arrangement.tabs.iter_mut();
         tabs.for_each(crate::tab::Tab::sync_asset_bubbles);
@@ -227,6 +229,7 @@ impl WorkspaceBundleAdapter<'_> {
     /// that restores one at startup — a second, import-only restore path is
     /// how the two would drift.
     fn reload_cockpit_stores(&mut self, imported: &[&str]) {
+        let _ = self.alerts.reload(crate::metrics::wall_clock_ms());
         *self.added_symbols = symbols_file::load(self.arrangement.workspace.symbols_path());
         *self.drawing_presets =
             drawings::presets::PresetStore::load_from(drawings::presets::default_path());

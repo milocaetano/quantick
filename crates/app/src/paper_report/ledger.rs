@@ -8,9 +8,9 @@
 use super::LedgerScope;
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_paper::pnl::PnlReader;
-use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting};
+use quantick_paper::report::ledger_rows::{LedgerPage, RowNest, ledger_rows, nesting, saved_items};
 use quantick_paper::report::ledger_state::{LedgerEdit, SessionPress};
+use quantick_paper::report::readout::LedgerScopeTotals;
 use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, live_keys};
 use quantick_ui_model::paper_report::{Intent, LedgerIntent, RowInput};
 
@@ -20,13 +20,14 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, LoadedHistory, Paint,
-    ReportEnv, TOTALS_STRIP_PX,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, Paint, ReportEnv,
+    TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{caption, financial_text, points_color};
+use crate::paper_chrome::{caption, financial_text_on, points_color_on};
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_appearance::panel_chrome::FOOTER;
 use quantick_appearance::paper::{CARD_GAP_PX, ledger_frame};
 
 impl Paint<'_, '_> {
@@ -39,8 +40,10 @@ impl Paint<'_, '_> {
         self.ledger(LedgerIntent::EnsureLoaded);
         self.ledger(LedgerIntent::Timezone(tz));
 
-        self.draw_scope_row(ui, env);
-        self.draw_filter_row(ui, tz);
+        crate::panel_chrome::filter_bar(ui, |ui| {
+            self.draw_scope_row(ui, env);
+            self.draw_filter_row(ui, tz);
+        });
         if let Some(receipt) = self.project_ledger(env.live_closes(), tz, env.pnl) {
             self.update(Intent::InstallLedger(receipt));
         }
@@ -87,26 +90,13 @@ impl Paint<'_, '_> {
             cache,
             tz,
         );
+        let pnl = env.pnl.of(env.symbol);
         let live: Vec<Item<'_>> = live
             .into_iter()
-            .map(|live| Item {
-                trade: live.trade,
-                symbol: env.symbol,
-                live: Some(live.index),
-                meta: TradeMeta {
-                    session: live.at.map(|at| &at.session),
-                    trade_ref: live.at.map_or_else(TradeRef::default, |at| at.trade),
-                    source: live.source,
-                    tags: live.tags,
-                    pnl: env.pnl.of(env.symbol),
-                },
-            })
+            .map(|live| Item::live(live, env.symbol, pnl))
             .collect();
         // Only the revealed pages are turned into rows; the rest stay
         // loaded and counted, which is what the control below them says.
-        // The `take` is the point — a year of sessions must cost the same
-        // per frame as a week of them, so the untouched tail is never even
-        // walked into a Vec.
         let page = LedgerPage::of(cut.kept.len(), self.ledger_pages());
         let saved = saved_items(cache, &cut.kept, page.shown, env.pnl);
 
@@ -130,26 +120,21 @@ impl Paint<'_, '_> {
             &view,
         );
 
-        // Totals over everything *in scope*, not everything listed: the
-        // rows above are one revealed page and the strip must not swing
-        // every time the trader reveals another. The saved half was summed
-        // when the folder was read; only this session's own trades — a
-        // handful — are counted here. A filter narrows the scope, and the
-        // strip follows it.
-        let totals = if self.sessions().view.filter.is_default() {
-            let own = LedgerTotals::of_trades(env.pnl, env.symbol, env.session_trades);
-            self.saved_totals().plus(&own)
+        let scope = if self.sessions().view.filter.is_default() {
+            let own = env.session_trades;
+            LedgerScopeTotals::Whole {
+                symbol: env.symbol,
+                own,
+            }
         } else {
-            let kept = cache.map_or(LedgerTotals::default(), |cache| {
-                LedgerTotals::of(cut.kept.iter().map(|&index| {
-                    let row = &cache.rows[index];
-                    (env.pnl.of(&row.symbol), &row.trade)
-                }))
-            });
-            kept.plus(&LedgerTotals::of(
-                live.iter().map(|item| (item.meta.pnl, item.trade)),
-            ))
+            let live = live.iter().map(|item| (item.meta.pnl, item.trade));
+            LedgerScopeTotals::Cut {
+                kept: &cut.kept,
+                live: live.collect(),
+            }
         };
+        let rows_in = cache.map(|cache| cache.rows.as_slice());
+        let totals = (self.saved_totals().clone()).in_scope(env.pnl, rows_in, scope);
         let shown = live.len() + cut.kept.len();
         let rows_listed = live.len() + saved.len();
         let list_height = (ui.available_height() - palette.layout(TOTALS_STRIP_PX) * 3.0)
@@ -202,7 +187,9 @@ impl Paint<'_, '_> {
         ui.separator();
         self.draw_tag_strip(ui, target, focus_tags);
         self.draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
-        draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
+        crate::panel_chrome::panel_footer(ui, |ui| {
+            draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
+        });
         self.draw_ledger_disclosure(ui);
     }
 
@@ -493,7 +480,8 @@ impl RowList<'_, '_> {
     fn row(&mut self, ui: &mut egui::Ui, index: usize, nest: RowNest, presses: &mut RowPresses) {
         #[cfg(test)]
         layout_cache_tests::record(ui);
-        framed(ui, &ledger_frame(nest.day, nest.session), |ui| {
+        let dark = theme::get(ui.ctx()).resolved.dark;
+        framed(ui, &ledger_frame(dark, nest.day, nest.session), |ui| {
             self.row_body(ui, index, presses)
         });
         let gap = ui.ctx().style().spacing.item_spacing.y;
@@ -595,40 +583,8 @@ enum TradePick {
     Saved(Option<(SessionKey, TradeRef)>),
 }
 
-/// The revealed page of saved rows, newest first, as list items.
-fn saved_items<'a>(
-    cache: Option<&'a LoadedHistory>,
-    kept: &[usize],
-    shown: usize,
-    pnl: PnlReader<'a>,
-) -> Vec<Item<'a>> {
-    cache
-        .map(|cache| {
-            kept.iter()
-                .rev()
-                .take(shown)
-                .map(|&index| {
-                    let row = &cache.rows[index];
-                    Item {
-                        trade: &row.trade,
-                        symbol: &row.symbol,
-                        live: None,
-                        meta: TradeMeta {
-                            session: row.session.as_ref(),
-                            trade_ref: row.trade_ref,
-                            source: row.source,
-                            tags: &row.tags,
-                            pnl: pnl.of(&row.symbol),
-                        },
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The strip under the list: trades and win rate over everything in scope,
-/// and the net points.
+/// The strip under the list: trades and win rate over everything in scope
+/// in the footer plate's ink, the net's words too, its figures in its signed inks.
 pub(super) fn draw_totals_strip(
     ui: &mut egui::Ui,
     net: (String, rust_decimal::Decimal),
@@ -637,25 +593,11 @@ pub(super) fn draw_totals_strip(
     rows_listed: usize,
 ) {
     let palette = theme::get(ui.ctx());
-    let win_rate = totals
-        .win_rate()
-        .map_or_else(String::new, |rate| format!(" · {rate}% win"));
-    let scope = if page.remaining > 0 {
-        format!(" · {rows_listed} listed")
-    } else {
-        String::new()
-    };
-    ui.label(
-        egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
-            .monospace()
-            .color(palette.text_muted()),
-    );
-    ui.label(financial_text(
-        &palette,
-        &net.0,
-        palette.mono_font(12.0),
-        points_color(&palette, net.1),
-    ));
+    let summary = totals.summary(page.remaining > 0, rows_listed);
+    ui.label(egui::RichText::new(summary).monospace());
+    let color = points_color_on(&palette, FOOTER.fill, net.1);
+    let words = (net.0.as_str(), palette.mono_font(12.0), color);
+    ui.label(financial_text_on(&palette, FOOTER, words));
 }
 
 #[cfg(test)]

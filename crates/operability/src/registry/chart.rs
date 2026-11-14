@@ -236,15 +236,15 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "canvas.pane.float",
-        title: "Move or resize a floating chart over the canvas",
-        reach: "a floating chart's grip dropped away from the edges and corners, or an edge dragged",
+        title: "Float a docked chart, or move or resize a floating one over the canvas",
+        reach: "a docked chart's ⋯ → Float, or its ⋯ dragged; a floating chart's grip dropped away from the dock zones and corners, or an edge dragged",
         keys: &[(Source::Authored, GRIP)],
         mapping: capability!("canvas.pane.float"),
     },
     UiBehaviour {
         id: "canvas.pane.dock",
-        title: "Dock a floating chart into the layout at an edge",
-        reach: "a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here",
+        title: "Dock a floating chart into the layout at a canvas edge, beside a docked chart, or in a docked chart's place",
+        reach: "a floating chart's grip (or a docked chart's ⋯, which lifts it) dropped on a canvas edge, a chart's side or its centre, where the slot lights with Dock here; or a floating chart's ⋯ → Dock left/right/top/bottom",
         keys: &[(Source::Authored, GRIP)],
         mapping: capability!("canvas.pane.dock"),
     },
@@ -288,8 +288,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
 ];
 
 /// What a drag on a floating chart's grip is keyed by.
-const GRIP: &str =
-    "the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides";
+const GRIP: &str = "the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides";
 
 /// History.
 pub(super) const HISTORY: &[UiBehaviour] = &[

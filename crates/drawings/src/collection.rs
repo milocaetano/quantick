@@ -242,7 +242,19 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.undo.len()
     }
 
-    pub(crate) fn restore(&mut self, entry: UndoEntry<T>) {
+    pub(crate) fn restore(&mut self, mut entry: UndoEntry<T>) {
+        // Metadata issued after an external inspector snapshot must survive
+        // that snapshot's later commit/undo. Runtime IDs are never reused.
+        for drawing in &mut entry.items {
+            if let Some(identity) = self
+                .items
+                .iter()
+                .find(|held| held.id == drawing.id)
+                .and_then(|held| held.durable_identity.as_ref())
+            {
+                drawing.durable_identity = Some(identity.clone());
+            }
+        }
         self.revision += 1;
         self.items = entry.items;
         self.all_hidden = entry.all_hidden;

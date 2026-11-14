@@ -392,3 +392,25 @@ fn pending_new_request_does_not_relabel_the_completed_painted_frame() {
     assert_eq!(complete["buy_quantity"], value["buy_quantity"]);
     assert_eq!(complete["sell_quantity"], value["sell_quantity"]);
 }
+
+/// Review round 2 #6: a ranked peak frame reads back its own policy and
+/// basis, and no quarter threshold.
+#[test]
+fn ranked_peak_frames_read_back_their_policy() {
+    let trades = [source_trade(0, 100, 13), source_trade(1, 120, 5)];
+    let mut frame = projected(&trades, 1, 200.0, 200.0);
+    assert_eq!(
+        wire(&frame, settled(&frame))["display_policy"],
+        "volume_weighted_with_dim_context"
+    );
+    frame.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1);
+    frame.scale_basis =
+        quantick_orderflow::projection::flow_tape::FlowScaleBasis::RankedVisibleMasses {
+            masses: 2,
+            labelled_from: 13.into(),
+        };
+    let value = wire(&frame, settled(&frame));
+    assert_eq!(value["display_policy"], "ranked_peak_masses");
+    assert_eq!(value["scale_basis"], "ranked_visible_masses");
+    assert!(value["large_region_threshold"].is_null());
+}

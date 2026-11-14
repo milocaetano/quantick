@@ -301,6 +301,13 @@ impl QuantickApp {
             return;
         }
         match command {
+            MenuCommand::OpenAlerts => super::alerts_runtime::apply_alert_request(
+                self,
+                crate::surfaces::alerts::Request {
+                    open: true,
+                    ..Default::default()
+                },
+            ),
             MenuCommand::OpenReplayBrowser => self.surfaces.replay_browser.open_browser(),
             MenuCommand::CloseReplay => {
                 let (tab, config) = self.active_with_config();
@@ -320,7 +327,7 @@ impl QuantickApp {
             }
             MenuCommand::ToggleContextCharts => {
                 let canvas = &mut self.active_tab_mut().canvas;
-                canvas.set_context_collapsed(!canvas.context_collapsed);
+                canvas.set_context_collapsed(!canvas.context_collapsed && canvas.column_painted());
             }
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {

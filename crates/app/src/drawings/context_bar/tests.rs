@@ -206,20 +206,6 @@ fn every_offered_width_is_inside_the_models_range() {
     }
 }
 
-#[test]
-fn the_glyph_steps_span_the_tools_own_range() {
-    let steps = glyph_steps(GlyphSize {
-        px: 12.0,
-        min: 8.0,
-        max: 28.0,
-    });
-    assert_eq!(steps[0], 8.0);
-    assert_eq!(steps[3], 28.0);
-    for pair in steps.windows(2) {
-        assert!(pair[1] > pair[0], "steps must increase: {steps:?}");
-    }
-}
-
 fn chart() -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0))
 }

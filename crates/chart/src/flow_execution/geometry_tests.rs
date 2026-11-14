@@ -132,6 +132,7 @@ fn rect_move_and_resize_change_the_key_while_invalid_price_ranges_are_rejected()
 fn viewport_style() -> quantick_orderflow::TickBubbleStyle {
     quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         reference_quantity: 900.0,
         reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
         viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
@@ -190,6 +191,87 @@ fn viewport_camera(px_per_bar: f32, range: (f64, f64)) -> FlowExecutionGeometry 
     FlowExecutionGeometry::new(viewport, 3, 0, range, [0.0, 0.0, 300.0, 200.0], false).unwrap()
 }
 
+/// Test agent D1: through the viewport gain and a display scale, the least
+/// peak sphere's painted radius (the readback's `radius_px`) never falls
+/// under the minimum, and the top-ranked one reaches what the old path's
+/// largest sphere reaches at the same camera.
+#[test]
+fn peak_spheres_keep_the_minimum_and_reach_the_old_paths_largest() {
+    let off = viewport_source();
+    let mut peaks = off.clone();
+    peaks.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1);
+    let style = viewport_style();
+    let peak_style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        ..style
+    };
+    let clip = [[0.0, 0.0], [300.0, 200.0]];
+    let least = quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX;
+    for (px_per_bar, display) in [(8.0, 1.0), (8.0, 0.5), (64.0, 1.0), (64.0, 0.25)] {
+        let camera = viewport_camera(px_per_bar, (90.0, 110.0)).with_display_scale(display);
+        let old = camera.viewport_frame(&off, Some(style), clip).unwrap();
+        let new = camera
+            .viewport_frame(&peaks, Some(peak_style), clip)
+            .unwrap();
+        let largest =
+            |frame: &FlowTapeFrame| frame.dots.iter().map(|dot| dot.radius).fold(0.0, f32::max);
+        let smallest = new
+            .dots
+            .iter()
+            .map(|dot| dot.radius)
+            .fold(f32::MAX, f32::min);
+        assert!(
+            smallest >= least,
+            "{smallest} at {px_per_bar} px, x{display}"
+        );
+        assert_eq!(
+            largest(&new),
+            largest(&old),
+            "at {px_per_bar} px, x{display}"
+        );
+    }
+}
+
+/// Review round 2 #4: a display gain ranks into the scaled range instead of
+/// clamping the scaled radii, so the rank map's spread survives any gain.
+#[test]
+fn a_display_gain_keeps_the_rank_spread() {
+    let mut peaks = viewport_source();
+    peaks.view.region = quantick_orderflow::projection::flow_tape::FlowRegionSpan::Peaks(1);
+    let style = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        ..viewport_style()
+    };
+    let clip = [[0.0, 0.0], [300.0, 200.0]];
+    let least = quantick_orderflow::projection::flow_tape::PEAK_MIN_RADIUS_PX;
+    let radii = |display: f32| {
+        let camera = viewport_camera(64.0, (90.0, 110.0)).with_display_scale(display);
+        let frame = camera.viewport_frame(&peaks, Some(style), clip).unwrap();
+        let radii: Vec<f32> = frame.dots.iter().map(|dot| dot.radius).collect();
+        (radii, frame.view.radius_limit)
+    };
+    let (plain, full) = radii(1.0);
+    for display in [0.25, 1.5] {
+        let (scaled, scaled_full) = radii(display);
+        assert_eq!(scaled_full, full * display);
+        let scaled_least = least.min(scaled_full);
+        for (before, after) in plain.iter().zip(&scaled) {
+            let place = (before - least) / (full - least);
+            let now = (after - scaled_least) / (scaled_full - scaled_least);
+            assert!(
+                (place - now).abs() < 1e-4,
+                "x{display}: {place} became {now}"
+            );
+        }
+        assert!(
+            scaled.windows(2).all(|pair| pair[0] < pair[1]),
+            "x{display}: {scaled:?}"
+        );
+    }
+}
+
 #[test]
 fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regrouping() {
     let source = viewport_source();
@@ -242,6 +324,7 @@ fn viewport_spheres_use_current_camera_and_exact_visible_volume_without_regroupi
     ] {
         let legacy = quantick_orderflow::TickBubbleStyle {
             zoom_regions: false,
+            peak_spheres: None,
             viewport_scale: None,
             reference_mode,
             ..style

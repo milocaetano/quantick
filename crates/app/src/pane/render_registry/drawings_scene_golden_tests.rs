@@ -178,11 +178,21 @@ fn fixtures() -> Vec<Fixture> {
             } else {
                 ANCHORS[..drawing_tool.required_points()].to_vec()
             };
+            let mut payload = drawing_tool.default_payload();
+            // The golden pins how a projecting extension paints; a fresh one
+            // now opens finite, so the fixture asks for the projection.
+            if let Some(fib) = payload
+                .as_any_mut()
+                .downcast_mut::<quantick_drawings::FibPayload>()
+                && drawing_tool.id() == "fib-extension"
+            {
+                fib.extend = quantick_drawings::FibExtend::Forward;
+            }
             Fixture {
                 label: drawing_tool.id().to_owned(),
                 tool: drawing_tool,
                 points,
-                payload: drawing_tool.default_payload(),
+                payload,
                 scale: plain,
             }
         })
@@ -337,7 +347,9 @@ fn drawings_scene_golden() {
     }
 }
 
-/// Text keeps its authored ink; a local backing supplies the missing contrast.
+/// Where the theme backs labels, text keeps its authored ink and a local
+/// backing supplies the missing contrast; where it paints none (Light's
+/// paper), the text is bare and its hue is shaded until it reads.
 #[cfg(test)]
 #[test]
 fn drawing_text_and_forms_remain_readable() {
@@ -393,10 +405,11 @@ fn drawing_text_and_forms_remain_readable() {
                         }
                     })
                     .expect("annotation text");
-                assert_eq!(
-                    text.galley.job.sections[0].format.color, color,
-                    "authored ink is preserved"
-                );
+                let ink = text.galley.job.sections[0].format.color;
+                let plates = palette.resolved.drawing_label_plates;
+                if plates {
+                    assert_eq!(ink, color, "authored ink is preserved");
+                }
                 let backing = output.shapes.iter().find_map(|shape| {
                     if let egui::Shape::Rect(rect) = &shape.shape {
                         Some(rect)
@@ -406,6 +419,14 @@ fn drawing_text_and_forms_remain_readable() {
                 });
                 if palette.resolved.dark {
                     assert!(backing.is_none(), "Dark and Bookmap paint are preserved");
+                } else if !plates {
+                    assert!(backing.is_none(), "bare labels have no backing");
+                    let rgba =
+                        |c: egui::Color32| PremultipliedRgba::from_premultiplied(c.to_array());
+                    assert!(
+                        contrast::contrast_ratio(rgba(ink), rgba(palette.canvas())) >= 4.5,
+                        "bare text reads on the canvas"
+                    );
                 } else {
                     let background = backing.map_or(palette.canvas(), |rect| {
                         assert!(

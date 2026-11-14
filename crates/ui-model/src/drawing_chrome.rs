@@ -54,6 +54,8 @@ pub struct Core {
     pub inline: InlineEditor,
     pub pending_text_edit: bool,
     pub pending_open_settings: bool,
+    /// A floating surface (Alerts) owns the pointer; the context bar stands down.
+    pub surface_over: bool,
     pub clipboard: Option<Drawing>,
     pub paste_count: u32,
     pub menu_ask: Option<(u64, DrawingChromeAsk)>,
@@ -80,6 +82,11 @@ pub enum Intent {
     },
     ConfirmDelete(bool),
     RequestTextEdit,
+    /// A placed note wants the caret; Alerts owns the pointer.
+    FrameFacts {
+        text_edit: bool,
+        surface_over: bool,
+    },
     CarrySelection,
     InspectorOpen(bool),
     OpenSettings,
@@ -120,6 +127,8 @@ pub enum Intent {
         editable: bool,
     },
     EndInline,
+    /// Draw-again closes an open note and says the editing state moved.
+    RepeatEndsInline,
     OpenEditGesture(DrawingEdit),
     Menu {
         pane: u64,
@@ -157,6 +166,13 @@ impl crate::Model for Model {
             }
             Intent::ConfirmDelete(confirm) => state.core.shared.delete_confirm = confirm,
             Intent::RequestTextEdit => state.core.pending_text_edit = true,
+            Intent::FrameFacts {
+                text_edit,
+                surface_over,
+            } => {
+                state.core.pending_text_edit |= text_edit;
+                state.core.surface_over = surface_over;
+            }
             Intent::CarrySelection => state.core.pending_open_settings |= state.core.shared.open,
             Intent::OpenSettings => {
                 state.core.shared.open = true;
@@ -241,6 +257,10 @@ impl crate::Model for Model {
                 }
             }
             Intent::EndInline => effects.record_inline_edit = state.core.inline.end().map(Box::new),
+            Intent::RepeatEndsInline => {
+                effects.record_inline_edit = state.core.inline.end().map(Box::new);
+                effects.content_editing_changed = effects.record_inline_edit.is_some();
+            }
             Intent::OpenEditGesture(edit) => state.core.shared.edit_baseline = Some(edit),
             Intent::Menu { pane, ask } => match &mut state.core.menu_ask {
                 Some((queued, earlier)) if *queued == pane => earlier.merge(ask),

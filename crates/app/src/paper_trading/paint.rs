@@ -8,6 +8,7 @@
 //! the same question.
 
 use eframe::egui;
+use quantick_appearance::paper::{LevelState, outlined_tag};
 use quantick_engine::Side;
 use quantick_sim::{Bracket, BracketTarget, OrderRole, signed_points};
 use rust_decimal::Decimal;
@@ -254,7 +255,7 @@ impl PaperTrading {
                     continue;
                 }
                 ctx.level_line(y, color, true, LINE_WIDTH_PX, false, false);
-                ctx.gutter_chip(y, color, &fmt_decimal(level));
+                ctx.level_chip(y, color, &fmt_decimal(level), LevelState::Moving);
                 // A ladder labels each rung with the slice it closes: "TP" on
                 // three lines at three prices says nothing about which part
                 // each one belongs to.
@@ -269,7 +270,8 @@ impl PaperTrading {
                 };
                 let even = !laddered && preview.ruler_ticks > 0;
                 let text = aim_leg_text(&aim, slice.as_deref(), even, pnl);
-                ctx.chip_tag(y, color, &text, false, false);
+                let paper = outlined_tag(&palette.resolved, LevelState::Moving);
+                ctx.chip_tag(y, color, &text, false, paper);
             }
         }
     }
@@ -469,7 +471,13 @@ impl PaperTrading {
             hovered,
             dragging,
         );
-        ctx.gutter_chip(y, color, &fmt_decimal(shown));
+        // A leg under the hand wears the paper plate on a light chart.
+        let state = if dragging {
+            LevelState::Moving
+        } else {
+            LevelState::Resting
+        };
+        ctx.level_chip(y, color, &fmt_decimal(shown), state);
         let open = self
             .desk
             .gesture
@@ -481,7 +489,7 @@ impl PaperTrading {
             color,
             &text,
             open.is_some_and(|tag| tag.cancel),
-            paint.pending,
+            paint.pending || outlined_tag(&palette.resolved, state),
         );
     }
 
@@ -522,12 +530,22 @@ impl PaperTrading {
         let (line, ink) = ctx.plate(color).unwrap_or((color, palette.chip_ink()));
         let stroke = egui::Stroke::new(LINE_HOVER_WIDTH_PX, line);
         dashed_run(ctx, [start, end], stroke, ORDER_DASH_PX, ORDER_GAP_PX);
-        ctx.gutter_chip(preview.pointer.y, color, &fmt_decimal(preview.price));
+        let price = fmt_decimal(preview.price);
+        ctx.level_chip(preview.pointer.y, color, &price, LevelState::Aimed);
         // Full fill, always: while it paints, the click is already live.
         // There is no resting state to distinguish — releasing the
-        // modifier is what makes the aim go away.
-        ctx.painter
-            .rect_filled(label, egui::Rounding::same(3.0), line);
+        // modifier is what makes the aim go away. A light chart lays the
+        // paper plate instead, edged dashed: the order is not sent yet.
+        let ink = match ctx.paper(color, LevelState::Aimed) {
+            Some((fill, edge, ink, dashed)) => {
+                ctx.plate_body(label, fill, Some((edge, dashed)));
+                ink
+            }
+            None => {
+                ctx.plate_body(label, line, None);
+                ink
+            }
+        };
         let quantity = preview.quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
         let text = format!(
             "{} {} {}",

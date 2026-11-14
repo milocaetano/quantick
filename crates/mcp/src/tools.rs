@@ -155,6 +155,11 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
 /// Recovery is an explicit cockpit opt-in, so its cached generic tool hint
 /// must include timeline rebuilds and paper-position closure even before a grant.
 pub fn tools_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> Vec<Tool> {
+    tools_with_sensitive_edits(profile_ceiling, allow_recovery)
+}
+
+/// Sensitive opt-ins include recovery and native indicator changes without undo.
+pub fn tools_with_sensitive_edits(profile_ceiling: &str, allow_sensitive_edits: bool) -> Vec<Tool> {
     let mut invoke_annotations = match profile_ceiling {
         // Both read-only ceilings answer the same way: the analyst reads
         // more, and reading more is still reading.
@@ -193,7 +198,7 @@ pub fn tools_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> Vec<T
             open_world_hint: true,
         },
     };
-    if profile_ceiling == COCKPIT_PROFILE && allow_recovery {
+    if profile_ceiling == COCKPIT_PROFILE && allow_sensitive_edits {
         invoke_annotations.destructive_hint = true;
     }
     let mut tools = vec![

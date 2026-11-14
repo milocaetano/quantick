@@ -84,6 +84,42 @@ pub enum SplitAxis {
     Column,
 }
 
+/// A side of the canvas, or of a docked pane, a pane can dock at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    pub const ALL: [Self; 4] = [Self::Left, Self::Right, Self::Top, Self::Bottom];
+
+    /// The stable name the wire and the scene use.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+        }
+    }
+
+    /// The split axis a pane docked on this side lies along, and whether it
+    /// comes first along it.
+    #[must_use]
+    pub const fn placing(self) -> (SplitAxis, bool) {
+        match self {
+            Self::Left => (SplitAxis::Row, true),
+            Self::Right => (SplitAxis::Row, false),
+            Self::Top => (SplitAxis::Column, true),
+            Self::Bottom => (SplitAxis::Column, false),
+        }
+    }
+}
+
 /// The canvas split tree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "node", rename_all = "snake_case")]
@@ -206,14 +242,22 @@ impl PaneTree {
             SplitAxis::Row => area.w,
             SplitAxis::Column => area.h,
         };
-        let pinned: Vec<Option<f32>> = children
+        let mut pinned: Vec<Option<f32>> = children
             .iter()
-            .map(|child| match child {
-                Self::Pane { slot, .. } if children.len() > 1 => fixed(*slot),
-                _ => None,
+            .map(|child| {
+                (children.len() > 1)
+                    .then(|| child.folded_extent(axis, fixed))
+                    .flatten()
             })
             .collect();
-        let pinned_total: f32 = pinned.iter().flatten().sum();
+        let mut pinned_total: f32 = pinned.iter().flatten().sum();
+        // Every child folded: this split is itself a strip its parent pinned,
+        // so its strips share whatever it was given in proportion.
+        if pinned.iter().all(Option::is_some) && pinned_total > f32::EPSILON {
+            let scale = extent / pinned_total;
+            pinned.iter_mut().flatten().for_each(|px| *px *= scale);
+            pinned_total = extent;
+        }
         let free = (extent - pinned_total).max(0.0);
         let open_share: f32 = shares
             .iter()
@@ -247,6 +291,34 @@ impl PaneTree {
             };
             child.carve(piece, fixed, out);
             start = end;
+        }
+    }
+
+    /// How far this node reaches along `axis` when `fixed` pins every pane
+    /// it holds: a pinned pane its strip, a split of pinned panes one strip
+    /// across `axis` or its strips end to end along it. `None` while any
+    /// pane it holds is open.
+    fn folded_extent(
+        &self,
+        axis: SplitAxis,
+        fixed: &dyn Fn(PaneSlot) -> Option<f32>,
+    ) -> Option<f32> {
+        match self {
+            Self::Pane { slot, .. } => fixed(*slot),
+            Self::Split {
+                axis: own,
+                children,
+                ..
+            } => {
+                let extents = (children.iter())
+                    .map(|child| child.folded_extent(axis, fixed))
+                    .collect::<Option<Vec<f32>>>()?;
+                if *own == axis {
+                    Some(extents.iter().sum())
+                } else {
+                    extents.into_iter().reduce(f32::max)
+                }
+            }
         }
     }
 
@@ -303,10 +375,13 @@ impl PaneTree {
         }
     }
 
-    /// `pane` inserted at the start or end of the root along `axis`, taking an
-    /// even share of it: what docking at a canvas edge does.
+    /// `pane` inserted at the start or end of the root along `axis`, taking a
+    /// fair share of it: one more of the panes the tree lays side by side
+    /// along `axis`, so a dock beside a 2x2 grid takes a third, not half.
+    /// What docking at a canvas edge does.
     #[must_use]
     pub fn docked(&self, pane: Self, axis: SplitAxis, at_start: bool) -> Self {
+        let new_share = 1.0 / (self.across(axis) as f32 + 1.0);
         let (mut children, mut shares) = match self {
             Self::Split {
                 axis: root,
@@ -315,19 +390,133 @@ impl PaneTree {
             } if *root == axis => (children.to_vec(), normalised(shares)),
             _ => (vec![self.clone()], vec![1.0]),
         };
-        let count = children.len() as f32;
-        let new_share = 1.0 / (count + 1.0);
         shares
             .iter_mut()
             .for_each(|share| *share *= 1.0 - new_share);
-        if at_start {
-            children.insert(0, pane);
-            shares.insert(0, new_share);
-        } else {
-            children.push(pane);
-            shares.push(new_share);
-        }
+        let at = if at_start { 0 } else { children.len() };
+        children.insert(at, pane);
+        shares.insert(at, new_share);
         Self::owned_split(axis, children, shares)
+    }
+
+    /// How many panes this node lays side by side along `axis`: a pane one,
+    /// a split along `axis` its children's sum, one across it their most.
+    fn across(&self, axis: SplitAxis) -> usize {
+        match self {
+            Self::Pane { .. } => 1,
+            Self::Split {
+                axis: own,
+                children,
+                ..
+            } => {
+                let each = children.iter().map(|child| child.across(axis));
+                if *own == axis {
+                    each.sum()
+                } else {
+                    each.max().unwrap_or(1)
+                }
+            }
+        }
+    }
+
+    /// `pane` docked on `side` of the pane `slot`. When `slot`'s split
+    /// already lays along that side's axis, `pane` joins it beside `slot` and
+    /// takes a fair share of it; otherwise `slot` becomes a split of the two,
+    /// half each. `None` when the tree holds no `slot`.
+    #[must_use]
+    pub fn docked_beside(&self, slot: PaneSlot, pane: Self, side: Edge) -> Option<Self> {
+        if !self.holds(slot) {
+            return None;
+        }
+        let (axis, at_start) = side.placing();
+        Some(self.beside(slot, &pane, axis, at_start))
+    }
+
+    fn beside(&self, slot: PaneSlot, pane: &Self, axis: SplitAxis, at_start: bool) -> Self {
+        let pair = |held: &Self| {
+            let pair = if at_start {
+                vec![pane.clone(), held.clone()]
+            } else {
+                vec![held.clone(), pane.clone()]
+            };
+            Self::owned_split(axis, pair, vec![0.5, 0.5])
+        };
+        let Self::Split {
+            axis: own,
+            children,
+            shares,
+        } = self
+        else {
+            return pair(self);
+        };
+        let leaf = |child: &Self| matches!(child, Self::Pane { slot: held, .. } if *held == slot);
+        if let Some(index) = children.iter().position(leaf)
+            && *own == axis
+        {
+            let new_share = 1.0 / (children.len() as f32 + 1.0);
+            let mut shares = normalised(shares);
+            shares
+                .iter_mut()
+                .for_each(|share| *share *= 1.0 - new_share);
+            let at = if at_start { index } else { index + 1 };
+            let mut children = children.to_vec();
+            children.insert(at, pane.clone());
+            shares.insert(at, new_share);
+            return Self::owned_split(axis, children, shares);
+        }
+        let children = (children.iter())
+            .map(|child| match child {
+                child if leaf(child) => pair(child),
+                child if child.holds(slot) => child.beside(slot, pane, axis, at_start),
+                child => child.clone(),
+            })
+            .collect();
+        Self::owned_split(*own, children, shares.to_vec())
+    }
+
+    /// The tree with the panes `a` and `b` in each other's place, each
+    /// keeping its slot and kind; shares stay with the places. Unchanged
+    /// unless the tree holds both.
+    #[must_use]
+    pub fn swap(&self, a: PaneSlot, b: PaneSlot) -> Self {
+        let panes = self.panes();
+        let kind = |slot| {
+            panes
+                .iter()
+                .find(|(held, _)| *held == slot)
+                .map(|(_, k)| *k)
+        };
+        let (Some(kind_a), Some(kind_b)) = (kind(a), kind(b)) else {
+            return self.clone();
+        };
+        self.replaced(&|slot, kind| match slot {
+            slot if slot == a => (b, kind_b),
+            slot if slot == b => (a, kind_a),
+            _ => (slot, kind),
+        })
+    }
+
+    /// The same tree with every pane `(slot, kind)` replaced by
+    /// `map(slot, kind)`; shares stay.
+    pub(crate) fn replaced(
+        &self,
+        map: &impl Fn(PaneSlot, PaneKind) -> (PaneSlot, PaneKind),
+    ) -> Self {
+        match self {
+            Self::Pane { slot, kind } => {
+                let (slot, kind) = map(*slot, *kind);
+                Self::pane(slot, kind)
+            }
+            Self::Split {
+                axis,
+                children,
+                shares,
+            } => Self::Split {
+                axis: *axis,
+                children: Cow::Owned(children.iter().map(|child| child.replaced(map)).collect()),
+                shares: shares.clone(),
+            },
+        }
     }
 
     fn owned_split(axis: SplitAxis, children: Vec<Self>, shares: Vec<f32>) -> Self {
@@ -341,18 +530,7 @@ impl PaneTree {
     /// The same tree with every pane's slot replaced by `map(slot)`.
     #[must_use]
     pub fn relabelled(&self, map: &impl Fn(PaneSlot) -> PaneSlot) -> Self {
-        match self {
-            Self::Pane { slot, kind } => Self::pane(map(*slot), *kind),
-            Self::Split {
-                axis,
-                children,
-                shares,
-            } => Self::Split {
-                axis: *axis,
-                children: Cow::Owned(children.iter().map(|child| child.relabelled(map)).collect()),
-                shares: shares.clone(),
-            },
-        }
+        self.replaced(&|slot, kind| (map(slot), kind))
     }
 }
 

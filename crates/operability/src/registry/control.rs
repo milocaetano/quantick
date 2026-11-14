@@ -185,11 +185,16 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.roll",
         title: "Roll the active tab to its next configured contract",
-        reach: "the toolbar's market button, then the roll row of the palette in switch mode",
-        keys: &[(
-            Source::Authored,
-            "the roll row is drawn from the headless market list, not an action enum",
-        )],
+        reach: "the toolbar's market button, then the roll row of the palette in switch mode; \
+                the feed notice popup's Roll button on a contract the venue no longer lists, \
+                and the same Roll beside the status word and on the empty chart",
+        keys: &[
+            (
+                Source::Authored,
+                "the roll row is drawn from the headless market list, not an action enum",
+            ),
+            (Source::NoticeAction, "Roll"),
+        ],
         mapping: capability!("feed.contract.roll"),
     },
 ];

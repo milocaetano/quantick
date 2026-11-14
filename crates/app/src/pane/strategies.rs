@@ -69,38 +69,11 @@ pub fn drawing_region(
     id: drawings::DrawingId,
     slot: usize,
 ) -> Option<(quantick_strategy::Region, bool)> {
-    let index = drawings.index_of(id)?;
-    let drawing = drawings.items().get(index)?;
-    // Every reason a region cannot honestly be tested — another market,
-    // a lost series, a drawing nobody can see — is one rule, shared with
-    // the badge that has to say so ([`region_pause`]). An order fired
-    // from a region nobody can see is an invisible bot; showing the
-    // drawing resumes it.
-    if region_pause(drawing, drawings.all_hidden()).is_some() {
-        return None;
-    }
-    let [a, b] = drawing.points.as_slice() else {
-        return None;
-    };
-    let region = quantick_strategy::Region::new(dec_from_f64(a.price), dec_from_f64(b.price));
-    // An extended rectangle runs to the chart's right edge until
-    // further notice, and its region does too — otherwise the bot
-    // silently expires at the drawn end while the band visibly keeps
-    // going (the replay trap this option exists to close).
-    // Left works the same way: a band visibly running back to the chart's
-    // left edge is active there too.
-    let (extend_left, extend_right) = drawing
-        .payload
-        .as_any()
-        .downcast_ref::<drawings::RectanglePayload>()
-        .map_or((false, false), |payload| {
-            (payload.extend_left, payload.extend_right)
-        });
-    #[allow(clippy::cast_precision_loss)]
-    let slot = slot as f32;
-    let active =
-        (extend_left || slot >= a.bar.min(b.bar)) && (extend_right || slot <= a.bar.max(b.bar));
-    Some((region, active))
+    let (a, b, active) = quantick_drawings::alert_geometry::region_at(drawings, id, slot)?;
+    Some((
+        quantick_strategy::Region::new(dec_from_f64(a), dec_from_f64(b)),
+        active,
+    ))
 }
 
 impl PaneStrategies {
@@ -278,22 +251,8 @@ impl PaneStrategies {
     }
 }
 
-pub(crate) fn region_can_fire(drawing: &Drawing, closed_slots: usize) -> bool {
-    let extend_right = drawing
-        .payload
-        .as_any()
-        .downcast_ref::<drawings::RectanglePayload>()
-        .is_some_and(|payload| payload.extend_right);
-    if extend_right {
-        return true;
-    }
-    let [a, b] = drawing.points.as_slice() else {
-        return false;
-    };
-    #[allow(clippy::cast_precision_loss)]
-    let next_slot = closed_slots as f32;
-    a.bar.max(b.bar) >= next_slot
-}
+pub(crate) use quantick_drawings::alert_geometry::region_can_fire;
+
 pub(super) fn badge_text_for(
     instance: &crate::strategy_anchors::AnchoredInstance,
     drawing: &Drawing,

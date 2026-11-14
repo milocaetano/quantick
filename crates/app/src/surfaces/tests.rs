@@ -52,6 +52,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         settings.enabled = initial;
         paper.set_cmd_trading(settings);
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: &mut paper,
             replay: None,
             timezone: Default::default(),
@@ -116,6 +117,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
         "missing-borrowed-probe-presets.toml",
     ));
     let drawings = DrawingEnv {
+        linked_alerts: 0,
         pane_id: 42,
         selected: None,
         chart_area: None,
@@ -138,6 +140,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
     for env in [None, Some(&mut wrong)] {
         // Seed stale observations independently before each absent/wrong facet.
         let mut paper_env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: &mut paper,
             replay: None,
             timezone: Default::default(),
@@ -195,6 +198,7 @@ fn borrowed_domain_rows_reborrow_in_catalog_order() {
     }
     let before = paper.cmd_trading();
     let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+        alerts_open: false,
         paper: &mut paper,
         replay: None,
         timezone: Default::default(),
@@ -626,6 +630,7 @@ fn every_valued_request_keeps_the_first_asker() {
     first.merge(SurfaceResponse {
         paper_panel: None,
         model_effects: Vec::new(),
+        alerts: None,
         indicator_actions: Vec::new(),
         script_editor_actions: Vec::new(),
         style: Some(contested),

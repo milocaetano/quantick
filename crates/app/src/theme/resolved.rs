@@ -16,6 +16,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         .entry(egui::FontFamily::Monospace)
         .or_default()
         .push("phosphor".into());
+    crate::drawings::text::install_fonts(&mut fonts);
     ctx.set_fonts(fonts);
 }
 

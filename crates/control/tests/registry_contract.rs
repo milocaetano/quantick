@@ -294,3 +294,22 @@ fn external_module_docks_with_its_own_permission_and_effect_without_contract_edi
             .any(|module| module.id.as_str() == "addon")
     );
 }
+
+/// A writing capability names its effect's permission floor, so a grant of
+/// reads alone never reaches it.
+#[test]
+fn a_writing_capability_without_its_effects_permission_floor_is_refused() {
+    let mut registry = reference_registry().unwrap();
+    let mut floorless = registry
+        .capability(&CapabilityId::new(COUNTER_SET).unwrap(), 1)
+        .unwrap()
+        .clone();
+    floorless.id = CapabilityId::new("fake.floorless").unwrap();
+    floorless
+        .required_permissions
+        .remove(&PermissionId::new("fake.write").unwrap());
+    assert!(matches!(
+        registry.register_capability(floorless),
+        Err(RegistryError::InvalidDescriptor(message)) if message.contains("permission floor")
+    ));
+}

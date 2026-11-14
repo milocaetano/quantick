@@ -95,7 +95,8 @@ impl ChartPane {
         // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
         // line it opens that line; on a candle the Candles settings, the view kept; on open canvas,
         // the divider or a drawing live at the candles' zoom with the last price centred, and the
-        // third click there zooms in too (`Model::live_centre`).
+        // third click there zooms in too; already live, the double click zooms in itself
+        // (`Model::live_centre`). The tape follows the same rule on its own side.
         let mut open_settings = false;
         let on_canvas = chart.clicked() && primary_free;
         let repeat = CanvasRepeat::of(chart.double_clicked(), chart.triple_clicked());
@@ -120,6 +121,10 @@ impl ChartPane {
                 self,
                 quantick_chart_interaction::pane::Intent::ReturnToLive {
                     tape,
+                    tape_live: self
+                        .orderflow
+                        .as_ref()
+                        .is_some_and(|t| t.tape_end().is_live()),
                     overlay,
                     canvas,
                     repeat: Some(repeat),

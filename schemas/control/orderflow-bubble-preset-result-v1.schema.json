@@ -59,6 +59,11 @@
         "opacity": {
           "type": "string"
         },
+        "peak_spheres": {
+          "default": false,
+          "description": "Each zoom region is divided at the peaks of its volume-by-price\nprofile: one sphere per peak, sized by rank among the spheres in view.",
+          "type": "boolean"
+        },
         "reference_mode": {
           "$ref": "#/$defs/TickBubbleReferenceMode",
           "default": "fixed"
@@ -81,7 +86,7 @@
         },
         "zoom_regions": {
           "default": false,
-          "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many.",
+          "description": "Spheres merge inside whole candles chosen by the zoom, not one second\nof market time; the frame's `region_candles` says how many. True\nwhenever `peak_spheres` is, which divides those same regions.",
           "type": "boolean"
         }
       },

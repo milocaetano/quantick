@@ -16,7 +16,8 @@ pub(super) fn placed_labels(
     let measure =
         |label: &FlowQuantityLabel| quantity_galley(painter, label, appearance).size().into();
     let area = [history.min.into(), history.max.into()];
-    flow::place_quantity_labels(labels, area, fit, measure)
+    let peaks = frame.view.region.divides_at_peaks();
+    flow::place_quantity_labels_until_miss(labels, area, fit, measure, peaks)
 }
 
 impl FlowDrawing {

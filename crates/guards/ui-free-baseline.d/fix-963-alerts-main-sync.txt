@@ -1,0 +1,10 @@
+# #963 reconciles two independently green ratchets at pinned bases.
+# Alerts 3bd1ab64 measures 17557 and tightened its ceiling to 17557.
+# Main 5684d188c imports 149 UI-free app lines; feat-chart-volume permits 23,
+# consuming 126 lines of main slack that alerts already removed.
+# Imported native-indicator adapters bind app-owned panes, indicator workers,
+# settings dialogs and layout mirroring; validation/preparation/handlers stay
+# in control-schema/control-handlers. No new runtime code or spare headroom.
+# Combined measured 17706 - inherited ceiling 17580 = 126.
+crates/app +126
+!budget +126

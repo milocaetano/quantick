@@ -310,7 +310,7 @@ fn empty_loading_words_stand_bare_on_the_chart() {
                         let value = &text.galley.job.text;
                         (value == &title
                             || value.starts_with(words.meta.trim_end_matches('.'))
-                            || value == crate::loading::RECONNECT_LABEL)
+                            || value == "Reconnect")
                             .then_some((index, text))
                     })
                     .collect();

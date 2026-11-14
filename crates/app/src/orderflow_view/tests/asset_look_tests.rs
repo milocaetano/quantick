@@ -1,8 +1,7 @@
 //! A view wears its asset's look through the headless owner
 //! ([`quantick_stores::bubble_look::BubbleLook`]): presets reloaded in one
-//! tab reach every tab on an untuned asset, and an asset's own settings
-//! survive a reload. The owner's save, delete and refusal rules are tested
-//! beside it.
+//! tab reach every tab on an untuned asset. The owner's save, delete, reload,
+//! reset and refusal rules are tested beside it.
 use super::*;
 use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource, embedded};
 use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};
@@ -122,14 +121,6 @@ fn ignore_opening(view: &mut OrderflowView, on: bool) -> bool {
     view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = on)
 }
 
-/// A view on the mini index, bound to its asset as a tab binds it.
-fn bound_win() -> OrderflowView {
-    bound_to(
-        &AssetBubblesStore::default().shared(),
-        ("metatrader-b3", "WINV26"),
-    )
-}
-
 /// A view on `market`, bound to its asset in `store` as a tab binds it.
 fn bound_to(store: &SharedAssetBubbles, market: (&str, &str)) -> OrderflowView {
     let mut view = from_document(embedded());
@@ -181,45 +172,6 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     );
 }
 
-/// Review round 1, finding 4: reloading the presets keeps the settings an
-/// asset made its own, and files nothing over them.
-#[test]
-fn reloading_keeps_the_settings_an_asset_made_its_own() {
-    let mut view = bound_win();
-    assert!(ignore_opening(&mut view, true));
-    assert_eq!(view.sync_asset(false), None);
-    let edited = appearance(&view);
-    view.reload_presets_from((embedded(), PresetSource::Embedded, None));
-    assert_eq!(appearance(&view), edited, "WIN's edit is still on screen");
-    view.sync_asset(false);
-    assert_eq!(
-        view.look.asset().expect("bound").source(),
-        AssetSource::Stored
-    );
-    let status = view.look.status().expect("a status");
-    assert!(status.contains("keeps its own settings"), "{status}");
-}
-
-/// Review round 1, finding 8: the panel says what happens. The reset
-/// returns the mini index to its factory look and says so; over the shipped
-/// presets that is the look it opens on, so its own settings are dropped.
-#[test]
-fn the_reset_returns_the_asset_to_its_factory_look_and_says_so() {
-    let mut view = bound_win();
-    assert!(ignore_opening(&mut view, true));
-    view.sync_asset(false);
-    let asset = |view: &OrderflowView| view.look.asset().expect("bound").source();
-    assert_eq!(asset(&view), AssetSource::Stored, "the edit is filed");
-    view.press_reset_bubble_visuals_for_test();
-    let status = view.look.status().expect("a status");
-    assert!(
-        status.contains("factory look 'mini index regions'"),
-        "{status}"
-    );
-    view.sync_asset(false);
-    assert_eq!(asset(&view), AssetSource::Declared);
-}
-
 /// Review #19/#29: the sphere picker asks the rule tick.set asks. A mode
 /// asset offers its spheres on a tick chart and not on a volume chart; an
 /// asset without the mode offers none, but spheres it already wears can be
@@ -260,6 +212,6 @@ fn the_sphere_picker_follows_the_tick_sphere_rule() {
     let offered = texts(&mut gold, true);
     assert!(offered.contains("Tick chart spheres"), "{offered}");
     assert!(!offered.contains("quantity in"), "{offered}");
-    assert_eq!(gold.apply_tick_preset(None), Ok(true));
+    assert_eq!(gold.apply_tick_preset(None, Default::default()), Ok(true));
     assert_eq!(gold.config.volume_dots.tick_bubbles, None);
 }

@@ -74,6 +74,7 @@ use crate::{Finding, size};
 /// fails rather than going quietly unguarded.
 pub const HEADLESS_CRATES: &[&str] = &[
     "ui-model",
+    "alerts",
     "appearance",
     "anchored-studies",
     "backpressure",

@@ -19,6 +19,7 @@ pub enum RowId {
     SaveDesk,
     TogglePanels,
     MarketReplay,
+    Alerts,
     CloseReplay,
     CommandPalette,
     Settings,
@@ -184,6 +185,7 @@ pub const ROWS: &[Row] = &[
         label_when_on: Some("Hide panels"),
         ..row(RowId::TogglePanels, "Show panels", "dock.toggle")
     },
+    row(RowId::Alerts, "Alerts\u{2026}", "alerts.list"),
     row(RowId::MarketReplay, "Market Replay…", "replay.browser.open"),
     row(RowId::CloseReplay, "Close Replay", "replay.close"),
     Row {
@@ -268,6 +270,7 @@ pub const ROOT: &[Item] = &[
     Item::Row(RowId::SaveToWorkspace),
     Item::Row(RowId::SaveDesk),
     Item::Row(RowId::TogglePanels),
+    Item::Row(RowId::Alerts),
     Item::Row(RowId::MarketReplay),
     Item::Row(RowId::CloseReplay),
     Item::Separator,
@@ -749,6 +752,7 @@ mod tests {
                 "Save to workspace",
                 "Save desk",
                 "Hide panels",
+                "Alerts…",
                 "Market Replay…",
                 "Close Replay",
                 "-",

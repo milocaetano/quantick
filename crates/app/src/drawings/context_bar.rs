@@ -189,18 +189,6 @@ pub fn place(
     egui::pos2(x, y.clamp(chart.top(), max_y))
 }
 
-/// The four type sizes a glyph tool offers, spread across its own range.
-#[must_use]
-pub fn glyph_steps(size: GlyphSize) -> [f32; 4] {
-    let step = (size.max - size.min) / 3.0;
-    [
-        size.min,
-        (step.mul_add(1.0, size.min)).round(),
-        (step.mul_add(2.0, size.min)).round(),
-        size.max,
-    ]
-}
-
 /// Which popover the bar has open. Kept here rather than in egui memory so
 /// the state machine below can close it as one step of a transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1190,25 +1178,17 @@ fn draw_glyph_size_popover(
     let Some(size) = object.glyph_size else {
         return;
     };
-    for step in glyph_steps(size) {
-        let active = (size.px - step).abs() < f32::EPSILON;
-        if draw_preview_row(
-            ui,
-            active,
-            &format!("{step:.0} px"),
-            |painter, rect, color| {
-                painter.text(
-                    egui::pos2(rect.left() + 10.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    "Aa",
-                    egui::FontId::proportional(step.min(POPOVER_ROW_HEIGHT_PX - 6.0)),
-                    color,
-                );
-            },
-        ) {
-            object.glyph_size = Some(GlyphSize { px: step, ..size });
-            intent.edited = true;
-        }
+    let mut px = size.px;
+    if ui
+        .add(
+            egui::Slider::new(&mut px, size.min..=size.max)
+                .suffix(" px")
+                .text("Size"),
+        )
+        .changed()
+    {
+        object.glyph_size = Some(GlyphSize { px, ..size });
+        intent.edited = true;
     }
 }
 

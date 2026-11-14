@@ -164,14 +164,20 @@ impl FlowPresentation {
         let ordinary: Vec<_> = (0..regions.len())
             .filter(|&index| regions[index].role != FlowRegionRole::Opening)
             .collect();
-        let threshold = frame.large_region_threshold().unwrap_or_else(|| {
-            ordinary
-                .iter()
-                .map(|&index| frame.dots[regions[index].dot_index].mark.quantity)
-                .max()
-                .unwrap_or_default()
-                / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR)
-        });
+        let threshold = if frame.view.region.divides_at_peaks() {
+            // Peak spheres size every mass by rank: none is held back as
+            // context, however small against the largest.
+            Decimal::ZERO
+        } else {
+            frame.large_region_threshold().unwrap_or_else(|| {
+                ordinary
+                    .iter()
+                    .map(|&index| frame.dots[regions[index].dot_index].mark.quantity)
+                    .max()
+                    .unwrap_or_default()
+                    / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR)
+            })
+        };
         // Camera spacing never promotes small volume out of the source trajectory.
         for &region_index in &ordinary {
             let region = regions[region_index];

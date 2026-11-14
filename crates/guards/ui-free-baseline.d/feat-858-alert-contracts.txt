@@ -1,0 +1,4 @@
+# #858 approved borrowed native source/pane facts, native clock and host adapters.
+# Rules and persistence state remain headless; exact residual, no headroom.
+crates/app +119
+!budget +119

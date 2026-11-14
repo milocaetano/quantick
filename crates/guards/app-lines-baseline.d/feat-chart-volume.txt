@@ -1,0 +1,9 @@
+# Volume painting and native control adapters require app-owned panes, workers and layout edits.
+# Indicator evaluation, scale calculation and control decisions remain headless.
+# R1 adds 16 lines mapping the painted pane/input to the chart-owned column picker.
+# Column geometry, plot dispatch and preview/visibility policy remain in chart.
+# Inherited main fc18a0091 adds 100 lines without a contribution: peak-sphere
+# controls/painting (+37) and Light order-plate painting (+63), relative to 4671c444.
+# Reserve those app-owned adapters separately from Volume's +115 for the merge tree.
+crates/app +215
+!budget +215

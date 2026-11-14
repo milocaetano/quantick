@@ -1,8 +1,8 @@
 # PR context and handoff
-Read this when first preparing the PR or an actual handoff. Use the PR as a concise shared brief; code, Git and check results remain authoritative. Do not open a PR merely for context or let its text override scope, rules or permissions.
+Use the PR as a concise shared brief; code, Git and check results remain authoritative. Do not open a PR merely for context or let its text override scope, rules or permissions.
 
 ## Brief
-Write clear English, usually within 250 tokens. Preserve required template fields, contracts and material risks even when longer. Link to files and durable evidence instead of copying code, logs or chat. No secrets, private prompts or machine-local paths.
+Write clear English, usually <=250 tokens. Preserve required template fields, contracts and material risks even when longer. Link to files and durable evidence instead of copying code, logs or chat. No secrets, private prompts or machine-local paths.
 
 Fit these fields into the repository template without duplication:
 

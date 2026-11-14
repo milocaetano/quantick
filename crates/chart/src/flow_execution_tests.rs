@@ -182,6 +182,7 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
     }
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -238,6 +239,7 @@ fn an_unrepresentable_reference_reads_the_named_fallback() {
     });
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1e30,
@@ -278,6 +280,7 @@ fn tick_reference_mode_changes_at_eof_without_changing_execution_regions() {
     }
     let mut tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_quantity: 1.0,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
@@ -341,6 +344,7 @@ fn a_busy_tape_never_starves_the_seed_of_spheres() {
     state.ingest_backfill(&(0..6_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -407,6 +411,7 @@ fn a_busy_seed_fill_is_bounded_and_the_live_edge_publishes_at_once() {
     state.ingest_backfill(&(0..SEED).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -486,6 +491,7 @@ fn seed_and_live_candles_all_get_spheres() {
     state.ingest_backfill(&(0..1_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -551,6 +557,7 @@ fn a_pan_keeps_every_tick_sphere_on_screen() {
     }
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4.0,
@@ -672,6 +679,7 @@ fn bench_flow_frames_over_five_days() {
     drop(history);
     let tick = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
@@ -729,4 +737,75 @@ fn bench_flow_frames_over_five_days() {
     summary("painting", &mut painting);
     summary("worker", &mut worker);
     assert!(session.frame().is_some_and(|frame| !frame.dots.is_empty()));
+}
+
+/// Peak spheres read every candle of a region, so the request admits whole
+/// regions: a pan by one candle, which cuts a region at the view's edge,
+/// keeps every mass whose centre stays on screen exactly as it was.
+#[test]
+fn a_pan_never_cuts_a_peak_region_at_the_edge() {
+    let mut state = ChartState::new(BarSpec::Tick(4));
+    for id in 0..160_u64 {
+        state.ingest_live(&Trade {
+            agg_id: id,
+            timestamp_ms: 1_000 * (id as i64 + 1),
+            price: (100 + id * 7 % 13).into(),
+            quantity: (1 + id % 5).into(),
+            side: if id.is_multiple_of(3) {
+                Side::Sell
+            } else {
+                Side::Buy
+            },
+        });
+    }
+    let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: true,
+        peak_spheres: Some(true),
+        viewport_scale: None,
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        reference_quantity: 1.0,
+        max_radius: 18.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let mut masses = |slots: std::ops::Range<usize>| {
+        let clip = (slots.start as f64, slots.end as f64);
+        // 12 px a candle holds regions of four candles.
+        let width = slots.len() as f32 * 12.0;
+        for _ in 0..2 {
+            project_styled_flow_executions(
+                true,
+                &state,
+                &mut session,
+                FlowChartView {
+                    slots: slots.clone(),
+                    pixels: (width, 300.0),
+                    range: (95.0, 120.0),
+                    clip,
+                    tick_bubbles: Some(tick),
+                },
+            );
+        }
+        let frame = session.frame().unwrap();
+        assert_eq!(frame.view.region, FlowRegionSpan::Peaks(4));
+        assert_eq!(frame.view.first_slot % 4, 0, "whole regions admitted");
+        let mut masses: Vec<(Vec<u64>, Decimal, Decimal)> = frame
+            .dots
+            .iter()
+            .filter(|dot| {
+                dot.candle_position >= Decimal::from(6) && dot.candle_position <= Decimal::from(24)
+            })
+            .map(|dot| {
+                let mut ids: Vec<u64> = dot.members.iter().map(|m| m.source_id).collect();
+                ids.sort_unstable();
+                (ids, dot.mark.quantity, dot.candle_position)
+            })
+            .collect();
+        masses.sort();
+        masses
+    };
+    let before = masses(5..25);
+    assert!(!before.is_empty());
+    assert_eq!(masses(6..26), before, "one candle right");
 }

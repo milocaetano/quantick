@@ -4,12 +4,14 @@
 //! `show`; the tab composes them in order and commits whatever changed once.
 
 use eframe::egui;
-use quantick_orderbook::BookLevel;
 use quantick_orderflow::config::theme::PaletteChoice;
 use quantick_orderflow::engine::BookPublished;
+use quantick_orderflow::health_words::{BOOK_NOW_HOVER, BookHealthWords};
 use quantick_orderflow::{DisplayGrouping, HeatmapConfig, IntensityMode};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+
+use crate::panel_chrome;
 
 /// Colour theme, display grouping, brightness and quiet-liquidity gamma.
 pub(super) struct LiquidityRangesSection<'a> {
@@ -19,9 +21,9 @@ pub(super) struct LiquidityRangesSection<'a> {
 impl LiquidityRangesSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
+        panel_chrome::caption(ui, "liquidity ranges");
         ui.horizontal(|ui| {
-            ui.strong("liquidity ranges");
-            ui.add_space(8.0);
+            ui.label("theme");
             egui::ComboBox::from_id_salt("heatmap_theme")
                 .selected_text(config.palette.label())
                 .show_ui(ui, |ui| {
@@ -94,7 +96,7 @@ pub(super) struct VisualLayersSection<'a> {
 impl VisualLayersSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
-        ui.strong("visual layers");
+        panel_chrome::caption(ui, "visual layers");
         ui.small(
             "One switch per legend entry. Display-only: capture keeps running and \
              history keeps accumulating, so a layer switched back on repaints the \
@@ -140,7 +142,7 @@ pub(super) struct LiquidityResponseSection<'a> {
 impl LiquidityResponseSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
-        ui.strong("liquidity response");
+        panel_chrome::caption(ui, "liquidity response");
         ui.add_enabled(
             config.liquidity_events_enabled(),
             egui::Slider::new(&mut config.liquidity_correlation_ms, 25..=1_000)
@@ -184,7 +186,7 @@ pub(super) struct ScaleHistorySection<'a> {
 impl ScaleHistorySection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
-        ui.strong("scale & history");
+        panel_chrome::caption(ui, "scale & history");
         let mut retention_minutes = config.retention_ms as f64 / 60_000.0;
         ui.add(
             egui::Slider::new(&mut retention_minutes, 1.0..=1_440.0)
@@ -248,48 +250,16 @@ pub(super) struct BookHealthSection<'a> {
 
 impl BookHealthSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
-        let published = self.published;
-        let health = &published.health;
-        ui.label(format!(
-            "{} · {} bid / {} ask levels",
-            published.status.label(),
-            health.bid_levels,
-            health.ask_levels
-        ));
-        if let Some(ladder) = &published.ladder {
-            let side = |level: Option<BookLevel>| match level {
-                Some(level) => format!("{} × {}", level.price(), level.quantity()),
-                None => "—".to_owned(),
-            };
-            let spread = match (ladder.best_bid, ladder.best_ask) {
-                (Some(bid), Some(ask)) => (ask.price() - bid.price()).to_string(),
-                _ => "—".to_owned(),
-            };
-            ui.label(format!(
-                "book now: bid {} · ask {} · spread {}",
-                side(ladder.best_bid),
-                side(ladder.best_ask),
-                spread
-            ))
-            .on_hover_text(
-                "Best resting bid and ask of the live book, read from the published ladder.",
-            );
-            ui.small(format!(
-                "ladder holds {} bids / {} asks in view",
-                ladder.bids.len(),
-                ladder.asks.len()
-            ));
+        let words = BookHealthWords::of(self.published);
+        ui.label(words.levels);
+        if let Some(now) = words.book_now {
+            ui.label(now).on_hover_text(BOOK_NOW_HOVER);
         }
-        ui.label(format!(
-            "{} runs · {:.1} MiB retained · projection {:.1} ms",
-            health.archived_runs + health.active_levels,
-            health.history_bytes as f64 / (1024.0 * 1024.0),
-            health.projection_ms
-        ));
-        ui.label(format!(
-            "effective range {} · {}× base",
-            health.effective_grouping, health.effective_grouping_multiple
-        ));
+        if let Some(ladder) = words.ladder {
+            ui.small(ladder);
+        }
+        ui.label(words.retained);
+        ui.label(words.range);
     }
 }
 

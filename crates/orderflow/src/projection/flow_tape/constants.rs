@@ -73,3 +73,61 @@ pub(crate) const EVICTION_RESET_DIVISOR: usize = 2;
 /// loaded source must reach the last published count times this. Bounds
 /// total cold-fill projection work; a newer print never waits for one.
 pub(crate) const PUBLICATION_GROWTH_FACTOR: usize = 2;
+
+// Peak spheres (`peaks.rs`): a zoom region divided at the valleys of its
+// volume-by-price profile, one sphere per peak.
+
+/// The standard deviation, in native ticks, of the Gaussian that smooths a
+/// region's volume-by-price profile before its peaks are read.
+pub const PEAK_SMOOTHING_SIGMA_TICKS: f64 = 1.0;
+
+/// The Gaussian of [`PEAK_SMOOTHING_SIGMA_TICKS`] as exact integer weights,
+/// from the centre row out: `round(1e6 * exp(-d^2 / 2 sigma^2))` for each
+/// distance `d` in ticks, cut at four sigma. Integer weights keep the smoothed
+/// profile exact, so no float summation order can move a peak.
+pub const PEAK_SMOOTHING_KERNEL: [u32; 5] = [1_000_000, 606_531, 135_335, 11_109, 335];
+
+/// A peak counts when it rises above its higher saddle by at least this
+/// percentage of the region's highest smoothed row (its point of control).
+pub const PEAK_PROMINENCE_PERCENT: u32 = 8;
+
+/// The most rows a region's profile holds. A region whose prints span more
+/// native ticks than this reads them in whole multiples of the tick, so a
+/// stray print far away never makes the profile unbounded.
+pub const PEAK_PROFILE_MAX_ROWS: usize = 4_096;
+
+/// The smoothing sigma, in pixels, as a share of the look's full-size
+/// radius. The profile's rows are the smallest power-of-two multiple of the
+/// tape's tick at least this tall at the held price scale, and two equal
+/// peaks stay two only past two sigma apart. At the mini index's default
+/// scale (about a point a pixel, an 18 px radius) a row stays the native
+/// 5-point tick, as the approved prototype read it; zooming price out
+/// coarsens the rows, so peaks the screen would pile become one mass.
+pub const PEAK_SIGMA_RADIUS_SHARE: f64 = 0.2;
+
+/// The most times the tick doubles into a profile row: a row of 2^40 ticks
+/// is far coarser than any chart draws, and the bound keeps a degenerate
+/// price scale from looping.
+pub const PEAK_ROW_MAX_DOUBLINGS: u32 = 40;
+
+/// Rank fractions (the share of the masses in view at or below a mass) at
+/// which [`PEAK_RADIUS_SHARES`] are reached; linear between them.
+pub const PEAK_RANK_STOPS: [f32; 5] = [0.0, 0.5, 0.8, 0.95, 1.0];
+
+/// A mass's radius at each of [`PEAK_RANK_STOPS`], as a share of the range
+/// from [`PEAK_MIN_RADIUS_PX`] to the look's full-size radius: the median
+/// small, the top twentieth large.
+pub const PEAK_RADIUS_SHARES: [f32; 5] = [0.08, 0.19, 0.38, 0.66, 1.0];
+
+/// The largest masses' count divided by this carry their quantity: the top
+/// fifth, at least one when any mass is in view.
+pub const PEAK_LABEL_SHARE_DIVISOR: usize = 5;
+
+/// The smallest radius, in logical pixels, a ranked mass is drawn at: the
+/// bubble style's minimum, so the least mass is a dot, never hidden. Tick
+/// styles carry no minimum of their own.
+pub const PEAK_MIN_RADIUS_PX: f32 = crate::config::DEFAULT_BUBBLE_MIN_RADIUS;
+
+/// The fill strength of a perfectly balanced mass; a one-sided mass is drawn
+/// at full strength, and strength is linear in `|buy - sell| / (buy + sell)`.
+pub const PEAK_BALANCED_STRENGTH: f32 = 0.45;

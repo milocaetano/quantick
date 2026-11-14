@@ -60,6 +60,7 @@ impl<T: ToolCatalog> Drawings<T> {
                 magnet: false,
                 foreign_market: false,
                 off_series: false,
+                durable_identity: None,
                 origin: None,
                 payload: fresh.payload,
             });

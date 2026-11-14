@@ -393,3 +393,21 @@ fn a_candle_dot_is_a_share_of_a_full_dot() {
     };
     assert!((candle_dot_px(&bubbles) - 12.0).abs() < 1e-5);
 }
+
+/// A dot never outgrows its cell: half its level's height on screen. A
+/// squeezed price axis shrinks every dot of the pane by one share, so the
+/// dots stay in proportion.
+#[test]
+fn a_squeezed_level_shrinks_every_dot_by_one_share() {
+    let bubbles = BubbleStyle {
+        min_radius: 2.0,
+        max_radius: 10.0,
+        ..BubbleStyle::default()
+    };
+    let lane = crate::LiveLaneStyle::default();
+    let range =
+        |height| crate::projection::dot_radius_range(&bubbles, &lane, true, (100.0, height));
+    let (roomy, squeezed) = (range(100.0), range(10.0));
+    assert!((squeezed.1 - 5.0).abs() < 1e-5, "{squeezed:?}");
+    assert!((squeezed.0 / squeezed.1 - roomy.0 / roomy.1).abs() < 1e-5);
+}

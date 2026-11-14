@@ -223,8 +223,17 @@ label_min_radius = 12.6
 # splits them again. Area is relative to the largest sphere on screen
 # (`visible_max`, with `viewport_scale` as on the BTC spheres), so a quiet
 # stretch still shows which of its regions was the heavy one.
+#
+# `peak_spheres` divides each region at the valleys of its volume-by-price
+# profile: one sphere per peak at its volume-weighted price, sized by its rank
+# among the spheres on screen, so the median mass is a small dot and only the
+# rare large ones are big. The profile is read on the native tick at this
+# scale, in coarser rows when price is zoomed out, so peaks the screen would
+# pile are one mass. A lopsided mass is vivid, a balanced one muted (approved
+# by the trader on 2026-11-11).
 [presets.tick_bubbles]
 zoom_regions = true
+peak_spheres = true
 viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
 reference_mode = "visible_max"
 reference_quantity = 1.0

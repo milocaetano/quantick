@@ -28,6 +28,7 @@ mod cases {
                         &mut dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            alerts_open: false,
                             replay: None,
                             paper: &mut paper,
                             timezone: TzOffset::default(),
@@ -44,6 +45,7 @@ mod cases {
                 &mut dock,
                 ctx,
                 &mut PaperPanelEnv {
+                    alerts_open: false,
                     replay: None,
                     paper: &mut paper,
                     timezone: TzOffset::default(),
@@ -70,6 +72,7 @@ mod cases {
                         dock,
                         ctx,
                         &mut PaperPanelEnv {
+                            alerts_open: false,
                             replay: None,
                             paper,
                             timezone: TzOffset::default(),
@@ -110,6 +113,7 @@ mod cases {
         env: &mut PaperPanelEnv<'_>,
     ) -> PaperPanelEffects {
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: env.paper,
             replay: env.replay,
             timezone: env.timezone,
@@ -135,6 +139,7 @@ mod cases {
         let mut response = SurfaceResponse::default();
         let output = ctx.run(panel_input(viewport, events), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                alerts_open: false,
                 paper,
                 replay: None,
                 timezone: Default::default(),
@@ -298,7 +303,10 @@ mod cases {
                     let _ = ctx.run(
                         panel_input(viewport, vec![egui::Event::PointerMoved(position)]),
                         |ctx| {
-                            assert_eq!(holds_pointer(&registry.dock.model_state, ctx), expected);
+                            assert_eq!(
+                                holds_pointer(&registry.dock.model_state, ctx, false),
+                                expected
+                            );
                         },
                     );
                 }
@@ -307,12 +315,71 @@ mod cases {
                     panel_input(viewport, vec![egui::Event::PointerMoved(body.center())]),
                     |ctx| {
                         assert!(
-                            !holds_pointer(&registry.dock.model_state, ctx),
+                            !holds_pointer(&registry.dock.model_state, ctx, false),
                             "hidden panels never claim Delete"
                         );
                     },
                 );
             }
+        }
+    }
+
+    /// The permanent bell on the right rail asks the host to open the alert
+    /// manager at a narrow and a wide window alike.
+    #[test]
+    fn alerts_right_rail_entry() {
+        for width in [640.0, 1280.0] {
+            let ctx = egui::Context::default();
+            let mut registry = Surfaces::default();
+            let mut paper = PaperTrading::new();
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 360.0));
+            let mut frame = |events: Vec<egui::Event>| {
+                let mut effects = PaperPanelEffects::default();
+                let mut input = panel_input(egui::ViewportId::ROOT, events);
+                input.screen_rect = Some(screen);
+                let output = ctx.run(input, |ctx| {
+                    let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                        alerts_open: false,
+                        paper: &mut paper,
+                        replay: None,
+                        timezone: Default::default(),
+                    });
+                    effects = registry
+                        .draw_slot_unscoped_with_env(
+                            Slot::LateEdgePanels,
+                            &mut ViewContext { ctx, ui: None },
+                            Some(&mut env),
+                        )
+                        .paper_panel
+                        .map(|paper| *paper)
+                        .unwrap_or_default();
+                });
+                (output, effects.open_alerts)
+            };
+            frame(vec![]);
+            let (output, _) = frame(vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == icons::BELL => {
+                        Some(text.pos + text.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .expect("permanent bell painted");
+            assert!(pos.x > width - TAB_STRIP_WIDTH);
+            let event = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame(vec![egui::Event::PointerMoved(pos), event(true)]);
+            assert!(
+                frame(vec![event(false)]).1,
+                "rail click opens the same manager"
+            );
         }
     }
 
@@ -430,6 +497,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
     for paper in [&mut first, &mut second] {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+                alerts_open: false,
                 paper,
                 replay: None,
                 timezone: Default::default(),
@@ -477,6 +545,7 @@ fn paper_report_composition_preserves_account_lifetime_and_tail_registration() {
             SurfaceResponse::default()
         );
         let mut env = BorrowedSurfaceEnv::Paper(PaperPanelEnv {
+            alerts_open: false,
             paper: &mut first,
             replay: None,
             timezone: Default::default(),

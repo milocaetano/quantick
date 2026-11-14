@@ -34,7 +34,7 @@ pub(super) fn maintain(app: &mut QuantickApp) {
 }
 
 /// Run `act` journaled as the trader's hand, toasting each note it answers.
-fn as_hand<I: IntoIterator<Item = String>>(
+pub(super) fn as_hand<I: IntoIterator<Item = String>>(
     app: &mut QuantickApp,
     act: impl FnOnce(&mut QuantickApp, ops::Journal<'_, crate::control::ControlAccess>) -> I,
 ) {

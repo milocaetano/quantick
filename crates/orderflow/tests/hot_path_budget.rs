@@ -5,7 +5,7 @@
 //! | `orderflow.trade.book` | print | `BookEngine::record_trade` |
 //! | `orderflow.depth.book` | depth update | `BookEngine::handle_depth_event_at`, interleaved with the prints that advance the clock and close bars |
 //! | `orderflow.frame.book` | frame | `BookEngine::project_at` over the newest 120 bars, heatmap and bubbles on; every counted frame a rebuild, one projection interval after the last |
-//! | `orderflow.trade.flow.regions` / `.spheres` | print | one live FLOW frame of five prints: `FlowSession::project`, its capture and an inline worker's append and publication, divided by the prints; regional FLOW and typed-reference tick spheres |
+//! | `orderflow.trade.flow.regions` / `.spheres` / `.peaks` | print | one live FLOW frame of five prints: `FlowSession::project`, its capture and an inline worker's append and publication, divided by the prints; regional FLOW, typed-reference tick spheres and the mini index's peak spheres |
 //!
 //! The prints are the recorded WIN slice under `tests/fixtures`, replayed in
 //! laps; the depth is a twenty-level book a side whose updates move one bid
@@ -36,8 +36,8 @@ use quantick_orderflow::HeatmapConfig;
 use quantick_orderflow::engine::{BookEngine, ProjectionRequest};
 use quantick_orderflow::projection::PriceWindow;
 use quantick_orderflow::projection::flow_tape::{
-    FlowChunk, FlowReference, FlowRequest, FlowRunner, FlowSession, FlowTapeFrame, FlowTapeView,
-    FlowWorkerCache, OwnedFlowExecution,
+    FlowChunk, FlowReference, FlowRegionSpan, FlowRequest, FlowRunner, FlowSession, FlowTapeFrame,
+    FlowTapeView, FlowWorkerCache, OwnedFlowExecution,
 };
 use rust_decimal::Decimal;
 
@@ -121,6 +121,19 @@ const TRADE_FLOW_SPHERES: Budget = Budget {
     allocs: 500.0,
     bytes: 192.0 * KIB,
     copy_bytes: 300.0 * KIB,
+};
+
+/// A live peak-sphere FLOW frame, per print: zoom regions of eight candles
+/// divided at the peaks of their volume profile, sized by rank. Calibrated
+/// on `feat/peak-spheres` over `a2cf24a9`: 87.2 allocations, 17,662 bytes
+/// and 112,708 copy bytes per print — under the typed spheres, because a
+/// region divides by its profile without the proximity merge.
+const TRADE_FLOW_PEAKS: Budget = Budget {
+    path: "orderflow.trade.flow.peaks",
+    unit: "print",
+    allocs: 170.0,
+    bytes: 32.0 * KIB,
+    copy_bytes: 220.0 * KIB,
 };
 
 // ---------------------------------------------------------------------------
@@ -549,7 +562,7 @@ fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade], look: Flo
             reference: look.reference,
             radius_limit: look.radius_limit,
             merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,
-            region: Default::default(),
+            region: look.region,
             exclude_opening: false,
         },
     };
@@ -574,12 +587,14 @@ fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade], look: Flo
 struct FlowLook {
     reference: FlowReference,
     radius_limit: f32,
+    region: FlowRegionSpan,
 }
 
 /// Regional FLOW: spheres against the visible regions' own maximum.
 const REGIONS: FlowLook = FlowLook {
     reference: FlowReference::VisibleRegions,
     radius_limit: FLOW_RADIUS_LIMIT_PX,
+    region: FlowRegionSpan::Time,
 };
 
 /// Tick spheres against a typed reference, as the BTC spheres look sizes
@@ -587,6 +602,7 @@ const REGIONS: FlowLook = FlowLook {
 fn spheres() -> FlowLook {
     let style = quantick_orderflow::TickBubbleStyle {
         zoom_regions: false,
+        peak_spheres: None,
         reference_quantity: 10.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -597,6 +613,17 @@ fn spheres() -> FlowLook {
     FlowLook {
         reference: FlowReference::from(style),
         radius_limit: style.bubbles().max_radius,
+        region: FlowRegionSpan::Time,
+    }
+}
+
+/// The mini index's peak spheres at their 18 px radius: a visible reference with a floor, zoom
+/// regions of the rung an 8 px candle holds, divided at their peaks.
+fn peaks() -> FlowLook {
+    FlowLook {
+        reference: FlowReference::VisibleRegionsAtLeast(Decimal::ONE),
+        radius_limit: 18.0,
+        region: FlowRegionSpan::Peaks(FlowRegionSpan::held(None, f64::from(PX_PER_BAR))),
     }
 }
 
@@ -608,6 +635,11 @@ fn flow_regions_live_frames_hold_to_budget() {
 #[test]
 fn flow_spheres_live_frames_hold_to_budget() {
     flow_live_frames_hold_to_budget(TRADE_FLOW_SPHERES, spheres());
+}
+
+#[test]
+fn flow_peaks_live_frames_hold_to_budget() {
+    flow_live_frames_hold_to_budget(TRADE_FLOW_PEAKS, peaks());
 }
 
 fn flow_live_frames_hold_to_budget(budget: Budget, look: FlowLook) {

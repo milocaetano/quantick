@@ -11,6 +11,7 @@ pub mod config;
 mod constants;
 pub mod engine;
 pub mod grouping;
+pub mod health_words;
 pub mod history;
 pub mod interaction;
 pub mod pane_tape;
@@ -34,11 +35,11 @@ pub use config::{
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_MAX_RADIUS,
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
-    MarketHold, OldTapeFold, TickBubbleStyle, TickLook, TickReferenceMode, ViewportBubbleScale,
-    VolumeDotStyle, admitted_bubble_display_scale, bubble_halo_padding, bubble_impact_ring_padding,
-    bubble_radius, format_window_ms, lane_lag_label, lane_time_ticks, lane_window_label,
-    lane_window_options, lane_window_pick, same_lane_window, sane_bubble_display_scale,
-    sane_volume_dot_full_quantity, side_offset_y,
+    MarketHold, OldTapeFold, TickBubbleStyle, TickLook, TickReferenceMode, TickTuning,
+    ViewportBubbleScale, VolumeDotStyle, admitted_bubble_display_scale, bubble_halo_padding,
+    bubble_impact_ring_padding, bubble_radius, format_window_ms, lane_lag_label, lane_time_ticks,
+    lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
+    sane_bubble_display_scale, sane_volume_dot_full_quantity, side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{

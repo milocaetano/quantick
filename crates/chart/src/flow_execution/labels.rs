@@ -15,7 +15,9 @@ pub struct FlowQuantityLabel {
 }
 
 impl FlowPresentation {
-    /// Every sphere big enough to carry its quantity, largest first.
+    /// Every sphere big enough to carry its quantity, largest first; under
+    /// peak spheres, only the largest masses
+    /// ([`FlowTapeFrame::peak_label_floor`]).
     #[must_use]
     pub fn quantity_labels(
         &self,
@@ -25,16 +27,26 @@ impl FlowPresentation {
         let Some(style) = tick.map(TickBubbleStyle::bubbles) else {
             return Vec::new();
         };
+        let floor = frame.peak_label_floor();
         let mut labels: Vec<_> = self
             .regions
             .iter()
-            .filter(|region| region.disc.radius >= style.label_min_radius)
+            .filter(|region| floor.is_some() || region.disc.radius >= style.label_min_radius)
+            .filter(|region| {
+                floor.is_none_or(|floor| frame.dots[region.dot_index].mark.quantity >= floor)
+            })
             .map(|region| FlowQuantityLabel {
                 center: region.disc.center,
                 radius: region.disc.radius,
-                text: quantick_orderflow::config::labels::format_quantity(
-                    frame.dots[region.dot_index].mark.quantity,
-                ),
+                text: if floor.is_some() {
+                    quantick_orderflow::config::labels::format_quantity_compact(
+                        frame.dots[region.dot_index].mark.quantity,
+                    )
+                } else {
+                    quantick_orderflow::config::labels::format_quantity(
+                        frame.dots[region.dot_index].mark.quantity,
+                    )
+                },
             })
             .collect();
         labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
@@ -51,8 +63,25 @@ pub fn place_quantity_labels(
     labels: Vec<FlowQuantityLabel>,
     history: FlowBounds,
     fit: [f32; 2],
-    mut measure: impl FnMut(&FlowQuantityLabel) -> [f32; 2],
+    measure: impl FnMut(&FlowQuantityLabel) -> [f32; 2],
 ) -> Vec<([f32; 2], FlowQuantityLabel)> {
+    place_quantity_labels_until_miss(labels, history, fit, measure, false)
+}
+
+/// [`place_quantity_labels`], and when `stop_at_miss`, the first sphere too
+/// small for its text ends the placement, so no larger sphere goes
+/// unlabelled for want of room beside a smaller labelled one. A label off
+/// screen, or one that would cover a label already placed, is skipped alone:
+/// the one exception to that order. Peak spheres place their labels so.
+#[must_use]
+pub fn place_quantity_labels_until_miss(
+    labels: Vec<FlowQuantityLabel>,
+    history: FlowBounds,
+    fit: [f32; 2],
+    mut measure: impl FnMut(&FlowQuantityLabel) -> [f32; 2],
+    stop_at_miss: bool,
+) -> Vec<([f32; 2], FlowQuantityLabel)> {
+    let mut stopped = false;
     let inside = |[x, y]: [f32; 2]| {
         history[0][0] <= x && x <= history[1][0] && history[0][1] <= y && y <= history[1][1]
     };
@@ -65,14 +94,16 @@ pub fn place_quantity_labels(
             at.map(|start| start - LABEL_CLEARANCE_PX),
             [0, 1].map(|axis| at[axis] + size[axis] + LABEL_CLEARANCE_PX),
         ];
-        let free = fits
-            && inside(bounds[0])
-            && inside(bounds[1])
+        let on_screen = inside(bounds[0]) && inside(bounds[1]);
+        let free = !stopped
+            && fits
+            && on_screen
             && !occupied.iter().any(|other| {
                 (0..2).all(|axis| {
                     other[0][axis] <= bounds[1][axis] && bounds[0][axis] <= other[1][axis]
                 })
             });
+        stopped |= stop_at_miss && !fits;
         free.then(|| {
             occupied.push(bounds);
             (at, label)

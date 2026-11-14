@@ -106,6 +106,7 @@ impl DrawingChromeAsk {
             let own = self.readbacks.get_or_insert_with(Default::default);
             own.scenario = own.scenario.take().or(other.scenario);
             own.quick_range = own.quick_range.take().or(other.quick_range);
+            own.alert_target = own.alert_target.take().or(other.alert_target);
         }
         self.clipboard_paste = self.clipboard_paste.take().or(other.clipboard_paste);
         self.inspector_position_dirty |= other.inspector_position_dirty;
@@ -153,6 +154,8 @@ pub struct Readbacks {
     pub scenario: Option<super::scenario::Effect>,
     pub quick_range:
         Option<quantick_chart_interaction::quick_range::conversion_plan::ConversionReadback>,
+    /// Open the alert editor on this drawing, once the host resolves it.
+    pub alert_target: Option<quantick_control_schema::alerts::DrawingSelector>,
 }
 impl DrawingChromeAsk {
     pub fn scenario(effect: Option<super::scenario::Effect>) -> Self {

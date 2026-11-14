@@ -327,7 +327,7 @@ fn the_live_lane_inherits_a_history_cluster_picked_this_frame() {
     };
 
     let output = frame(&mut view, Vec::new());
-    let lane_header = find(&output, "live lane")[0];
+    let lane_header = find(&output, "LIVE LANE")[0];
     click(&mut view, lane_header);
     let output = frame(&mut view, Vec::new());
     assert!(

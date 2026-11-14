@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "drawing_id": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "pane_id": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tab_id": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "drawing_id"
+  ],
+  "title": "DrawingSelector",
+  "type": "object"
+}

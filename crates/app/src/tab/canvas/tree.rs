@@ -87,14 +87,10 @@ impl Tab {
                     tab_id,
                     |_| {},
                     |_, session| {
-                        crate::pane_menu::strip(
-                            ui,
-                            rect,
-                            &name,
-                            slot,
-                            &mut self.canvas.menus,
-                            session,
-                        );
+                        let menus = &mut self.canvas.menus;
+                        let door = crate::pane_menu::strip(ui, rect, &name, slot, menus, session);
+                        let (at, ink) = ((slot, &self.canvas.state), palette.text_muted());
+                        crate::pane_menu::button(ui, door, at, menus, ink, session);
                     },
                 );
                 continue;

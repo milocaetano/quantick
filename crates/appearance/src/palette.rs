@@ -257,9 +257,49 @@ pub enum Token {
     /// The band's light bulb while the flow pane's lights are on; at rest it
     /// wears the gear's ink.
     FlowBulbLit,
+    /// A light chart's price-axis chip, filled, under a buy or take-profit
+    /// level whose tag wears the paper plate (`paper::level_chip`); its
+    /// digits are `chip_ink`. Dark's value mirrors `buy`.
+    PaperTagGain,
+    /// The same chip under a sell or stop-loss level. Dark's mirrors `sell`.
+    PaperTagLoss,
+    /// The edge of a light chart's measurement readout (`paper::paper_readout`).
+    /// Dark draws none; its value is transparent.
+    ReadoutEdge,
+    /// A settings panel's or dock's ground, under its blocks.
+    PanelGround,
+    /// The full-bleed title plate across a panel's top.
+    PanelPlate,
+    /// Words on the title plate and on a section's band.
+    PanelPlateInk,
+    /// A section's block, and a trade's card, on the panel ground.
+    PanelBlock,
+    /// A block's one-pixel border, and the rule under the filter bar.
+    PanelBlockEdge,
+    /// A section header's band, and the ledger's date row.
+    PanelBand,
+    /// A section header's state words on its band.
+    PanelBandState,
+    /// A subgroup's uppercase caption inside a block.
+    PanelCaption,
+    /// The one-pixel rule under a subgroup caption.
+    PanelCaptionRule,
+    /// The full-bleed footer plate: health, reset and totals.
+    PanelFooter,
+    /// Words on the footer plate, and the ledger's bold session captions.
+    PanelStrongInk,
+    /// The ledger's full-bleed filter bar.
+    PanelFilterBar,
+    /// The ledger's Live session row.
+    PanelLiveRow,
+    /// A losing trade card's left stripe.
+    PanelStripeLoss,
+    /// A gain on the panels' grey plates, the footer and a lit session row,
+    /// where Light's buy ink falls short of 4.5:1.
+    PanelGainInk,
 }
 impl Token {
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 154] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -396,6 +436,24 @@ impl Token {
         Self::FlowKeyUnlitInk,
         Self::FlowGearInk,
         Self::FlowBulbLit,
+        Self::PaperTagGain,
+        Self::PaperTagLoss,
+        Self::ReadoutEdge,
+        Self::PanelGround,
+        Self::PanelPlate,
+        Self::PanelPlateInk,
+        Self::PanelBlock,
+        Self::PanelBlockEdge,
+        Self::PanelBand,
+        Self::PanelBandState,
+        Self::PanelCaption,
+        Self::PanelCaptionRule,
+        Self::PanelFooter,
+        Self::PanelStrongInk,
+        Self::PanelFilterBar,
+        Self::PanelLiveRow,
+        Self::PanelStripeLoss,
+        Self::PanelGainInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -442,6 +500,24 @@ impl Token {
             Self::FlowKeyUnlitInk => "flow_key_unlit_ink",
             Self::FlowGearInk => "flow_gear_ink",
             Self::FlowBulbLit => "flow_bulb_lit",
+            Self::PaperTagGain => "paper_tag_gain",
+            Self::PaperTagLoss => "paper_tag_loss",
+            Self::ReadoutEdge => "readout_edge",
+            Self::PanelGround => "panel_ground",
+            Self::PanelPlate => "panel_plate",
+            Self::PanelPlateInk => "panel_plate_ink",
+            Self::PanelBlock => "panel_block",
+            Self::PanelBlockEdge => "panel_block_edge",
+            Self::PanelBand => "panel_band",
+            Self::PanelBandState => "panel_band_state",
+            Self::PanelCaption => "panel_caption",
+            Self::PanelCaptionRule => "panel_caption_rule",
+            Self::PanelFooter => "panel_footer",
+            Self::PanelStrongInk => "panel_strong_ink",
+            Self::PanelFilterBar => "panel_filter_bar",
+            Self::PanelLiveRow => "panel_live_row",
+            Self::PanelStripeLoss => "panel_stripe_loss",
+            Self::PanelGainInk => "panel_gain_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

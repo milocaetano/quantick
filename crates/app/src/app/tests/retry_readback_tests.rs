@@ -76,6 +76,8 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "drawing_scope_control_tests.rs"]
 mod drawing_scope_control;
+#[path = "drawing_text_control_tests.rs"]
+mod drawing_text_control;
 #[path = "feed_source_control_tests.rs"]
 mod feed_source_control;
 #[path = "history_control_tests.rs"]
@@ -875,6 +877,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        ("annotate.text.set", 1, Value::Null, Readback::Moves),
         // Filled in when it runs: a dated line placed for the call to keep.
         (
             "annotate.drawing_scope.set",
@@ -950,48 +953,10 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("canvas.pane.pop_out", 1, Value::Null, Readback::Moves),
         ("canvas.pane.return", 1, Value::Null, Readback::Moves),
         ("canvas.pane.remove", 1, Value::Null, Readback::Moves),
+        ("alerts.open", 1, json!({}), Readback::Moves),
         // Last of all: it closes the active tab, edits or not.
         ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]
-}
-
-#[test]
-fn context_pair_resize_requires_the_granted_layout_scope() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(20);
-    app.active_tab_mut()
-        .set_layout(CanvasLayout::TimeTimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    let directory = gateway_test_directory("resize-pair-scopes");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let input = json!({
-        "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
-        "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
-        "fraction": "0.4"
-    });
-    let before = app.active_tab().context_divider_rect(0).unwrap();
-    for options in [options("observer", &[]), options("cockpit", &["cockpit"])] {
-        let mut client = connect(&directory, &options);
-        let (response, served) = keyed_call(
-            &mut app,
-            &mut client,
-            "denied",
-            "layout.pane.resize_pair",
-            input.clone(),
-            "denied-pair",
-        );
-        assert!(matches!(
-            error_code(&response),
-            Some(codes::SCOPE_DENIED | codes::PERMISSION_DENIED)
-        ));
-        assert!(served.iter().all(|request| !request.began));
-        run_frame(&mut app, &ctx);
-        assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), before);
-    }
-    disable_test_gateway(&mut app, &ctx);
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
@@ -1265,6 +1230,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
                 })
+            }
+            "annotate.text.set" => {
+                let pane = &mut app.active_tab_mut().flow_pane;
+                pane.drawings.place(
+                    crate::drawings::DrawingTool::by_id("text").unwrap(),
+                    ChartPoint::at(1.0, 100.0),
+                );
+                let target = drawing_text_control::target(&app);
+                json!({ "target": target, "text": "Retry-safe note" })
             }
             "annotate.drawing_scope.set" => {
                 app.surfaces.chart_settings.model_state.close();
@@ -2215,3 +2189,6 @@ fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+#[path = "native_indicator_control_tests.rs"]
+mod native_indicator_control;

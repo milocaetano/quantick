@@ -7,6 +7,7 @@
 //! Nothing here holds application state, reads a clock or names a renderer:
 //! every function is a total function of what it is handed.
 
+pub mod alerts;
 pub mod analysis;
 pub mod attention;
 pub mod bubble_preset;
@@ -21,6 +22,7 @@ pub mod deal_recording;
 pub mod desk;
 pub mod drawing_magnet;
 pub mod drawing_scope;
+pub mod drawing_text;
 pub mod evidence;
 pub mod feed;
 pub mod feed_source;
@@ -64,6 +66,7 @@ pub mod workspace;
 pub mod workspace_book;
 
 pub mod indicator_picker;
+pub mod native_indicator;
 
 pub mod appearance;
 

@@ -402,11 +402,15 @@ fn drawing_text_and_forms_remain_readable_authored_notes() {
                         })
                         .expect("actual drawing tool paints the annotation");
                     let palette = app.active_tab().drawing_pane().palette(&ctx);
-                    let resolved = palette.resolved.legible_drawing(authored);
+                    // Canvas resolution first, then bare-label shading where
+                    // the theme paints no label plates (Light's paper).
+                    let resolved = palette
+                        .resolved
+                        .drawing_text_ink(palette.resolved.legible_drawing(authored));
                     assert_eq!(
                         text.galley.job.sections[0].format.color.to_array(),
                         resolved.to_array(),
-                        "existing canvas foreground resolution is preserved"
+                        "canvas foreground resolution, then bare-label shading"
                     );
                     assert_eq!(
                         app.active_tab().drawing_pane().drawings.items()[index]

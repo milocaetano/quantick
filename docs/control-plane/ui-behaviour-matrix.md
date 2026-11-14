@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 128 |
+| Reachable by capability | 131 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **182** |
+| **Total** | **185** |
 
-99 of the 182 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 83 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+100 of the 185 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 85 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -70,7 +70,7 @@ The three exclusion classes are closed:
 | `market.palette.add` | Add a symbol to a venue and open it | Enter on a palette no-match row | — | `pending_capability` — no capability adds a symbol to a venue's list yet; `market.open` opens what the config and the added-symbols file already offer. Tracked in issue 401 |
 | `market.palette.remove` | Remove a market the trader added | Delete on a palette row the trader added | `catalog.remove` | — |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's market button, then Enter on a row of the palette in switch mode | `tab.market.set`, `feed.source.set` | — |
-| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode | `feed.contract.roll` | — |
+| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode; the feed notice popup's Roll button on a contract the venue no longer lists, and the same Roll beside the status word and on the empty chart | `feed.contract.roll` | — |
 | `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | window menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | window menu, Help | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -100,8 +100,8 @@ The three exclusion classes are closed:
 | `canvas.pane.restore` | Bring a folded or maximized chart back to its place | a folded chart's » restore, the ⋯ menu's Restore size, Esc while a chart fills the canvas | `canvas.pane.restore` | — |
 | `canvas.pane.remove` | Remove a chart from the canvas, asking first when the save holds it | a chart header's ⋯ menu, Remove chart, then the dialog's Remove | `canvas.pane.remove` | — |
 | `canvas.widget.add` | Add a chart or a widget to the canvas | the toolbar's + left of the capsule, then a row of ADD TO CANVAS | `canvas.widget.add` | — |
-| `canvas.pane.float` | Move or resize a floating chart over the canvas | a floating chart's grip dropped away from the edges and corners, or an edge dragged | `canvas.pane.float` | — |
-| `canvas.pane.dock` | Dock a floating chart into the layout at an edge | a floating chart's grip dropped on a canvas edge, where the slot lights with Dock here | `canvas.pane.dock` | — |
+| `canvas.pane.float` | Float a docked chart, or move or resize a floating one over the canvas | a docked chart's ⋯ → Float, or its ⋯ dragged; a floating chart's grip dropped away from the dock zones and corners, or an edge dragged | `canvas.pane.float` | — |
+| `canvas.pane.dock` | Dock a floating chart into the layout at a canvas edge, beside a docked chart, or in a docked chart's place | a floating chart's grip (or a docked chart's ⋯, which lifts it) dropped on a canvas edge, a chart's side or its centre, where the slot lights with Dock here; or a floating chart's ⋯ → Dock left/right/top/bottom | `canvas.pane.dock` | — |
 | `canvas.pane.park` | Park a floating chart in a canvas corner | a floating chart's grip dropped in a canvas corner | `canvas.pane.park` | — |
 | `canvas.pane.pop_out` | Open a chart in its own OS window | a chart header's ⋯ menu, Open in new window; a floating chart's grip dragged past the window's edge | `canvas.pane.pop_out` | — |
 | `canvas.pane.return` | Bring a chart from its own window back over the canvas | the chart window's ⋯ menu, Return to canvas; closing that window | `canvas.pane.return` | — |
@@ -129,7 +129,7 @@ The three exclusion classes are closed:
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
 | `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
-| `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker | `orderflow.bubbles.tick.set` | — |
+| `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker, Peak spheres checkbox and sphere opacity slider | `orderflow.bubbles.tick.set` | — |
 | `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
 | `orderflow.bubbles.reset` | Reset the bubble look to the asset's factory preset | Bubbles settings, reset bubble visuals | `orderflow.bubbles.reset` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
@@ -198,6 +198,8 @@ The three exclusion classes are closed:
 | `tool.trend-line` | Arm the trend line | tool rail, family flyout, canvas right-click | `annotate.trend_line.create` | — |
 | `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
+| `drawing.text.properties` | Edit a note's words, font, size, color, background, border and wrapping | inline editor, text properties tab and size slider | `annotate.text.set` | — |
+| `drawing.text.repeat` | Place another independent note in the selected style | the text properties bar T button | `annotate.text.repeat` | — |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu (drawing section and objects submenu), the object manager, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
@@ -214,6 +216,7 @@ The three exclusion classes are closed:
 | `drawing.scope.toggle` | Show one drawing on every timeframe of its market, or keep it to its chart | the object context bar's sharing button, beside Hide, and the inspector's Coordinates tab checkbox | `annotate.drawing_scope.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
+| `alerts.list` | List local alerts and manage their definitions, monitoring and history | window menu, Alerts… | `alerts.open`, `alerts.list`, `alerts.read`, `alerts.create`, `alerts.edit`, `alerts.delete`, `alerts.pause`, `alerts.resume`, `alerts.rearm`, `alerts.history` | — |
 | `desk.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | `desk.export` | — |
 | `desk.import` | Open a cockpit from a file | window menu, Desk, Import desk from file… | `desk.import` | — |
 | `workspace.recent.open` | Reopen a cockpit file opened before | window menu, Desk, Open recent | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
@@ -254,11 +257,11 @@ matrix fails the build.
 | `rail_tool` | 2 |
 | `toolbox_dock` | 3 |
 | `layout_preset` | 16 |
-| `notice_action` | 2 |
+| `notice_action` | 3 |
 | `hotkey` | 25 |
-| `menu_entry` | 46 |
+| `menu_entry` | 47 |
 | `scripted_menu` | 0 |
-| `authored` | 83 |
+| `authored` | 87 |
 
 ## Appendix: rows no registry stands behind
 
@@ -298,9 +301,9 @@ declares nothing here is a guard failure.
 | `canvas.pane.maximize` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.restore` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.remove` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
-| `canvas.pane.float` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
-| `canvas.pane.dock` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
-| `canvas.pane.park` | the grip of a floating chart, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.float` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.dock` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
+| `canvas.pane.park` | the grip of a floating chart or the ⋯ of a docked one, a drag whose drop the canvas model's `drop_target` decides |
 | `canvas.pane.pop_out` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.return` | a row of the chart's ⋯ menu, whose rows are `PaneMenuItem`, not an action enum |
 | `canvas.pane.resize` | a drag on a seam the canvas model's `tree_seams` lists |
@@ -338,6 +341,8 @@ declares nothing here is a guard failure.
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `feed.connection_state` | a readout painted from one state, with no control of its own |
 | `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
+| `drawing.text.properties` | the text properties widgets |
+| `drawing.text.repeat` | the text properties bar repeat button |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |

@@ -247,7 +247,9 @@ pub(crate) fn paint_price_tag(
         galley.size().y + under_size.y,
     );
     let background = egui::Rect::from_min_size(text_pos - TAG_PAD, size + TAG_PAD * 2.0);
-    painter.rect_filled(background, egui::Rounding::same(TAG_ROUNDING), fill);
+    if fill.a() > 0 {
+        painter.rect_filled(background, egui::Rounding::same(TAG_ROUNDING), fill);
+    }
     let under_pos = text_pos + egui::vec2(0.0, galley.size().y);
     painter.galley(text_pos, galley, ink);
     if let Some(line) = under {

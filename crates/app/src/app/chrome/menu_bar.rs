@@ -177,6 +177,7 @@ fn settle_row(id: RowId, commands: &mut Vec<MenuCommand>) {
         RowId::ToolbarHidden => MenuCommand::ToggleToolbox,
         RowId::SaveDesk => MenuCommand::SaveWorkspace("menu"),
         RowId::TogglePanels => MenuCommand::ToggleDock,
+        RowId::Alerts => MenuCommand::OpenAlerts,
         RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
         RowId::CloseReplay => MenuCommand::CloseReplay,
         RowId::Settings => MenuCommand::OpenSettings(SettingsSection::Display),

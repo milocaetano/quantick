@@ -41,6 +41,15 @@ impl Seats {
     pub fn held(&self) -> &[(PaneSlot, usize)] {
         &self.held
     }
+
+    /// These seats brought up to date for `state` as the next frame seats
+    /// them, so a read between an edit and that frame is not stale.
+    #[must_use]
+    pub fn current(&self, state: &CanvasState) -> Self {
+        let mut seats = self.clone();
+        seated(state, &mut seats);
+        seats
+    }
 }
 
 /// One docked pane of the tree, ready to paint.
@@ -102,8 +111,34 @@ pub fn seat_slot(state: &CanvasState, seats: &mut Seats, seat: Option<usize>) ->
     slots.find(|slot| seat_of(&panes, seats, *slot) == Some(seat))
 }
 
+/// How built chart `seat` (`None` for the flow pane) shows by `seats`, as
+/// [`Seats::current`] reads them; `None` when the canvas holds no pane for it.
+#[must_use]
+pub fn seat_mode(state: &CanvasState, seats: &Seats, seat: Option<usize>) -> Option<PaneMode> {
+    let slot = match seat {
+        Some(seat) => (seats.held.iter()).find_map(|(slot, held)| (*held == seat).then_some(*slot)),
+        None => (state.panes().into_iter())
+            .find_map(|(slot, kind, _)| (kind != PaneKind::Time).then_some(slot)),
+    };
+    state.mode(slot?)
+}
+
+/// Whether built chart `seat` (`None` for the flow pane) is on screen:
+/// docked with nothing maximized over it, maximized itself, or floating. A
+/// folded chart is only its strip, and a chart the canvas lacks is nowhere.
+#[must_use]
+pub fn seat_drawn(state: &CanvasState, seats: &Seats, seat: Option<usize>) -> bool {
+    match seat_mode(state, seats, seat) {
+        Some(PaneMode::Docked) => state.maximized().is_none(),
+        Some(PaneMode::Minimized) | None => false,
+        Some(_) => true,
+    }
+}
+
 /// `state`'s panes, with `seats` brought up to date: gone slots dropped,
-/// new time slots seated on the lowest free chart.
+/// new time slots seated on the lowest free chart in the order the tree
+/// draws them, then the floating ones, so a picked layout shows its first
+/// built chart first whatever the slots' numbers.
 fn seated(state: &CanvasState, seats: &mut Seats) -> Vec<(PaneSlot, PaneKind, PaneMode)> {
     let panes = state.panes();
     let time = |slot: PaneSlot| {
@@ -121,14 +156,16 @@ fn seated(state: &CanvasState, seats: &mut Seats) -> Vec<(PaneSlot, PaneKind, Pa
         }
         kept
     });
-    for (slot, kind, _) in &panes {
-        if *kind == PaneKind::Time && !held.iter().any(|(on, _)| on == slot) {
+    let docked = state.tree().panes().into_iter();
+    let floating = (state.floating().iter()).map(|pane| (pane.slot, pane.kind));
+    for (slot, kind) in docked.chain(floating) {
+        if kind == PaneKind::Time && !held.iter().any(|(on, _)| *on == slot) {
             let free = (0..).find(|pane| !held.iter().any(|(_, seat)| seat == pane));
             let free = free.unwrap_or_default();
             if freed.remove(&free) {
                 reseed.push(free);
             }
-            held.push((*slot, free));
+            held.push((slot, free));
         }
     }
     panes

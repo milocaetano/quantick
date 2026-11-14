@@ -21,6 +21,25 @@ fn removing_a_chart_keeps_the_others_on_their_panes() {
     assert_eq!(seats, vec![Some(1), None], "the kept chart stays on pane 1");
 }
 
+/// A picked layout seats its charts in the order the tree draws them, so the
+/// top chart of a stack shows the first built chart whatever its slot.
+#[test]
+fn seats_follow_reading_order_after_a_pick() {
+    let mut state = CanvasState::from_preset(preset("charts-2").unwrap());
+    let reversed = state.tree().relabelled(&|slot| 1 - slot);
+    *state.tree_mut() = reversed;
+    assert_eq!(state.tree().panes()[0].0, 1, "Row[1, 0]");
+    state.apply_preset(preset("stack2+flow").unwrap());
+    let top = state.tree().panes()[0].0;
+    assert_eq!(top, 1, "the pick kept slot 1 first");
+    let mut seats = Seats::default();
+    seats.clear();
+    let bands = tree_bands(&state, &mut seats, AREA, 4.0);
+    let band = bands.iter().find(|band| band.slot == top).unwrap();
+    assert_eq!(band.rect.y, 0.0, "the top band");
+    assert_eq!(band.seat, Some(0), "seated first in reading order");
+}
+
 /// A seam inside the canvas gives half a divider to each side; the canvas's
 /// own edges give nothing.
 #[test]
@@ -86,4 +105,33 @@ fn presets_answer_their_split_label_and_word() {
     let charts = preset("charts-4").unwrap();
     assert_eq!(DeclaredLayout::nearest(charts), DeclaredLayout::Time);
     assert_eq!(charts.time_panes(), 4);
+}
+
+/// What a canvas draws, per built chart: a folded chart only its strip, a
+/// maximized one alone, a floating one over the rest.
+#[test]
+fn seat_drawn_follows_folds_maximize_and_floats() {
+    let area = CanvasRect::new(0.0, 0.0, 1600.0, 900.0);
+    let mut state = CanvasState::from_preset(preset("time+time+flow").unwrap());
+    let mut seats = Seats::default();
+    let _ = tree_bands(&state, &mut seats, area, 4.0);
+    let drawn = |state: &CanvasState, seats: &Seats| {
+        [None, Some(0), Some(1), Some(2)].map(|seat| seat_drawn(state, seats, seat))
+    };
+    assert_eq!(drawn(&state, &seats), [true, true, true, false]);
+    let first = seats.held()[0].0;
+    state.minimize(first).unwrap();
+    assert_eq!(
+        seat_mode(&state, &seats, Some(0)),
+        Some(PaneMode::Minimized)
+    );
+    assert_eq!(drawn(&state, &seats), [true, false, true, false]);
+    let flow = seat_slot(&state, &mut seats, None).unwrap();
+    state.maximize(flow).unwrap();
+    assert_eq!(drawn(&state, &seats), [true, false, false, false]);
+    state.restore(flow).unwrap();
+    let added = state.add(PaneKind::Time, area).unwrap();
+    let _ = tree_bands(&state, &mut seats, area, 4.0);
+    assert_eq!(state.mode(added), Some(PaneMode::Floating));
+    assert_eq!(drawn(&state, &seats), [true, false, true, true]);
 }

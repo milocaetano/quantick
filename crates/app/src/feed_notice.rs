@@ -26,6 +26,7 @@ use eframe::egui;
 
 use crate::theme;
 pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, report};
+use quantick_feed::notice_report::{RELOAD_CAPTION, ROLL_CAPTION, roll_label};
 use quantick_feed::stall::Recovery;
 
 /// The word when the chart is not being fed: one word for several faults, which
@@ -75,39 +76,6 @@ const BUTTON_SPACING_PX: f32 = 8.0;
 const BUTTON_GAP_PX: f32 = 10.0;
 /// Gap between the button row and the consequence caption, in pixels.
 const CAPTION_GAP_PX: f32 = 6.0;
-
-/// What [`Recovery::Reload`] costs, said on the popup rather than behind a
-/// confirmation dialog.
-///
-/// A modal between a trader and a stalled chart is one more thing in the way at
-/// the worst moment, and this act is recoverable in the sense that matters —
-/// the position it closes is journaled, with its reason, by
-/// `PaperTrading::on_timeline_reset`. What is not acceptable is the trader
-/// learning about it afterwards, which is what happened while the only button
-/// on offer said "Try again" and quietly reset the timeline.
-const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
-     disarms every strategy.";
-
-/// What each control costs, in the trader's terms, on its own hover.
-///
-/// The caption below the buttons names what the destructive one ends, and for
-/// a while that was the only sentence either button had. A warning beside one
-/// control and silence beside the other does not read as "that one is safe" —
-/// it reads as "one of these is dangerous and I cannot tell which", which
-/// pushes a trader toward pressing neither at the moment they most need to
-/// press one. This is the status line's old hover text, restored to the
-/// surface that inherited its job.
-#[must_use]
-fn recovery_cost(recovery: Recovery) -> &'static str {
-    match recovery {
-        Recovery::Reconnect => {
-            "Keeps the chart as it is: bars, drawings, strategies and any open paper position."
-        }
-        Recovery::Reload => {
-            "Rebuilds the chart from scratch: closes any open paper position and disarms every strategy."
-        }
-    }
-}
 
 /// Whether `QUANTICK_FEED_POPUP` asks the chart to open the popup.
 ///
@@ -164,6 +132,8 @@ struct Geometry {
     primary: (egui::Rect, Recovery),
     /// The other one.
     secondary: (egui::Rect, Recovery),
+    /// The roll off an unlisted contract, on its own row above the pair.
+    roll: Option<egui::Rect>,
 }
 
 /// Measure the popup for `report` inside `area`.
@@ -193,9 +163,18 @@ fn geometry(
     };
     let headline = wrap(report.headline, HEADLINE_PT, palette.text_primary());
     let step = report
-        .next_step
-        .map(|step| wrap(step, STEP_PT, palette.text_muted()));
+        .next_step_text()
+        .map(|step| wrap(&step, STEP_PT, palette.text_muted()));
     let caption = wrap(RELOAD_CAPTION, CAPTION_PT, palette.text_faint());
+    // As wide as its label, which names a contract of any length, and never
+    // wider than the column: a clipped name is a roll to who knows where.
+    let roll = report.roll_target().map(|target| {
+        let font = egui::TextStyle::Button.resolve(&painter.ctx().style());
+        let label = painter.layout_no_wrap(roll_label(target), font, palette.text_primary());
+        let pad = 2.0 * painter.ctx().style().spacing.button_padding.x;
+        let width = (label.size().x + pad).max(BUTTON_SIZE_PX.x);
+        egui::vec2(width.min(text_width), BUTTON_SIZE_PX.y)
+    });
 
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
@@ -220,6 +199,7 @@ fn geometry(
         height += LINE_GAP_PX + step.size().y;
     }
     height += BUTTON_GAP_PX + button_size.y + CAPTION_GAP_PX + caption.size().y;
+    height += roll.map_or(0.0, |size| size.y + BUTTON_SPACING_PX);
 
     // Anchored to the chip, not to the middle of the chart: the popup grows
     // out of the thing that was clicked, so the eye does not have to travel to
@@ -239,7 +219,11 @@ fn geometry(
     if let Some(step) = &step {
         cursor += LINE_GAP_PX + step.size().y;
     }
-    let button_top = cursor + BUTTON_GAP_PX;
+    let roll = roll
+        .map(|size| egui::Rect::from_min_size(egui::pos2(text_left, cursor + BUTTON_GAP_PX), size));
+    let button_top = roll.map_or(cursor + BUTTON_GAP_PX, |roll| {
+        roll.bottom() + BUTTON_SPACING_PX
+    });
     let primary = egui::Rect::from_min_size(egui::pos2(text_left, button_top), button_size);
     let secondary = egui::Rect::from_min_size(
         egui::pos2(primary.right() + BUTTON_SPACING_PX, button_top),
@@ -254,6 +238,7 @@ fn geometry(
         caption,
         primary: (primary, report.primary),
         secondary: (secondary, report.primary.other()),
+        roll,
     }
 }
 
@@ -299,6 +284,7 @@ pub fn draw_popup(
         caption,
         primary,
         secondary,
+        roll,
     } = geometry(&painter, area, chip, report);
 
     // The body claims the pointer before anything is drawn into it. A painted
@@ -358,18 +344,25 @@ pub fn draw_popup(
     // The primary is filled and the secondary is not, so the button that fixes
     // *this* stall is the one the eye lands on. Both are always present: the
     // application's guess about which act is needed must never be the reason a
-    // trader cannot reach the other one.
+    // trader cannot reach the other one. A roll off an unlisted contract goes
+    // above them, filled in the primary's place; the pair stays whole.
     let mut action = NoticeAction::None;
+    if let (Some(rect), Some(target)) = (roll, report.roll_target()) {
+        let label = egui::RichText::new(roll_label(target)).color(palette.chip_ink());
+        let button = ui.put(rect, egui::Button::new(label).fill(accent));
+        if button.on_hover_text(ROLL_CAPTION).clicked() {
+            action = NoticeAction::Roll(target.to_owned());
+        }
+    }
     let (primary_rect, primary_recovery) = primary;
+    let (fill, ink) = match roll {
+        Some(_) => (palette.control(), palette.text_primary()),
+        None => (accent, palette.chip_ink()),
+    };
+    let label = egui::RichText::new(primary_recovery.label()).color(ink);
     if ui
-        .put(
-            primary_rect,
-            egui::Button::new(
-                egui::RichText::new(primary_recovery.label()).color(palette.chip_ink()),
-            )
-            .fill(accent),
-        )
-        .on_hover_text(recovery_cost(primary_recovery))
+        .put(primary_rect, egui::Button::new(label).fill(fill))
+        .on_hover_text(primary_recovery.cost())
         .clicked()
     {
         action = primary_recovery.into();
@@ -380,7 +373,7 @@ pub fn draw_popup(
             secondary_rect,
             egui::Button::new(secondary_recovery.label()).fill(palette.control()),
         )
-        .on_hover_text(recovery_cost(secondary_recovery))
+        .on_hover_text(secondary_recovery.cost())
         .clicked()
     {
         action = secondary_recovery.into();

@@ -20,11 +20,13 @@ mod sessions;
 mod tables;
 mod window;
 
+#[cfg(test)]
+pub(crate) use quantick_paper::report::LoadedHistory;
 pub(crate) use quantick_paper::report::ledger_rows::LedgerScope;
 #[cfg(test)]
 pub(crate) use quantick_paper::report::load_history;
 pub(crate) use quantick_paper::report::snapshot::{OpenRow, ReportEnv};
-pub(crate) use quantick_paper::report::{HistoryRow, LoadedHistory, ReportView, SourceFilter};
+pub(crate) use quantick_paper::report::{HistoryRow, ReportView, SourceFilter};
 #[cfg(test)]
 use quantick_sim::{ClosedTrade, PerformanceReport};
 pub(crate) use quantick_ui_model::paper_report::LedgerAction;

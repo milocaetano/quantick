@@ -34,36 +34,7 @@ use std::time::{Duration, Instant};
 
 pub use quantick_strategy::sound::{AlertSound, ClipId, Cue, PlayLength, SoundCategory};
 
-/// Where a cue goes.
-///
-/// A port, so the alarm's *decisions* can be tested without a machine
-/// making noise — and so a build with no audio has one honest place to say
-/// so rather than every caller guessing.
-pub trait AlertSink {
-    /// Play these, in order, and let them replace whatever was still
-    /// sounding: a clip still running has already turned the head, and the
-    /// newest signal is the one the trader has not heard yet. A batch is
-    /// one frame's worth — a burst of prints that closed several bars at
-    /// once — and its clips queue behind each other so two regions with
-    /// two sounds are both heard. Platform sounds cannot queue: they sound
-    /// the moment they are asked for, ahead of the batch's clips.
-    ///
-    /// Every cue is attempted. `Ok(())` means every one was handed to
-    /// something that plays it; `Err` carries the *first* reason one could
-    /// not be, in words a client can print — a notification that never
-    /// reached the trader is reported, never assumed, and one that did is
-    /// not withheld because a neighbour failed.
-    fn play(&mut self, cues: &[Cue]) -> Result<(), &'static str>;
-
-    /// Get ready to play `cue` soon, off the path that will ask for it.
-    /// A sink that has a device to open opens it here — when an alarm is
-    /// armed, not on the frame the signal lands — so the first alarm pays
-    /// nothing the second does not. The default does nothing, which is
-    /// right for a sink with nothing to prepare.
-    fn warm_up(&mut self, cue: Cue) {
-        let _ = cue;
-    }
-}
+pub use quantick_alerts::delivery::AlertSink;
 
 /// How long the [`Speaker`] leaves a refused output device alone before
 /// asking for it again. Long enough that a machine with no output device

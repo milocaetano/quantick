@@ -80,8 +80,8 @@ exact_fields! {
         tick_bubbles, enabled, full_quantity, auto_full, ignore_opening_burst_in_scale,
     }
     TickBubbleStyle {
-        reference_quantity, reference_mode, viewport_scale, zoom_regions, max_radius,
-        label_min_radius, opacity,
+        reference_quantity, reference_mode, viewport_scale, zoom_regions, peak_spheres,
+        max_radius, label_min_radius, opacity,
     }
     ViewportBubbleScale { x_units_per_pixel, price_units_per_pixel }
     BubbleStyle {

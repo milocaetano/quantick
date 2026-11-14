@@ -29,9 +29,10 @@ pub(super) fn flow_runs(
     // A palette that rims its bubbles (the lit flow pane's) draws them flat.
     let flat = tick_colors.is_some_and(|colors| colors.flat_rims.is_some());
     let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
-    let shade = |color| match &tick_style {
-        Some(style) if flat => SphereShading::flat(color).faded(style.opacity),
-        Some(style) => SphereShading::sphere(color, style).faded(style.opacity),
+    // Peak spheres fill by imbalance: `strength` is 1 for every other look.
+    let shade = |color, strength: f32| match &tick_style {
+        Some(style) if flat => SphereShading::flat(color).faded(style.opacity * strength),
+        Some(style) => SphereShading::sphere(color, style).faded(style.opacity * strength),
         None => SphereShading::flat(color),
     };
     let mut build = |regions: &[flow::FlowRegionVisual]| {
@@ -57,9 +58,13 @@ pub(super) fn flow_runs(
                     tessellator.tessellate_shape(shape, &mut rim);
                 }
             }
+            let strength = frame.peak_fill_strength(&frame.dots[region.dot_index]);
             for (side, angle, sweep) in region.sectors(frame, PIE_START_ANGLE) {
-                let (center, radius, color) =
-                    (disc.center.into(), disc.radius, shade(colors[side]));
+                let (center, radius, color) = (
+                    disc.center.into(),
+                    disc.radius,
+                    shade(colors[side], strength),
+                );
                 add_sector(&mut mesh, center, radius, angle, sweep, color, light);
             }
         }

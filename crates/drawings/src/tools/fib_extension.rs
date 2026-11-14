@@ -104,9 +104,10 @@ impl MarkTool for FibExtension {
     fn test_geometry(&self) -> (Vec<Px>, Px) {
         (
             vec![pos2(100.0, 100.0), pos2(200.0, 200.0)],
-            // Right of B on the 100 % level: the levels project forward
-            // from there, so that is where the object can be grabbed.
-            pos2(300.0, 300.0),
+            // Between the anchors on the 100 % level: a fresh extension's
+            // levels end at its last anchor (see `Extend::for_kind`), so
+            // that is where the object can be grabbed.
+            pos2(150.0, 300.0),
         )
     }
 }

@@ -23,7 +23,7 @@ fn left_edge_dock_turns_one_tf_flow_into_two_tf_flow() {
         "floating panes leave the tree alone"
     );
 
-    assert_eq!(state.dock(slot, Edge::Left), Ok(true));
+    assert_eq!(state.dock(slot, DockTarget::Canvas(Edge::Left)), Ok(true));
     assert_eq!(state.mode(slot), Some(PaneMode::Docked));
     assert_eq!(matching_preset(state.tree()).unwrap().label, "2 TF + Flow");
     let rects = state.rects(CANVAS);
@@ -33,17 +33,17 @@ fn left_edge_dock_turns_one_tf_flow_into_two_tf_flow() {
     // A dock the catalogue has no name for is a custom arrangement.
     let mut custom = canvas("time+flow");
     let slot = custom.add(PaneKind::Time, CANVAS).unwrap();
-    custom.dock(slot, Edge::Bottom).unwrap();
+    custom.dock(slot, DockTarget::Canvas(Edge::Bottom)).unwrap();
     assert_eq!(matching_preset(custom.tree()), None);
     assert_eq!(custom.preset(), None);
 
-    // Only a floating pane docks.
+    // A docked pane docking elsewhere moves there.
+    assert_eq!(state.dock(0, DockTarget::Canvas(Edge::Left)), Ok(true));
+    let rects = state.rects(CANVAS);
+    let left = rects.iter().find(|(held, _)| *held == 0).unwrap().1;
+    assert_eq!(left.x, 0.0, "pane 0 moved to the left edge");
     assert_eq!(
-        state.dock(0, Edge::Left),
-        Err(CanvasRefusal::NotFloating(0))
-    );
-    assert_eq!(
-        state.dock(42, Edge::Left),
+        state.dock(42, DockTarget::Canvas(Edge::Left)),
         Err(CanvasRefusal::UnknownPane(42))
     );
 }
@@ -148,7 +148,7 @@ fn floating_panes_park_pop_out_and_return() {
     };
     assert_eq!(
         *rect,
-        park_rect(CANVAS, Corner::BottomRight, (300.0, 200.0))
+        park_rect(CANVAS, Corner::BottomRight, (300.0, 200.0), &[])
     );
     assert_eq!(state.park(0, Corner::BottomRight, CANVAS), Ok(false));
     assert_eq!(
@@ -170,24 +170,89 @@ fn floating_panes_park_pop_out_and_return() {
         Err(CanvasRefusal::NotInOsWindow(0))
     );
 
-    // Picking a layout re-docks by kind; floating panes keep floating.
+    // Picking a layout re-docks by kind, a floating pane of a needed kind
+    // included; one no place needs keeps floating.
+    let spare = state.add(PaneKind::Time, CANVAS).unwrap();
     assert!(state.apply_preset(preset("time+flow").unwrap()));
-    assert_eq!(state.mode(0), Some(PaneMode::Floating));
+    assert_eq!(state.mode(0), Some(PaneMode::Docked), "the float came back");
+    assert_eq!(state.mode(spare), Some(PaneMode::Floating));
     let docked: Vec<_> = state.tree().panes();
-    assert_eq!(docked.len(), 2);
-    assert!(
-        docked.iter().any(|(slot, _)| *slot == 1),
-        "the flow pane kept its slot"
-    );
-    assert!(
-        !docked.iter().any(|(slot, _)| *slot == 0),
-        "a new time pane took a new slot"
-    );
+    assert_eq!(docked, [(0, PaneKind::Time), (1, PaneKind::Flow)]);
 
     // The canvas holds at most nine charts.
     let mut full = canvas("charts-8");
     full.add(PaneKind::Flow, CANVAS).unwrap();
     assert_eq!(full.add(PaneKind::Time, CANVAS), Err(CanvasRefusal::Full));
+}
+
+/// Picking a flow layout while the flow pane floats takes that pane back
+/// into the tree: one flow pane, and every docked slot has a band.
+#[test]
+fn picking_a_flow_layout_while_the_flow_floats_keeps_one_flow_pane() {
+    let mut state = canvas("time+flow");
+    let rect = CanvasRect::new(100.0, 100.0, 400.0, 300.0);
+    state.float(1, rect).unwrap();
+    assert!(state.apply_preset(preset("time+time+flow").unwrap()));
+    let flows = (state.panes().into_iter())
+        .filter(|(_, kind, _)| *kind == PaneKind::Flow)
+        .count();
+    assert_eq!(flows, 1, "never a second flow");
+    assert_eq!(state.mode(1), Some(PaneMode::Docked), "the flow came back");
+    assert!(state.floating().is_empty());
+    let bands = tree_bands(&state, &mut Seats::default(), CANVAS, 4.0);
+    let banded: Vec<_> = bands.iter().map(|band| band.slot).collect();
+    let mut docked: Vec<_> = (state.tree().panes().into_iter())
+        .map(|(slot, _)| slot)
+        .collect();
+    docked.sort_unstable();
+    assert_eq!(banded, docked, "every tree slot has a band");
+
+    // Floats count against the cap: a pick that would overflow it is refused
+    // and changes nothing.
+    let mut crowded = canvas("time");
+    while crowded.add(PaneKind::Time, CANVAS).is_ok() {}
+    let before = crowded.clone();
+    assert!(!crowded.apply_preset(preset("grid4+flow").unwrap()));
+    assert_eq!(crowded, before);
+
+    // A chart over the canvas is taken before one on another monitor.
+    let mut popped = canvas("time+time+flow");
+    let window = CanvasRect::new(2000.0, 0.0, 800.0, 600.0);
+    popped.pop_out(0, "DISPLAY2", window).unwrap();
+    popped.float(1, rect).unwrap();
+    assert!(popped.apply_preset(preset("time+flow").unwrap()));
+    assert_eq!(popped.mode(1), Some(PaneMode::Docked));
+    assert_eq!(
+        popped.mode(0),
+        Some(PaneMode::OsWindow),
+        "left on its monitor"
+    );
+}
+
+/// Folding every chart of a stack folds the stack itself to one strip, so
+/// the flow pane beside it takes the width.
+#[test]
+fn minimizing_every_pane_of_a_split_folds_the_split_to_a_strip() {
+    let mut state = canvas("stack2+flow");
+    state.minimize(0).unwrap();
+    state.minimize(1).unwrap();
+    let rects = state.rects(CANVAS);
+    let rect = |slot| rects.iter().find(|(held, _)| *held == slot).unwrap().1;
+    for slot in [0, 1] {
+        assert_eq!(rect(slot).x, 0.0);
+        assert_eq!(rect(slot).w, MINIMIZED_STRIP_PX, "one strip wide");
+    }
+    assert!(
+        (rect(0).h + rect(1).h - CANVAS.h).abs() < 1e-2,
+        "full height"
+    );
+    assert_eq!(rect(2).x, MINIMIZED_STRIP_PX);
+    assert_eq!(rect(2).w, CANVAS.w - MINIMIZED_STRIP_PX, "the flow grows");
+    let seams = tree_seams(&state, CANVAS, 4.0);
+    assert!(
+        seams.iter().all(|seam| !seam.resizable),
+        "the folded stack is pinned"
+    );
 }
 
 #[test]
@@ -231,7 +296,7 @@ fn canvas_state_round_trips_and_marks_dirty() {
     // Floating and OS-window panes round-trip through the saved file.
     let mut state = canvas("time+flow");
     let floating = state.add(PaneKind::Time, CANVAS).unwrap();
-    let popped = state.add(PaneKind::Flow, CANVAS).unwrap();
+    let popped = state.add(PaneKind::Time, CANVAS).unwrap();
     state
         .pop_out(
             popped,
@@ -337,4 +402,76 @@ fn a_window_on_a_gone_monitor_falls_back_to_the_canvas() {
             .settle_monitors(&["DISPLAY1".to_owned()], CANVAS)
             .is_empty()
     );
+}
+
+/// C12: a float docked at the left edge of a 2x2 grid takes a third of the
+/// width, one more column beside two, not half.
+#[test]
+fn an_edge_dock_on_a_grid_takes_a_fair_share() {
+    let mut state = canvas("charts-4");
+    let slot = state.add(PaneKind::Time, CANVAS).unwrap();
+    state.dock(slot, DockTarget::Canvas(Edge::Left)).unwrap();
+    let rects = state.rects(CANVAS);
+    let at = |held| rects.iter().find(|(slot, _)| *slot == held).unwrap().1;
+    let third = CANVAS.w / 3.0;
+    assert!((at(slot).w - third).abs() < 0.01, "{:?}", at(slot));
+    assert!(
+        (at(0).w - third).abs() < 0.01,
+        "each grid column a third too"
+    );
+    assert_eq!(at(slot).h, CANVAS.h);
+
+    // Beside a pane whose split already lays that way, the dock joins it and
+    // takes a fair share of it.
+    let mut row = canvas("charts-2");
+    let slot = row.add(PaneKind::Time, CANVAS).unwrap();
+    let beside = DockTarget::Beside {
+        slot: 0,
+        side: Edge::Right,
+    };
+    row.dock(slot, beside).unwrap();
+    assert_eq!(row.preset().map(|preset| preset.id), Some("charts-3"));
+    let rects = row.rects(CANVAS);
+    let x = |held| rects.iter().find(|(slot, _)| *slot == held).unwrap().1.x;
+    assert!(
+        x(0) < x(slot) && x(slot) < x(1),
+        "between chart 0 and chart 1"
+    );
+}
+
+/// C18: a canvas holding the order flow refuses a second one, by name; no
+/// slot is minted, and the add menu marks the row unavailable, saying why.
+#[test]
+fn a_second_flow_pane_is_refused() {
+    let mut state = canvas("time+flow");
+    assert_eq!(
+        state.add(PaneKind::Flow, CANVAS),
+        Err(CanvasRefusal::SecondFlow)
+    );
+    assert_eq!(CanvasRefusal::SecondFlow.code(), "canvas.second_flow");
+    assert_eq!(state.panes().len(), 2, "no pane was added");
+    assert_eq!(state.add(PaneKind::Time, CANVAS), Ok(2), "no slot minted");
+    let flow = widget("order-flow").unwrap();
+    let why = |state: &CanvasState| {
+        let rows = add_menu(state, |_| true);
+        (rows.into_iter())
+            .find(|(row, _)| row.id == flow.id)
+            .unwrap()
+            .1
+    };
+    assert_eq!(
+        why(&state),
+        Err("the canvas already holds the order flow".to_owned()),
+        "the add menu marks the row unavailable, saying why"
+    );
+
+    // A floating flow counts as held; once it is gone, one can be added.
+    state.float(1, CANVAS).unwrap();
+    assert_eq!(
+        state.add(PaneKind::Flow, CANVAS),
+        Err(CanvasRefusal::SecondFlow)
+    );
+    state.remove(1).unwrap();
+    assert_eq!(why(&state), Ok(()));
+    assert!(state.add(PaneKind::Flow, CANVAS).is_ok());
 }

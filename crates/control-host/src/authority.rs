@@ -61,6 +61,12 @@ pub const COCKPIT_PERMISSION_ID: &str = "cockpit";
 pub const COCKPIT_LAYOUT_PERMISSION_ID: &str = "cockpit.layout";
 /// The effect every cockpit capability declares.
 pub const COCKPIT_EFFECT_ID: &str = "cockpit";
+/// Explicit consent to add, change or remove saved native indicators.
+pub const COCKPIT_INDICATORS_PERMISSION_ID: &str = "cockpit.indicators";
+/// Native indicator changes, including removal and layout mirrors.
+pub const INDICATORS_EFFECT_ID: &str = "cockpit.indicators";
+/// Saved indicator settings may be overwritten or removed without undo.
+pub const INDICATORS_CHANGED_RISK_FLAG: &str = "saved_indicators_changed";
 /// Permission for the one cockpit act that can remove the trader's work.
 ///
 /// Separate from `cockpit.layout` on purpose, and marked sensitive: a grant
@@ -90,6 +96,12 @@ pub const JOURNAL_DELETE_EFFECT_ID: &str = "cockpit.journal.delete";
 /// What a capability under [`JOURNAL_DELETE_EFFECT_ID`] declares it may
 /// cost: a session the ledger, the report and every listing stop reading.
 pub const SESSION_REMOVED_RISK_FLAG: &str = "journal_session_removed";
+/// Separate consent to permanently remove alert definitions or alert history.
+pub const COCKPIT_ALERT_DELETE_PERMISSION_ID: &str = "cockpit.alert.delete";
+/// Irreversible alert removal, distinct from reversible cockpit changes.
+pub const ALERT_DELETE_EFFECT_ID: &str = "cockpit.alert.delete";
+/// Alert definitions or recorded alert events are permanently removed.
+pub const ALERT_REMOVED_RISK_FLAG: &str = "alert_removed";
 /// The ceiling the `trade.*` family sits under.
 ///
 /// It exists because the registry requires every permission to name one, and
@@ -408,6 +420,14 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
         },
         PermissionDescriptor {
+            id: permission(COCKPIT_INDICATORS_PERMISSION_ID),
+            label: "Change saved native indicators".to_owned(),
+            description: "Add, configure, hide or remove native indicators, including indicators you created and their saved settings. Changes also affect panes that mirror this layout. Removed indicators and overwritten settings have no undo through this interface. Does not place orders or change positions.".to_owned(),
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
             id: permission(COCKPIT_RECOVER_PERMISSION_ID),
             label: "Rebuild a stalled chart".to_owned(),
             description: "Throw a stalled feed's timeline away and rebuild it, which closes any open paper position (journaled, with its reason) and disarms every strategy.".to_owned(),
@@ -423,6 +443,14 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             id: permission(COCKPIT_JOURNAL_DELETE_PERMISSION_ID),
             label: "Delete trading sessions".to_owned(),
             description: "Move a saved trading session out of the trades journal into `.deleted` under the trades folder: the ledger, the report and every listing stop reading it, and only moving the file back by hand restores it. The session being traded is always refused.".to_owned(),
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
+            id: permission(COCKPIT_ALERT_DELETE_PERMISSION_ID),
+            label: "Delete alerts and alert history".to_owned(),
+            description: "Permanently delete local alert definitions or clear recorded alert history. No command restores removed definitions or events. Deleting a definition preserves its recorded history; clearing history preserves definitions.".to_owned(),
             sensitive: true,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
@@ -592,6 +620,11 @@ pub fn profiles() -> Vec<ProfileDescriptor> {
 pub fn modules() -> Vec<ModuleDescriptor> {
     vec![
         ModuleDescriptor {
+            id: module("alerts"),
+            title: "Alerts".to_owned(),
+            description: "Persistent local price alerts and immutable firing history.".to_owned(),
+        },
+        ModuleDescriptor {
             id: module("control"),
             title: "Control".to_owned(),
             description: "Running-instance contract and authority metadata.".to_owned(),
@@ -754,6 +787,31 @@ pub fn effects() -> Vec<EffectPolicy> {
             },
         },
         EffectPolicy {
+            id: effect(INDICATORS_EFFECT_ID),
+            permission_floor: permission(COCKPIT_INDICATORS_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // Like recovery, loss is declared through consent and risk:
+                // destructive requires a revision guard this host cannot supply.
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(INDICATORS_CHANGED_RISK_FLAG).expect("static risk flag is valid")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: true,
+                durable_requires_reversible: false,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        },
+        EffectPolicy {
             id: effect(RECOVER_EFFECT_ID),
             permission_floor: permission(COCKPIT_RECOVER_PERMISSION_ID),
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
@@ -823,6 +881,32 @@ pub fn effects() -> Vec<EffectPolicy> {
                 allows_destructive: true,
                 // The file moves aside rather than vanishing, but nothing in
                 // the contract moves it back.
+                durable_requires_reversible: false,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        },
+        EffectPolicy {
+            id: effect(ALERT_DELETE_EFFECT_ID),
+            permission_floor: permission(COCKPIT_ALERT_DELETE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // Journal-delete policy: destructive couples to envelope revisions
+                // this host refuses. Loss is explicit in sensitive consent, risk,
+                // and reversible:false. Alert payload revisions are separate.
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(ALERT_REMOVED_RISK_FLAG).expect("static risk flag is valid")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: true,
                 durable_requires_reversible: false,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,

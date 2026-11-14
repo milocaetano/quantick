@@ -342,7 +342,7 @@ fn delete_over_the_dock_never_deletes_the_selected_drawing() {
     };
     press_at(&mut app, dock);
     assert!(
-        crate::dock::holds_pointer(&app.surfaces.dock.model_state, &ctx),
+        crate::dock::holds_pointer(&app.surfaces.dock.model_state, &ctx, false),
         "the press landed on the dock"
     );
     assert_eq!(

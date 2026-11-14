@@ -170,7 +170,9 @@ impl Tab {
             ui.painter().rect_filled(area, 0.0, fill);
             return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
         }
-        let (frame, rects) = if self.canvas.column_painted() {
+        let columns = self.canvas.column_painted();
+        self.canvas.mirror_split(columns);
+        let (frame, rects) = if columns {
             let frame = self.canvas_frame(area);
             let rects = self.draw_context_column(tab_id, ui, &frame, chrome);
             (frame, rects)

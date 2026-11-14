@@ -322,11 +322,9 @@ fn folded_summary(views: &[IndicatorView]) -> String {
         .iter()
         .take(MAX_HOVER_LINES)
         .map(|view| {
-            let value = (!view.hidden)
-                .then(|| view.columns.first().and_then(|column| column.last()))
-                .flatten();
+            let value = (!view.hidden).then(|| view.headline_value()).flatten();
             match value {
-                Some(value) => format!("{}  {}", view.label(), chart::compact_value(*value)),
+                Some(value) => format!("{}  {}", view.label(), chart::compact_value(value)),
                 // A hidden row has no value worth quoting — the same silence
                 // its expanded row keeps, for the same reason.
                 None => format!("{}  hidden", view.label()),
@@ -427,10 +425,10 @@ fn draw_row(
                     // from a line that is not on screen answers nothing.
                     if !view.hidden
                         && view.error.is_none()
-                        && let Some(value) = view.columns.first().and_then(|column| column.last())
+                        && let Some(value) = view.headline_value()
                     {
                         ui.label(
-                            egui::RichText::new(chart::compact_value(*value))
+                            egui::RichText::new(chart::compact_value(value))
                                 .monospace()
                                 .small()
                                 .color(palette.text_muted()),
@@ -489,7 +487,12 @@ fn draw_row(
                 ui.id().with(("legend-row", view.slot.0)),
                 egui::Sense::click(),
             )
-            .on_hover_text("double-click to open settings")
+            .on_hover_ui(|ui| {
+                ui.label("double-click to open settings");
+                if let Some(note) = view.source_note() {
+                    ui.label(note);
+                }
+            })
             .double_clicked()
         {
             actions.push(LegendAction::OpenSettings(view.slot));

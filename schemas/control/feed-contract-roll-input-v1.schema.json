@@ -9,7 +9,7 @@
   "additionalProperties": false,
   "properties": {
     "from_symbol": {
-      "description": "The contract the caller read in feed.status. Naming it is what makes a\nretry safe: a second call cannot roll a contract further.",
+      "description": "The contract the caller read in feed.status: the tab's active_symbol,\nwhich is its notice.unlisted_symbol for the notice's Roll (the scene's\nfeed_status.roll). Naming it is what makes a retry safe: a second call\ncannot roll a contract further.",
       "type": "string"
     },
     "tab_id": {

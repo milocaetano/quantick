@@ -22,7 +22,7 @@ mod palette;
 pub mod theme;
 mod tick_bubbles;
 mod viewport_bubbles;
-pub use tick_bubbles::{TickBubbleStyle, TickLook, TickReferenceMode};
+pub use tick_bubbles::{TickBubbleStyle, TickLook, TickReferenceMode, TickTuning};
 pub use viewport_bubbles::ViewportBubbleScale;
 
 pub use bubbles::{

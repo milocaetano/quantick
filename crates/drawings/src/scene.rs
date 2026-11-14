@@ -11,6 +11,7 @@ use quantick_chart::geometry::PixelRect;
 use quantick_chart::style::PremultipliedRgba;
 
 use crate::color::TRANSPARENT;
+use crate::text::{FontSpec, TextFormat};
 use crate::{Align2, Px, PxRect};
 
 /// How an outline is drawn: its width in pixels and its colour.
@@ -33,78 +34,17 @@ impl Stroke {
     }
 }
 
-/// The two typefaces a mark's label is set in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FontFamily {
-    Proportional,
-    Monospace,
-}
-
-/// A label's face and size in pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FontSpec {
-    pub size_px: f32,
-    pub family: FontFamily,
-}
-
-impl FontSpec {
-    pub fn themed(
-        theme: &quantick_appearance::ResolvedTheme,
-        role: quantick_appearance::FontRole,
-        size: f32,
-    ) -> Self {
-        let font = theme.typography.at_size(role, size);
-        Self {
-            size_px: font.size,
-            family: match font.family {
-                quantick_appearance::FontFamily::Proportional => FontFamily::Proportional,
-                quantick_appearance::FontFamily::Monospace => FontFamily::Monospace,
-            },
-        }
-    }
-
-    #[must_use]
-    pub const fn proportional(size_px: f32) -> Self {
-        Self {
-            size_px,
-            family: FontFamily::Proportional,
-        }
-    }
-
-    #[must_use]
-    pub const fn monospace(size_px: f32) -> Self {
-        Self {
-            size_px,
-            family: FontFamily::Monospace,
-        }
-    }
-}
-
-/// How big a label sets, asked of the renderer that owns the fonts: a tool
-/// that sizes a plate around its words needs the words' real extent.
-pub trait TextMetrics {
-    /// The width and height `text` occupies on one line in `font`.
-    fn size(&self, text: &str, font: FontSpec) -> Px;
-}
-
-/// The metrics of a context that sets no label — a hit test or a gesture
-/// paints nothing, so every size it could ask for is zero.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Unmeasured;
-
-impl TextMetrics for Unmeasured {
-    fn size(&self, _text: &str, _font: FontSpec) -> Px {
-        Px::ZERO
-    }
-}
-
-/// See [`Unmeasured`].
-pub const UNMEASURED: Unmeasured = Unmeasured;
-
 /// One primitive a renderer paints. Every coordinate is already in screen
 /// pixels.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarkShape {
+    /// A laid-out note, with explicit font style and wrapping.
+    NoteText {
+        at: Px,
+        text: String,
+        format: TextFormat,
+        color: PremultipliedRgba,
+    },
     /// A straight segment between two points.
     Line { from: Px, to: Px, stroke: Stroke },
     /// A chain of segments through `points`, closed back to the first when

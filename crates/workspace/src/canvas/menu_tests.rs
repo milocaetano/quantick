@@ -14,7 +14,13 @@ fn the_menu_offers_restore_size_only_while_the_chart_fills_the_canvas() {
     let labels: Vec<_> = rows.iter().map(|item| item.label()).collect();
     assert_eq!(
         labels,
-        ["Minimize", "Maximize", "Open in new window", "Remove chart"]
+        [
+            "Minimize",
+            "Maximize",
+            "Float",
+            "Open in new window",
+            "Remove chart"
+        ]
     );
     state.maximize(0).unwrap();
     assert_eq!(pane_menu(&state, 0)[1], PaneMenuItem::Restore);
@@ -35,6 +41,29 @@ fn the_menu_offers_restore_size_only_while_the_chart_fills_the_canvas() {
     assert_eq!(menu_hook("0:remove"), pressed);
     assert_eq!(menu_hook("0:close"), None);
     assert_eq!(menu_hook("first"), None);
+}
+
+/// A folded chart's menu brings it back where Minimize stood: folding it
+/// again would do nothing, so it is not offered.
+#[test]
+fn a_minimized_pane_is_not_offered_minimize() {
+    let mut state = canvas("time+time+flow");
+    state.minimize(0).unwrap();
+    let rows = pane_menu(&state, 0);
+    assert!(rows.contains(&PaneMenuItem::Restore), "{rows:?}");
+    assert!(!rows.contains(&PaneMenuItem::Minimize), "{rows:?}");
+    let labels: Vec<_> = rows.iter().map(|item| item.label()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Restore size",
+            "Maximize",
+            "Float",
+            "Open in new window",
+            "Remove chart"
+        ]
+    );
+    assert_eq!(pane_menu(&state, 1)[0], PaneMenuItem::Minimize, "open");
 }
 
 #[test]
@@ -141,7 +170,7 @@ fn the_add_menu_lists_the_registry_and_says_what_can_be_added() {
     let ids: Vec<_> = rows.iter().map(|(widget, _)| widget.id).collect();
     let registry: Vec<_> = WIDGETS.iter().map(|widget| widget.id).collect();
     assert_eq!(ids, registry, "one row per registry entry, in its order");
-    let ready = |id: &str| rows.iter().find(|(widget, _)| widget.id == id).unwrap().1;
+    let ready = |id: &str| (rows.iter().find(|(widget, _)| widget.id == id).unwrap().1).is_ok();
     assert!(ready("timeframe-chart"));
     assert!(
         !ready("order-flow"),
@@ -155,8 +184,43 @@ fn the_add_menu_lists_the_registry_and_says_what_can_be_added() {
         .is_ok()
     {}
     assert!(
-        !add_menu(&full, |_| true)[0].1,
+        add_menu(&full, |_| true)[0].1.is_err(),
         "a full canvas adds no chart"
     );
     assert!(widget("depth").is_some_and(|widget| widget.kind.is_none()));
+}
+
+/// C14: a docked chart's menu offers Float; a floating chart's offers a Dock
+/// row per canvas edge and no Float; the last docked chart cannot float.
+#[test]
+fn menus_offer_float_and_dock() {
+    let mut state = canvas("time+flow");
+    assert!(pane_menu(&state, 0).contains(&PaneMenuItem::Float));
+    state
+        .float(0, CanvasRect::new(0.0, 0.0, 400.0, 300.0))
+        .unwrap();
+    let rows = pane_menu(&state, 0);
+    let labels: Vec<_> = rows.iter().map(|item| item.label()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Dock left",
+            "Dock right",
+            "Dock top",
+            "Dock bottom",
+            "Open in new window",
+            "Remove chart"
+        ]
+    );
+    assert!(
+        !pane_menu(&state, 1).contains(&PaneMenuItem::Float),
+        "the last docked chart stays docked"
+    );
+    for item in PaneMenuItem::ALL {
+        assert_eq!(PaneMenuItem::parse(item.id()), Some(item));
+    }
+    assert_eq!(
+        menu_hook("0:dock_left"),
+        Some((0, Some(PaneMenuItem::Dock(Edge::Left))))
+    );
 }

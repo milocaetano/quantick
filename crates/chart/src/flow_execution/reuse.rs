@@ -68,7 +68,15 @@ impl FlowPresentation {
             .map(|region| {
                 let dot = &frame.dots[region.dot_index];
                 let (buy, sell) = dot.side_shares();
-                let emphasis = if tick || region.role != FlowRegionRole::Peak {
+                // Tick spheres take no regional emphasis, but peak spheres
+                // fill by imbalance: their strength is part of the key.
+                let emphasis = if tick {
+                    if frame.view.region.divides_at_peaks() {
+                        frame.peak_fill_strength(dot)
+                    } else {
+                        0.0
+                    }
+                } else if region.role != FlowRegionRole::Peak {
                     0.0
                 } else {
                     frame.ordinary_region_opacity(dot)

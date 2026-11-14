@@ -13,6 +13,7 @@ use crate::layouts::LayoutId;
 use crate::pane::PaneSide;
 
 mod guide;
+mod native;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
 
 /// Read the same durable values materialization uses, never a live preview.

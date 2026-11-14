@@ -71,6 +71,7 @@ impl LitFlowOverride {
             candle_outline_opacity: None,
             candle_wick_opacity: None,
             chart_time_grid: None,
+            drawing_label_plates: None,
             chart_axes: None,
             colors: self.colors.clone(),
             plot_ink: BTreeMap::new(),

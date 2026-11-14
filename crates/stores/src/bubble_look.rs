@@ -253,6 +253,7 @@ impl BubbleLook {
     ) {
         let (window, width_share) = (config.live_lane.window, config.live_lane.width_share);
         settings.look.apply_to(config);
+        self.adopt_preset_peaks(config);
         let marked = settings.look.live_lane.old_tape_fold.0;
         let spent = self.spend_old_tape_fold(&settings.look.name);
         if marked {

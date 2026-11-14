@@ -285,3 +285,65 @@ pub fn draws_bubble(style: &OrderflowRenderStyle, mark: &AggressionPrimitive) ->
         Side::Sell => style.show_sell,
     }
 }
+
+#[cfg(test)]
+mod draws_bubble_tests {
+    use super::*;
+    use crate::RestingSide;
+
+    fn mark(side: Side, buy_share: f32, live: bool) -> AggressionPrimitive {
+        AggressionPrimitive {
+            agg_id: 1,
+            agg_ids: vec![1],
+            generation: None,
+            side,
+            consumed_side: RestingSide::Ask,
+            quantity: Decimal::ONE,
+            buy_share,
+            live,
+            price_bucket: Decimal::ONE,
+            price_span: Decimal::ONE,
+            price: Decimal::ONE,
+            trade_count: 1,
+            first_timestamp_ms: 0,
+            last_timestamp_ms: 0,
+            timestamp_quantity: Decimal::ZERO,
+            matched_quantity: Decimal::ZERO,
+            buy_quantity: Decimal::ZERO,
+            matched_fraction: 0.0,
+            liquidity_event_ids: Vec::new(),
+            x: 0.5,
+            y: 0.5,
+            size: 1.0,
+            folded_marks: 0,
+        }
+    }
+
+    /// Each pane's switch decides its own marks, a hidden side hides its
+    /// prints, and a two-sided mark is withheld while either side is hidden.
+    #[test]
+    fn a_bubble_draws_on_its_own_panes_switch_and_shown_sides_only() {
+        let (candle, tape) = (mark(Side::Buy, 1.0, false), mark(Side::Buy, 1.0, true));
+        let both = OrderflowRenderStyle::default();
+        assert!(draws_bubble(&both, &candle) && draws_bubble(&both, &tape));
+        let candles_off = OrderflowRenderStyle {
+            aggression_layer: false,
+            ..both.clone()
+        };
+        assert!(!draws_bubble(&candles_off, &candle) && draws_bubble(&candles_off, &tape));
+        let tape_off = OrderflowRenderStyle {
+            lane_aggression_layer: false,
+            ..both.clone()
+        };
+        assert!(draws_bubble(&tape_off, &candle) && !draws_bubble(&tape_off, &tape));
+
+        let buys_hidden = OrderflowRenderStyle {
+            show_buy: false,
+            ..both.clone()
+        };
+        assert!(!draws_bubble(&buys_hidden, &candle));
+        assert!(draws_bubble(&buys_hidden, &mark(Side::Sell, 0.0, false)));
+        let mixed = mark(Side::Sell, 0.4, false);
+        assert!(draws_bubble(&both, &mixed) && !draws_bubble(&buys_hidden, &mixed));
+    }
+}

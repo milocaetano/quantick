@@ -1,0 +1,6 @@
+# #860 approved measured native residual: Existing alert control port forwarding and frame/menu dispatch only; no new root state or domain decisions.
+QuantickApp +31
+!budget +31
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+QuantickApp -1
+!budget -1

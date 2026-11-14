@@ -7,7 +7,7 @@
 use eframe::egui::{self, Align2, Color32, Rect, Sense, Stroke, vec2};
 use egui_phosphor::regular as icons;
 use quantick_control_handlers::canvas::add_act;
-use quantick_workspace::canvas::WidgetSpec;
+use quantick_workspace::canvas::{AddRow, WidgetSpec};
 
 use crate::theme;
 use crate::toolbar::DrawnControl;
@@ -60,11 +60,11 @@ pub(crate) fn button(ui: &mut egui::Ui, open: bool) -> egui::Response {
 }
 
 /// The menu under the + at `door`, its right edge on the door's; `rows` say
-/// what each entry is and whether it can be added now. A press outside, Esc
-/// or a row closes it.
+/// what each entry is and whether it can be added now, or why not. A press
+/// outside, Esc or a row closes it.
 pub(crate) fn hang(
     ctx: &egui::Context,
-    rows: &[(&'static WidgetSpec, bool)],
+    rows: &[AddRow],
     menu: &mut AddMenu,
     session: &mut quantick_ui_model::UpdateSession<'_, quantick_ui_model::canvas_popovers::Model>,
 ) {
@@ -85,10 +85,10 @@ pub(crate) fn hang(
                     let font = egui::FontId::proportional(11.0);
                     ui.label(egui::RichText::new(HEADING).font(font).color(muted));
                     for (widget, ready) in rows {
-                        if row(ui, widget, *ready, menu) {
+                        if row(ui, widget, ready.as_ref().err(), menu) {
                             session.update(quantick_ui_model::canvas_popovers::Intent::Pick {
                                 widget,
-                                available: *ready,
+                                available: ready.is_ok(),
                             });
                         }
                     }
@@ -104,15 +104,24 @@ pub(crate) fn hang(
     });
 }
 
-/// One row: its miniature, title and line; greyed and inert when it cannot
-/// be added now.
-fn row(ui: &mut egui::Ui, widget: &'static WidgetSpec, ready: bool, menu: &mut AddMenu) -> bool {
+/// One row: its miniature, title and line; greyed and inert, saying `why`
+/// on hover, when it cannot be added now.
+fn row(
+    ui: &mut egui::Ui,
+    widget: &'static WidgetSpec,
+    why: Option<&String>,
+    menu: &mut AddMenu,
+) -> bool {
+    let ready = why.is_none();
     let palette = theme::get(ui.ctx());
     let sense = Sense {
         click: ready,
         ..Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(vec2(MENU_PX, ROW_PX), sense);
+    let response = why
+        .into_iter()
+        .fold(response, |row, why| row.on_hover_text(why));
     if ready && response.hovered() {
         ui.painter().rect_filled(rect, 4.0, palette.hover_fill());
     }

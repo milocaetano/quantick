@@ -23,6 +23,8 @@ macro_rules! surface_catalog {
                 [] []
                 indicator_settings: IndicatorSettings => indicator_settings = "indicator_settings.rs", indicator_settings = "indicator_settings.rs", indicator_settings::effects, EditorDialogs, Local;
                 [] []
+                alerts: Alerts => alerts = "alerts.rs", alerts = "alerts/mod.rs", alerts::effects, Overlay, Local;
+                [] []
                 layout_dialogs: LayoutDialogs => layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs = "chrome/layout_dialogs.rs", layout_dialogs::effects, Overlay, Local;
                 [] []
                 feed_notice: FeedNotice => feed_notice = "feed_notice.rs", feed_notice = "feed_notice.rs", feed_notice::effects, Overlay, Local;

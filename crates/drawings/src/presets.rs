@@ -505,7 +505,7 @@ mod appearance_tests {
     use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
 
     #[test]
-    fn light_creates_slate_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
+    fn light_creates_black_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
         let path = crate::scratch::thread_dir("light-drawing-defaults").join(PRESETS_FILE);
         let mut store = PresetStore::load_from(&path);
         let mut appearance = quantick_appearance::Appearance::default();
@@ -518,14 +518,15 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
             let fresh = new_drawing_from_defaults(&store, tool);
-            // Every tool is born in the slate default but those whose colour
-            // is their meaning: the buy and sell marks and the profile. The
-            // VWAP shares the slate, the trader's pick for the paper canvas.
+            // Every tool is born black on paper but those whose colour is
+            // their meaning: the buy and sell marks and the profile. The
+            // anchored VWAP keeps its own slate role colour.
             let expected = match tool.id() {
                 "fixed-range-profile" => [122, 142, 194, 255],
                 "arrow-mark-up" => [31, 122, 52, 255],
                 "arrow-mark-down" => [17, 17, 17, 255],
-                _ => [43, 54, 64, 255],
+                "anchored-vwap" => [43, 54, 64, 255],
+                _ => [0, 0, 0, 255],
             };
             assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
             assert_eq!(fresh.style.width_px, existing.style.width_px);
