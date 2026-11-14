@@ -34,7 +34,7 @@ pub use bands::{
     LayoutMarks, Seats, Signal, TreeBand, inset_seams, same_layout, seat_drawn, seat_mode,
     seat_slot, signal, slot_seat, tree_bands,
 };
-pub use columns::{ColumnDrag, column_drag, revealed};
+pub use columns::{ColumnDrag, ColumnHold, column_drag, revealed};
 pub use drag::{
     DOCK_HINT, DOCK_PILL, DropOutcome, FloatGesture, LIFT_PX, MIN_FLOAT_SIZE, RESIZE_GRIP_PX,
     ResizeEdges, open_panes,
@@ -48,12 +48,13 @@ pub use menu::{
     add_menu, menu_hook, pane_menu, remove_prompt, strip_label,
 };
 pub use metrics::{
-    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX,
+    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX,
+    MIN_PANE_WIDTH_PX, RAIL_CLICK_PX,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
 };
-pub use rail::SeamDrag;
+pub use rail::{Hand, SeamDrag};
 pub use seams::{MIN_TREE_PANE_PX, SeamAddress, SeamRail, TreeSeam, tree_rails, tree_seams};
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,

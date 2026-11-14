@@ -10,7 +10,7 @@
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{ColumnDrag, PANE_MENU_BUTTON_PX, column_drag, seat_slot};
+use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, seat_slot};
 use smallvec::SmallVec;
 
 use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
@@ -19,7 +19,7 @@ use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_flow_pane, split_pane_header, split_pane_layout_strip,
+    SharedPick, split_flow_pane, split_pane_header, split_pane_layout_strip,
 };
 use crate::style::ChartStyle;
 use crate::theme;
@@ -1100,31 +1100,10 @@ impl Tab {
         self.apply_canvas_drag(&handle, drawn_width, canvas_width);
     }
 
-    fn apply_canvas_drag(
-        &mut self,
-        response: &egui::Response,
-        drawn_width: f32,
-        canvas_width: f32,
-    ) {
-        if response.drag_started() || (response.dragged() && self.canvas.drag.is_none()) {
-            self.canvas.drag = Some((drawn_width, self.canvas.folds()));
-        }
-        let step = response.drag_delta().x;
-        let held = self.canvas.drag.as_mut().filter(|_| response.dragged());
-        if let Some(held) = held.filter(|_| step.abs() > f32::EPSILON && canvas_width > 0.0) {
-            held.0 += step;
-            let asked = column_drag(held.0, canvas_width, held.1);
-            if let ColumnDrag::Open(fraction) = asked {
-                self.canvas.fold(false, false);
-                self.canvas.fold(true, false);
-                self.canvas.split_fraction = clamp_pane_fraction(fraction);
-            } else if asked != ColumnDrag::Hold {
-                self.canvas.fold(asked == ColumnDrag::FoldFlow, true);
-            }
-        }
-        if response.drag_stopped() {
-            self.canvas.drag = None;
-        }
+    fn apply_canvas_drag(&mut self, response: &egui::Response, at: f32, width: f32) {
+        let (canvas, hand) = (&mut self.canvas, hand(response, true));
+        let held = (&mut canvas.drag, &mut canvas.split_fraction);
+        canvas.state.column_hand(held, hand, (at, width));
     }
 
     /// The horizontal dividers between context charts.
@@ -1186,6 +1165,16 @@ impl Tab {
             }
         }
     }
+}
+
+/// The hand on `r` this frame, along x (`row`) or y.
+pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
+    let (delta, primary) = (
+        r.drag_delta(),
+        r.drag_stopped_by(egui::PointerButton::Primary),
+    );
+    let reads = [r.drag_started(), r.dragged(), r.drag_stopped(), primary];
+    Hand::of(reads, [delta.y, delta.x][usize::from(row)])
 }
 
 /// A folded side's rail, one look for every fold: chrome, the inner edge

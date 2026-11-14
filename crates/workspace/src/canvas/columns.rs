@@ -1,10 +1,11 @@
 //! The column painter's own decisions over a canvas: what a divider drag
-//! asks for, which pane a layout switch reveals, and whether the column
-//! painter draws a canvas at all. The window keeps the flags and the focus;
-//! what they become is decided here.
+//! asks for, what a click on its rail restores, which pane a layout switch
+//! reveals, and whether the column painter draws a canvas at all. The window
+//! keeps the split and the focus; what they become is decided here.
 
-use super::metrics::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX};
+use super::metrics::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX, RAIL_CLICK_PX};
 use super::presets::{LayoutPreset, PaneKind};
+use super::rail::Hand;
 use super::state::CanvasState;
 
 /// The kind of pane a switch from `previous` to `next` reveals, which takes
@@ -49,6 +50,82 @@ impl CanvasState {
             && self.minimized().is_empty()
             && self.one_side_railed()
             && self.preset() == Some(preset)
+    }
+}
+
+/// The column painter's divider or rail drag in flight: where the divider
+/// stood at the press, the pointer's travel since and the farthest it went,
+/// and the folds and the split the press found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColumnHold {
+    at: f32,
+    travel: f32,
+    reach: f32,
+    from: (bool, bool),
+    split: f32,
+}
+
+impl CanvasState {
+    /// The hand on the column painter's divider or rail, one frame, the
+    /// divider drawn `at` points into a canvas `width` wide and `split` the
+    /// painter's: a press takes `hold`, a move lays the columns out by
+    /// [`column_drag`], a fold keeps the split the press found (what the
+    /// side opens at again), and letting go of a primary press on a rail
+    /// that never travelled [`RAIL_CLICK_PX`] restores the rail as
+    /// `canvas.pane.restore` does. Answers whether the canvas or the split
+    /// changed.
+    pub fn column_hand(
+        &mut self,
+        (hold, split): (&mut Option<ColumnHold>, &mut f32),
+        hand: Hand,
+        (at, width): (f32, f32),
+    ) -> bool {
+        if hand.pressed || (hand.held && hold.is_none()) {
+            let from = self.flow_side_folds();
+            *hold = Some(ColumnHold {
+                at,
+                travel: 0.0,
+                reach: 0.0,
+                from,
+                split: *split,
+            });
+        }
+        let was = *split;
+        let mut changed = false;
+        let moving = hand.held && hand.delta.abs() > f32::EPSILON && width > 0.0;
+        if let Some(held) = hold.as_mut().filter(|_| moving) {
+            held.travel += hand.delta;
+            held.reach = held.reach.max(held.travel.abs());
+            let asked = column_drag(held.at + held.travel, width, held.from);
+            if let ColumnDrag::Open(fraction) = asked {
+                changed = self.fold_flow_side(false, false) | self.fold_flow_side(true, false);
+                *split = fraction;
+            } else if asked != ColumnDrag::Hold {
+                *split = held.split;
+                self.follow_split(split, true);
+                changed = self.fold_flow_side(asked == ColumnDrag::FoldFlow, true);
+            }
+        }
+        if hand.released {
+            let click = hold
+                .take()
+                .filter(|held| hand.primary && held.reach < RAIL_CLICK_PX);
+            let (context, flow) = click.map_or((false, false), |held| held.from);
+            let rail = (context || flow).then(|| self.side_rail(flow)).flatten();
+            if let Some(slot) = rail {
+                changed |= self.restore(slot).unwrap_or(false);
+                self.follow_split(split, false);
+            }
+        }
+        changed || *split != was
+    }
+
+    /// The tree and the column painter's `split` made one number, the
+    /// painter's taken (`columns`) or the tree's: see [`Self::mirror_split`].
+    fn follow_split(&mut self, split: &mut f32, columns: bool) {
+        if let Some(preset) = self.preset() {
+            self.mirror_split(preset, split, columns);
+        }
     }
 }
 

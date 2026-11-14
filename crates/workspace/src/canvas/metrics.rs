@@ -46,6 +46,11 @@ pub const COLLAPSE_AT_PX: f32 = MIN_PANE_WIDTH_PX / 2.0;
 /// picture of an affordance rather than one.
 pub const COLLAPSED_HIT_PX: f32 = 24.0;
 
+/// How far a press on a rail may travel, in points, and still be a click,
+/// which restores the rail, rather than a drag: the toolkit's own click
+/// slop, so a click on a rail is a click wherever the window reads one.
+pub const RAIL_CLICK_PX: f32 = 6.0;
+
 /// Narrowest the column painter squeezes a pane to while it is still open.
 ///
 /// A pane is not all chart. The price axis takes `plot_area`'s gutter constant (64 px)

@@ -244,6 +244,9 @@ pub const CHIP_MENU_MAX_LIST_ROWS: usize = 12;
 /// The rows that never scroll: auto save and its line, Save, Save as,
 /// Rename, the WORKSPACES caption, New and Manage.
 pub const CHIP_MENU_FIXED_ROWS: usize = 8;
+/// The least of a row's caption worth showing cut short, in points; with
+/// less room beside the whole name the caption is dropped.
+pub const CHIP_MENU_MIN_CAPTION_PT: f32 = 24.0;
 /// The separators between the menu's groups.
 pub const CHIP_MENU_SEPARATORS: usize = 3;
 /// The height egui gives a horizontal separator, before the gap after it.
@@ -311,6 +314,36 @@ impl ChipSizing {
             .is_some_and(|&whole| whole as f32 > room_pt.ceil())
     }
 }
+/// How a press row's caption shares the row with its name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CaptionFit {
+    /// Both fit whole: the row draws as it always has.
+    Whole,
+    /// The caption cut short to this many points beside the whole name.
+    Cut(f32),
+    /// No room for a caption: the name takes the row, cut short only when
+    /// it alone is wider.
+    Dropped,
+}
+
+/// Fit a row's `name_pt` wide name and `caption_pt` wide caption, `gap_pt`
+/// apart, into `room_pt`, `None` for a row that extends to what it asks:
+/// the caption gives way first, cut short to what the whole name leaves and
+/// then dropped, so the name keeps its width and two names that differ only
+/// at their end stay apart in the cell menu and the window menu's Workspace
+/// submenu alike.
+#[must_use]
+pub fn fit_caption(room_pt: Option<f32>, name_pt: f32, gap_pt: f32, caption_pt: f32) -> CaptionFit {
+    let left = room_pt.unwrap_or(f32::INFINITY) - name_pt - gap_pt;
+    if caption_pt <= 0.0 || caption_pt <= left {
+        CaptionFit::Whole
+    } else if left >= CHIP_MENU_MIN_CAPTION_PT {
+        CaptionFit::Cut(left)
+    } else {
+        CaptionFit::Dropped
+    }
+}
+
 /// A rectangle in points.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuBounds {
@@ -758,21 +791,33 @@ mod tests {
     /// to what the whole name leaves, then dropped; never bounded, whole.
     #[test]
     fn a_row_s_caption_gives_way_before_its_name() {
-        assert_eq!(fit_caption(300.0, 100.0, 8.0, 120.0), CaptionFit::Whole);
-        assert_eq!(fit_caption(228.0, 100.0, 8.0, 120.0), CaptionFit::Whole);
-        assert_eq!(fit_caption(200.0, 100.0, 8.0, 120.0), CaptionFit::Cut(92.0));
+        assert_eq!(
+            fit_caption(Some(300.0), 100.0, 8.0, 120.0),
+            CaptionFit::Whole
+        );
+        assert_eq!(
+            fit_caption(Some(228.0), 100.0, 8.0, 120.0),
+            CaptionFit::Whole
+        );
+        assert_eq!(
+            fit_caption(Some(200.0), 100.0, 8.0, 120.0),
+            CaptionFit::Cut(92.0)
+        );
         let least = 100.0 + 8.0 + CHIP_MENU_MIN_CAPTION_PT;
         assert_eq!(
-            fit_caption(least, 100.0, 8.0, 120.0),
+            fit_caption(Some(least), 100.0, 8.0, 120.0),
             CaptionFit::Cut(CHIP_MENU_MIN_CAPTION_PT)
         );
         assert_eq!(
-            fit_caption(least - 1.0, 100.0, 8.0, 120.0),
+            fit_caption(Some(least - 1.0), 100.0, 8.0, 120.0),
             CaptionFit::Dropped
         );
-        assert_eq!(fit_caption(80.0, 100.0, 8.0, 120.0), CaptionFit::Dropped);
-        assert_eq!(fit_caption(80.0, 100.0, 8.0, 0.0), CaptionFit::Whole);
-        let open = fit_caption(f32::INFINITY, 900.0, 8.0, 900.0);
+        assert_eq!(
+            fit_caption(Some(80.0), 100.0, 8.0, 120.0),
+            CaptionFit::Dropped
+        );
+        assert_eq!(fit_caption(Some(80.0), 100.0, 8.0, 0.0), CaptionFit::Whole);
+        let open = fit_caption(None, 900.0, 8.0, 900.0);
         assert_eq!(open, CaptionFit::Whole, "a row that extends");
     }
 

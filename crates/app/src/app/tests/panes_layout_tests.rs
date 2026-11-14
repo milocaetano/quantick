@@ -2141,8 +2141,10 @@ fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
     );
 }
 
+/// A click on the folded column's rail opens it, as `canvas.pane.restore`
+/// does; a click on the open divider never folds it.
 #[test]
-fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
+fn a_click_on_the_context_rail_opens_it_and_one_on_the_divider_never_folds() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     app.active_tab_mut().canvas.fold(false, true);
@@ -2153,11 +2155,10 @@ fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
         .expect("the collapsed column leaves a rail");
     click_chart(&mut app, &ctx, rail.center());
     assert!(
-        app.active_tab().canvas.folds().0,
-        "a rail click opened the column"
+        !app.active_tab().canvas.folds().0,
+        "a rail click opens the column"
     );
 
-    app.active_tab_mut().canvas.fold(false, false);
     run_frame(&mut app, &ctx);
     let divider = app
         .active_tab()

@@ -16,6 +16,7 @@ use crate::app::QuantickApp;
 use crate::app::arrangement_host::ArrangementHost;
 
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
+const BUTTON: egui::TextStyle = egui::TextStyle::Button;
 
 /// What the workspace rows read this frame.
 #[derive(Clone, Copy)]
@@ -180,7 +181,7 @@ fn cell_row(
         RowKind::Caption => ui.label(crate::theme::supporting_text(ui, label)),
         RowKind::Switch => ui.checkbox(&mut on, label),
         RowKind::Press => {
-            let beside = crate::theme::supporting_text(ui, row.beside.as_str());
+            let beside = caption(ui, row);
             let button = egui::Button::new(label).selected(on).shortcut_text(beside);
             ui.add_enabled(row.unavailable.is_none(), button)
         }
@@ -203,6 +204,23 @@ fn cell_row(
         drawn.push((row.clone(), seen));
     }
     response.clicked().then(|| row.command.clone()).flatten()
+}
+
+/// A press row's caption, giving way to its name in a row that truncates:
+/// whole while both fit, else cut short, else dropped (`fit_caption`).
+fn caption(ui: &egui::Ui, row: &CellRow) -> egui::WidgetText {
+    use egui::TextWrapMode::{Extend, Truncate};
+    let text = egui::WidgetText::from(crate::theme::supporting_text(ui, row.beside.as_str()));
+    let lay = |text: egui::WidgetText, mode, at| text.into_galley(ui, Some(mode), at, BUTTON);
+    let wide = |text: egui::WidgetText| lay(text, Extend, f32::INFINITY).size().x;
+    let (pad, gap) = (ui.spacing().button_padding.x, ui.spacing().item_spacing.x);
+    let room = (ui.wrap_mode() == Truncate).then(|| ui.available_width() - 2.0 * pad);
+    let (name, beside) = (wide(row.label.as_str().into()), wide(text.clone()));
+    match model::fit_caption(room, name, gap, beside) {
+        model::CaptionFit::Whole => text,
+        model::CaptionFit::Cut(at) => lay(text, Truncate, at).into(),
+        model::CaptionFit::Dropped => egui::WidgetText::default(),
+    }
 }
 
 /// The workspace dialogs: the one asking a name over the Manage one.
