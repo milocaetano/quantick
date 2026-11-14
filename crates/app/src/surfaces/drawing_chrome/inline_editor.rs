@@ -97,11 +97,11 @@ fn draw_inner(chrome: &mut Chrome, ctx: &egui::Context, env: &DrawingEnv<'_>) ->
         .as_any()
         .downcast_ref::<quantick_drawings::TextPayload>()
     else {
-        close(&mut ask, chrome);
+        ask.merge(chrome.emit(super::Intent::EndInline));
         return ask;
     };
     if drawing.locked {
-        close(&mut ask, chrome);
+        ask.merge(chrome.emit(super::Intent::EndInline));
         return ask;
     }
     let format = payload.format();

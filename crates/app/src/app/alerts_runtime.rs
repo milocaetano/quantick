@@ -76,7 +76,7 @@ pub(super) fn deliver(
             .map(|sound| Cue::new(sound, event.spec.notification.sound_seconds))
     });
     if let Some(message) = audio.play_pending(strategy_cues.into_iter().chain(alert_cues)) {
-        toast.note(message, std::time::Instant::now());
+        crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
     if events.is_empty() && runtime.core.error.is_none() {
         return;
@@ -90,7 +90,7 @@ pub(super) fn deliver(
             let notification = &event.spec.notification;
             outcome = DeliveryOutcome::Delivered;
             if notification.toast {
-                toast.note(event.spec.notice(), std::time::Instant::now());
+                crate::surfaces::toast::note(toast, event.spec.notice(), std::time::Instant::now());
             }
             if notification.popup {
                 let _ = popup.update(quantick_ui_model::agent_popup::Intent::Show(
@@ -108,10 +108,8 @@ pub(super) fn deliver(
         let _ = runtime.core.book.record_delivery(event.sequence, outcome);
     }
     if let Err(error) = runtime.core.flush() {
-        toast.note(
-            format!("Alert storage: {error:?}"),
-            std::time::Instant::now(),
-        );
+        let message = format!("Alert storage: {error:?}");
+        crate::surfaces::toast::note(toast, message, std::time::Instant::now());
     }
 }
 
@@ -252,7 +250,8 @@ pub(super) fn apply_alert_request(
                 }
             }
         } else {
-            app.surfaces.toast.note(
+            crate::surfaces::toast::note(
+                &mut app.surfaces.toast,
                 if matches.is_empty() {
                     "Alert target is missing from the open workspace"
                 } else {

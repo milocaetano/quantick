@@ -990,10 +990,11 @@ impl QuantickApp {
         if let Some(selector) = ask.alert_target.take() {
             match self.layout_adapter().resolve_alert_target(selector) {
                 Ok(target) => self.surfaces.alerts.open_drawing(Some(target)),
-                Err(error) => self
-                    .surfaces
-                    .toast
-                    .note(format!("Alert target unavailable: {error:?}"), now),
+                Err(error) => crate::surfaces::toast::note(
+                    &mut self.surfaces.toast,
+                    format!("Alert target unavailable: {error:?}"),
+                    now,
+                ),
             }
         }
         let mut drawings = self.drawings.with(&mut self.surfaces.drawing_chrome);

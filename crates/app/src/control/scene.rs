@@ -56,7 +56,6 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment, side_description};
 use quantick_control_handlers::feed_status::{FeedStatusView, feed_status_controls};
 use quantick_control_schema::orderflow_settings as settings;
 

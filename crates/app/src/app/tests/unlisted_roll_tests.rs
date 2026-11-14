@@ -23,7 +23,9 @@ fn rolling_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
 /// The popup open on the active tab, over `notice`, settled for a click.
 fn popup_over(app: &mut QuantickApp, ctx: &egui::Context, notice: FeedNotice) -> egui::FullOutput {
     app.active_tab_mut().link.notice = notice;
-    app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
+    let tab = app.runtime.tabs.active_id();
+    let _ = (app.surfaces.feed_notice)
+        .update(quantick_ui_model::feed_notice::Intent::InitializeOpen(tab));
     for _ in 0..3 {
         run_frame(app, ctx);
     }
@@ -88,11 +90,12 @@ fn the_popup_offers_the_roll_and_its_press_lands_on_the_next_contract() {
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     assert_eq!(
-        app.chrome.feed_popup_tab, None,
+        app.surfaces.feed_notice.model_state.open(),
+        None,
         "a pressed control closes it"
     );
     assert_eq!(
@@ -276,7 +279,7 @@ fn a_restored_tab_rolls_itself_once_and_says_so() {
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().active.1, "ETHUSDT");
     assert_eq!(
-        app.surfaces.toast.message(),
+        app.surfaces.toast.model_state.message(),
         Some("TESTUSDT is no longer listed; rolled to ETHUSDT")
     );
     // The explanation stays on the tab, not alarming, and is readable on the

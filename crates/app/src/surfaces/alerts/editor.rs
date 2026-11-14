@@ -1,7 +1,7 @@
 use super::*;
 use egui_phosphor::regular as icons;
 use quantick_alerts::{
-    AlertCommand, AlertSpec, Expiration, ExpirationChoice, Frequency, MAX_CONDITIONS, MarketRef,
+    AlertSpec, Expiration, ExpirationChoice, Frequency, MAX_CONDITIONS, MarketRef,
     Operator, Predicate, SourceContext, TargetKind, TargetRef, sound,
 };
 

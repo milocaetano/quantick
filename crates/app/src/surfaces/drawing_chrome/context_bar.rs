@@ -272,8 +272,7 @@ pub(crate) fn draw(
     ask.duplicate |= intent.duplicate;
     if intent.draw_again {
         ask.draw_again = Some(tool);
-        ask.record_inline_edit = chrome.inline.end().map(Box::new);
-        ask.content_editing_changed = ask.record_inline_edit.is_some();
+        ask.merge(chrome.emit(super::Intent::RepeatEndsInline));
     }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask

@@ -303,7 +303,7 @@ mod cases {
                     let _ = ctx.run(
                         panel_input(viewport, vec![egui::Event::PointerMoved(position)]),
                         |ctx| {
-                            assert_eq!(holds_pointer(&registry.dock.model_state, ctx), expected);
+                            assert_eq!(holds_pointer(&registry.dock.model_state, ctx, false), expected);
                         },
                     );
                 }
@@ -312,7 +312,7 @@ mod cases {
                     panel_input(viewport, vec![egui::Event::PointerMoved(body.center())]),
                     |ctx| {
                         assert!(
-                            !holds_pointer(&registry.dock.model_state, ctx),
+                            !holds_pointer(&registry.dock.model_state, ctx, false),
                             "hidden panels never claim Delete"
                         );
                     },

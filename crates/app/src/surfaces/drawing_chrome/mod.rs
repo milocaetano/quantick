@@ -369,12 +369,6 @@ impl Chrome<'_> {
         self.emit(Intent::CarrySelection);
     }
 
-    /// Ask for the caret on the next frame — the placement that just happened
-    /// wants its note typed.
-    pub fn request_text_edit(&mut self) {
-        self.emit(Intent::RequestTextEdit);
-    }
-
     /// The window's facts: a placed note wants the caret; Alerts owns the pointer.
     pub fn frame_facts(&mut self, text_edit: bool, surface_over: bool) {
         self.emit(Intent::FrameFacts {

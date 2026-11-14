@@ -37,6 +37,7 @@ fn catalog_passes_commit_original_inline_target_once_before_queued_menu() {
         "missing-drawing-chrome-test-presets.toml",
     ));
     let env = DrawingEnv {
+        linked_alerts: 0,
         pane_id: 42,
         selected: None,
         chart_area: None,
@@ -109,6 +110,7 @@ pub(crate) fn pinned_inspector_borrowed_dispatch_shares_the_floating_owner() {
         "missing-pinned-borrowed-presets.toml",
     ));
     let mut env = DrawingEnv {
+        linked_alerts: 0,
         pane_id: 42,
         selected: Some(SelectedDrawing {
             index: 3,

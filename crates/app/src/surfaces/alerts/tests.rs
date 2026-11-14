@@ -8,7 +8,7 @@ use quantick_control_schema::alerts::DrawingSelector;
 
 /// An open surface; with `context`, its new draft too.
 fn surface(context: Option<&Context>) -> AlertSurface {
-    let mut surface = AlertSurface::new(View, effects);
+    let mut surface = new_surface();
     let _ = surface.update(Intent::Apply(Request {
         open: true,
         ..Request::default()

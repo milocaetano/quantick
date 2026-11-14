@@ -641,6 +641,7 @@ mod tests {
             "missing-borrowed-probe-presets.toml",
         ));
         let drawings = DrawingEnv {
+            linked_alerts: 0,
             pane_id: 42,
             selected: None,
             chart_area: None,

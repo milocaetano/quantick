@@ -20,8 +20,8 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, LoadedHistory, Paint,
-    ReportEnv, TOTALS_STRIP_PX,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerAction, LedgerTotals, Paint, ReportEnv,
+    TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, financial_text_on, points_color_on};

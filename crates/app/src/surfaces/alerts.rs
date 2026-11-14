@@ -185,6 +185,12 @@ pub(crate) fn draw_manager_panel(
     response
 }
 
+/// A surface outside the catalog, for the host tests that drive one alone.
+#[cfg(test)]
+pub(crate) fn new_surface() -> AlertSurface {
+    AlertSurface::new(View, effects).in_slots(&[quantick_ui_model::Slot::Overlay])
+}
+
 /// A replay capture must open the same draft a trader sees after loading.
 /// This delay belongs only to fixture activation; manual Create stays immediate.
 #[cfg(any(feature = "scenario-harness", test))]

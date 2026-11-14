@@ -320,15 +320,15 @@ mod bar_switch_tests {
             "fixture".into(),
             "TEST".into(),
             BUILTIN_BARS.parse("tick:50").unwrap(),
-            crate::feed::FeedHandle {
+            quantick_feed::FeedHandle {
                 events,
                 book_events,
                 commands,
-                notices: crate::feed::silent_notices(),
-                capabilities: crate::feed::fixed_capabilities(
+                notices: quantick_feed::silent_notices(),
+                capabilities: quantick_feed::fixed_capabilities(
                     crate::config::FeedCapabilities::none(),
                 ),
-                latency: crate::feed::unsplit_latency(),
+                latency: quantick_feed::unsplit_latency(),
                 replay: None,
             },
             dir.to_path_buf(),

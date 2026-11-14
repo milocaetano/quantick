@@ -130,7 +130,7 @@ fn a_real_double_click_while_live_zooms_in_each_time() {
             "one zoom a pair"
         );
         assert_last_price_centred(pane);
-        assert!(!app.surfaces.chart_settings.is_open());
+        assert!(!app.surfaces.chart_settings.model_state.is_open());
     }
 }
 

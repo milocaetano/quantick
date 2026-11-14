@@ -458,8 +458,9 @@ fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
         (place, at(chart)),
         "they traded places"
     );
+    let id = app.runtime.tabs.active_id();
     assert!(
-        app.active_tab().canvas.menus.open.is_none(),
+        app.surfaces.remove_chart.scoped(id).0.menu_open().is_none(),
         "a drag opens no menu"
     );
     press_menu_opens(&mut app, &ctx, chart);
@@ -468,5 +469,9 @@ fn a_dragged_menu_button_lifts_and_swaps_a_docked_chart() {
 /// A click on the ⋯ still opens the chart's menu.
 fn press_menu_opens(app: &mut QuantickApp, ctx: &egui::Context, slot: u32) {
     press(app, ctx, &format!("pane_menu.{slot}"));
-    assert_eq!(app.active_tab().canvas.menus.open, Some(slot));
+    let id = app.runtime.tabs.active_id();
+    assert_eq!(
+        app.surfaces.remove_chart.scoped(id).0.menu_open(),
+        Some(slot)
+    );
 }
