@@ -16,6 +16,7 @@ use crate::app::QuantickApp;
 use crate::app::arrangement_host::ArrangementHost;
 
 const NAME_FIELD_WIDTH_PT: f32 = 220.0;
+const BUTTON: egui::TextStyle = egui::TextStyle::Button;
 
 /// What the workspace rows read this frame.
 #[derive(Clone, Copy)]
@@ -175,18 +176,18 @@ fn cell_row(
     drawn: &mut Vec<(CellRow, egui::Rect)>,
 ) -> Option<WorkspaceCommand> {
     let (label, mut on) = (row.label.as_str(), row.on);
+    let (beside, fit) = caption(ui, row);
     let mut response = match row.kind {
         RowKind::Separator => ui.separator(),
         RowKind::Caption => ui.label(crate::theme::supporting_text(ui, label)),
         RowKind::Switch => ui.checkbox(&mut on, label),
         RowKind::Press => {
-            let beside = crate::theme::supporting_text(ui, row.beside.as_str());
             let button = egui::Button::new(label).selected(on).shortcut_text(beside);
             ui.add_enabled(row.unavailable.is_none(), button)
         }
     };
-    let asked = response.intrinsic_size.map_or(0.0, |size| size.x);
-    let cut = row.kind == RowKind::Press && sizing.cut(&row.key, asked, ui.available_width());
+    // A tip names the row only while its name itself is cut short.
+    let cut = row.kind == RowKind::Press && fit == model::CaptionFit::NameCut;
     if let Some(text) = row.tip(cut) {
         response = response.on_hover_text(text).on_disabled_hover_text(text);
     }
@@ -203,6 +204,25 @@ fn cell_row(
         drawn.push((row.clone(), seen));
     }
     response.clicked().then(|| row.command.clone()).flatten()
+}
+
+/// A press row's caption, giving way to its name in a row that truncates:
+/// whole while both fit, else cut short, else dropped (`fit_caption`).
+fn caption(ui: &egui::Ui, row: &CellRow) -> (egui::WidgetText, model::CaptionFit) {
+    use egui::TextWrapMode::{Extend, Truncate};
+    let text = egui::WidgetText::from(crate::theme::supporting_text(ui, row.beside.as_str()));
+    let lay = |text: egui::WidgetText, mode, at| text.into_galley(ui, Some(mode), at, BUTTON);
+    let wide = |text: egui::WidgetText| lay(text, Extend, f32::INFINITY).size().x;
+    let (pad, gap) = (ui.spacing().button_padding.x, ui.spacing().item_spacing.x);
+    let room = (ui.wrap_mode() == Truncate).then(|| ui.available_width() - 2.0 * pad);
+    let (name, beside) = (wide(row.label.as_str().into()), wide(text.clone()));
+    let fit = model::fit_caption(room, name, gap, beside);
+    let text = match fit {
+        model::CaptionFit::Whole => text,
+        model::CaptionFit::Cut(at) => lay(text, Truncate, at).into(),
+        _ => egui::WidgetText::default(),
+    };
+    (text, fit)
 }
 
 /// The workspace dialogs: the one asking a name over the Manage one.

@@ -19,6 +19,35 @@ use super::state::{CanvasRefusal, CanvasState};
 use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
 use serde::{Deserialize, Serialize};
 
+/// One frame of a hand on a seam, a divider or a rail, as the window reads
+/// its pointer's drag. A press let go without a move is no click here: only
+/// a drag folds or opens a rail.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hand {
+    /// The press landed this frame.
+    pub pressed: bool,
+    /// Held down and dragging this frame.
+    pub held: bool,
+    /// The pointer's move along the split this frame, in points.
+    pub delta: f32,
+    /// Let go this frame.
+    pub released: bool,
+}
+
+impl Hand {
+    /// A frame read off a toolkit's drag: pressed, held and let go, and the
+    /// move along the split.
+    #[must_use]
+    pub const fn of([pressed, held, released]: [bool; 3], delta: f32) -> Self {
+        Self {
+            pressed,
+            held,
+            delta,
+            released,
+        }
+    }
+}
+
 /// A seam drag in flight: the seam, where the first of its pair ended at the
 /// press, the pointer's travel since, the split's shares then, and the
 /// pair's shares before any fold of it: what a fold keeps for a restore.
@@ -91,6 +120,21 @@ impl CanvasState {
             open: kept.unwrap_or([shares[at[0]], shares[at[1]]]),
             shares,
         })
+    }
+
+    /// The hand on `seam`, one frame: [`Self::step_seam_drag`] while it is
+    /// held, and the drag dropped when it lets go. Answers whether anything
+    /// moved; a refused step moves nothing.
+    pub fn seam_hand(
+        &mut self,
+        drag: &mut Option<SeamDrag>,
+        (seam, hand): (&SeamAddress, Hand),
+        area: CanvasRect,
+    ) -> bool {
+        let step = (seam, hand.delta, hand.pressed);
+        let moved = hand.held && self.step_seam_drag(drag, step, area).unwrap_or(false);
+        drag.take_if(|_| hand.released);
+        moved
     }
 
     /// The hand's drag of a seam, one frame: `drag` taken afresh on the
@@ -293,17 +337,19 @@ impl CanvasState {
     }
 
     /// Fold the order-flow pane to its rail (`flow`) or the charts beside it
-    /// in its split, or open them (`folded` false): what the column painter's
-    /// collapse calls do on a canvas the tree paints. The two sides never
-    /// fold together, so folding one opens the other; a fold that would
-    /// leave no chart open does nothing. Answers whether anything changed.
+    /// in its split, or open them (`folded` false), a side a drag folded at
+    /// the shares it had before ([`Self::open_side`]): what the column
+    /// painter's collapse calls do on a canvas the tree paints. The two
+    /// sides never fold together, so folding one opens the other; a fold
+    /// that would leave no chart open does nothing. Answers whether anything
+    /// changed.
     pub fn fold_flow_side(&mut self, flow: bool, folded: bool) -> bool {
         let Some((own, context)) = self.flow_sides() else {
             return false;
         };
         let (fold, other) = if flow { (own, context) } else { (context, own) };
         if !folded {
-            return self.set_railed(&fold, false);
+            return self.open_side(&fold);
         }
         let mut next = self.clone();
         next.set_railed(&other, false);
@@ -314,6 +360,22 @@ impl CanvasState {
         let changed = next != *self;
         *self = next;
         changed
+    }
+
+    /// Open every rail among `side`, the last folded first, each through
+    /// [`Self::unrail`] as a restore does, so a pair a drag folded gets back
+    /// the shares it had before; a rail no fold remembers just opens.
+    /// Answers whether anything changed.
+    fn open_side(&mut self, side: &[PaneSlot]) -> bool {
+        let remembered: Vec<PaneSlot> = (self.reopen.iter().rev())
+            .map(|kept| kept.folded)
+            .filter(|slot| side.contains(slot))
+            .collect();
+        let mut changed = false;
+        for slot in remembered {
+            changed |= self.railed().contains(&slot) && self.unrail(slot);
+        }
+        self.set_railed(side, false) || changed
     }
 
     /// The split holding the docked flow pane and its index there, found

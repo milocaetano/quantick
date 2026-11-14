@@ -162,13 +162,8 @@ impl Tab {
             // Every step the pointer took since the press, as the column
             // divider adds them up: an off-centre grab never jumps the seam,
             // and travel past a floor still reaches the fold.
-            let step = [handle.drag_delta().y, handle.drag_delta().x][usize::from(row)];
-            if handle.dragged() {
-                let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
-                let pressed = (&seam.address, step, handle.drag_started());
-                let _ = state.step_seam_drag(held, pressed, canvas);
-            }
-            self.canvas.seam_drag.take_if(|_| handle.drag_stopped());
+            let (state, held) = (&mut self.canvas.state, &mut self.canvas.seam_drag);
+            state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
         }
         for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
             let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);

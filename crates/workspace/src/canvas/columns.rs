@@ -1,10 +1,11 @@
 //! The column painter's own decisions over a canvas: what a divider drag
-//! asks for, which pane a layout switch reveals, and whether the column
-//! painter draws a canvas at all. The window keeps the flags and the focus;
-//! what they become is decided here.
+//! asks for and the split a fold keeps, which pane a layout switch reveals,
+//! and whether the column painter draws a canvas at all. The window keeps
+//! the split and the focus; what they become is decided here.
 
 use super::metrics::{COLLAPSE_AT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX};
 use super::presets::{LayoutPreset, PaneKind};
+use super::rail::Hand;
 use super::state::CanvasState;
 
 /// The kind of pane a switch from `previous` to `next` reveals, which takes
@@ -49,6 +50,62 @@ impl CanvasState {
             && self.minimized().is_empty()
             && self.one_side_railed()
             && self.preset() == Some(preset)
+    }
+}
+
+/// The column painter's divider or rail drag in flight: where the divider
+/// stood at the press, the pointer's travel since, and the folds and the
+/// split the press found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColumnHold {
+    at: f32,
+    travel: f32,
+    from: (bool, bool),
+    split: f32,
+}
+
+impl CanvasState {
+    /// The hand on the column painter's divider or rail, one frame, the
+    /// divider drawn `at` points into a canvas `width` wide and `split` the
+    /// painter's: a press takes `hold`, a move lays the columns out by
+    /// [`column_drag`], and a fold keeps the split the press found, so a
+    /// restore opens the side where it stood rather than at the floor the
+    /// drag passed. Letting go drops the hold; a press without a move does
+    /// nothing. Answers whether the canvas or the split changed.
+    pub fn column_hand(
+        &mut self,
+        (hold, split): (&mut Option<ColumnHold>, &mut f32),
+        hand: Hand,
+        (at, width): (f32, f32),
+    ) -> bool {
+        if hand.pressed || (hand.held && hold.is_none()) {
+            let from = self.flow_side_folds();
+            *hold = Some(ColumnHold {
+                at,
+                travel: 0.0,
+                from,
+                split: *split,
+            });
+        }
+        let was = *split;
+        let mut changed = false;
+        let moving = hand.held && hand.delta.abs() > f32::EPSILON && width > 0.0;
+        if let Some(held) = hold.as_mut().filter(|_| moving) {
+            held.travel += hand.delta;
+            let asked = column_drag(held.at + held.travel, width, held.from);
+            if let ColumnDrag::Open(fraction) = asked {
+                changed = self.fold_flow_side(false, false) | self.fold_flow_side(true, false);
+                *split = fraction;
+            } else if asked != ColumnDrag::Hold {
+                *split = held.split;
+                if let Some(preset) = self.preset() {
+                    self.mirror_split(preset, split, true);
+                }
+                changed = self.fold_flow_side(asked == ColumnDrag::FoldFlow, true);
+            }
+        }
+        hold.take_if(|_| hand.released);
+        changed || *split != was
     }
 }
 

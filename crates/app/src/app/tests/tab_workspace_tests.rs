@@ -1840,3 +1840,111 @@ fn the_window_menu_covers_its_workspace_submenu_and_lists_nine_whole() {
         );
     }
 }
+
+/// Texts `output` painted that start with `prefix`, each with whether it
+/// was cut short and where it was painted.
+fn painted_rows(output: &egui::FullOutput, prefix: &str) -> Vec<(String, bool, egui::Rect)> {
+    type Found = Vec<(String, bool, egui::Rect)>;
+    fn walk(shape: &egui::Shape, prefix: &str, found: &mut Found) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with(prefix) => {
+                let at = text.visual_bounding_rect();
+                found.push((text.galley.text().to_owned(), text.galley.elided, at));
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, prefix, found)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in &output.shapes {
+        walk(&clipped.shape, prefix, &mut found);
+    }
+    found
+}
+
+/// Workspaces whose names differ only at their end stay apart in the
+/// bounded menu: beside thirty workspaces the caption gives way first, so
+/// every such name paints whole.
+#[test]
+fn names_that_differ_at_their_end_paint_whole_before_their_captions() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_WIDTH_PT;
+    let long = format!("FORCE BAR {}", "W".repeat(19));
+    let names = [
+        "Force Bar Only".to_owned(),
+        "Force Bar Only 2".to_owned(),
+        format!("{long} 1"),
+        format!("{long} 2"),
+    ];
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-name-first", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let book = app.runtime.workspace.book.book_mut();
+    for name in names.iter().rev() {
+        book.create(first, name).expect("a fresh name");
+    }
+    // A name as wide as a name gets holds the menu at its cap.
+    let widest = "W".repeat(quantick_workspace::workspace_book::MAX_WORKSPACE_NAME);
+    book.create(second, &widest).expect("a fresh name");
+    for n in 1.. {
+        if book.list().len() >= 30 {
+            break;
+        }
+        book.create(second, &format!("Zone {n:02}"))
+            .expect("a fresh name");
+    }
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let width = shown.menu.width();
+    let capped = width <= CHIP_MENU_MAX_WIDTH_PT && width > CHIP_MENU_MAX_WIDTH_PT - 1.0;
+    assert!(capped, "at the bounded width: {width}");
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+    let (upper, lower) = (
+        painted_rows(&output, "FORCE"),
+        painted_rows(&output, "Force"),
+    );
+    let painted: Vec<_> = upper.into_iter().chain(lower).collect();
+    eprintln!("{} pt wide: {painted:?}", shown.menu.width());
+    for name in &names {
+        assert!(
+            painted.iter().any(|(text, cut, _)| text == name && !cut),
+            "{name} painted whole: {painted:?}"
+        );
+    }
+}
+
+/// Nine short names leave every row as it was: each name and its caption
+/// painted whole, the captions lined up at the row's end.
+#[test]
+fn nine_short_names_keep_their_captions_whole() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-nine-captions", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+    let book = app.runtime.workspace.book.book();
+    let mut caption_ends = Vec::new();
+    for row in book.list() {
+        let named = painted_rows(&output, &row.name);
+        assert!(
+            named.iter().any(|(text, cut, _)| *text == row.name && !cut),
+            "{} whole: {named:?}",
+            row.name
+        );
+        let summary = book.summary(&row.name);
+        let beside = painted_rows(&output, &summary);
+        assert!(!beside.is_empty(), "{}: its caption {summary}", row.name);
+        for (_, cut, at) in beside.iter().filter(|(text, ..)| *text == summary) {
+            assert!(!*cut, "{}: {summary} whole", row.name);
+            caption_ends.push(at.right().round() as i64);
+        }
+    }
+    caption_ends.sort_unstable();
+    caption_ends.dedup();
+    assert_eq!(
+        caption_ends.len(),
+        1,
+        "captions end together: {caption_ends:?}"
+    );
+}
