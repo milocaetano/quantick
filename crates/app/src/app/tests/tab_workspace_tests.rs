@@ -1289,3 +1289,426 @@ fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
         "the edit stays held"
     );
 }
+
+/// The window size the trader's desk runs at.
+const FULL_HD: egui::Vec2 = egui::vec2(1920.0, 1000.0);
+
+/// The cell's menu on the first frame it is shown.
+struct Shown {
+    /// The menu's rect and the capsule name's.
+    menu: egui::Rect,
+    name: egui::Rect,
+    /// Each row in view by scene id, with the rect the scene publishes.
+    rows: Vec<(String, egui::Rect)>,
+    /// The frames before it was shown.
+    unseen: usize,
+}
+
+impl Shown {
+    fn row(&self, id: &str) -> Option<egui::Rect> {
+        let mut rows = self.rows.iter();
+        rows.find(|(row, _)| row == id).map(|(_, rect)| *rect)
+    }
+
+    fn listed(&self) -> Vec<egui::Rect> {
+        let rows = self
+            .rows
+            .iter()
+            .filter(|(id, _)| id.contains(".workspace."));
+        rows.map(|(_, rect)| *rect).collect()
+    }
+}
+
+/// Frames at full HD until the cell's menu is shown, as the scene reads it.
+fn until_shown(app: &mut QuantickApp, ctx: &egui::Context) -> Shown {
+    let tab = app.runtime.tabs.active_id();
+    for unseen in 0..6 {
+        run_frame_at(app, ctx, FULL_HD);
+        assert!(app.chrome.window_menu.tab_workspace.chip_menu_on(tab));
+        let drawn = &app.chrome.window_menu.cell_rows;
+        let Some(((menu_row, menu), rows)) = drawn.split_first() else {
+            continue;
+        };
+        assert_eq!(menu_row.scene_id(), "workspace_menu");
+        let rows = rows.iter().map(|(row, rect)| (row.scene_id(), *rect));
+        let name = (app.chrome.toolbar_controls.iter())
+            .find(|control| control.id == "toolbar.capsule.workspace")
+            .expect("the capsule's name")
+            .rect;
+        let rows = rows.collect();
+        return Shown {
+            menu: *menu,
+            name,
+            rows,
+            unseen,
+        };
+    }
+    panic!("the menu was never shown");
+}
+
+/// Open the cell's menu and run it to its first shown frame.
+fn open_cell_menu(app: &mut QuantickApp, ctx: &egui::Context) -> Shown {
+    let tab = app.runtime.tabs.active_id();
+    app.chrome.window_menu.tab_workspace.toggle_chip_menu(tab);
+    until_shown(app, ctx)
+}
+
+/// Workspaces `Desk 01`.. on the first tab until the book holds `count`.
+fn fill_book(app: &mut QuantickApp, tab: u64, count: usize) {
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1.. {
+        if book.list().len() >= count {
+            break;
+        }
+        book.create(tab, &format!("Desk {n:02}"))
+            .expect("a fresh name");
+    }
+}
+
+/// The trader's complaint: the menu off the workspace name stays inside the
+/// window, scrolls its list alone, opens where it hangs, and is as wide as
+/// what it shows this time, not the widest thing it ever showed.
+#[test]
+fn the_cell_menu_stays_inside_the_window_and_narrows_when_its_rows_do() {
+    use quantick_session::workspace_menu::{CHIP_MENU_MAX_LIST_ROWS, CHIP_MENU_MAX_WIDTH_PT};
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-bounded", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 39);
+    let long = "W".repeat(quantick_workspace::workspace_book::MAX_WORKSPACE_NAME);
+    let book = app.runtime.workspace.book.book_mut();
+    book.create(first, &long).expect("a fresh name");
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    let menu = shown.menu;
+    eprintln!("40 workspaces: {} x {} pt", menu.width(), menu.height());
+    assert!(
+        menu.width() <= CHIP_MENU_MAX_WIDTH_PT,
+        "{} wide",
+        menu.width()
+    );
+    assert!(
+        (menu.right() - shown.name.right()).abs() < 1.0,
+        "the first frame shown hangs from the capsule: {menu:?} under {:?}",
+        shown.name
+    );
+    assert!(menu.bottom() <= FULL_HD.y, "bottom {}", menu.bottom());
+    assert!(menu.top() >= shown.name.bottom(), "hangs below the capsule");
+    for fixed in ["autosave", "save", "save_as", "rename", "new", "manage"] {
+        let id = format!("workspace_menu.{fixed}");
+        assert!(shown.row(&id).is_some(), "{id} never scrolls away");
+    }
+    let listed = shown.listed();
+    assert!(
+        listed.len() <= CHIP_MENU_MAX_LIST_ROWS + 1,
+        "{}",
+        listed.len()
+    );
+    let new = shown.row("workspace_menu.new").expect("New");
+    for row in &listed {
+        assert!(row.bottom() <= new.top(), "{row:?} over the footer {new:?}");
+    }
+    let own = format!("workspace_menu.workspace.{long}");
+    assert!(
+        shown.row(&own).is_some(),
+        "the tab's own row is scrolled into view"
+    );
+    let wide = menu.width();
+
+    app.chrome.window_menu.tab_workspace.close_chip_menu();
+    run_frame_at(&mut app, &ctx, FULL_HD);
+    let book = app.runtime.workspace.book.book_mut();
+    let names: Vec<String> = book.list().into_iter().map(|row| row.name).collect();
+    for name in names
+        .iter()
+        .filter(|name| name.starts_with("Desk") || **name == long)
+    {
+        book.delete(name).expect("a stored workspace");
+    }
+    let shown = open_cell_menu(&mut app, &ctx);
+    assert!(
+        shown.menu.width() < wide,
+        "{} after {wide}",
+        shown.menu.width()
+    );
+    let stored = app.runtime.workspace.book.book().list().len();
+    assert_eq!(shown.listed().len(), stored, "every row in view");
+}
+
+/// A workspace made while the menu is open, with a name wider than any row,
+/// is measured again: the menu widens to the cap and the row is listed.
+#[test]
+fn rows_that_change_while_the_menu_is_open_are_measured_again() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_WIDTH_PT;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-remeasure", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let narrow = open_cell_menu(&mut app, &ctx).menu.width();
+    let long = "W".repeat(quantick_workspace::workspace_book::MAX_WORKSPACE_NAME);
+    let book = app.runtime.workspace.book.book_mut();
+    book.create(first, &long).expect("a fresh name");
+    let shown = until_shown(&mut app, &ctx);
+    assert!(shown.unseen > 0, "the new words were measured unseen first");
+    assert!(
+        shown.menu.width() > narrow,
+        "{} after {narrow}",
+        shown.menu.width()
+    );
+    assert!(shown.menu.width() <= CHIP_MENU_MAX_WIDTH_PT);
+    let own = format!("workspace_menu.workspace.{long}");
+    assert!(shown.row(&own).is_some());
+}
+
+/// How many area states egui keeps in `ctx`'s memory.
+fn stored_areas(ctx: &egui::Context) -> usize {
+    let areas = ctx.memory(|memory| format!("{:?}", memory.areas()));
+    areas.matches("AreaState").count()
+}
+
+/// Opening the menu again and again leaves egui no area state per opening.
+#[test]
+fn reopening_the_cell_menu_keeps_one_area_state_per_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-reopen", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    let cycle = |app: &mut QuantickApp, count: usize| {
+        for _ in 0..count {
+            open_cell_menu(app, &ctx);
+            app.chrome.window_menu.tab_workspace.close_chip_menu();
+            run_frame_at(app, &ctx, FULL_HD);
+        }
+    };
+    cycle(&mut app, 2);
+    let settled = stored_areas(&ctx);
+    cycle(&mut app, 30);
+    assert_eq!(stored_areas(&ctx), settled, "30 more openings");
+}
+
+/// The trader's nine workspaces fit whole below the capsule, no row clipped,
+/// and the capsule names the call that reads what the menu lists.
+#[test]
+fn nine_workspaces_fit_below_the_capsule_and_the_name_names_its_call() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_WIDTH_PT;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-nine", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    assert_eq!(app.runtime.workspace.book.book().list().len(), 9);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    eprintln!(
+        "9 workspaces: {} x {} pt",
+        shown.menu.width(),
+        shown.menu.height()
+    );
+    assert!(shown.menu.width() <= CHIP_MENU_MAX_WIDTH_PT);
+    assert!(shown.menu.height() <= FULL_HD.y - shown.name.bottom());
+    let listed = shown.listed();
+    assert_eq!(listed.len(), 9);
+    for row in &listed {
+        assert_eq!(
+            row.height(),
+            listed[0].height(),
+            "no row clipped: {listed:?}"
+        );
+    }
+    let capsule = (app.chrome.toolbar_controls.iter())
+        .find(|control| control.id == "toolbar.capsule.workspace")
+        .expect("the capsule's name");
+    let list = quantick_control_schema::workspace_book::WORKSPACE_LIST_CAPABILITY_ID;
+    assert_eq!(capsule.capability, Some(list));
+}
+
+/// Thirty workspaces show twelve rows and scroll the rest.
+#[test]
+fn thirty_workspaces_show_twelve_rows_and_scroll() {
+    use quantick_session::workspace_menu::CHIP_MENU_MAX_LIST_ROWS;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-thirty", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 30);
+    let ctx = egui::Context::default();
+    let shown = open_cell_menu(&mut app, &ctx);
+    eprintln!(
+        "30 workspaces: {} x {} pt",
+        shown.menu.width(),
+        shown.menu.height()
+    );
+    let listed = shown.listed().len();
+    assert!(
+        (CHIP_MENU_MAX_LIST_ROWS - 1..=CHIP_MENU_MAX_LIST_ROWS + 1).contains(&listed),
+        "{listed} rows in view"
+    );
+}
+
+/// The scene lists the greyed Save unavailable, with the reason a client can
+/// branch on, and the rows a press reaches as available.
+#[test]
+fn the_scene_lists_a_greyed_row_unavailable_with_its_reason() {
+    use quantick_control_handlers::workspace_cell_menu::NO_EDITS_REASON;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-scene", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    let ctx = egui::Context::default();
+    open_cell_menu(&mut app, &ctx);
+    let scene = crate::control::scene_snapshot(&app);
+    let control = |id: &str| {
+        let mut controls = scene.controls.iter();
+        controls.find(|control| control.control_id == id).expect(id)
+    };
+    let save = control("toolbar.workspace_menu.save");
+    assert!(!save.availability.available);
+    assert_eq!(save.availability.reason.as_deref(), Some(NO_EDITS_REASON));
+    assert!(save.bounds.is_some());
+    let menu = control("toolbar.workspace_menu");
+    assert!(menu.selected && menu.availability.available);
+    assert!(control("toolbar.workspace_menu.new").availability.available);
+}
+
+/// Names painted whole or cut short, among the texts `output` painted that
+/// start with `prefix`: (whole, cut).
+fn painted_names(output: &egui::FullOutput, prefix: &str) -> (usize, usize) {
+    fn walk(shape: &egui::Shape, prefix: &str, found: &mut (usize, usize)) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with(prefix) => {
+                if text.galley.elided {
+                    found.1 += 1;
+                } else {
+                    found.0 += 1;
+                }
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, prefix, found)),
+            _ => {}
+        }
+    }
+    let mut found = (0, 0);
+    for clipped in &output.shapes {
+        walk(&clipped.shape, prefix, &mut found);
+    }
+    found
+}
+
+/// Workspaces named `Flow Mini Index Morning Desk NN` until the book holds `count`.
+fn fill_named(app: &mut QuantickApp, tab: u64, count: usize) {
+    let book = app.runtime.workspace.book.book_mut();
+    for n in 1.. {
+        if book.list().len() >= count {
+            break;
+        }
+        book.create(tab, &format!("Flow Mini Index Morning Desk {n:02}"))
+            .expect("a fresh name");
+    }
+}
+
+/// The scroll bar's gutter is counted in the width the menu wants, so names
+/// that fit with nine workspaces still fit with thirty.
+#[test]
+fn names_that_fit_with_nine_workspaces_fit_with_thirty() {
+    let mut widths = Vec::new();
+    for count in [9, 30] {
+        let layouts = crate::scratch::ScratchFile::new("workspace-menu-gutter", "layouts.toml");
+        let (mut app, _, second) = two_tabs(&layouts);
+        // Made on the other tab, so the list's rows, not Save, set the width.
+        fill_named(&mut app, second, count);
+        app.runtime.tabs.select(0);
+        let ctx = egui::Context::default();
+        let shown = open_cell_menu(&mut app, &ctx);
+        let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
+        let (whole, cut) = painted_names(&output, "Flow Mini Index");
+        eprintln!(
+            "{count} workspaces: {} x {} pt",
+            shown.menu.width(),
+            shown.menu.height()
+        );
+        assert!(whole > 0, "{count}: no name painted");
+        assert_eq!(cut, 0, "{count}: {cut} names cut, {whole} whole");
+        widths.push(shown.menu.width());
+    }
+    assert!(
+        widths[0] > 215.0,
+        "nine names wider than the floor: {widths:?}"
+    );
+    assert!(widths[1] > widths[0], "the gutter is counted: {widths:?}");
+}
+
+/// Open the `?` menu and its Workspace submenu at the test window's size:
+/// the menu's rect, the submenu's and the last frame painted.
+fn open_workspace_submenu(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+) -> (egui::Rect, egui::Rect, egui::FullOutput) {
+    use quantick_control_schema::window_menu::KEBAB_CONTROL;
+    run_frame(app, ctx);
+    let kebab = app.chrome.title_bar.control_rect(KEBAB_CONTROL).unwrap();
+    click_sized(app, ctx, TEST_WINDOW, kebab.center());
+    let output = run_frame(app, ctx);
+    let row = painted_text_center(&output, "Workspace").expect("the Workspace row");
+    click_sized(app, ctx, TEST_WINDOW, row);
+    run_frame(app, ctx);
+    let output = run_frame(app, ctx);
+    let pane = |level: usize| {
+        let id = egui::Id::new(("window_menu_pane", level));
+        ctx.memory(|memory| memory.area_rect(id)).expect("a pane")
+    };
+    (pane(0), pane(1), output)
+}
+
+/// The `?` menu's Workspace submenu keeps to the window with thirty
+/// workspaces: twelve rows scroll, the rows after them stay in view.
+#[test]
+fn the_window_menu_workspace_submenu_stays_inside_the_window() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-bounded", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 30);
+    let ctx = egui::Context::default();
+    let (_, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    eprintln!("window submenu, 30 workspaces: {submenu:?}");
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW);
+    assert!(window.contains_rect(submenu), "{submenu:?}");
+    for row in [
+        "Manage workspaces\u{2026}",
+        "Layouts",
+        "Save as new\u{2026}",
+    ] {
+        let at = painted_text_center(&output, row).unwrap_or_else(|| panic!("{row}"));
+        assert!(submenu.contains(at), "{row} at {at:?} out of {submenu:?}");
+    }
+    let listed = painted_text(&output)
+        .iter()
+        .filter(|text| text.starts_with("Desk "))
+        .count();
+    assert!(listed <= 13, "{listed} workspace rows painted");
+}
+
+/// Where the Workspace submenu meets the `?` menu, the menu is on top, as
+/// it was before the rows were shared, and nine workspaces list whole.
+#[test]
+fn the_window_menu_covers_its_workspace_submenu_and_lists_nine_whole() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-submenu-order", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    fill_book(&mut app, first, 9);
+    let ctx = egui::Context::default();
+    let (menu, submenu, output) = open_workspace_submenu(&mut app, &ctx);
+    let overlap = menu.intersect(submenu);
+    eprintln!("menu {menu:?}, submenu {submenu:?}, overlap {overlap:?}");
+    if overlap.is_positive() {
+        let top = ctx.layer_id_at(overlap.center()).expect("a layer");
+        let menu_layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(("window_menu_pane", 0)),
+        );
+        assert_eq!(top, menu_layer, "the submenu draws over the menu");
+    }
+    let names = app.runtime.workspace.book.book().list();
+    for row in names {
+        assert!(
+            painted_text_center(&output, &row.name).is_some(),
+            "{}",
+            row.name
+        );
+    }
+}

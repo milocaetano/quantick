@@ -437,15 +437,16 @@ pub(super) fn workspace_cell(
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     let open = menu.follow_cell(tab, cell.is_some(), &window, clicked || pressed);
     let mut commands = Vec::new();
-    if let Some(cell) = cell.filter(|_| open) {
+    let drawn = cell.filter(|_| open).map(|cell| {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
         let rows = workspace_rows::WorkspaceRows::of(app);
-        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
-    }
+        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands)
+    });
     app.chrome.window_menu.tab_workspace = menu;
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }
+    app.chrome.window_menu.cell_rows = drawn.unwrap_or_default();
 }
 
 /// The commands that need to know which window asked, then all the others.

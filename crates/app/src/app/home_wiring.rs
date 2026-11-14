@@ -40,6 +40,7 @@ pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
     app.chrome.layout_picker_open = false;
     // Nothing of the toolbar is drawn on Home, so the scene lists none of it.
     app.chrome.toolbar_controls.clear();
+    app.chrome.window_menu.cell_rows.clear();
     app.chrome.window_menu.toolbar_door = None;
     let (tab, config) = app.active_with_config();
     tab.settle_source(config);
