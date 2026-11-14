@@ -160,3 +160,123 @@ fn a_column_drag_fold_reopens_by_call_at_the_split_before_the_fold() {
         );
     }
 }
+
+/// The split holding the flow pane: its path, the flow pane's index there,
+/// the split's axis and its child count.
+fn flow_split(state: &CanvasState) -> Option<(Vec<usize>, usize, SplitAxis, usize)> {
+    fn walk(
+        node: &PaneTree,
+        path: &mut Vec<usize>,
+    ) -> Option<(Vec<usize>, usize, SplitAxis, usize)> {
+        let PaneTree::Split { axis, children, .. } = node else {
+            return None;
+        };
+        let flow = |child: &PaneTree| matches!(child, PaneTree::Pane { kind, .. } if *kind == PaneKind::Flow);
+        if let Some(index) = children.iter().position(flow) {
+            return Some((path.clone(), index, *axis, children.len()));
+        }
+        children.iter().enumerate().find_map(|(at, child)| {
+            path.push(at);
+            let found = walk(child, path);
+            path.pop();
+            found
+        })
+    }
+    walk(state.tree(), &mut Vec::new())
+}
+
+/// Every split's shares, depth first.
+fn shares_of(state: &CanvasState) -> Vec<f32> {
+    fn walk(node: &PaneTree, out: &mut Vec<f32>) {
+        if let PaneTree::Split {
+            children, shares, ..
+        } = node
+        {
+            out.extend(shares.iter());
+            children.iter().for_each(|child| walk(child, out));
+        }
+    }
+    let mut out = Vec::new();
+    walk(state.tree(), &mut out);
+    out
+}
+
+/// One `canvas.seam.drag` of the seam after child `index` of the split at
+/// `path`, `by` points in one press.
+fn seam_drag(state: &mut CanvasState, path: &[usize], index: usize, by: f32) {
+    let seam = SeamAddress {
+        path: path.to_vec(),
+        index,
+    };
+    state
+        .step_seam_drag(&mut None, (&seam, by, true), AREA)
+        .unwrap_or_else(|refused| panic!("{seam:?}: {refused}"));
+}
+
+/// Every layout with a flow side, its shares first moved off the preset's:
+/// the flow pane dragged shut, the chart beside it dragged shut, and every
+/// chart beside it dragged shut one rail at a time, each reopened by the
+/// expand call of its side (`layout.flow.expand`, `layout.pane.expand`),
+/// comes back at the shares it had before the drag, no chart under the
+/// least a pane keeps.
+#[test]
+fn an_expand_after_a_drag_fold_reopens_at_the_pre_fold_shares() {
+    for preset in LAYOUT_PRESETS {
+        let mut laid = CanvasState::from_preset(preset);
+        let Some((path, flow, axis, len)) = flow_split(&laid) else {
+            continue;
+        };
+        let whole = match axis {
+            SplitAxis::Row => AREA.w,
+            SplitAxis::Column => AREA.h,
+        };
+        let neighbour = if flow > 0 { flow - 1 } else { flow + 1 };
+        let _ = laid.move_seam(&root_at(&path, flow.min(neighbour)), 37.0, AREA);
+        let before = shares_of(&laid);
+        // A chart folds when its seam with the next child toward the flow
+        // pane is dragged away from the flow; the flow pane, the other way.
+        let shut = |at: usize| if at < flow { -whole } else { whole };
+        let mut cases: Vec<(&str, bool, Vec<(usize, f32)>)> = vec![
+            ("flow", true, vec![(flow.min(neighbour), -shut(neighbour))]),
+            (
+                "one chart",
+                false,
+                vec![(flow.min(neighbour), shut(neighbour))],
+            ),
+        ];
+        let mut charts: Vec<usize> = (0..len).filter(|at| *at != flow).collect();
+        charts.sort_by_key(|at| std::cmp::Reverse(at.abs_diff(flow)));
+        let every = charts.iter().map(|at| {
+            let seam = if *at < flow { *at } else { at - 1 };
+            (seam, shut(*at))
+        });
+        cases.push(("every chart", false, every.collect()));
+        for (case, flow_side, drags) in cases {
+            let name = format!("{} {case}", preset.id);
+            let mut state = laid.clone();
+            for (seam, by) in drags {
+                seam_drag(&mut state, &path, seam, by);
+            }
+            assert!(!state.railed().is_empty(), "{name}: folded");
+            assert!(state.fold_flow_side(flow_side, false), "{name}: expanded");
+            assert!(state.railed().is_empty(), "{name}: open");
+            let after = shares_of(&state);
+            let same = before.iter().zip(&after).all(|(a, b)| (a - b).abs() < EPS);
+            assert!(same, "{name}: the pre-fold shares, {before:?} -> {after:?}");
+            for (slot, rect) in state.rects(AREA) {
+                let least = MIN_TREE_PANE_PX.min(AREA.h / 2.0) - 1.0;
+                assert!(
+                    rect.w >= least && rect.h >= least,
+                    "{name}: {slot} {rect:?}"
+                );
+            }
+        }
+    }
+}
+
+fn root_at(path: &[usize], index: usize) -> SeamAddress {
+    SeamAddress {
+        path: path.to_vec(),
+        index,
+    }
+}
