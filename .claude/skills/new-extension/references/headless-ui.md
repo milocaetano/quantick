@@ -14,8 +14,9 @@ The default route for any new UI surface. Zero `QuantickApp` edits.
    effects stay `Local` or route to the `Host`. The catalog generates the module
    declarations, storage, intent/effect variants and slot drawing.
 
-Test-only fixtures take `[cfg(any(test, feature = "test-support"))] [cfg(test)]`
-on their entry; `second` (`crates/ui-model/src/second.rs`,
+Each entry opens with two attribute groups, model module first, view module
+second: `[] []` for a shipped surface; a test-only fixture takes
+`[cfg(any(test, feature = "test-support"))] [cfg(test)]`. `second` (`crates/ui-model/src/second.rs`,
 `crates/app/src/surfaces/tests/fixtures/second.rs`) is the minimal copy, and
 `new_surface_uses_only_catalog_registration` drives it through a real app frame.
 
