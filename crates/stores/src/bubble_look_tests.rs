@@ -573,3 +573,22 @@ fn an_unbound_view_resets_to_the_code_defaults() {
     );
     assert!(!screen.look.restore_factory(&mut screen.config));
 }
+
+/// Reloading the presets keeps the look an asset made its own: nothing is
+/// worn over the screen, the asset stays filed, and the status says so.
+#[test]
+fn a_presets_reload_keeps_a_tuned_assets_own_look_and_says_so() {
+    let store = AssetBubblesStore::default().shared();
+    let mut screen = bound(&store, ("metatrader-b3", "WINZ26"), &embedded());
+    tune(&mut screen);
+    screen.look.sync(&screen.config, false, false);
+    let tuned = screen.config.clone();
+    let reload = (embedded(), PresetSource::Embedded, None);
+    assert_eq!(screen.look.reload(reload, &mut screen.config), None);
+    assert_eq!(screen.config, tuned, "the asset's edit is still on screen");
+    screen.look.sync(&screen.config, false, false);
+    let binding = screen.look.asset().expect("bound");
+    assert_eq!(binding.source(), AssetSource::Stored);
+    let status = screen.look.status().expect("a status");
+    assert!(status.contains("keeps its own settings"), "{status}");
+}

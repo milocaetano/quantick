@@ -796,4 +796,46 @@ mod tests {
         assert!((0.0..=1.0).contains(&bubbles.sphere_shading));
         assert!((0.0..=1.0).contains(&bubbles.sphere_highlight));
     }
+
+    /// Area, not radius, follows the normalized quantity above the floor.
+    #[test]
+    fn bubble_area_above_the_floor_tracks_normalized_quantity() {
+        let area = |size| bubble_radius(size, 3.0, 13.0).powi(2) - 9.0;
+        assert!((area(0.5) / area(1.0) - 0.25).abs() < 1e-5);
+    }
+
+    /// The nudge names a book side: buys toward the ask, sells toward the
+    /// bid, equal and opposite, and mirrored on an upside-down chart.
+    #[test]
+    fn the_side_nudge_is_equal_opposite_and_mirrors_upside_down() {
+        assert_eq!(side_offset_y(AggressorSide::Buy, 4.0, false), -4.0);
+        assert_eq!(side_offset_y(AggressorSide::Sell, 4.0, false), 4.0);
+        assert_eq!(side_offset_y(AggressorSide::Buy, 0.0, false), 0.0);
+        assert_eq!(side_offset_y(AggressorSide::Buy, 4.0, true), 4.0);
+        assert_eq!(side_offset_y(AggressorSide::Sell, 4.0, true), -4.0);
+    }
+
+    /// A print at the dust threshold is drawn exactly on the readability
+    /// floor; with no reference, or no floor above the minimum, nothing is dust.
+    #[test]
+    fn the_dust_threshold_lands_on_the_readability_floor() {
+        use rust_decimal::prelude::ToPrimitive as _;
+        let style = BubbleStyle::default();
+        let reference = Decimal::from(400);
+        let dust = style
+            .dust_quantity(reference)
+            .expect("a floor above the minimum");
+        let size = (dust / reference).to_f32().unwrap().sqrt();
+        let radius = bubble_radius(size, style.min_radius, style.max_radius);
+        assert!(
+            (radius - style.readable_min_radius).abs() < 1e-3,
+            "{radius}"
+        );
+        assert_eq!(style.dust_quantity(Decimal::ZERO), None);
+        let flat = BubbleStyle {
+            readable_min_radius: 0.0,
+            ..BubbleStyle::default()
+        };
+        assert_eq!(flat.dust_quantity(reference), None);
+    }
 }

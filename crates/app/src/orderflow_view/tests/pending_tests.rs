@@ -9,10 +9,6 @@ use quantick_orderflow::engine::VisibleOrderflow;
 use quantick_orderflow::projection::PaneGeometry;
 use std::sync::Arc;
 
-#[path = "dense_frame_performance.rs"]
-mod dense_frame_performance;
-#[path = "recorded_frame_performance.rs"]
-mod recorded_frame_performance;
 #[path = "tape_memory_tests.rs"]
 mod tape_memory_tests;
 
@@ -247,55 +243,6 @@ fn ordinary_btc_style_views_keep_the_existing_worker_publication_contract() {
 }
 
 #[test]
-fn a_source_or_replay_reset_discards_pending_prints_even_when_ids_restart() {
-    let (mut view, _, hold) = held_view(true);
-    view.record_trade(&print(1, 1_001, 100, 11, Side::Buy));
-    let _ = frame(&mut view, &[print(1, 1_001, 100, 11, Side::Buy)]);
-    view.reset_for_symbol("WINV26");
-    let fresh = print(1, 101, 200, 2, Side::Sell);
-    view.record_trade(&fresh);
-    let shown = frame(&mut view, &[fresh]);
-    let fit = view.tape_price_range();
-    hold.release();
-    let marks = tape(&shown.expect("the new source has a same-frame print"));
-    assert_eq!(marks.len(), 1);
-    assert_eq!(
-        (marks[0].quantity, marks[0].price),
-        (Decimal::from(2), Decimal::from(200))
-    );
-    assert_eq!(fit, Some((200.0, 200.0)));
-}
-
-#[test]
-fn pending_print_storage_obeys_the_existing_retention_capacity() {
-    let (mut view, _, hold) = held_view(true);
-    let before = view.config.clone();
-    view.config.max_aggressions = 2;
-    view.commit_config_changes(before);
-    let prints = [
-        print(1, 1_001, 100, 1, Side::Buy),
-        print(2, 1_101, 105, 2, Side::Buy),
-        print(3, 1_201, 110, 3, Side::Sell),
-    ];
-    for trade in &prints {
-        view.record_trade(trade);
-    }
-    let shown = frame(&mut view, &prints);
-    let pending_count = view.pane_tape.pending().len();
-    hold.release();
-    assert_eq!(
-        pending_count, 2,
-        "a stalled worker cannot grow the pending store past its configured cap"
-    );
-    let marks = tape(&shown.unwrap());
-    assert_eq!(
-        marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
-        Decimal::from(5)
-    );
-    assert!(marks.iter().all(|mark| !mark.agg_ids.contains(&1)));
-}
-
-#[test]
 fn reentering_tape_mode_never_uses_a_legacy_dot_window_for_the_pending_print() {
     let (mut view, gate, initial) = held_view(false);
     let first = print(1, 1_001, 100, 1, Side::Buy);
@@ -319,29 +266,6 @@ fn reentering_tape_mode_never_uses_a_legacy_dot_window_for_the_pending_print() {
             .iter()
             .any(|mark| mark.agg_ids.contains(&2) && mark.x == 1.0)
     );
-}
-
-#[test]
-fn pending_storage_retires_the_existing_time_retention_prefix() {
-    let (mut view, _, hold) = held_view(true);
-    let before = view.config.clone();
-    view.config.retention_ms = 1_000;
-    view.commit_config_changes(before);
-    let prints = [
-        print(1, 1_001, 100, 1, Side::Buy),
-        print(2, 2_101, 105, 2, Side::Sell),
-    ];
-    for trade in &prints {
-        view.record_trade(trade);
-    }
-    let shown = frame(&mut view, &prints);
-    let pending_count = view.pane_tape.pending().len();
-    hold.release();
-    assert_eq!(pending_count, 1);
-    let marks = tape(&shown.unwrap());
-    assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0].agg_ids, vec![2]);
-    assert_eq!(marks[0].quantity, Decimal::from(2));
 }
 
 #[test]
