@@ -520,3 +520,39 @@ fn a_regions_sectors_sweep_its_exact_sides_in_turn() {
     let sold: Vec<_> = region(1).unwrap().sectors(&frame, 1.0).collect();
     assert_eq!(sold, [(1, 1.0, tau as f32)], "the buy side draws nothing");
 }
+
+/// Tick spheres stand on their own executions: no uniform offset and no peak
+/// relocation, so a sphere never moves when another arrives beside it.
+/// Regional FLOW draws the same places at its uniform offset.
+#[test]
+fn tick_spheres_stand_on_their_executions() {
+    let frame = frame(&[4500, 4500]);
+    let centers = [[100.0, 150.0], [102.0, 150.0]];
+    let at = |dot: &FlowTapeDot| Some(centers[dot.mark.agg_id as usize - 1]);
+    let tick = quantick_orderflow::TickBubbleStyle {
+        zoom_regions: false,
+        viewport_scale: None,
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+        reference_quantity: 4500.0,
+        max_radius: 12.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let spheres = FlowPresentation::styled(&frame, HISTORY, Some(tick), at);
+    let regional = FlowPresentation::new(&frame, HISTORY, at);
+    assert_eq!(spheres.regions.len(), 2);
+    let offset = crate::flow_execution::FLOW_EXECUTION_OFFSET;
+    for sphere in &spheres.regions {
+        let [x, y] = centers[frame.dots[sphere.dot_index].mark.agg_id as usize - 1];
+        assert_eq!(sphere.source_disc.center, [x, y], "no offset");
+        assert_eq!(sphere.disc, sphere.source_disc, "no relocation");
+        let flow = regional
+            .regions
+            .iter()
+            .find(|r| r.dot_index == sphere.dot_index);
+        assert_eq!(
+            flow.unwrap().source_disc.center,
+            [x + offset[0], y + offset[1]]
+        );
+    }
+}

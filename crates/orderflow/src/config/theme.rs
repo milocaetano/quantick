@@ -530,4 +530,27 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn render_style_sanitizes_non_finite_geometry() {
+        let style = OrderflowRenderStyle {
+            heat_opacity: f32::NAN,
+            min_cell_height: f32::INFINITY,
+            edge_glow: -1.0,
+            bubbles: BubbleStyle {
+                max_radius: -4.0,
+                label_min_radius: f32::NAN,
+                ..BubbleStyle::default()
+            },
+            legend_max_width: f32::NAN,
+            ..OrderflowRenderStyle::default()
+        }
+        .sanitized();
+        assert_eq!(style.heat_opacity, 1.0);
+        assert_eq!(style.min_cell_height, 1.5);
+        assert_eq!(style.edge_glow, 0.0);
+        assert!(style.bubbles.max_radius >= style.bubbles.min_radius);
+        assert!(style.bubbles.label_min_radius.is_finite());
+        assert!(style.legend_max_width.is_finite());
+    }
 }
