@@ -518,3 +518,52 @@ fn one_grid_chart_folded_keeps_the_other_legends() {
             .expect("an open tab");
     assert!(!recipe.context_collapsed, "a save writes no column fold");
 }
+
+/// "4 TF + Flow", a chart of the grid dragged shut and then the flow column,
+/// each drag stepped through frames as the hand's is: the first rail stays
+/// folded after the second, and both rails draw.
+#[test]
+fn a_second_fold_on_grid4_flow_keeps_the_first_rail_through_frames() {
+    use quantick_workspace::canvas::{SeamAddress, tree_rails};
+    let ctx = egui::Context::default();
+    let (mut app, _evt, _cmd, _book) = test_app();
+    run_frame(&mut app, &ctx);
+    app.apply_layout_preset(crate::canvas_layout::preset("grid4+flow").expect("registered"));
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let area = app.active_tab().canvas.last_canvas;
+    let whole = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
+    let drag = |app: &mut QuantickApp, path: Vec<usize>| {
+        let seam = SeamAddress { path, index: 0 };
+        let mut held = None;
+        for _ in 0..16 {
+            let step = (&seam, whole.w / 16.0, false);
+            let state = &mut app.active_tab_mut().canvas.state;
+            state
+                .step_seam_drag(&mut held, step, whole)
+                .expect("the seam moves");
+            run_frame(app, &ctx);
+        }
+        run_frame(app, &ctx);
+    };
+    // Reading order: the grid's four charts, then the flow pane.
+    let panes = app.active_tab().canvas.state.tree().panes();
+    let (top_right, flow) = (panes[1].0, panes[4].0);
+    drag(&mut app, vec![0, 0]);
+    let first: Vec<_> = (app.active_tab().canvas.state.railed().iter().copied()).collect();
+    assert_eq!(first, [top_right], "the grid's top-right chart folded");
+    drag(&mut app, Vec::new());
+    let state = &app.active_tab().canvas.state;
+    assert!(state.railed().contains(&flow), "the flow column folded");
+    assert!(
+        state.railed().contains(&top_right),
+        "the first rail stays folded: {:?}",
+        state.railed()
+    );
+    assert_eq!(
+        tree_rails(state, whole, CANVAS_DIVIDER_PX).len(),
+        2,
+        "two rails"
+    );
+}

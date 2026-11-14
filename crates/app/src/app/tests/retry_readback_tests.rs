@@ -2253,3 +2253,61 @@ fn a_collapse_with_nothing_to_fold_answers_as_before() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+/// On a charts-only layout every chart is a context chart, and expanding the
+/// context brings back the ones a drag folded, at the shares they had, as
+/// `canvas.pane.restore` would: a silent `changed: false` there left the
+/// rail standing. A second expand finds nothing folded.
+#[test]
+fn expanding_a_charts_only_layout_reopens_its_rails() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-expand-charts-only");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    for id in [
+        "charts-2", "charts-3", "charts-4", "charts-5", "charts-6", "charts-7", "charts-8",
+    ] {
+        app.apply_layout_preset(crate::canvas_layout::preset(id).expect("registered"));
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let area = app.active_tab().canvas.last_canvas;
+        let whole = quantick_workspace::canvas::CanvasRect::new(
+            area.left(),
+            area.top(),
+            area.width(),
+            area.height(),
+        );
+        let seam = quantick_workspace::canvas::SeamAddress {
+            path: Vec::new(),
+            index: 0,
+        };
+        (app.active_tab_mut().canvas.state)
+            .step_seam_drag(&mut None, (&seam, -10_000.0, true), whole)
+            .expect("the first seam folds");
+        run_frame(&mut app, &ctx);
+        assert!(!app.active_tab().canvas.state.railed().is_empty(), "{id}");
+        for changed in [true, false] {
+            let (answer, _) = unkeyed_call_at(
+                &mut app,
+                &mut client,
+                "layout.pane.expand",
+                LAYOUT_V2,
+                json!({}),
+            );
+            let result = success_result(&answer);
+            assert_eq!(result["changed"], json!(changed), "{id}: {result}");
+            run_frame(&mut app, &ctx);
+            let state = &app.active_tab().canvas.state;
+            assert!(state.railed().is_empty(), "{id}: every rail reopened");
+        }
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}

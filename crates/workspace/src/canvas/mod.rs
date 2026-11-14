@@ -73,6 +73,8 @@ mod drop_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod rail_tests;
+#[cfg(test)]
 mod seams_tests;
 #[cfg(test)]
 mod state_tests;
