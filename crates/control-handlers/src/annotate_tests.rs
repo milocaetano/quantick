@@ -618,3 +618,40 @@ fn a_projection_call_takes_two_anchors_or_the_legacy_three() {
     assert!(refused.is_err(), "a retracement never takes three");
     assert_eq!(window.flow.drawings.items().len(), 2, "nothing more placed");
 }
+
+/// A Fibonacci call short of its leg is refused and places nothing.
+#[test]
+fn a_fibonacci_call_with_one_anchor_places_nothing() {
+    let anchor = json!({ "time_unix_ms": 1_000, "bar_position": "0.5", "price": "100" });
+    let mut window = FakeWindow::new();
+    for capability in [FIB_RETRACEMENT_CAPABILITY_ID, FIB_PROJECTION_CAPABILITY_ID] {
+        let input = json!({ "anchors": [anchor] });
+        let error = call(&mut window, &mut FakeAccess::default(), capability, input)
+            .expect_err("one anchor is no leg");
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST, "{capability}");
+    }
+    assert!(window.flow.drawings.items().is_empty());
+}
+
+/// A profile anchor past the last bar answers in chart space, with no time
+/// the chart does not have.
+#[test]
+fn a_profile_anchor_past_the_last_bar_answers_without_a_time() {
+    let anchors = json!([
+        { "time_unix_ms": 2_000, "bar_position": "1.5", "price": "100" },
+        { "bar_position": "12.5", "price": "104.25" }
+    ]);
+    let mut window = FakeWindow::new();
+    let version = (PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION);
+    let placed = call_version(
+        &mut window,
+        &mut FakeAccess::default(),
+        version,
+        json!({ "anchors": anchors }),
+    )
+    .expect("version 2 takes projected chart space");
+    assert_eq!(placed["anchors"][1]["bar_position"], "12.5");
+    assert!(placed["anchors"][1].get("time_unix_ms").is_none());
+    let points = &window.flow.drawings.items()[0].points;
+    assert_eq!(points[1], ChartPoint::at_time(12.5, 104.25, None));
+}
