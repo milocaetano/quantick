@@ -95,7 +95,7 @@ impl LayoutTab for Tab {
         changed
     }
     fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
-        self.canvas.fold(false, collapsed)
+        self.canvas.state.fold_context(collapsed)
     }
     fn flow_has_rail(&self) -> bool {
         let layout = self.canvas.layout;

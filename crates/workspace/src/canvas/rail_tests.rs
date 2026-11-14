@@ -180,3 +180,67 @@ fn every_second_fold_of_every_layout_keeps_the_first() {
     }
     assert!(beside_pairs > 0, "the rail rule is exercised");
 }
+
+/// The outer side folded over a rail and dragged back open in the same
+/// gesture: the rail inside it stays folded, and its restore still opens it
+/// at the shares it had.
+#[test]
+fn a_rail_inside_a_side_folded_and_reopened_in_one_drag_stays_folded() {
+    let mut state = canvas("grid4+flow");
+    let before = state.clone();
+    drag_shut(&mut state, &seam(&[0, 0], 0), true);
+    let mut held = None;
+    for by in [-AREA.w, AREA.w] {
+        for _ in 0..16 {
+            let step = (&seam(&[], 0), by / 16.0, false);
+            state.step_seam_drag(&mut held, step, AREA).unwrap();
+        }
+        if by < 0.0 {
+            assert_eq!(state.railed().len(), 4, "the grid folded whole");
+        }
+    }
+    assert_eq!(
+        state.railed().iter().copied().collect::<Vec<_>>(),
+        [1],
+        "the grid opened, its folded chart did not"
+    );
+    assert_eq!(state.restore(1), Ok(true));
+    let Some(PaneTree::Split { shares, .. }) = node_at(state.tree(), &[0, 0]) else {
+        panic!("the grid's top row");
+    };
+    let Some(PaneTree::Split { shares: was, .. }) = node_at(before.tree(), &[0, 0]) else {
+        panic!("the grid's top row");
+    };
+    assert!(
+        (shares.iter().zip(was.iter())).all(|(a, b)| (a - b).abs() < 1e-5),
+        "{shares:?} vs {was:?}"
+    );
+}
+
+/// The context column's expand on a layout with no flow pane: every chart
+/// is context, so it opens every rail at its pre-fold shares, as a restore
+/// does; a second finds nothing, and a collapse has no column to fold.
+#[test]
+fn a_context_expand_without_a_flow_pane_opens_every_rail() {
+    for id in [
+        "charts-2", "charts-3", "charts-4", "charts-5", "charts-6", "charts-7", "charts-8",
+    ] {
+        let fresh = canvas(id);
+        let mut state = fresh.clone();
+        assert!(!state.fold_context(true), "{id}: no column to collapse");
+        drag_shut(&mut state, &seam(&[], 0), false);
+        assert!(!state.railed().is_empty(), "{id}");
+        assert!(state.fold_context(false), "{id}: the rail opens");
+        assert!(state.railed().is_empty(), "{id}");
+        assert_eq!(state, fresh, "{id}: at the shares it had");
+        assert!(!state.fold_context(false), "{id}: nothing left folded");
+    }
+    let mut flow = canvas("time+time+flow");
+    assert!(
+        flow.fold_context(true),
+        "beside a flow pane it folds the charts"
+    );
+    assert_eq!(flow.flow_side_folds(), (true, false));
+    assert!(flow.fold_context(false));
+    assert_eq!(flow, canvas("time+time+flow"));
+}
