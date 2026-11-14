@@ -8,7 +8,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_control_handlers::workspace_cell_menu::CellRow;
+use quantick_control_handlers::workspace_book::cell_menu::CellRow;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::{
     self, HOME_SHOWN_HOVER, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId,

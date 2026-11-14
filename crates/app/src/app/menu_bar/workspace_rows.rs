@@ -4,8 +4,8 @@
 
 use crate::app::tab_workspaces::symbols_of;
 use eframe::egui;
-use quantick_control_handlers::workspace_cell_menu::{CellRow, RowKind, action_row, cell_menu};
-use quantick_control_handlers::workspace_cell_menu::{state_of, window_list};
+use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowKind, action_row};
+use quantick_control_handlers::workspace_book::cell_menu::{cell_menu, state_of, window_list};
 use quantick_control_schema::window_menu::{self as text, RowId, row_of};
 use quantick_session::workspace_menu::{self as model, ChipSizing, MenuBounds, MenuMetrics};
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};

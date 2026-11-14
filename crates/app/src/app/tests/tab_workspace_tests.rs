@@ -1675,7 +1675,7 @@ fn thirty_workspaces_show_twelve_rows_and_scroll() {
 /// branch on, and the rows a press reaches as available.
 #[test]
 fn the_scene_lists_a_greyed_row_unavailable_with_its_reason() {
-    use quantick_control_handlers::workspace_cell_menu::NO_EDITS_REASON;
+    use quantick_control_handlers::workspace_book::cell_menu::NO_EDITS_REASON;
     let layouts = crate::scratch::ScratchFile::new("workspace-menu-scene", "layouts.toml");
     let (mut app, _, _) = two_tabs(&layouts);
     app.runtime.tabs.select(0);
