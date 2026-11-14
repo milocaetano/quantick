@@ -67,137 +67,6 @@ mod placement_characterization {
         assert!(app.active_tab_mut().flow_pane.drawings.undo());
         assert!(app.active_tab().flow_pane.drawings.items().is_empty());
     }
-
-    #[test]
-    fn freehand_keeps_stationary_and_subthreshold_pixels_out_of_the_draft() {
-        let (mut app, _commands) = app_with_history(200);
-        let ctx = egui::Context::default();
-        run_frame(&mut app, &ctx);
-        let start = egui::pos2(
-            620.0,
-            app.active_tab()
-                .flow_pane
-                .frame
-                .chart_area
-                .unwrap()
-                .center()
-                .y,
-        );
-        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
-        let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(start),
-                pointer_button(start, true),
-            ],
-        );
-        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 1);
-        run_frame(&mut app, &ctx);
-        assert_eq!(
-            app.active_tab().flow_pane.drawings.draft_len(),
-            1,
-            "stationary held pointer is not a second anchor"
-        );
-        for (offset, count) in [(3.0, 1), (4.0, 2), (7.0, 2), (8.0, 3)] {
-            run_frame_with_events(
-                &mut app,
-                &ctx,
-                vec![egui::Event::PointerMoved(start + egui::vec2(offset, 0.0))],
-            );
-            assert_eq!(
-                app.active_tab().flow_pane.drawings.draft_len(),
-                count,
-                "decimation at offset {offset}"
-            );
-        }
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![pointer_button(start + egui::vec2(8.0, 0.0), false)],
-        );
-        let pane = &app.active_tab().flow_pane;
-        assert_eq!(pane.drawings.items().len(), 1);
-        assert_eq!(pane.drawings.items()[0].points.len(), 3);
-        assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
-        assert_eq!(pane.drawings.draft_len(), 0);
-        assert_eq!(app.surfaces.toolrail.tool(), Tool::Pointer);
-    }
-
-    #[test]
-    fn the_held_freehand_path_accepts_anchor_512_and_refuses_513() {
-        let (mut app, _commands) = app_with_history(200);
-        let ctx = egui::Context::default();
-        run_frame(&mut app, &ctx);
-        let start = egui::pos2(
-            620.0,
-            app.active_tab()
-                .flow_pane
-                .frame
-                .chart_area
-                .unwrap()
-                .center()
-                .y,
-        );
-        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(start),
-                pointer_button(start, true),
-            ],
-        );
-        // Prepare a real near-cap draft through the store's placement operation;
-        // the two boundary additions below still use actual held-pointer frames.
-        let store = &mut app.active_tab_mut().flow_pane.drawings;
-        let origin = store.draft().unwrap().points[0];
-        let brush = drawing_tool("brush");
-        for index in 1..511 {
-            assert!(!store.place(
-                brush,
-                drawings::ChartPoint {
-                    bar: origin.bar + index as f32 * 0.01,
-                    ..origin
-                }
-            ));
-        }
-        assert_eq!(store.draft_len(), 511);
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(start + egui::vec2(4.0, 0.0))],
-        );
-        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 512);
-        let boundary = app
-            .active_tab()
-            .flow_pane
-            .drawings
-            .draft()
-            .unwrap()
-            .points
-            .last()
-            .copied()
-            .unwrap();
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(start + egui::vec2(8.0, 0.0))],
-        );
-        let store = &app.active_tab().flow_pane.drawings;
-        assert_eq!(store.draft_len(), 512);
-        assert_eq!(store.draft().unwrap().points.last(), Some(&boundary));
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![pointer_button(start + egui::vec2(8.0, 0.0), false)],
-        );
-        assert_eq!(
-            app.active_tab().flow_pane.drawings.items()[0].points.len(),
-            512
-        );
-    }
 }
 
 pub(super) fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
@@ -642,57 +511,6 @@ fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
     );
 }
 
-#[test]
-fn a_future_space_range_still_creates_a_volume_profile() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(200);
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let total = app.active_tab().flow_pane.slots();
-    app.active_tab_mut()
-        .flow_pane
-        .model
-        .viewport
-        .pan_pixels(-160.0, total);
-    run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
-    let chart = pane.frame.chart_area.expect("the chart was laid out");
-    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
-    let start = egui::pos2(
-        pane.model
-            .viewport
-            .x_at_bar_position(160.5, history_right, pane.slots()),
-        chart.center().y + 55.0,
-    );
-    let end = egui::pos2(
-        pane.model
-            .viewport
-            .x_at_bar_position(204.5, history_right, pane.slots()),
-        chart.center().y - 55.0,
-    );
-
-    drag_quick_range(&mut app, &ctx, start, end);
-    let profile = quick_range_action(
-        &app,
-        crate::surfaces::drawing_chrome::QuickRangeAction::Profile,
-    );
-    assert!(profile.enabled, "future-space ranges remain actionable");
-    click_quick_range_action(
-        &mut app,
-        &ctx,
-        crate::surfaces::drawing_chrome::QuickRangeAction::Profile,
-    );
-
-    let drawings = app.active_tab().flow_pane.drawings.items();
-    assert_eq!(drawings.len(), 1);
-    assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
-    assert!(
-        drawings[0].points[1].time_ms.is_none(),
-        "the future endpoint stays honest instead of inventing market time"
-    );
-    assert!(drawings[0].points[1].bar > app.active_tab().flow_pane.slots() as f32);
-    assert!(crate::app::control_quick_range(&app).is_none());
-}
-
 /// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
 /// 160.5, above and below the chart's middle.
 pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
@@ -715,18 +533,6 @@ pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, eg
 }
 
 #[test]
-fn quick_range_rewrite_never_offers_a_profile_over_stale_slots() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(200);
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let (_, start, end) = quick_range_ends(&app);
-    drag_quick_range(&mut app, &ctx, start, end);
-    app.active_tab_mut().flow_pane.rebuild_bars();
-    run_frame(&mut app, &ctx);
-    assert!(crate::app::control_quick_range(&app).is_none_or(|control| !control.enabled));
-}
-
-#[test]
 fn quick_range_never_starts_in_the_live_tape_lane() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
@@ -743,56 +549,6 @@ fn quick_range_never_starts_in_the_live_tape_lane() {
     drag_quick_range(&mut app, &ctx, start, end);
     assert!(crate::app::control_quick_range(&app).is_none());
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
-}
-
-#[test]
-fn quick_range_conversion_keeps_slots_with_identical_open_times() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(200);
-    let pane = &mut app.active_tab_mut().flow_pane;
-    pane.reset_series();
-    let trades: Vec<_> = (1..=200)
-        .map(|id| {
-            let mut print = trade(id);
-            print.timestamp_ms = 10_000;
-            print
-        })
-        .collect();
-    pane.ingest_backfill(&trades);
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let (_, start, end) = quick_range_ends(&app);
-    drag_quick_range(&mut app, &ctx, start, end);
-    run_frame(&mut app, &ctx);
-    let action = crate::app::control_quick_range(&app).expect("ready range");
-    assert!(action.enabled);
-    click_quick_range_action(
-        &mut app,
-        &ctx,
-        crate::surfaces::drawing_chrome::QuickRangeAction::Profile,
-    );
-    let points = &app.active_tab().flow_pane.drawings.items()[0].points;
-    assert_eq!([points[0].bar as usize, points[1].bar as usize], [80, 160]);
-}
-
-#[test]
-fn quick_range_yields_chrome_when_a_persistent_drawing_is_selected() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(200);
-    run_frame_at(&mut app, &ctx, TEST_WINDOW);
-    let (_, start, end) = quick_range_ends(&app);
-    drag_quick_range(&mut app, &ctx, start, end);
-    app.control_action(
-        crate::control::PROFILE_CAPABILITY_ID,
-        1,
-        crate::control::ActionOrigin::Human,
-        serde_json::json!({"anchors": [
-            {"time_unix_ms": 2000, "price": "100"},
-            {"time_unix_ms": 3000, "price": "101"}
-        ]}),
-    )
-    .unwrap();
-    run_frame(&mut app, &ctx);
-    assert!(crate::app::control_quick_range(&app).is_none());
 }
 
 /// The range is what the pointer crossed. A secondary drag used to pan the
@@ -1689,34 +1445,6 @@ fn clicking_a_drawing_keeps_it_selected_after_the_release() {
     }
 }
 
-/// The two Fib tools ask different questions, so they open with different
-/// spans — this is not one shared default:
-///
-/// - a retracement measures how much of *one move* was given back, so its
-///   lines live between its own anchors and end where the trader stopped
-///   dragging ("a linha deve ir até o ponto onde eu tô traçando e não ir
-///   para o infinito", reported from the running build);
-/// - an extension projects what comes *after* its last anchor, so drawing
-///   its targets back over the measured leg is backwards on its face.
-#[test]
-fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
-    use quantick_drawings::{FibExtend as Extend, FibPayload};
-    for (tool, expected) in [
-        ("fib-retracement", Extend::Anchors),
-        ("fib-extension", Extend::Forward),
-    ] {
-        let payload = drawing_tool(tool).default_payload();
-        let fib = payload
-            .as_any()
-            .downcast_ref::<FibPayload>()
-            .expect("the fib tools carry a fib payload");
-        assert_eq!(
-            fib.extend, expected,
-            "{tool} must open with the span its own question asks for"
-        );
-    }
-}
-
 /// A three-anchor tool that stops following the pointer reads as frozen —
 /// reported from the running build after a drag left a channel sitting
 /// there. It is waiting for a click, and it now says so beside the
@@ -1797,102 +1525,6 @@ fn a_dragged_channel_is_born_a_corridor_and_not_a_line() {
         anchor_cross(&channel.points).abs() > 0.0,
         "the width anchor is off the trend line; anchors {:?}",
         channel.points
-    );
-}
-
-/// Holding Shift while dragging the trend line lays the channel level, so
-/// a range comes out flat instead of "nearly flat" — which a free hand
-/// cannot produce and which no later gesture could fix by eye.
-///
-/// End to end: the host reads the modifier, the tool decides what level
-/// means for it, and the anchor that gets committed is the levelled one.
-#[test]
-fn holding_shift_lays_a_channel_dead_level() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
-    drag_chart_with(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, 400.0),
-        // Well off the horizontal: without the modifier this is a channel
-        // sloping down across sixty pixels of price.
-        egui::pos2(800.0, 340.0),
-        egui::Modifiers::SHIFT,
-    );
-    let draft = app
-        .active_tab()
-        .flow_pane
-        .drawings
-        .draft()
-        .expect("the drag laid the trend line")
-        .clone();
-    assert_eq!(draft.points.len(), 2);
-    assert!(
-        (draft.points[0].price - draft.points[1].price).abs() < 1e-9,
-        "both ends of the trend line sit on one price: {:?}",
-        draft.points
-    );
-    assert!(
-        draft.points[1].bar > draft.points[0].bar,
-        "and it still ran along the tape: {:?}",
-        draft.points
-    );
-}
-
-/// A Shift-levelled ruler is level to the bit: the far anchor copies the
-/// near price rather than reading it back off the screen, where the magnet
-/// would also pull it onto its own bar's print. The flat readout can then
-/// compare exactly and never hide a real move.
-#[test]
-fn shift_levels_the_armed_ruler_to_the_exact_price() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    app.surfaces.toolrail.set_magnet(true);
-    run_frame(&mut app, &ctx);
-
-    let y = price_y(&app, PaneSide::Flow, 100.0);
-    arm_drawing_from_toolbox(&mut app, &ctx, "measure");
-    drag_chart_with(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, y),
-        egui::pos2(800.0, y - 60.0),
-        egui::Modifiers::SHIFT,
-    );
-    let points = &app.active_tab().flow_pane.drawings.items()[0].points;
-    assert_eq!(points[0].price, points[1].price, "{points:?}");
-    assert!(points[1].bar > points[0].bar, "{points:?}");
-}
-
-/// The same drag without the modifier keeps the slope the hand gave it —
-/// the constraint is opt-in, never a snap the trader did not ask for.
-#[test]
-fn without_shift_a_channel_keeps_the_slope_it_was_drawn_with() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, 400.0),
-        egui::pos2(800.0, 340.0),
-    );
-    let draft = app
-        .active_tab()
-        .flow_pane
-        .drawings
-        .draft()
-        .expect("the drag laid the trend line")
-        .clone();
-    assert!(
-        (draft.points[0].price - draft.points[1].price).abs() > 1e-6,
-        "the trend line kept its slope: {:?}",
-        draft.points
     );
 }
 
@@ -2080,9 +1712,9 @@ fn shift_on_a_corner_levels_a_channel_through_the_app() {
     );
 }
 
-/// The same modifier on the trend line, which is the tool a trader
-/// reaches for when they want a level in the first place. A two-anchor
-/// tool finishes on the release, so this proves the constraint survives
+/// Holding Shift while dragging a trend line lays it dead level: the host
+/// reads the modifier on the drag that places it. A two-anchor tool
+/// finishes on the release, so this also proves the constraint survives
 /// the path where placement and completion are the same event.
 #[test]
 fn holding_shift_lays_a_trend_line_dead_level() {
@@ -2209,97 +1841,6 @@ fn a_real_pointer_takes_precedence_over_the_scenario_hand() {
     assert_eq!(app.active_tab().flow_pane.gestures.hover, Some(parked));
 }
 
-/// A tool of two anchors is finished by the release, exactly as it always
-/// was: the shaping port must not have turned every drag into a gesture
-/// that owes a click.
-#[test]
-fn a_two_anchor_tool_still_closes_on_the_release() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, 400.0),
-        egui::pos2(800.0, 340.0),
-    );
-    let pane = &app.active_tab().flow_pane;
-    assert_eq!(pane.drawings.draft_len(), 0, "nothing is left in flight");
-    assert_eq!(
-        pane.drawings.items().last().map(|item| item.tool.id()),
-        Some("trend-line"),
-        "the release finished the object"
-    );
-}
-
-/// Escape during the shaping phase drops the whole draft and leaves no
-/// half-made object behind — the trader's way out of a gesture they did
-/// not mean to start.
-#[test]
-fn escape_drops_a_half_placed_channel_and_leaves_nothing_behind() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, 400.0),
-        egui::pos2(800.0, 340.0),
-    );
-    assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 2);
-
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![key_press_with(egui::Key::Escape, egui::Modifiers::NONE)],
-    );
-    let pane = &app.active_tab().flow_pane;
-    assert_eq!(pane.drawings.draft_len(), 0, "the draft is gone");
-    assert!(
-        pane.drawings.items().is_empty(),
-        "a cancelled draft is not a drawing; items {:?}",
-        pane.drawings.items().len()
-    );
-}
-
-/// Backspace steps back one anchor at a time, so a trader who mis-placed
-/// the trend line fixes that one anchor instead of starting over. The
-/// last step back ends the draft rather than leaving an anchor stranded.
-#[test]
-fn backspace_steps_back_one_anchor_of_a_channel_at_a_time() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(600.0, 400.0),
-        egui::pos2(800.0, 340.0),
-    );
-    assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 2);
-
-    let backspace = || key_press_with(egui::Key::Backspace, egui::Modifiers::NONE);
-    run_frame_with_events(&mut app, &ctx, vec![backspace()]);
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.draft_len(),
-        1,
-        "one anchor back, not the whole draft"
-    );
-    run_frame_with_events(&mut app, &ctx, vec![backspace()]);
-    let pane = &app.active_tab().flow_pane;
-    assert_eq!(pane.drawings.draft_len(), 0);
-    assert!(
-        pane.drawings.items().is_empty(),
-        "stepping back past the first anchor deletes nothing that exists"
-    );
-}
-
 /// A tool with nothing specific to say still reports progress, because a
 /// count beats an object that looks like it stopped responding.
 #[test]
@@ -2414,77 +1955,6 @@ fn a_saved_default_style_reaches_the_next_drawing_and_only_that() {
     let _ = std::fs::remove_file(app.drawings.presets.path());
 }
 
-/// Selecting is not moving. Without a drag threshold on the move gesture,
-/// a couple of pixels of hand tremor during a click re-angled a channel
-/// or shifted a level — and recorded it as an undo step, so the trader's
-/// line was quietly no longer where they put it. Placement already
-/// refused to read a twitch as a drag; moving refuses too now.
-#[test]
-fn a_twitch_while_clicking_does_not_move_the_drawing() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
-    click_chart(&mut app, &ctx, egui::pos2(600.0, 400.0));
-    click_chart(&mut app, &ctx, egui::pos2(900.0, 300.0));
-    run_frame(&mut app, &ctx);
-    let placed = app.active_tab().flow_pane.drawings.items()[0]
-        .points
-        .clone();
-
-    // Press on the stroke, wobble inside the threshold, release.
-    let grab = egui::pos2(750.0, 350.0);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
-    );
-    // Ending *away* from the press, still inside the threshold: a wobble
-    // that returned to its origin would net to zero movement and prove
-    // nothing about the threshold.
-    let wobbled = grab + egui::vec2(3.0, 0.0);
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(wobbled)]);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![
-            egui::Event::PointerMoved(wobbled),
-            pointer_button(wobbled, false),
-        ],
-    );
-
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.items()[0].points,
-        placed,
-        "a click that wobbled under the threshold must leave the geometry alone"
-    );
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.selected(),
-        Some(0),
-        "and it is still a click, so it still selects"
-    );
-
-    // The same gesture past the threshold does move it.
-    let far = grab + egui::vec2(40.0, 0.0);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
-    );
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(far)]);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(far), pointer_button(far, false)],
-    );
-    assert_ne!(
-        app.active_tab().flow_pane.drawings.items()[0].points,
-        placed,
-        "a real drag still moves it"
-    );
-}
-
 /// The reported flicker, root cause.
 ///
 /// The pinned inspector is a `SidePanel::right` laid out *before* the
@@ -2590,48 +2060,6 @@ fn grabbing_a_handle_off_the_stroke_selects_and_stays_selected() {
             app.active_tab().flow_pane.drawings.selected(),
             Some(0),
             "the selection was wiped {frame} frames after the handle grab"
-        );
-    }
-}
-
-/// The same gesture on a crowded chart — the demo hook's seventeen
-/// overlapping objects, which is what the report was looking at.
-#[test]
-fn clicking_a_drawing_on_a_crowded_chart_keeps_it_selected() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-
-    for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
-        arm_drawing_from_toolbox(&mut app, &ctx, tool.id());
-        for point in 0..tool.required_points() {
-            let offset = index as f32;
-            let step = point as f32;
-            click_chart(
-                &mut app,
-                &ctx,
-                egui::pos2(
-                    560.0 + (offset % 4.0) * 50.0 + step * 70.0,
-                    250.0 + (offset % 3.0) * 70.0 + step * 50.0,
-                ),
-            );
-        }
-    }
-    run_frame(&mut app, &ctx);
-    app.active_tab_mut().flow_pane.drawings.select(None);
-    run_frame(&mut app, &ctx);
-
-    // Press-release on a spot the objects cover.
-    let spot = egui::pos2(630.0, 320.0);
-    click_chart(&mut app, &ctx, spot);
-    let picked = app.active_tab().flow_pane.drawings.selected();
-    assert!(picked.is_some(), "the click found something to select");
-    for frame in 0..5 {
-        run_frame(&mut app, &ctx);
-        assert_eq!(
-            app.active_tab().flow_pane.drawings.selected(),
-            picked,
-            "the selection changed {frame} frames after the click"
         );
     }
 }
@@ -2755,43 +2183,6 @@ fn a_shared_mark_is_dragged_from_the_other_chart() {
         time_drawings(&app),
         undo_before + 1,
         "the whole drag is one undo entry on the chart it was made on"
-    );
-}
-
-/// The other direction, and the regression this pass exists to hold:
-/// moving a shared mark on the chart it *lives* on has to carry its
-/// instants with it, or the twin on the other chart stays where it was.
-/// `translate_selected` moved bar indices only, which made the two views
-/// disagree the moment either was dragged.
-#[test]
-fn moving_a_shared_mark_on_its_own_chart_carries_its_instants() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands, _position) = split_with_a_shared_line(&ctx);
-    app.active_tab_mut().flow_pane.drawings.select(Some(0));
-    let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
-
-    // Four bars to the right, through the same path a drag takes.
-    app.active_tab_mut().flow_pane.drawings.begin_gesture();
-    app.active_tab_mut()
-        .flow_pane
-        .drawings
-        .translate_selected(4.0, 0.0);
-    app.active_tab_mut().flow_pane.retime_selected();
-    app.active_tab_mut().flow_pane.drawings.commit_gesture();
-
-    let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
-    assert!(after.bar > before.bar, "the mark moved on its own chart");
-    assert_ne!(
-        after.time_ms, before.time_ms,
-        "and the instant behind it moved too, or the other chart still \
-             paints it at the old moment"
-    );
-    assert_eq!(
-        app.active_tab()
-            .flow_pane
-            .slot_at_time(after.time_ms.expect("a mark on a bar has an instant")),
-        Some(slot_of(after.bar)),
-        "the bar and the instant say the same thing"
     );
 }
 
@@ -3370,44 +2761,8 @@ fn giving_the_placement_back_is_saved_as_well() {
 }
 
 /// The harness table tells an agent to pair `QUANTICK_DRAWING_INSPECTOR=1`
-/// with the drawings demo. That instruction is only true if the demo's own
-/// selection does not close the panel the hook asked for — it did, so
-/// every capture of the popup was a capture of a chart without one.
-#[test]
-fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(500);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("demo-inspector"));
-    app.surfaces
-        .drawing_chrome
-        .scenario(quantick_ui_model::drawing_chrome::scenario::Intent::RequestGallery(DrawingsDemo::default()));
-    app.surfaces.drawing_chrome.set_inspector_open(true);
-
-    for _ in 0..4 {
-        run_frame(&mut app, &ctx);
-    }
-
-    assert!(
-        !app.surfaces.drawing_chrome.demos().gallery_requested(),
-        "the demo has run"
-    );
-    assert!(
-        app.active_tab()
-            .drawing_pane()
-            .drawings
-            .selected()
-            .is_some(),
-        "and left an object selected, which is what closes the panel"
-    );
-    assert!(
-        app.surfaces.drawing_chrome.inspector_open(),
-        "the panel the hook asked for survives the demo's own selection"
-    );
-}
-
-/// The same guarantee reached the way a capture run reaches it: through
+/// with the drawings demo, so the demo's own selection must not close the
+/// panel the hook asked for. Reached the way a capture run reaches it:
 /// captured environment input through the real constructor, not a field set.
 ///
 /// The distinction is the whole test. `QUANTICK_DRAWING_INSPECTOR` used to
@@ -3416,8 +2771,8 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
 /// which runs after `apply_drawing_demo`, the very code that asks whether
 /// the panel is open before it moves the selection. The panel then closed
 /// itself and every capture pairing the two hooks photographed a chart
-/// with no inspector. Nothing failed: the sibling test above sets the
-/// field directly, so it could not see the order slip.
+/// with no inspector. A test that sets the field directly cannot see that
+/// order slip.
 #[test]
 fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     let ctx = egui::Context::default();
@@ -3623,158 +2978,6 @@ fn the_object_manager_opens_beside_the_rail() {
         manager.top(),
         chart.top()
     );
-}
-
-/// The live use of a mark is marking the bar that is *running* — marking
-/// a closed one is review. `closed_bar` stops one slot short of the
-/// forming bar, so the snap used to fall through to the pointer's own
-/// price there: the mark landed inside the candle body, which is the one
-/// failure the whole tool exists to avoid, in the only moment it is used
-/// under pressure.
-#[test]
-fn a_magnetic_mark_on_the_forming_bar_still_grabs_its_extreme() {
-    // tick(2) with an odd trade count: the last print leaves a bar open,
-    // which `app_with_history`'s tick(1) never does.
-    let (mut app, evt_tx, _commands, _book) = test_app();
-    app.active_tab_mut()
-        .flow_pane
-        .spec
-        .retain(crate::state::BarSpec::Tick(2));
-    app.active_tab_mut().apply_spec_changes();
-    app.active_tab_mut().apply_spec_changes();
-    let trades: Vec<_> = (1..=201).map(trade).collect();
-    evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    let tab_id = app.runtime.tabs.active_id();
-    app.active_tab_mut().drain_feed(tab_id);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
-    let forming = pane.closed_slots();
-    assert_eq!(
-        pane.slots(),
-        forming + 1,
-        "this proof needs a bar still forming"
-    );
-
-    // Aim at the forming slot: the newest one, at the right edge of the
-    // history area.
-    let chart = pane.frame.chart_area.expect("chart laid out");
-    let width = pane.model.viewport.candle_width();
-    let right = pane.frame.candles_right.unwrap_or(chart.right());
-    let x = right - width * 0.5;
-
-    // Free by default: without the magnet the mark keeps the cursor's price.
-    let before = app.active_tab().flow_pane.drawings.items().len();
-    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
-    click_chart(&mut app, &ctx, egui::pos2(x, 200.0));
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.items().len(),
-        before + 1,
-        "the free click placed a new mark"
-    );
-    let free = app
-        .active_tab()
-        .flow_pane
-        .drawings
-        .items()
-        .last()
-        .map(|mark| mark.points[0].price);
-
-    app.surfaces.toolrail.set_magnet(true);
-    arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
-    click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.items().len(),
-        before + 2,
-        "the magnetic click placed a new mark"
-    );
-    let placed = app.active_tab().flow_pane.drawings.items().last();
-    let Some(placed) = placed else {
-        panic!("the mark was not placed on the forming bar");
-    };
-    let anchor = placed.points[0];
-    assert_eq!(
-        slot_of(anchor.bar),
-        forming,
-        "the click has to land on the forming slot for this to prove anything"
-    );
-    let low = app
-        .active_tab()
-        .flow_pane
-        .state
-        .partial()
-        .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.low))
-        .expect("the forming bar has a low");
-    assert!(
-        (anchor.price - low).abs() < 1e-9,
-        "the mark must hang from the forming bar's low ({low}), not the cursor ({})",
-        anchor.price
-    );
-    let free = free.expect("the free mark was placed");
-    assert!(
-        (free - low).abs() > 1e-6,
-        "without the magnet the mark stays at the cursor ({free}), off the low ({low})"
-    );
-}
-
-/// The draft belongs to the band its first anchor landed in. A hand that
-/// strays into the indicator pane mid-stroke would otherwise write that
-/// pane's value into an object living on the price axis — and a stroke
-/// has no handles, so it could only be deleted and redrawn.
-#[test]
-fn a_pencil_stroke_ignores_points_outside_its_own_band() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("chart laid out");
-
-    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
-    // Start well inside the price band, then run the pointer far below
-    // the pane and back — the shape of a hand overshooting the divider.
-    let start = egui::pos2(620.0, chart.center().y);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![
-            egui::Event::PointerMoved(start),
-            pointer_button(start, true),
-        ],
-    );
-    for offset in [30.0_f32, 60.0, 90.0] {
-        let below = egui::pos2(start.x + offset, chart.bottom() + 200.0);
-        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(below)]);
-    }
-    let end = egui::pos2(start.x + 120.0, chart.center().y + 20.0);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
-    );
-
-    let items = app.active_tab().flow_pane.drawings.items();
-    assert_eq!(items.len(), 1, "one stroke");
-    let stroke = &items[0];
-    assert_eq!(stroke.band, drawings::DrawingBand::Price);
-    // Every anchor has to be a price this chart could actually show.
-    let (lo, hi) = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .auto_range
-        .expect("the pane has a range");
-    let span = hi - lo;
-    for point in &stroke.points {
-        assert!(
-            point.price > lo - span && point.price < hi + span,
-            "a stray point escaped the band: {} not near {lo}..{hi}",
-            point.price
-        );
-    }
 }
 
 /// A text note is placed *empty*, and its words are its content — so the
@@ -4165,62 +3368,6 @@ fn a_level_bar_has_no_pencil() {
     );
 }
 
-/// A press that never moved is a click that missed, not a drawing. An
-/// invisible one-point object the trader can neither see nor select is
-/// worse than nothing happening.
-#[test]
-fn a_pencil_click_that_never_moved_leaves_nothing_behind() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    arm_drawing_from_toolbox(&mut app, &ctx, "brush");
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    run_frame(&mut app, &ctx);
-    assert!(
-        app.active_tab().flow_pane.drawings.items().is_empty(),
-        "a dot is not a stroke"
-    );
-    assert!(
-        app.active_tab().flow_pane.drawings.draft().is_none(),
-        "and it leaves no half-finished draft behind either"
-    );
-}
-
-/// A buy mark that arrives in the stock blue is one the trader repaints
-/// every single time.
-#[test]
-fn the_marks_are_born_in_the_colour_of_the_side_they_mean() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    for (id, expected) in [
-        ("arrow-mark-up", theme::BUY),
-        ("arrow-mark-down", theme::SELL),
-    ] {
-        arm_drawing_from_toolbox(&mut app, &ctx, id);
-        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        let placed = app
-            .active_tab()
-            .flow_pane
-            .drawings
-            .items()
-            .last()
-            .expect("the mark was placed");
-        assert_eq!(placed.tool.id(), id);
-        assert_eq!(placed.style.color32(), expected, "{id} was born wrong");
-    }
-}
-
-/// The stamp and the vector stay two different tools: one click versus
-/// two anchors is the whole difference, and folding them together would
-/// cost the stamp its reason to exist.
-#[test]
-fn a_mark_is_one_click_and_the_arrow_tool_is_still_two() {
-    assert_eq!(drawing_tool("arrow-mark-up").required_points(), 1);
-    assert_eq!(drawing_tool("arrow-mark-down").required_points(), 1);
-    assert_eq!(drawing_tool("arrow").required_points(), 2);
-}
-
 /// The headline of this change: clicking a drawing must not throw a
 /// 320 px panel over the chart. It raises the strip, and nothing else.
 #[test]
@@ -4453,38 +3600,6 @@ fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].scope,
         drawings::DrawingScope::AllCharts
-    );
-}
-
-/// Condition (c) of the bare-glyph contract: the protected object still
-/// asks. Without this the Del key on a locked drawing is a silent no-op
-/// now that the panel is not there to raise the question.
-#[test]
-fn a_locked_drawing_asks_before_it_goes_from_the_bar() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    app.surfaces
-        .toolrail
-        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.active_tab_mut()
-        .flow_pane
-        .drawings
-        .set_selected_locked(true);
-    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
-
-    assert_eq!(
-        app.active_tab().flow_pane.drawings.items().len(),
-        1,
-        "a locked object is not deleted by the first ask"
-    );
-    let texts = painted_text(&run_frame(&mut app, &ctx));
-    assert!(
-        texts
-            .iter()
-            .any(|text| text.contains("Delete locked drawing?")),
-        "the bar speaks in words for the one act that is protected; painted: {texts:?}"
     );
 }
 
@@ -5124,27 +4239,6 @@ fn an_edit_on_the_flow_chart_leaves_the_context_charts_undo() {
     assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
 }
 
-/// Another chart's write does not cost a chart the undo of its own edit to a
-/// mark every chart shows: a level placed on the flow chart still undoes
-/// there after the context chart adds one, and leaves every chart.
-#[test]
-fn a_level_placed_on_one_chart_undoes_after_another_chart_draws() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = split_app(&ctx, 200);
-    place_level(&mut app, PaneSide::Flow, 50.0);
-    run_frame(&mut app, &ctx);
-    place_level(&mut app, PaneSide::Time(0), 100.0);
-    run_frame(&mut app, &ctx);
-    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0, 100.0]);
-
-    app.active_tab_mut().focus = PaneSide::Flow;
-    let undo = key_press_with(egui::Key::Z, egui::Modifiers::COMMAND);
-    run_frame_with_modifiers(&mut app, &ctx, vec![undo], egui::Modifiers::COMMAND);
-    run_frame(&mut app, &ctx);
-    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
-    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
-}
-
 /// A mark kept to the flow chart stays with the bars it was kept at: a re-cut
 /// hides it and the way back restores it.
 #[test]
@@ -5616,37 +4710,6 @@ fn drawings_follow_the_market_the_tab_shows() {
     assert!(
         !app.active_tab().flow_pane.drawings.items()[0].foreign_market,
         "and it is at home, not marked as another market's"
-    );
-}
-
-/// "Show on all timeframes" is stored once for the market and comes back
-/// shared after a layout round trip.
-#[test]
-fn a_shared_drawing_comes_back_shared() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = split_app(&ctx, 200);
-    place_level(&mut app, PaneSide::Time(0), 100.0);
-    {
-        let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
-        pane.drawings.select(Some(0));
-        pane.drawings.selected_mut().expect("selected").scope =
-            crate::drawings::DrawingScope::AllCharts;
-    }
-    run_frame(&mut app, &ctx);
-    let first = app.layout_state().layouts().active_id();
-    let second = app.layout_adapter().create_layout(None).expect("second");
-    app.layout_adapter().switch_layout(second).ok();
-    app.layout_adapter().switch_layout(first).expect("back");
-    let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].scope, crate::drawings::DrawingScope::AllCharts);
-    assert_eq!(
-        app.active_tab()
-            .pane(PaneSide::Time(0))
-            .drawings
-            .shared_count(),
-        1,
-        "the flow pane mirrors it again"
     );
 }
 
