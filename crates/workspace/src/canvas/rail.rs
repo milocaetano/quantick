@@ -349,7 +349,9 @@ impl CanvasState {
             return self.fold_flow_side(false, folded);
         }
         let rails: Vec<PaneSlot> = self.railed().iter().copied().collect();
-        (rails.into_iter()).fold(false, |changed, slot| self.unrail(slot) || changed)
+        // Every rail, never stopping at the first that opens.
+        let opened = rails.into_iter().filter(|slot| self.unrail(*slot));
+        opened.count() > 0
     }
 
     /// The split holding the docked flow pane and its index there, found
