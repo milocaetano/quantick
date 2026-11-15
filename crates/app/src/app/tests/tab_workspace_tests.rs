@@ -2540,3 +2540,29 @@ fn apply_on_a_custom_colour_reaches_the_colour_handler() {
         "it closes"
     );
 }
+
+/// The popover call reaches the window's own menu: it opens the menu and its
+/// popover on the active tab, and Custom fills its field in the window's theme.
+#[test]
+fn the_popover_call_opens_the_window_s_menu_and_reads_its_theme() {
+    use crate::control::ActionOrigin;
+    use serde_json::json;
+    let (mut app, _ctx, _layouts) = popover_on("cell");
+    app.chrome.window_menu.tab_workspace = Default::default();
+    let mut call = |input: serde_json::Value| {
+        app.control_action("workspace.colour.popover", 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{error:?}"))
+    };
+    let open = call(json!({ "act": "open" }));
+    assert_eq!(
+        (open["open"].clone(), open["face"].clone()),
+        (json!(true), json!("grid"))
+    );
+    let custom = call(json!({ "act": "custom" }));
+    let dark = crate::app::TabsPort::appearance(&app).dark;
+    let scalp = app.runtime.workspace.book.book().colour("Scalp").unwrap();
+    let rgb = quantick_stores::workspaces::hex(scalp.rgb(dark));
+    assert_eq!(custom["hex"], json!(rgb));
+    let menu = &app.chrome.window_menu.tab_workspace;
+    assert!(menu.colour.as_ref().is_some_and(|popover| popover.custom));
+}
