@@ -19,8 +19,10 @@ use quantick_control_schema::scene::{
 use quantick_control_schema::window_menu::{RowId, row_of};
 use quantick_control_schema::workspace_book as calls;
 use quantick_session::workspace_menu::{CHIP_MENU_FILTER_FROM, WorkspaceCommand, filter_matches};
-use quantick_stores::workspaces::{DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceRecipe};
-use quantick_workspace::canvas::{PaneKind, PaneTree};
+use quantick_stores::workspaces::{
+    DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceListing, WorkspaceRecipe,
+};
+use quantick_workspace::canvas::PaneTree;
 use quantick_workspace::canvas_layout::recipe_canvas;
 
 /// Between the parts of a summary.
@@ -44,6 +46,8 @@ pub const CAPTION: &str = "WORKSPACES";
 pub const QUIET_SAVE: &str = "Saved automatically";
 /// The empty filter field's words.
 pub const FILTER_PLACEHOLDER: &str = "Type to filter";
+/// How a row ends while only the tab whose menu it is holds its edit.
+pub const UNSAVED_HERE: &str = "unsaved";
 /// The header's mark while the tab holds edits.
 pub const UNSAVED: &str = "Unsaved";
 
@@ -255,32 +259,13 @@ pub fn state_of(book: &WorkspaceBook, tab: u64) -> (&str, bool) {
         })
 }
 
-/// What a workspace holds, as its row says it: its panes' kinds, timeframe
-/// charts first, and its indicators; a recipe never saved reads as the feed
-/// opens it.
-fn summary_of(recipe: &WorkspaceRecipe, tree: &PaneTree) -> String {
-    if recipe.is_factory() {
-        return recipe.summary();
-    }
-    let kinds: Vec<PaneKind> = tree.panes().into_iter().map(|(_, kind)| kind).collect();
-    let count = |kind| kinds.iter().filter(|held| **held == kind).count();
-    let mut parts = vec!["Time"; count(PaneKind::Time)];
-    parts.extend((count(PaneKind::Flow) > 0).then_some("Flow"));
-    let panes = recipe
-        .context_panes
-        .iter()
-        .map(|pane| pane.indicators.len());
-    let indicators = recipe.flow_indicators.len() + panes.sum::<usize>();
-    let indicators = format!("{indicators} ind");
-    parts.push(&indicators);
-    parts.join(SEPARATOR)
-}
-
-/// The layout workspace `name` restores and its summary.
+/// The layout workspace `name` restores and its summary, as `workspace.list`
+/// says it.
 fn described(book: &WorkspaceBook, name: &str) -> (PaneTree, String) {
-    let recipe = book.recipe(name).cloned().unwrap_or_default();
-    let tree = recipe_canvas(&recipe).tree().clone();
-    let summary = summary_of(&recipe, &tree);
+    let factory = WorkspaceRecipe::default();
+    let recipe = book.recipe(name).unwrap_or(&factory);
+    let tree = recipe_canvas(recipe).tree().clone();
+    let summary = recipe.summary_of(&tree);
     (tree, summary)
 }
 
@@ -290,6 +275,32 @@ fn tabs_said(count: usize) -> String {
         "1 tab".to_owned()
     } else {
         format!("{count} tabs")
+    }
+}
+
+/// Where workspace `row`'s unsaved edit is held, as its summary ends: just
+/// `unsaved` when only `tab`, whose menu it is, holds it; else each holder's
+/// label once, or how many tabs hold it when two labels read alike. `None`
+/// while no tab holds one.
+fn held_in(
+    book: &WorkspaceBook,
+    row: &WorkspaceListing,
+    tab: u64,
+    label: &dyn Fn(u64) -> String,
+) -> Option<String> {
+    let holders: Vec<u64> = (row.tabs.iter().copied())
+        .filter(|&other| state_of(book, other).1)
+        .collect();
+    let mut labels: Vec<String> = holders.iter().map(|&holder| label(holder)).collect();
+    labels.sort();
+    labels.dedup();
+    match holders.as_slice() {
+        [] => None,
+        [only] if *only == tab => Some(UNSAVED_HERE.to_owned()),
+        _ if labels.len() < holders.len() => {
+            Some(format!("unsaved in {}", tabs_said(holders.len())))
+        }
+        _ => Some(format!("unsaved in {}", labels.join(", "))),
     }
 }
 
@@ -309,18 +320,15 @@ pub fn cell_menu(
     let list = (book.list().into_iter())
         .map(|row| {
             let (tree, mut summary) = described(book, &row.name);
-            let held: Vec<String> = (row.tabs.iter())
-                .filter(|&&other| other != tab && !auto && state_of(book, other).1)
-                .map(|&other| label(other))
-                .collect();
-            if !held.is_empty() {
-                summary = format!("{summary}{SEPARATOR}unsaved in {}", held.join(", "));
+            let held = held_in(book, &row, tab, &label).filter(|_| !auto);
+            if let Some(held) = &held {
+                summary = format!("{summary}{SEPARATOR}{held}");
             }
             let on = row.name == workspace;
             CellRow {
                 summary,
                 on,
-                dot: !held.is_empty(),
+                dot: held.is_some(),
                 command: (!on).then(|| WorkspaceCommand::Set(row.name.clone())),
                 capability: Some(calls::TAB_WORKSPACE_SET_CAPABILITY_ID),
                 tree: Some(tree),
@@ -333,8 +341,13 @@ pub fn cell_menu(
         })
         .collect::<Vec<_>>();
     let tabs = tabs_said(book.tabs_on(workspace).len().max(1));
+    let shown = book.tab_copy(tab).or_else(|| book.recipe(workspace));
+    let shown = shown.map_or_else(
+        || described(book, workspace).1,
+        |copy| copy.summary_of(live),
+    );
     let current = CellRow {
-        summary: format!("{}{SEPARATOR}{tabs}", described(book, workspace).1),
+        summary: format!("{shown}{SEPARATOR}{tabs}"),
         on: true,
         dot: modified && !auto,
         capability: Some(MENU_CAPABILITY_ID),
@@ -431,6 +444,43 @@ fn foot(auto: bool, keys: &str) -> Vec<CellRow> {
             MENU_CAPABILITY_ID,
         ),
     ]
+}
+
+/// The open menu's rows, built once and again only when what they read
+/// changes: the book, the tab, the shortcut's words, the live layout or the
+/// tabs' labels. A quiet frame borrows the last build.
+#[derive(Debug, Default)]
+pub struct CellMenuCache {
+    read: Option<(WorkspaceBook, u64, String, PaneTree, Vec<String>)>,
+    menu: Option<CellMenu>,
+    /// How many times the rows were built.
+    pub builds: usize,
+}
+
+impl CellMenuCache {
+    /// [`cell_menu`] for these words, built only when they changed.
+    pub fn menu(
+        &mut self,
+        book: &WorkspaceBook,
+        tab: u64,
+        keys: &str,
+        live: &PaneTree,
+        label: impl Fn(u64) -> String,
+    ) -> &CellMenu {
+        let labels: Vec<String> = book.tab_workspaces().map(|(held, _)| label(held)).collect();
+        let read = (book, tab, keys, live, &labels);
+        let same =
+            (self.read.as_ref()).is_some_and(|(b, t, k, l, ls)| (b, *t, k.as_str(), l, ls) == read);
+        if !same {
+            let owned = (book.clone(), tab, keys.to_owned(), live.clone(), labels);
+            (self.read, self.menu) = (Some(owned), None);
+        }
+        let builds = &mut self.builds;
+        self.menu.get_or_insert_with(|| {
+            *builds += 1;
+            cell_menu(book, tab, keys, live, label)
+        })
+    }
 }
 
 #[cfg(test)]

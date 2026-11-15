@@ -156,10 +156,8 @@ fn the_header_names_the_workspace_its_summary_and_its_tabs() {
     let menu = menu_of(&desk(false), 1);
     let current = &menu.current;
     assert_eq!(current.label, "Pair");
-    assert_eq!(
-        current.summary,
-        "Time \u{b7} Flow \u{b7} 9 ind \u{b7} 2 tabs"
-    );
+    // What the tab shows now: the live layout, a lone flow pane here.
+    assert_eq!(current.summary, "Flow \u{b7} 9 ind \u{b7} 2 tabs");
     assert!(current.on);
     assert!(!current.dot, "nothing held");
     assert_eq!(current.tree, Some(live()), "the capsule's live layout");
@@ -402,4 +400,88 @@ fn a_cut_name_reads_whole_on_hover() {
     let solo = menu.list.iter().find(|row| row.label == "Solo").unwrap();
     assert_eq!(solo.tip(true), Some("Solo"));
     assert_eq!(solo.tip(false), None);
+}
+
+/// The header describes what the tab shows now, its edit included, beside
+/// its live miniature and its Unsaved mark.
+#[test]
+fn the_header_describes_what_the_tab_shows_now() {
+    let mut book = desk(false);
+    book.observe(1, &recipe(DeclaredLayout::TimeAndFlow, 2))
+        .unwrap();
+    let menu = menu_of(&book, 1);
+    assert_eq!(menu.current.summary, "Flow \u{b7} 2 ind \u{b7} 2 tabs");
+    assert_eq!(menu.current.tree, Some(live()));
+    assert!(menu.current.dot);
+}
+
+/// A row says what `workspace.list` says of the same workspace.
+#[test]
+fn a_row_says_what_the_workspace_list_says() {
+    let book = crowded(5);
+    for row in &menu_of(&book, 1).list {
+        assert_eq!(row.summary, book.summary(&row.label), "{}", row.label);
+    }
+}
+
+/// An edit only this tab holds ends its row with just `unsaved`: the
+/// header already says where.
+#[test]
+fn an_edit_held_only_here_says_unsaved() {
+    let mut book = desk(false);
+    book.observe(1, &recipe(DeclaredLayout::TimeAndFlow, 2))
+        .unwrap();
+    let menu = menu_of(&book, 1);
+    let pair = menu.list.iter().find(|row| row.label == "Pair").unwrap();
+    let end = format!("\u{b7} {UNSAVED_HERE}");
+    assert!(pair.summary.ends_with(&end), "{}", pair.summary);
+    assert!(!pair.summary.contains("unsaved in"));
+}
+
+/// Holders are named once each; two that read alike are counted instead.
+#[test]
+fn holders_are_named_once_or_counted_when_they_read_alike() {
+    let mut book = desk(false);
+    book.observe(1, &recipe(DeclaredLayout::TimeAndFlow, 2))
+        .unwrap();
+    book.observe(2, &recipe(DeclaredLayout::TimeAndFlow, 3))
+        .unwrap();
+    let pair = |menu: CellMenu| {
+        menu.list
+            .into_iter()
+            .find(|row| row.label == "Pair")
+            .unwrap()
+    };
+    let named = pair(cell_menu(&book, 1, "Ctrl+S", &live(), label));
+    assert!(
+        named.summary.ends_with("unsaved in T1, T2"),
+        "{}",
+        named.summary
+    );
+    let alike = pair(cell_menu(&book, 1, "Ctrl+S", &live(), |_| {
+        "WINZ25".to_owned()
+    }));
+    assert!(
+        alike.summary.ends_with("unsaved in 2 tabs"),
+        "{}",
+        alike.summary
+    );
+}
+
+/// A quiet frame borrows the last build; a change to the book builds again.
+#[test]
+fn the_rows_are_built_again_only_when_the_book_changes() {
+    let mut book = desk(false);
+    let mut cache = CellMenuCache::default();
+    for _ in 0..3 {
+        cache.menu(&book, 1, "Ctrl+S", &live(), label);
+    }
+    assert_eq!(cache.builds, 1, "quiet frames");
+    book.observe(1, &recipe(DeclaredLayout::TimeAndFlow, 2))
+        .unwrap();
+    let menu = cache.menu(&book, 1, "Ctrl+S", &live(), label).clone();
+    assert_eq!(cache.builds, 2, "the edit");
+    assert_eq!(menu, menu_of(&book, 1));
+    cache.menu(&book, 1, "Ctrl+Alt+S", &live(), label);
+    assert_eq!(cache.builds, 3, "the shortcut's words");
 }

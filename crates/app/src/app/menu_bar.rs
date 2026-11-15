@@ -461,13 +461,16 @@ pub(super) fn workspace_cell(
     );
     let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
+    let mut cache = std::mem::take(&mut app.chrome.window_menu.cell_cache);
     let open = menu.follow_cell(tab, cell.is_some(), &window, clicked || pressed);
     let mut commands = Vec::new();
     let drawn = cell.filter(|_| open).map(|cell| {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
-        workspace_rows::chip_menu(app, ctx, cell, &mut menu, keys, &mut commands)
+        let rows = (&mut menu, &mut cache);
+        workspace_rows::chip_menu(app, ctx, cell, rows, keys, &mut commands)
     });
     app.chrome.window_menu.tab_workspace = menu;
+    app.chrome.window_menu.cell_cache = cache;
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }
