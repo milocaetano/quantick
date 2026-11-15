@@ -269,6 +269,15 @@ pub struct SeedTab {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceBook {
     version: u32,
+    /// The last custom colour applied, the palette's seventeenth swatch: one
+    /// for the whole book, read leniently (an old file or a bad value has none).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "stored_custom",
+        deserialize_with = "lenient_custom"
+    )]
+    last_custom: Option<workspace_colour::Rgb>,
     #[serde(default)]
     recipes: BTreeMap<String, WorkspaceRecipe>,
     /// Old name to current name. The desk names a tab's workspace and is
@@ -351,6 +360,7 @@ impl Default for WorkspaceBook {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
+            last_custom: None,
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
             renamed: BTreeMap::new(),
             colours: BTreeMap::from([(
@@ -413,6 +423,26 @@ where
         .into_iter()
         .filter_map(|(name, stored)| read(stored).map(|colour| (name, colour)))
         .collect())
+}
+
+/// Write the last custom colour as upper-case `#RRGGBB`.
+fn stored_custom<S: serde::Serializer>(
+    rgb: &Option<workspace_colour::Rgb>,
+    out: S,
+) -> Result<S::Ok, S::Error> {
+    out.serialize_str(&rgb.map(workspace_colour::hex).unwrap_or_default())
+}
+
+/// Read the last custom colour; a value that is no `#RRGGBB` is none.
+fn lenient_custom<'de, D>(deserializer: D) -> Result<Option<workspace_colour::Rgb>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let stored = StoredColour::deserialize(deserializer)?;
+    Ok(match stored {
+        StoredColour::Word(word) => workspace_colour::parse_hex(&word),
+        _ => None,
+    })
 }
 
 /// Parse a workspaces file. A file without `Default` gets the factory one back.
@@ -567,8 +597,18 @@ impl WorkspaceBook {
         if !self.recipes.contains_key(name) {
             return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
         }
-        workspace_colour::pick(&mut self.colours, name, colour, swap)
-            .map_err(WorkspaceRefusal::ColourTaken)
+        let outcome = workspace_colour::pick(&mut self.colours, name, colour, swap)
+            .map_err(WorkspaceRefusal::ColourTaken)?;
+        if let WorkspaceColour::Custom(rgb) = colour {
+            self.last_custom = Some(rgb);
+        }
+        Ok(outcome)
+    }
+
+    /// The last custom colour applied: the palette's seventeenth swatch.
+    #[must_use]
+    pub fn last_custom(&self) -> Option<workspace_colour::Rgb> {
+        self.last_custom
     }
 
     /// What a workspace holds, in the one line the menu and `workspace.list`

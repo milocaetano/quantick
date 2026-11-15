@@ -172,6 +172,48 @@ pub fn parse_hex(text: &str) -> Option<Rgb> {
     Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
+/// What the Custom field takes: `#RRGGBB` or `RRGGBB` in any case, spaces
+/// around it aside.
+#[must_use]
+pub fn parse_typed_hex(text: &str) -> Option<Rgb> {
+    let text = text.trim();
+    parse_hex(&format!("#{}", text.strip_prefix('#').unwrap_or(text)))
+}
+
+/// The picker's position as hue, saturation and value, each 0 to 1, of a
+/// colour: what the square and the hue strip show.
+#[must_use]
+pub fn rgb_hsv(rgb: Rgb) -> [f32; 3] {
+    let [r, g, b] = rgb.map(|c| f32::from(c) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let span = max - min;
+    let hue = if span == 0.0 {
+        0.0
+    } else if max == r {
+        ((g - b) / span).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / span + 2.0
+    } else {
+        (r - g) / span + 4.0
+    };
+    let saturation = if max == 0.0 { 0.0 } else { span / max };
+    [hue / 6.0, saturation, max]
+}
+
+/// The colour at a picker position ([`rgb_hsv`]'s inverse), rounded to bytes;
+/// a hue of 1 is the strip's far end, red again.
+#[must_use]
+pub fn hsv_rgb([hue, saturation, value]: [f32; 3]) -> Rgb {
+    let sector = (hue.clamp(0.0, 1.0) * 6.0).rem_euclid(6.0);
+    let (s, v) = (saturation.clamp(0.0, 1.0), value.clamp(0.0, 1.0));
+    let channel = |n: f32| {
+        let k = (n + sector).rem_euclid(6.0);
+        let lit = v - v * s * k.min(4.0 - k).clamp(0.0, 1.0);
+        (lit * 255.0).round() as u8
+    };
+    [channel(5.0), channel(3.0), channel(1.0)]
+}
+
 /// Who holds which colour, by workspace name.
 pub type Colours = BTreeMap<String, WorkspaceColour>;
 
