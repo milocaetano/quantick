@@ -2,8 +2,9 @@
 //! the sixteen presets and the last custom colour as swatches, which one is
 //! current and who holds the others; what a pick does (applies, or asks to
 //! swap, in the question's words); and the Custom picker's warnings, which
-//! never block. The menu's header popover draws it today; Manage and the
-//! create dialogs reuse it unchanged.
+//! never block. The menu's header popover and Manage apply a pick at once
+//! and ask to swap a held colour; the create dialogs only choose, and lock
+//! every colour another workspace holds ([`choosing`]).
 //!
 //! The warnings need the book and the bundled themes' trade and strip
 //! colours, and this is the lowest crate that sees both.
@@ -37,6 +38,8 @@ pub struct Swatch {
     pub holder: Option<String>,
     /// [`Self::holder`]'s initials, as the swatch shows them.
     pub initials: Option<String>,
+    /// Held, in a palette that only chooses: hatched, no press.
+    pub locked: bool,
 }
 
 impl Swatch {
@@ -50,6 +53,9 @@ impl Swatch {
             self.name.clone()
         };
         match (&self.holder, self.current) {
+            (Some(owner), false) if self.locked => {
+                format!("Used by {owner}{SEPARATOR}change it in Manage workspaces")
+            }
             (_, true) => format!("{name}{SEPARATOR}current"),
             (Some(owner), false) => format!("{name}{SEPARATOR}used by {owner}"),
             (None, false) => name,
@@ -68,6 +74,9 @@ pub struct Palette {
     pub last_custom: Option<Swatch>,
     /// The colour a new workspace would take now.
     pub next_free: WorkspaceColour,
+    /// For a workspace not made yet: a pick only chooses, and a colour
+    /// another workspace holds is refused, never swapped.
+    pub choosing: bool,
     colours: Colours,
 }
 
@@ -83,7 +92,19 @@ pub fn said(colour: WorkspaceColour) -> String {
 /// The palette for workspace `name`; `None` for a name the book lacks.
 #[must_use]
 pub fn palette(book: &WorkspaceBook, name: &str) -> Option<Palette> {
-    let current = book.colour(name)?;
+    Some(built(book, name, book.colour(name)?, false))
+}
+
+/// The palette of a workspace not made yet, in the create dialogs: `chosen`,
+/// else the next free colour, current; every held colour locked.
+#[must_use]
+pub fn choosing(book: &WorkspaceBook, chosen: Option<WorkspaceColour>) -> Palette {
+    let held: Vec<WorkspaceColour> = book.list().iter().map(|row| row.colour).collect();
+    let current = chosen.unwrap_or_else(|| workspace_colour::next_free(&held, false));
+    built(book, "", current, true)
+}
+
+fn built(book: &WorkspaceBook, name: &str, current: WorkspaceColour, choosing: bool) -> Palette {
     let listed = book.list();
     let names: Vec<&str> = listed.iter().map(|row| row.name.as_str()).collect();
     let swatch = |key: String, colour: WorkspaceColour, label: String| {
@@ -95,6 +116,7 @@ pub fn palette(book: &WorkspaceBook, name: &str) -> Option<Palette> {
             colour,
             name: label,
             current: colour == current,
+            locked: choosing && holder.is_some(),
             initials: holder.as_deref().map(|owner| initials(owner, &names)),
             holder,
         }
@@ -111,17 +133,18 @@ pub fn palette(book: &WorkspaceBook, name: &str) -> Option<Palette> {
         )
     });
     let held: Vec<WorkspaceColour> = listed.iter().map(|row| row.colour).collect();
-    Some(Palette {
+    Palette {
         workspace: name.to_owned(),
         current,
         presets,
         last_custom,
         next_free: workspace_colour::next_free(&held, false),
+        choosing,
         colours: listed
             .into_iter()
             .map(|row| (row.name, row.colour))
             .collect(),
-    })
+    }
 }
 
 /// What picking a colour does.
@@ -163,6 +186,17 @@ impl Palette {
     /// field, whose value equal to a preset says which preset it is.
     #[must_use]
     pub fn pick(&self, colour: WorkspaceColour, typed: bool) -> Pick {
+        if self.choosing {
+            let owners: Vec<String> = (self.colours.iter())
+                .filter(|(_, held)| held.identical(colour))
+                .map(|(owner, _)| owner.clone())
+                .collect();
+            if owners.is_empty() {
+                return Pick::Apply(colour);
+            }
+            let taken = ColourTaken::NewWorkspace { owners };
+            return Pick::Refused(super::WorkspaceRefusal::ColourTaken(taken).to_string());
+        }
         let mut trial = self.colours.clone();
         match workspace_colour::pick(&mut trial, &self.workspace, colour, false) {
             Ok(_) => Pick::Apply(colour),
