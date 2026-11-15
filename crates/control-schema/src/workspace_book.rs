@@ -241,6 +241,9 @@ pub struct WorkspaceColourSetResult {
     /// The colour `swapped_with` holds now: the one the workspace gave up.
     #[serde(default)]
     pub holder_colour: Option<WorkspaceColourDto>,
+    /// What the colour warns; none blocks. Additive.
+    #[serde(default)]
+    pub warnings: Vec<crate::workspace_colour::ColourWarningDto>,
 }
 
 /// Takes nothing: every workspace is listed.
@@ -273,7 +276,7 @@ fn bounded(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
 }
 
 /// Behind the desk's consent: this call changes what the trader comes back to.
-fn writes_the_book(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
+pub(crate) fn writes_the_book(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
     descriptor.persistence = EffectPersistence::Durable;
     descriptor.required_permissions = [COCKPIT_PERMISSION_ID, COCKPIT_DESK_PERMISSION_ID]
         .into_iter()
@@ -402,7 +405,7 @@ pub fn workspace_colour_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_COLOUR_SET_CAPABILITY_ID,
         MODULE_ID,
         "Give a workspace a colour",
-        "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
+        "Gives a workspace a colour: one of the sixteen presets by name (cobalt, orchid, sky, violet, slate, fuchsia, petrol, lavender, ultramarine, mauve, denim, grape, ink, plum, ice, blossom) or a custom #RRGGBB. The open tab paints its symbol in it, the capsule its tint, border and left bar, and the workspace menu its row's and header's slot. No two workspaces hold identical colours (the same value in either theme): a colour another workspace holds is refused with workspace.colour_taken, its details listing the holders in owners and, for a single holder, the colour it would get in owner_would_get. With swap true a single holder takes this workspace's old colour, named in swapped_with and holder_colour; two or more holders, or a swap that would give the holder a colour a third workspace matches, are refused even with swap. A new workspace takes the next free colour and a deleted one frees its own. Read the colours with workspace.list or on each tab of workspace.summary. The answer's warnings list what the colour warns, none of which blocks: kind close (hard to tell from the named workspace's colour), near_buy, near_sell, or low_contrast (lost on the named theme's tab strip, dark or light). An applied custom colour becomes the palette's last custom colour (workspace.colour.palette). A name no workspace has is refused with workspace.unknown, a colour that is neither a preset nor #RRGGBB with workspace.colour_invalid.",
         "The call names the colour it wants, so a repeat answers changed false and writes nothing.",
     ))
 }

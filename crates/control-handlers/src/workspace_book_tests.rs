@@ -559,7 +559,7 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     assert_eq!(
         taken,
         json!({ "workspace": "Scalp", "colour": SKY.clone(), "changed": true,
-                "swapped_with": null, "holder_colour": null })
+                "swapped_with": null, "holder_colour": null, "warnings": [] })
     );
     assert_eq!(
         (host.writes, access.events.len()),
@@ -583,7 +583,8 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     assert_eq!(
         swapped,
         json!({ "workspace": "Scalp", "colour": SLATE.clone(), "changed": true,
-                "swapped_with": "Default", "holder_colour": SKY.clone() })
+                "swapped_with": "Default", "holder_colour": SKY.clone(),
+                "warnings": [] })
     );
     let event = access.events.last().unwrap();
     assert_eq!(event.payload["colour"], "slate");
