@@ -161,12 +161,88 @@ fn the_footer_lays_the_switch_then_new_and_manage() {
 }
 
 #[test]
-fn the_filter_field_stands_eight_in_from_either_side() {
+fn the_filter_field_spans_the_rows_in_the_control_s_fill() {
     let menu = menu(false, false);
     let row = CellRow {
         label: "desk".to_owned(),
         ..menu.current.clone()
     };
     let field = filter(row, 318.0, true);
-    assert_eq!((field.at.x, field.at.w, field.at.h), (8.0, 302.0, 24.0));
+    let line = super::row(&menu.list[0], 318.0, false, true);
+    assert_eq!(
+        (field.at.x, field.at.w, field.at.h),
+        (line.at.x, line.at.w, 24.0)
+    );
+    let Mark::Box(plate) = &field.marks[0] else {
+        panic!("a box")
+    };
+    assert_eq!(plate.fill, Some(Token::Control));
+    let words = filter_text(318.0);
+    assert!(words.x > field.at.x && words.x + words.w < field.at.x + field.at.w);
+}
+
+/// An enabled button is edged in the menu's edge; a disabled one is bare,
+/// on the block's fainter edge, so the two never read alike.
+#[test]
+fn a_disabled_button_reads_disabled_in_both_themes() {
+    for dark in [true, false] {
+        let pieces = head(&menu(false, false), 318.0, dark, &measure);
+        let plate = |key: &str| match &keyed(&pieces, key).marks[0] {
+            Mark::Box(plate) => *plate,
+            _ => panic!("a box"),
+        };
+        let ink = chrome(dark);
+        let (save, save_as) = (plate("save"), plate("save_as"));
+        assert_eq!(
+            (save_as.fill, save_as.edge),
+            (Some(ink.control), Some(ink.edge))
+        );
+        assert_eq!(
+            (save.fill, save.edge),
+            (None, Some(ink.block_edge)),
+            "no edits"
+        );
+        assert!(!keyed(&pieces, "save").press);
+    }
+}
+
+/// Only the switch and its label take a press: the state words at the
+/// row's right end lie outside it.
+#[test]
+fn only_the_switch_and_its_label_take_the_autosave_press() {
+    let pieces = foot(&menu(false, false), 318.0, true, &measure);
+    let switch = keyed(&pieces, "autosave");
+    assert!(switch.press);
+    assert!(switch.at.w < 150.0, "{}", switch.at.w);
+    let state = (switch.marks.iter()).find_map(|mark| match mark {
+        Mark::Text(words) if words.text.starts_with("Off") => Some(words.x),
+        _ => None,
+    });
+    assert!(state.expect("the state words") > switch.at.x + switch.at.w);
+}
+
+/// The tab's own row writes its summary at 4.5:1 or better on the
+/// selection fill, in Dark and in Light.
+#[test]
+fn the_selected_row_s_summary_reads_on_its_fill() {
+    use quantick_appearance::contrast::contrast_ratio;
+    use quantick_appearance::{LIGHT, ResolvedTheme};
+    let menu = menu(false, false);
+    let own = menu.list.iter().find(|row| row.on).unwrap();
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    ] {
+        let lit = super::row(own, 310.0, false, theme.dark);
+        let Mark::Box(back) = &lit.marks[0] else {
+            panic!("a box")
+        };
+        let summary = (lit.marks.iter()).find_map(|mark| match mark {
+            Mark::Text(words) if words.text.contains("ind") => Some(words.clone()),
+            _ => None,
+        });
+        let summary = summary.expect("a summary");
+        let ratio = contrast_ratio(theme.color(summary.ink), theme.color(back.fill.unwrap()));
+        assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
+    }
 }

@@ -31,6 +31,8 @@ const SLOT_PT: f32 = 3.0 + 8.0;
 /// The miniatures: the header's as large as the capsule's, a row's smaller.
 const MINI_HEADER: [f32; 2] = [40.0, 14.0];
 const MINI_ROW: [f32; 2] = [26.0, 14.0];
+/// The switch's track and the gaps either side of it.
+const SWITCH_PT: f32 = 6.0 + 26.0 + 8.0;
 /// A row's status column: the check or the unsaved dot.
 const STATUS_PT: f32 = 14.0;
 /// The unsaved dot's radius.
@@ -230,10 +232,11 @@ fn entry(
 fn press(at: Area, row: &CellRow, plain: bool, ink: &MenuChrome, measure: Measure<'_>) -> Piece {
     let quiet = row.kind == RowKind::Quiet;
     let enabled = row.unavailable.is_none() && !quiet;
-    let (back, edge) = match (row.dot, plain || quiet) {
-        (true, _) => (Some(ink.accent), Some(ink.accent)),
-        (false, true) => (None, None),
-        (false, false) => (Some(ink.control), Some(ink.control_edge)),
+    let (back, edge) = match (row.dot, plain || quiet, enabled) {
+        (true, ..) => (Some(ink.accent), Some(ink.accent)),
+        (false, true, _) => (None, None),
+        (false, false, true) => (Some(ink.control), Some(ink.edge)),
+        (false, false, false) => (None, Some(ink.block_edge)),
     };
     let (y, mut x) = (at.y + at.h / 2.0, at.x + 8.0);
     let mut marks = vec![plate(at, RADIUS, back, edge)];
@@ -332,13 +335,13 @@ pub fn head(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
     pieces
 }
 
-/// The filter field `width` wide holding `row`'s words: the box the window's
+/// The filter field across a list `width` wide, on its rows' extents, holding `row`'s words: the box the window's
 /// text field sits in.
 #[must_use]
 pub fn filter(row: CellRow, width: f32, dark: bool) -> Piece {
     let ink = chrome(dark);
-    let at = area(8.0, 0.0, width - 16.0, 24.0);
-    let field = plate(at, RADIUS, Some(ink.inset), Some(ink.edge));
+    let at = area(PAD, 0.0, width - 2.0 * PAD, 24.0);
+    let field = plate(at, RADIUS, Some(ink.control), Some(ink.edge));
     Piece {
         row: Some(row),
         ..Piece::plain(at, vec![field])
@@ -348,7 +351,7 @@ pub fn filter(row: CellRow, width: f32, dark: bool) -> Piece {
 /// Where the filter field's words stand, in a list `width` wide.
 #[must_use]
 pub fn filter_text(width: f32) -> Area {
-    area(16.0, 4.0, width - 32.0, 16.0)
+    area(PAD + 8.0, 4.0, width - 2.0 * PAD - 16.0, 16.0)
 }
 
 /// A list row in a list `width` wide, inside its padding: the tab's own on the selection fill with its
@@ -371,7 +374,12 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         marks.push(dot(status + 7.0, y, DOT_PT, ink.accent));
     }
     let line = area(2.0 * PAD, 0.0, width - 3.0 * PAD - 8.0, CHIP_MENU_ROW_PT);
-    marks.extend(entry(line, row, MINI_ROW, BODY_PT, STATUS_PT + 8.0, &ink));
+    let mut line = entry(line, row, MINI_ROW, BODY_PT, STATUS_PT + 8.0, &ink);
+    // On the selection fill the support ink falls under 4.5:1 in Dark.
+    if let (true, Some(Mark::Text(summary))) = (row.on, line.get_mut(1)) {
+        summary.ink = ink.ink;
+    }
+    marks.extend(line);
     Piece {
         at,
         row: Some(row.clone()),
@@ -398,6 +406,11 @@ pub fn foot(menu: &CellMenu, width: f32, dark: bool, measure: Measure<'_>) -> Ve
     ];
     let rows = menu.foot.iter().zip(places);
     pieces.extend(rows.map(|(row, at)| press(at, row, true, &ink, measure)));
+    // Only the switch and its label take a press; the state words do not.
+    if let (Some(switch), Some(row)) = (pieces.get_mut(1), menu.foot.first()) {
+        switch.at.w = SWITCH_PT + measure(&row.label, BODY_PT) + 16.0;
+        switch.hover = hover(switch.at, ink.hover);
+    }
     pieces
 }
 
