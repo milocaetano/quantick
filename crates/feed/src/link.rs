@@ -137,8 +137,9 @@ pub struct FeedLink {
     /// is what wall clock is compared against every frame.
     pub latest_trade_ms: Option<i64>,
     pub live_trades: u64,
-    /// Receipt-to-paper-trading delay of the newest live prints; reset by
-    /// [`Self::attach`], so a new feed session starts its own window.
+    /// Drain-receipt-to-paper-trading delay of the newest live prints, never
+    /// a recording's; reset by [`Self::attach`], so a new feed session starts
+    /// its own window.
     pub intake_lag: quantick_operability::intake_lag::IntakeLag,
     /// A session of this link has connected at least once.
     connected_once: bool,
@@ -358,19 +359,21 @@ impl FeedLink {
     }
 
     /// Book one live print received at `received_at_ms`, as the window hands
-    /// it to its owners: the arrival delay (the arithmetic of
-    /// `quantick_orderflow::feed_lag_ms`), the tape-age stamp, the count and
-    /// one intake-lag sample read now — the moment paper trading, the first
-    /// live-trade stage, runs.
+    /// it to its owners: the arrival delay, the tape-age stamp, the count and,
+    /// off a recording, one intake-lag sample read now — the moment paper
+    /// trading, the first live-trade stage, runs.
     pub fn observe_live_trade(&mut self, received_at_ms: i64, trade_ms: i64) {
         self.observe_live_trade_at(received_at_ms, trade_ms, crate::clock::wall_clock_ms());
     }
 
     fn observe_live_trade_at(&mut self, received_at_ms: i64, trade_ms: i64, now_ms: i64) {
-        self.latest_trade_latency_ms = Some(received_at_ms.saturating_sub(trade_ms));
+        self.latest_trade_latency_ms = quantick_engine::feed_lag_ms(received_at_ms, Some(trade_ms));
         self.latest_trade_ms = Some(trade_ms);
         self.live_trades += 1;
-        self.intake_lag.record(received_at_ms, now_ms);
+        // A recording's drain is not live intake; its sibling figures say so too.
+        if self.replay.is_none() {
+            self.intake_lag.record(received_at_ms, now_ms);
+        }
     }
 
     /// Delay observed when the newest live trade reached the UI.

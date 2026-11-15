@@ -1,10 +1,16 @@
 //! How long a live print waits inside this process before paper trading sees it.
 //!
 //! The figure is the drain's receipt stamp (`received_at_ms`, read once when
-//! the window starts draining the feed queue) subtracted from the moment the
-//! paper-trading stage runs for that print. It is the intake half of the
-//! tape delay: the venue and the wire are reported elsewhere, and this says
-//! whether the window itself is falling behind a busy tape.
+//! a drain reaches its first live print) subtracted from the moment the
+//! paper-trading stage runs for that print: the time a print spends inside
+//! one drain, waiting behind the prints ahead of it. Time a print sat in the
+//! feed channel before the drain began is not in it — the arrival figures
+//! beside it in the health diagnostics carry that.
+//!
+//! Both stamps are wall-clock milliseconds, so a print handled within the
+//! same millisecond reads zero, and a forward clock step between the two
+//! stamps reads as lag; a backward step is recorded as zero and counted in
+//! [`IntakeLagSummary::clamped`].
 //!
 //! The owner is told the time — both stamps arrive as arguments — so the
 //! window keeps the clock and this module stays headless and deterministic.
@@ -17,11 +23,12 @@ pub const INTAKE_LAG_WINDOW: usize = 1_024;
 /// A bounded window of per-print intake lags, in milliseconds.
 #[derive(Clone, Debug, Default)]
 pub struct IntakeLag {
-    /// Ring storage; grows to [`INTAKE_LAG_WINDOW`] and is then overwritten.
-    samples: Vec<i64>,
+    /// Ring storage of `(lag_ms, clamped)`; grows to [`INTAKE_LAG_WINDOW`]
+    /// and is then overwritten.
+    samples: Vec<(i64, bool)>,
     /// Where the next sample lands once the ring is full.
     next: usize,
-    /// Samples whose stamps ran backwards and were recorded as zero.
+    /// Kept samples whose stamps ran backwards and were recorded as zero.
     clamped: u64,
 }
 
@@ -33,9 +40,8 @@ pub struct IntakeLagSummary {
     pub max_ms: i64,
     /// Samples the percentiles cover, at most [`INTAKE_LAG_WINDOW`].
     pub samples: u64,
-    /// Recorded samples, since the last [`IntakeLag::clear`], whose stage
-    /// stamp preceded the receipt stamp (a wall-clock step back) and were
-    /// counted as zero lag rather than dropped.
+    /// Of those samples, the ones whose stage stamp preceded the receipt
+    /// stamp (a wall-clock step back), counted as zero lag rather than dropped.
     pub clamped: u64,
 }
 
@@ -45,18 +51,15 @@ impl IntakeLag {
     /// is counted in [`IntakeLagSummary::clamped`].
     pub fn record(&mut self, received_at_ms: i64, now_ms: i64) {
         let lag = now_ms.saturating_sub(received_at_ms);
-        let lag = if lag < 0 {
-            self.clamped = self.clamped.saturating_add(1);
-            0
-        } else {
-            lag
-        };
+        let sample = (lag.max(0), lag < 0);
         if self.samples.len() < INTAKE_LAG_WINDOW {
-            self.samples.push(lag);
+            self.samples.push(sample);
         } else {
-            self.samples[self.next] = lag;
+            let (_, evicted_clamped) = std::mem::replace(&mut self.samples[self.next], sample);
+            self.clamped -= u64::from(evicted_clamped);
             self.next = (self.next + 1) % INTAKE_LAG_WINDOW;
         }
+        self.clamped += u64::from(sample.1);
     }
 
     /// Forget every sample; a new feed session starts its own window.
@@ -70,7 +73,7 @@ impl IntakeLag {
         if self.samples.is_empty() {
             return None;
         }
-        let mut sorted = self.samples.clone();
+        let mut sorted: Vec<i64> = self.samples.iter().map(|&(lag, _)| lag).collect();
         sorted.sort_unstable();
         Some(IntakeLagSummary {
             p50_ms: nearest_rank(&sorted, 50),
@@ -148,6 +151,21 @@ mod tests {
         let summary = lag.summary().expect("samples were recorded");
         assert_eq!((summary.p50_ms, summary.max_ms), (0, 4));
         assert_eq!(summary.clamped, 1);
+    }
+
+    #[test]
+    fn a_clamped_sample_leaves_the_count_when_it_leaves_the_window() {
+        let mut lag = IntakeLag::default();
+        lag.record(2_000, 1_990);
+        assert_eq!(lag.summary().map(|s| s.clamped), Some(1));
+        for _ in 0..INTAKE_LAG_WINDOW {
+            lag.record(0, 1);
+        }
+        let summary = lag.summary().expect("samples were recorded");
+        assert_eq!(
+            (summary.samples, summary.clamped),
+            (INTAKE_LAG_WINDOW as u64, 0)
+        );
     }
 
     #[test]

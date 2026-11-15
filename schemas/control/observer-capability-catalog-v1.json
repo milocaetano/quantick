@@ -32748,11 +32748,11 @@
             "type": "object"
           },
           "IntakeLagSnapshot": {
-            "description": "How long live prints waited inside this process before paper trading saw\nthem: the window's drain receipt stamp to the paper-trading stage, per\nprint, over a bounded window of the newest prints (nearest-rank).",
+            "description": "How long live prints waited inside one window drain before paper trading\nsaw them: the drain's receipt stamp (taken at its first live print) to the\npaper-trading stage, per print, over a bounded window of the newest prints\n(nearest-rank). Time spent queued before the drain began is not included;\n`arrival_latency_ms` carries that. Wall-clock milliseconds: sub-millisecond\nhandling reads zero, and a forward clock step reads as lag.",
             "properties": {
               "clamped": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Prints whose stage stamp preceded the receipt stamp (a wall-clock step\nback), counted as zero lag rather than dropped."
+                "description": "Of the prints the window covers, those whose stage stamp preceded the\nreceipt stamp (a wall-clock step back), counted as zero lag rather than\ndropped."
               },
               "max_ms": {
                 "format": "int64",
@@ -33107,7 +33107,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Receipt-to-paper-trading delay inside this process, over the newest\nlive prints; `None` before the feed session's first print."
+                "description": "Drain-receipt-to-paper-trading delay over the newest live prints;\n`None` before the feed session's first live print."
               },
               "sampled_prints": {
                 "$ref": "#/$defs/WireU64",
