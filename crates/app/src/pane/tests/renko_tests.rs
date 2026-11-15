@@ -99,49 +99,15 @@ fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
     assert_eq!(closes, [164, 166, 168].map(Decimal::from), "one per level");
 }
 
-/// Arm a strategy on a rectangle, so the pane queues it every live close.
-fn arm_a_strategy(pane: &mut ChartPane) {
-    let rectangle = drawings::DRAWING_TOOLS
-        .into_iter()
-        .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
-        .expect("the rectangle tool is registered");
-    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
-    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
-    let instance = crate::strategy_anchors::AnchoredInstance {
-        drawing: pane.drawings.items()[0].id,
-        preset: "BF".to_owned(),
-        spec: crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell),
-        armed: quantick_strategy::ArmedStrategy::new(
-            quantick_strategy::StrategyParams {
-                side: quantick_engine::Side::Sell,
-                quantity: Decimal::ONE,
-                tp_mult: Decimal::ONE,
-                sl_mult: Decimal::ONE,
-                rearm: quantick_strategy::Rearm::OneShot,
-                on_break: quantick_strategy::BreakPolicy::Ignore,
-                execution: quantick_strategy::Execution::Paper,
-            },
-            Box::new(quantick_strategy::ForceTrigger::new(
-                quantick_strategy::ForceParams::default_band(),
-            )),
-        ),
-        alarm: None,
-        cue: crate::audio::Cue::default(),
-        mark: crate::strategy_anchors::AlarmMark::Quiet,
-    };
-    assert!(pane.strategies.anchors.arm(instance).is_empty());
-}
-
 /// Bricks cut from the prints a Renko builder held while it read its step
 /// are history by the time they exist: they land behind the backfill
 /// boundary, reach the indicators as history rather than as live closes, and
-/// no armed strategy is handed one. Only the bricks the print that read the
-/// step closed itself are closes.
+/// no close observer — the tab's strategy queue — hears one. Only the bricks
+/// the print that read the step closed itself are closes.
 #[test]
 fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     use crate::indicator_worker::{IndicatorEvent, IndicatorSource};
     let mut pane = renko_pane();
-    arm_a_strategy(&mut pane);
     pane.add_indicator(IndicatorSource::Native {
         id: "native.cvd".to_owned(),
         values: Vec::new(),
@@ -157,11 +123,12 @@ fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
     prices.push(170);
     let tape = prints(0, prices);
     pane.ingest_backfill(&tape[..10]);
+    let mut queued: Vec<usize> = Vec::new();
     for trade in &tape[10..64] {
-        pane.ingest_live_trade(trade);
+        pane.ingest_live_trade_observed(trade, &mut |_, _, slot| queued.push(slot));
     }
     let _ = settled(&pane);
-    pane.ingest_live_trade(&tape[64]);
+    pane.ingest_live_trade_observed(&tape[64], &mut |_, _, slot| queued.push(slot));
     assert_eq!(pane.closed_slots(), 34);
     assert_eq!(pane.state.backfill_boundary(), Some(31));
     let events = settled(&pane);
@@ -183,12 +150,6 @@ fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
         matches!(rebuilt[..], [rows] if rows >= 31 && rows + appended == 34),
         "{rebuilt:?} rebuilt, {appended} appended"
     );
-    let queued: Vec<usize> = pane
-        .strategies
-        .pending
-        .iter()
-        .map(|(_, slot)| *slot)
-        .collect();
     assert_eq!(queued, [31, 32, 33], "no strategy is handed history");
 }
 

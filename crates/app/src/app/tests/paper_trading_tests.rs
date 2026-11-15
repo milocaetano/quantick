@@ -495,9 +495,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     assert!(
         matches!(
             app.active_tab()
-                .flow_pane
-                .strategies
-                .anchors
+                .anchors_on(crate::pane::PaneSide::Flow)
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
@@ -510,9 +508,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     print(&mut app, &mut id, "107.5");
     assert_eq!(
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -534,10 +530,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     for _ in 0..48 {
         print(&mut app, &mut id, "108");
     }
-    let pane = &app.active_tab().flow_pane;
-    let instance = pane
-        .strategies
-        .anchors
+    let instance = (app.active_tab().anchors_on(crate::pane::PaneSide::Flow))
         .for_drawing(drawing)
         .expect("the instance still rides the drawing");
     assert_eq!(
@@ -684,9 +677,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     );
     let instance = app
         .active_tab()
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -717,9 +708,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     );
     let instance = app
         .active_tab()
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -927,16 +916,20 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
     // Delete every drawing the way the manager's button does, then run
     // the same-frame sweep + drain the tab applies.
     {
-        let pane = &mut app.active_tab_mut().flow_pane;
-        pane.drawings.delete_all();
-        pane.strategies.sweep_orphans(&pane.drawings);
+        let tab = app.active_tab_mut();
+        tab.flow_pane.drawings.delete_all();
+        tab.sweep_strategy_orphans(crate::pane::PaneSide::Flow);
     }
     app.active_tab_mut().apply_strategy_cleanup();
     assert!(
         app.active_tab().paper.working_orders().is_empty(),
         "no resting bot order outlives its badge"
     );
-    assert!(app.active_tab().flow_pane.strategies.anchors.is_empty());
+    assert!(
+        app.active_tab()
+            .anchors_on(crate::pane::PaneSide::Flow)
+            .is_empty()
+    );
 }
 
 /// The bug the trader reported, walked through the real chart path: a
@@ -1044,9 +1037,7 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
     );
     assert!(tab.paper.is_flat(), "and takes no position either");
     let instance = tab
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -1149,9 +1140,7 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
         "the trader's long survives untouched"
     );
     let instance = tab
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -1242,9 +1231,7 @@ fn co_triggered_instances_do_not_stack_orders() {
     bar(&mut app, &mut id, "103", "107");
     let fired = app
         .active_tab()
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .instances
         .iter()
         .filter(|instance| {
@@ -1292,10 +1279,7 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
 
     app.active_tab_mut().reset_market_state(true);
 
-    let pane = &app.active_tab().flow_pane;
-    let instance = pane
-        .strategies
-        .anchors
+    let instance = (app.active_tab().anchors_on(crate::pane::PaneSide::Flow))
         .for_drawing(drawing)
         .expect("still attached");
     assert_eq!(
@@ -2185,9 +2169,8 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     assert_eq!(pane.drawings.items().len(), 2, "the band was duplicated");
     let copy = pane.drawings.items()[1].id;
     assert_ne!(copy, source);
-    let carried = pane
-        .strategies
-        .anchors
+    let anchors = app.active_tab().anchors_on(crate::pane::PaneSide::Flow);
+    let carried = anchors
         .for_drawing(copy)
         .expect("the copy carries its own armed instance");
     assert_eq!(carried.preset, "carry me", "same preset, by name");
@@ -2202,7 +2185,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
         "the copy starts watching, carrying none of the original's state"
     );
     assert!(
-        pane.strategies.anchors.for_drawing(source).is_some(),
+        anchors.for_drawing(source).is_some(),
         "and the original keeps its own"
     );
 }
@@ -2811,14 +2794,18 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
         "no resting order survives its removed nonfocused drawing"
     );
     assert!(
-        app.active_tab().flow_pane.strategies.anchors.is_empty(),
+        app.active_tab()
+            .anchors_on(crate::pane::PaneSide::Flow)
+            .is_empty(),
         "owner strategy removed immediately"
     );
     let other = &app.active_tab().time_panes[0];
     assert_eq!(other.drawings.items().len(), 1);
     assert_eq!(other.drawings.items()[0].id, other_id);
     assert!(
-        other.strategies.anchors.for_drawing(other_id).is_some(),
+        (app.active_tab().anchors_on(crate::pane::PaneSide::Time(0)))
+            .for_drawing(other_id)
+            .is_some(),
         "other pane strategy untouched"
     );
 }

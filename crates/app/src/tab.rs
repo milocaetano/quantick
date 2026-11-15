@@ -196,6 +196,8 @@ pub struct Tab {
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
     /// cost.
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
+    /// The strategies armed on the panes' drawings, keyed by pane id.
+    pub strategies: crate::strategy_anchors::TabStrategies,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
     /// Which panes the canvas shows, how they are sized and folded, and what
@@ -252,6 +254,7 @@ impl Tab {
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             time_panes: SmallVec::new(),
+            strategies: Default::default(),
             canvas: layout::TabCanvas::default(),
             focus: PaneSide::Flow,
             symbol,

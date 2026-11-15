@@ -334,9 +334,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
             "the retest limit rests at the cut edge"
         );
         let instance = tab
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .expect("instance");
         assert!(
@@ -360,9 +358,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
     );
     assert!(tab.paper.is_flat(), "no trade happened");
     let instance = tab
-        .flow_pane
-        .strategies
-        .anchors
+        .anchors_on(crate::pane::PaneSide::Flow)
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(

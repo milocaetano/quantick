@@ -196,9 +196,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     assert_eq!(app.surfaces.feed_notice.model_state.open(), None);
     assert!(matches!(
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .unwrap()
             .armed

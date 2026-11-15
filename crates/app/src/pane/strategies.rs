@@ -1,25 +1,14 @@
-//! The strategies armed on this pane's drawings: the owner, the lifecycle
-//! that keeps its badge honest, and the two views that say so.
+//! The strategies armed on this pane's drawings, as the chart sees them: the
+//! region a drawing marks, the gate a drawing must pass to be armed, and the
+//! badge that says what the bot riding it is doing.
 //!
-//! A pane anchors and paints; the kernel (`quantick-strategy`) judges. That
-//! division is why three of [`PaneStrategies`]' four fields are queues rather
-//! than state: the pane sees the closed bar and the click, but cannot reach
-//! the simulator or the dialog from inside its own input pass, so it parks
-//! what it saw and the tab drains it on the same frame.
-//!
-//! The owner never reaches into the pane. What it needs from the chart — the
-//! drawing an instance rides, the closed bars a ruler warms on — arrives as a
-//! borrowed [`Drawings`] or a [`PaneSeriesRead`], so the same transitions
-//! serve the menu, the keyboard, the tab's ingestion sweep and a test that
-//! never lays a pane out.
+//! The instances themselves are the tab's
+//! ([`crate::strategy_anchors::TabStrategies`], keyed by pane id); a pane
+//! anchors and paints, the kernel (`quantick-strategy`) judges.
 //!
 //! The badge says what the bot riding a drawing is actually doing — armed,
-//! held, or out of tape — and the lifecycle here is what makes that sentence
-//! true: re-arming when the trader drags the shape back over the future,
-//! sweeping the instance when the drawing dies, and queueing the cleanup so
-//! no resting order outlives the object that placed it. The text is produced
-//! as a `String` before it is painted, so the sentence a trader reads is the
-//! sentence a test asserts.
+//! held, or out of tape. The text is produced as a `String` before it is
+//! painted, so the sentence a trader reads is the sentence a test asserts.
 
 use eframe::egui;
 
@@ -27,31 +16,7 @@ use crate::drawings::{self, Drawing, Drawings};
 use crate::state::dec_from_f64;
 use crate::theme;
 
-use super::region_pause;
-use quantick_drawings::gesture::PaneSeriesRead;
-
-/// The armed strategies and the work they park for the tab. See the module
-/// docs.
-#[derive(Default)]
-pub struct PaneStrategies {
-    /// Armed strategy instances riding this pane's drawings. The kernel
-    /// (`quantick-strategy`) judges; this pane only anchors and paints.
-    pub anchors: crate::strategy_anchors::StrategyAnchors,
-    /// Closed bars awaiting strategy evaluation, each with the slot it
-    /// closed at. Pushed by `ingest_live_trade` only while instances
-    /// exist, drained by the tab in the same ingestion sweep — the slot
-    /// and the drawings' anchors are therefore read against one cut of
-    /// the series.
-    pub(crate) pending: Vec<(quantick_engine::Bar, usize)>,
-    /// The drawing whose "Add strategy…" was clicked; the app drains it
-    /// and opens the arming dialog over this pane.
-    pub(crate) popup_request: Option<drawings::DrawingId>,
-    /// Simulator commands the drawing menu owes the paper host — cancelling
-    /// a resting retest limit on disarm/removal. The pane cannot reach the
-    /// tab's simulator from inside the menu, so the tab drains this on the
-    /// same frame ([`crate::tab::TabState::apply_strategy_cleanup`]).
-    pub(super) cleanup: Vec<quantick_sim::Command>,
-}
+use super::{ChartPane, region_pause};
 
 /// Resolve the drawing an instance is anchored to into the kernel's
 /// terms, for the bar that closed at `slot`: the price band between the
@@ -60,9 +25,7 @@ pub struct PaneStrategies {
 /// lost its footing on this series — a region that cannot honestly be
 /// tested holds fire.
 ///
-/// A free function rather than a method on [`PaneStrategies`], so the tab
-/// can resolve regions while it steps the pane's instances mutably — and
-/// the one name both the closed-bar and the forming-bar paths resolve by.
+/// The one name both the closed-bar and the forming-bar paths resolve by.
 #[must_use]
 pub fn drawing_region(
     drawings: &Drawings,
@@ -76,179 +39,48 @@ pub fn drawing_region(
     ))
 }
 
-impl PaneStrategies {
-    /// The closed bars awaiting strategy evaluation, slot each. Drained by
-    /// the tab right after the ingestion sweep that queued them.
-    #[must_use]
-    pub fn take_bars(&mut self) -> Vec<(quantick_engine::Bar, usize)> {
-        std::mem::take(&mut self.pending)
+/// Whether `drawing` on `pane` can carry a strategy, in the words the
+/// trader reads when it cannot.
+///
+/// Re-validates everything the menu's gate promised: this is also the seam
+/// a programmatic caller comes through, and it must not be able to arm what
+/// the menu would refuse — the wrong shape, another band, a drawing with no
+/// footing here, or one nobody can see.
+pub(crate) fn check_arm(pane: &ChartPane, drawing: drawings::DrawingId) -> Result<(), String> {
+    let drawings = &pane.drawings;
+    let Some(index) = drawings.index_of(drawing) else {
+        return Err("the drawing is gone".to_owned());
+    };
+    let target = &drawings.items()[index];
+    if target.tool.id() != drawings::RECTANGLE_TOOL_ID
+        || target.band != drawings::DrawingBand::Price
+        || target.points.len() != 2
+    {
+        return Err("only price-band rectangles carry strategies".to_owned());
     }
-
-    /// Re-arm the instance riding `drawing`, re-warming its ruler when the
-    /// disarm named a *rebuilt series* (a replay seek, a bar-spec change, a
-    /// market switch reset the trigger's window). Without the re-warm,
-    /// "re-armed" silently means "warming up for another twenty bars" — the
-    /// replay-seek trap where force bars right after a seek never fire.
-    pub(crate) fn rearm(&mut self, drawing: drawings::DrawingId, series: PaneSeriesRead<'_>) {
-        use quantick_strategy::ArmedState;
-        let Some(instance) = self.anchors.for_drawing(drawing) else {
-            return;
-        };
-        let series_changed = matches!(
-            instance.armed.state(),
-            ArmedState::Disarmed { reason } if reason.resets_series()
+    if target.foreign_market || target.off_series {
+        return Err(
+            "this drawing belongs to another market or lost its series — redraw the \
+             region here first"
+                .to_owned(),
         );
-        if let Some(instance) = self.anchors.for_drawing_mut(drawing) {
-            instance.armed.rearm();
-        }
-        if series_changed {
-            self.rewarm_trigger(drawing, series);
-        }
     }
-
-    /// Feed the last `warmup_bars` closed bars of the live series back into
-    /// an instance's trigger — the arm-time warmup, repeated after a rearm
-    /// whose disarm reset the ruler. Venue-prefix candles are excluded for
-    /// the same reason as at arm time: they measure another ruler entirely.
-    fn rewarm_trigger(&mut self, id: drawings::DrawingId, series: PaneSeriesRead<'_>) {
-        let Some(instance) = self.anchors.for_drawing(id) else {
-            return;
-        };
-        let bars = series.warmup_bars(instance.armed.trigger().warmup_bars());
-        let Some(instance) = self.anchors.for_drawing_mut(id) else {
-            return;
-        };
-        instance.armed.warm(&bars);
+    if target.hidden || drawings.all_hidden() {
+        return Err("unhide the drawing first — an armed region stays visible".to_owned());
     }
-
-    /// Sweep instances whose drawing no longer exists — for the deletion
-    /// paths that cannot call [`Self::remove_for_drawing`] with an id in
-    /// hand (delete-all, undo, redo), so no path leaves a resting bot order
-    /// with no badge over it. Cleanup is queued for the tab's same-frame
-    /// drain like the menu's.
-    pub(crate) fn sweep_orphans(&mut self, drawings: &Drawings) {
-        if self.anchors.is_empty() {
-            return;
-        }
-        let alive: Vec<drawings::DrawingId> = self
-            .anchors
-            .instances
-            .iter()
-            .map(|instance| instance.drawing)
-            .filter(|id| drawings.index_of(*id).is_some())
-            .collect();
-        let cleanup = self.anchors.drop_orphans(|id| alive.contains(&id));
-        self.cleanup.extend(cleanup);
-    }
-
-    /// Drain the cleanup commands the drawing menu queued; the tab applies
-    /// them to the paper host on this same frame.
-    #[must_use]
-    pub fn take_cleanup(&mut self) -> Vec<quantick_sim::Command> {
-        std::mem::take(&mut self.cleanup)
-    }
-
-    /// Remove the instance riding `drawing` and queue the sweep of its
-    /// pending entry — every "the bot dies with its drawing" path funnels
-    /// through here so none of them can orphan a resting retest limit.
-    pub(crate) fn remove_for_drawing(&mut self, drawing: drawings::DrawingId) {
-        let cleanup = self.anchors.remove_for_drawing(drawing);
-        self.cleanup.extend(cleanup);
-    }
-
-    /// Call off the strategy riding `drawing`, as the user, and queue the
-    /// sweep of whatever it left resting. Nothing to call off is a no-op.
-    pub(crate) fn disarm(&mut self, drawing: drawings::DrawingId) {
-        if let Some(instance) = self.anchors.for_drawing_mut(drawing) {
-            let cleanup = instance.armed.disarm(quantick_strategy::DisarmReason::User);
-            self.cleanup.extend(cleanup);
-        }
-    }
-
-    /// Arm `form` on `drawing`, warmed on the bars `series` shows. Returns
-    /// the cleanup an instance it replaced owes the simulator, and the cue
-    /// its alarm rings with, if it carries one.
-    pub(crate) fn arm(
-        &mut self,
-        drawings: &Drawings,
-        series: PaneSeriesRead<'_>,
-        drawing: drawings::DrawingId,
-        form: &crate::strategy_presets::StoredPreset,
-        preset_label: String,
-    ) -> Result<(Vec<quantick_sim::Command>, Option<crate::audio::Cue>), String> {
-        let Some(compiled) = form.to_kernel() else {
-            return Err(
-                "a field does not parse: quantity, factors and multipliers must be numbers, \
-                 and an instance that neither trades nor alarms cannot be armed"
-                    .to_owned(),
-            );
-        };
-        let crate::strategy_presets::CompiledPreset {
-            params,
-            force,
-            alarm,
-        } = compiled;
-        // Re-validate everything the menu's gate promised: this is also
-        // the seam a future programmatic caller (the NL layer) comes
-        // through, and it must not be able to arm what the menu would
-        // refuse — the wrong shape, another band, a drawing with no
-        // footing here, or one nobody can see.
-        let Some(index) = drawings.index_of(drawing) else {
-            return Err("the drawing is gone".to_owned());
-        };
-        let target = &drawings.items()[index];
-        if target.tool.id() != drawings::RECTANGLE_TOOL_ID
-            || target.band != drawings::DrawingBand::Price
-            || target.points.len() != 2
-        {
-            return Err("only price-band rectangles carry strategies".to_owned());
-        }
-        if target.foreign_market || target.off_series {
-            return Err(
-                "this drawing belongs to another market or lost its series — redraw the \
-                 region here first"
-                    .to_owned(),
-            );
-        }
-        if target.hidden || drawings.all_hidden() {
-            return Err("unhide the drawing first — an armed region stays visible".to_owned());
-        }
-        // A region whose drawn span can no longer cover a future bar
-        // can never fire: the badge would show "armed" over a bot that
-        // is structurally done — the silent halt the named disarms
-        // exist to prevent. One predicate, shared with re-arm and the
-        // evaluation sweep (`Pane::strategy_region_can_fire`), refuses
-        // it with the fix in hand.
-        if !region_can_fire(target, series.closed_slots()) {
-            return Err(
-                "the region ends before the next bar, so nothing can ever fire — \
-                 stretch it past the right edge, or turn on \"extend right\" in its \
-                 Region settings"
-                    .to_owned(),
-            );
-        }
-        let mut armed = quantick_strategy::ArmedStrategy::new(
-            params,
-            Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
+    // A region whose drawn span can no longer cover a future bar can never
+    // fire: the badge would show "armed" over a bot that is structurally
+    // done. One predicate, shared with re-arm and the badge, refuses it with
+    // the fix in hand.
+    if !region_can_fire(target, pane.series_read().closed_slots()) {
+        return Err(
+            "the region ends before the next bar, so nothing can ever fire — \
+             stretch it past the right edge, or turn on \"extend right\" in its \
+             Region settings"
+                .to_owned(),
         );
-        // Warm the ruler on the bars the chart is already showing —
-        // armed means armed now, not after another twenty bars of
-        // warmup the trader cannot see the reason for. The trigger
-        // declares its own depth (`warmup_bars`), and the pane keeps
-        // venue-prefix candles out: they measure another ruler
-        // entirely (a 1-minute body dwarfs a tick-bar body).
-        armed.warm(&series.warmup_bars(armed.trigger().warmup_bars()));
-        let replaced_cleanup = self.anchors.arm(crate::strategy_anchors::AnchoredInstance {
-            drawing,
-            preset: preset_label,
-            spec: form.clone(),
-            armed,
-            alarm: alarm.map(|setup| quantick_strategy::SignalAlarm::new(setup.params)),
-            cue: alarm.map(|setup| setup.cue).unwrap_or_default(),
-            mark: crate::strategy_anchors::AlarmMark::Quiet,
-        });
-        Ok((replaced_cleanup, alarm.map(|setup| setup.cue)))
     }
+    Ok(())
 }
 
 pub(crate) use quantick_drawings::alert_geometry::region_can_fire;

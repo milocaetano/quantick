@@ -591,11 +591,7 @@ impl QuantickApp {
             self.layer_wiring().apply_footprint_change(change);
         }
         if asks.undo_drawing {
-            let pane = self.drawing_pane_mut();
-            pane.drawings.undo();
-            // Same orphan risk as the keyboard undo: the drawing an armed
-            // instance rides may just have been taken away.
-            pane.strategies.sweep_orphans(&pane.drawings);
+            self.active_tab_mut().undo_drawing();
         }
     }
 

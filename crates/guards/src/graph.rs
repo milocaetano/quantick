@@ -193,7 +193,12 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // One tab's reaching back behind a command bus: venue candles and the
     // trade-history run, over the source vocabulary. Told the time; its feed
     // requests leave as effects the window sends, so it never names `feed`.
-    ("session", &["civil", "engine", "sources"]),
+    // `strategy` for the armed instances a tab's panes carry, and `sim` for
+    // the commands they owe the paper account.
+    (
+        "session",
+        &["civil", "engine", "sim", "sources", "strategy"],
+    ),
     // What a source is, below the host that runs one: the provider settings
     // the config document reads and the history reach the feed host spends.
     ("sources", &["engine"]),

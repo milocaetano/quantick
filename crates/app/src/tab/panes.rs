@@ -559,17 +559,69 @@ impl Tab {
             paper,
             flow_pane,
             time_panes,
+            strategies,
             ..
         } = self;
-        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
-            for command in pane.strategies.take_cleanup() {
-                let _ = paper.account_mut().apply_strategy_command(command);
-            }
+        let panes: SmallVec<[&ChartPane; MAX_CANVAS_PANES]> = std::iter::once(&*flow_pane)
+            .chain(time_panes.iter())
+            .collect();
+        // A drawing a control call removed is swept here, on the frame of
+        // the call: the pane that lost it cannot reach the strategies. Free
+        // while nothing is armed.
+        if strategies.any_armed() {
+            strategies.sweep_orphans(|id, drawing| {
+                (panes.iter())
+                    .any(|pane| pane.id == id && pane.drawings.index_of(drawing).is_some())
+            });
+        }
+        let ids: SmallVec<[u64; MAX_CANVAS_PANES]> = panes.iter().map(|pane| pane.id).collect();
+        for command in strategies.take_cleanup(&ids) {
+            let _ = paper.account_mut().apply_strategy_command(command);
+        }
+    }
+
+    /// The pane on `side` beside its strategies, borrowed apart.
+    pub(crate) fn pane_with_strategies(
+        &mut self,
+        side: PaneSide,
+    ) -> (&mut ChartPane, &mut crate::strategy_anchors::PaneStrategies) {
+        let Self {
+            flow_pane,
+            time_panes,
+            strategies,
+            ..
+        } = self;
+        let pane = match side {
+            PaneSide::Time(slot) => time_panes.get_mut(slot).unwrap_or(flow_pane),
+            PaneSide::Flow => flow_pane,
+        };
+        let strategies = strategies.pane_mut(pane.id);
+        (pane, strategies)
+    }
+
+    /// Undo the last drawing edit on the drawing side. Same orphan risk as
+    /// the keyboard undo: the drawing an armed instance rides may just have
+    /// been taken away, so its strategies are swept with it.
+    pub(crate) fn undo_drawing(&mut self) {
+        let side = self.drawing_side();
+        self.pane_mut(side).drawings.undo();
+        self.sweep_strategy_orphans(side);
+    }
+
+    /// Sweep the instances on `side` whose drawing is gone — delete-all,
+    /// undo, redo — queueing what they owe for the same-frame drain.
+    pub(crate) fn sweep_strategy_orphans(&mut self, side: PaneSide) {
+        let pane = match side {
+            PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
+            PaneSide::Flow => &self.flow_pane,
+        };
+        if let Some(strategies) = self.strategies.existing_mut(pane.id) {
+            strategies.sweep_orphans(|id| pane.drawings.index_of(id).is_some());
         }
     }
 
     /// Arm `form` on the drawing through its pane's strategies
-    /// ([`crate::pane::strategies::PaneStrategies::arm`]), then settle what
+    /// ([`crate::strategy_anchors::PaneStrategies::arm`]), then settle what
     /// the arm owes the paper account and the alert sink.
     pub(crate) fn arm_strategy_instance(
         &mut self,
@@ -579,15 +631,15 @@ impl Tab {
         form: &crate::strategy_presets::StoredPreset,
         preset_label: String,
     ) -> Result<(), String> {
-        let pane = self.pane_mut(side);
-        let series = quantick_drawings::gesture::PaneSeriesRead {
-            history_prefix: &pane.history_prefix,
-            state: &pane.state,
-            spec: &pane.spec,
-        };
-        let (replaced_cleanup, cue) =
-            pane.strategies
-                .arm(&pane.drawings, series, drawing, form, preset_label)?;
+        let (pane, strategies) = self.pane_with_strategies(side);
+        let pane = &*pane;
+        let (replaced_cleanup, cue) = strategies.arm(
+            drawing,
+            form,
+            preset_label,
+            || crate::pane::strategies::check_arm(pane, drawing),
+            |depth| pane.series_read().warmup_bars(depth),
+        )?;
         for command in replaced_cleanup {
             // Arming over an instance with a pending entry sweeps that
             // entry — a resting order must never outlive its bot.
@@ -622,16 +674,13 @@ impl Tab {
             // so seeking inherits correct indicator behavior for free).
             pane.send_indicator_rebuild();
             pane.frame.lane_divider_x = None;
-            // Judgements armed on the old timeline do not carry into the
-            // rebuilt one — the same honesty rule the simulator's flatten
-            // follows, with the reason on the badge. No cleanup commands
-            // come back under this reason: `paper.on_timeline_reset` below
-            // sweeps every order with the honest `reset` label.
-            let _ = pane
-                .strategies
-                .anchors
-                .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         }
+        // Judgements armed on the old timeline do not carry into the rebuilt
+        // one — the same honesty rule the simulator's flatten follows, with
+        // the reason on the badge. No cleanup commands come back under this
+        // reason: `paper.on_timeline_reset` below sweeps every order with the
+        // honest `reset` label.
+        let _ = (self.strategies).disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         self.drop_overlay_gestures();
         // The timeline these describe is the one being rebuilt. A gap
         // re-anchors itself by market time, so one left behind would paint
@@ -751,7 +800,11 @@ impl Tab {
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         match reseed {
-            Some(seat) => self.time_panes[seat] = pane,
+            Some(seat) => {
+                // Whatever rode the chart this one replaces goes with it.
+                self.strategies.forget_pane(self.time_panes[seat].id);
+                self.time_panes[seat] = pane;
+            }
             None => self.time_panes.push(pane),
         }
         // One pane per frame, for the reason the first one waits a frame at
@@ -1017,8 +1070,8 @@ impl Tab {
             // bar spec, so the instances disarm and say why. The tape
             // itself continues, so any pending bot entry is swept here
             // and now — through the same funnel manual orders use.
-            let cleanup = pane.strategies.anchors.disarm_all(reason);
-            let _ = pane.strategies.take_bars();
+            let id = pane.id;
+            let cleanup = self.strategies.pane_mut(id).disarm_all(reason);
             for command in cleanup {
                 let _ = self.paper.account_mut().apply_strategy_command(command);
             }
