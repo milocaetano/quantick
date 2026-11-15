@@ -426,7 +426,7 @@ impl Harness {
             indicator_settings_dialog: read("QUANTICK_INDICATOR_SETTINGS")
                 .is_some_and(|value| value == "1"),
             settings_autostart: read("QUANTICK_INDICATOR_SETTINGS")
-                .and_then(|value| parse_settings_hook(&value)),
+                .and_then(|value| SettingsTab::hook(&value)),
             indicator_mouse_line: read("QUANTICK_INDICATOR_MOUSE_LINE")
                 .and_then(|value| value.trim().parse().ok()),
             pointer: read("QUANTICK_POINTER").and_then(|value| {
@@ -897,23 +897,6 @@ fn parse_pointer_fraction(value: &str) -> Option<egui::Vec2> {
     let x: f32 = x.trim().parse().ok()?;
     let y: f32 = y.trim().parse().ok()?;
     ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| egui::vec2(x, y))
-}
-
-/// Parse `QUANTICK_INDICATOR_SETTINGS`: `<index>` or `<index>:<tab>`, where
-/// the tab is `inputs`/`0` or `style`/`1`.
-///
-/// Nonsense is no hook at all rather than a guessed one: a validation run that
-/// captured the wrong tab because a typo silently defaulted would be a
-/// screenshot claiming to show something it does not.
-fn parse_settings_hook(value: &str) -> Option<(usize, SettingsTab)> {
-    let (index, tab) = value.split_once(':').unwrap_or((value, "inputs"));
-    let index = index.trim().parse::<usize>().ok()?;
-    let tab = match tab.trim().to_ascii_lowercase().as_str() {
-        "inputs" | "0" => SettingsTab::Inputs,
-        "style" | "1" => SettingsTab::Style,
-        _ => return None,
-    };
-    Some((index, tab))
 }
 
 /// Read the ending `QUANTICK_HISTORY_NOTE` names, and arm the hold.

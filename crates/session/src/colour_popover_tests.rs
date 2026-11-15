@@ -232,11 +232,20 @@ fn esc_steps_back_from_the_question_then_the_popover_then_the_menu() {
     menu.toggle_colour();
     let popover = menu.colour.as_mut().unwrap();
     popover.ask("sky");
-    assert_eq!(popover.keys(keys(&[Key::Escape]), 18, Some(3)), KeyAct::Cancel);
+    assert_eq!(
+        popover.keys(keys(&[Key::Escape]), 18, Some(3)),
+        KeyAct::Cancel
+    );
     popover.back();
-    assert_eq!(popover.keys(keys(&[Key::Escape]), 18, Some(3)), KeyAct::Close);
+    assert_eq!(
+        popover.keys(keys(&[Key::Escape]), 18, Some(3)),
+        KeyAct::Close
+    );
     menu.colour = None;
-    assert!(menu.chip_menu_on(7), "the menu stays after the popover closes");
+    assert!(
+        menu.chip_menu_on(7),
+        "the menu stays after the popover closes"
+    );
     menu.settle(None, true, false);
     assert!(!menu.chip_menu_on(7), "the third Esc closes the menu");
 }

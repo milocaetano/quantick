@@ -179,8 +179,10 @@ impl Palette {
                     _ => format!("{} is", said(colour)),
                 };
                 let gets = said(owner_would_get);
+                // A typed value equal to a held preset takes the preset.
+                let typed_preset = typed && matches!(held, WorkspaceColour::Preset(_));
                 Pick::Ask(SwapQuestion {
-                    colour,
+                    colour: if typed_preset { held } else { colour },
                     words: format!("{subject} used by {owner}. Swap? {owner} becomes {gets}."),
                     owner,
                     owner_gets: owner_would_get,

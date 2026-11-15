@@ -419,7 +419,12 @@ fn the_colour_call_answers_its_warnings() {
 #[test]
 fn a_question_whose_colour_freed_is_left_and_applies_nothing() {
     let (mut host, mut access, actor) = host();
-    press(&mut host, &mut access, &actor, ColourIntent::Pick("sky".to_owned()));
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("sky".to_owned()),
+    );
     assert!(host.menu.colour.as_ref().unwrap().asked.is_some());
     host.book.set_colour("Scalp", preset(6), false).unwrap();
     let writes = host.writes;
@@ -445,7 +450,13 @@ fn a_question_whose_colour_freed_is_left_and_applies_nothing() {
 fn the_custom_act_fills_the_field_in_the_window_s_theme() {
     let (mut host, mut access, actor) = host();
     host.dark = false;
-    let read = call(&mut host, &mut access, &actor, "popover", json!({"act": "custom"}));
+    let read = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "custom"}),
+    );
     assert_eq!(read["hex"], json!("#6A3FC4"), "Violet as Light paints it");
 }
 
@@ -464,12 +475,8 @@ fn a_typed_preset_value_swaps_the_preset() {
 fn a_refused_act_keeps_the_menu() {
     let (mut host, mut access, actor) = host();
     host.menu.colour = None;
-    let refused = popover_call::<Host, FakeAccess>(
-        &mut host,
-        &mut access,
-        &actor,
-        &json!({"act": "apply"}),
-    );
+    let refused =
+        popover_call::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"act": "apply"}));
     assert!(refused.is_err());
     assert!(host.menu.chip_menu_on(1), "the menu is still open");
 }

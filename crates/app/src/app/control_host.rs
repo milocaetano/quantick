@@ -949,6 +949,9 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
     }
+    fn workspace_dark(&self) -> bool {
+        TabsPort::appearance(self).dark
+    }
 }
 
 impl ChromePort for QuantickApp {

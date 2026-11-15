@@ -157,7 +157,7 @@ fn the_question_replaces_the_grid() {
     state.ask("sky");
     for dark in [true, false] {
         let marks = drawn(&mock(true), &state, dark);
-        assert_eq!(marks.size, [272.0, 112.0]);
+        assert_eq!(marks.size, [272.0, 130.0], "it ends on a row");
         let question = keyed(&marks, "question");
         assert_eq!(
             words(question),
@@ -402,12 +402,24 @@ fn the_field_the_chip_and_a_disabled_apply_wear_their_edges() {
         let mut state = ColourPopover::default();
         state.open_custom("#3A3550".to_owned(), [0.0; 3]);
         let marks = drawn(&mock(true), &state, dark);
-        assert!(plates(keyed(&marks, "hex")).iter().any(|p| p.edge == Some(accent)));
-        assert!(plates(keyed(&marks, "preview")).iter().any(|p| p.edge == Some(ink.edge)));
+        assert!(
+            plates(keyed(&marks, "hex"))
+                .iter()
+                .any(|p| p.edge == Some(accent))
+        );
+        assert!(
+            plates(keyed(&marks, "preview"))
+                .iter()
+                .any(|p| p.edge == Some(ink.edge))
+        );
         state.hex = "#3A7BD".to_owned();
         let marks = drawn(&mock(true), &state, dark);
         let apply = keyed(&marks, "apply");
-        assert!(plates(apply).iter().all(|p| p.fill != Some(accent) && p.edge != Some(accent)));
+        assert!(
+            plates(apply)
+                .iter()
+                .all(|p| p.fill != Some(accent) && p.edge != Some(accent))
+        );
         let label = apply.marks.iter().find_map(|mark| match mark {
             Mark::Text(words) => Some(words.ink),
             _ => None,
@@ -432,9 +444,15 @@ fn swatch_marks_read_on_every_preset_in_both_themes() {
         }
     }
     let marks = drawn(&mock(true), &ColourPopover::default(), true);
-    let initials = keyed(&marks, "sky").marks.iter().find_map(|mark| match mark {
-        Mark::Text(words) if words.text == "Sc" => words.rgb,
-        _ => None,
-    });
-    assert_eq!(initials, Some(mono_ink(WorkspaceColour::preset(2).unwrap().rgb(true))));
+    let initials = keyed(&marks, "sky")
+        .marks
+        .iter()
+        .find_map(|mark| match mark {
+            Mark::Text(words) if words.text == "Sc" => words.rgb,
+            _ => None,
+        });
+    assert_eq!(
+        initials,
+        Some(mono_ink(WorkspaceColour::preset(2).unwrap().rgb(true)))
+    );
 }

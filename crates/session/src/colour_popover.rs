@@ -123,9 +123,10 @@ pub struct ColourPopover {
     pub custom: bool,
     /// Custom's field, which the window's text field edits in place.
     pub hex: String,
-    /// Where the square and the strip were last pressed: hue, saturation
-    /// and value, each 0 to 1. The field's colour moves it when they differ.
-    pub hsv: [f32; 3],
+    /// Where the picker stands: hue, saturation and value, each 0 to 1, of
+    /// the last valid colour (`None` before one is known). A valid field
+    /// moves it; a malformed one leaves it.
+    pub hsv: Option<[f32; 3]>,
 }
 
 impl ColourPopover {
@@ -152,18 +153,19 @@ impl ColourPopover {
     pub fn open_custom(&mut self, hex: String, hsv: [f32; 3]) {
         self.custom = !self.custom;
         if self.custom {
-            (self.hex, self.hsv) = (hex, hsv);
+            (self.hex, self.hsv) = (hex, Some(hsv));
         }
     }
 
     /// A frame's keys over `cells` grid cells, `current` the workspace's own
-    /// swatch: Esc closes; the question answers only what Tab reached;
+    /// swatch: Esc cancels the question, else closes; the question answers
+    /// only what Tab reached;
     /// Custom open takes Enter as Apply; the grid moves its focus and
     /// presses it.
     pub fn keys(&mut self, keys: Keys, cells: usize, current: Option<usize>) -> KeyAct {
         let hit = |key| keys.has(key);
         if hit(Key::Escape) {
-            return KeyAct::Close;
+            return [KeyAct::Close, KeyAct::Cancel][usize::from(self.asked.is_some())];
         }
         let pressed = hit(Key::Enter) || hit(Key::Space);
         if self.asked.is_some() {

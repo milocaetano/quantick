@@ -10,7 +10,7 @@
 use quantick_appearance::workspace_menu::{FilledButton, chrome};
 use quantick_appearance::{PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio};
 use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowColour, RowKind};
-use quantick_control_handlers::workspace_book::colour_popover::{question, shown_hsv};
+use quantick_control_handlers::workspace_book::colour_popover::{question, settle, shown_hsv};
 use quantick_control_schema::workspace_book::WORKSPACE_COLOUR_SET_CAPABILITY_ID as SET;
 use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID as POPOVER;
 use quantick_session::colour_popover::{ColourIntent, ColourPopover, KeyAct, Keys};
@@ -20,12 +20,13 @@ use quantick_stores::workspaces::palette::{
 };
 use quantick_stores::workspaces::{Rgb, WorkspaceBook, WorkspaceColour, hsv_rgb, parse_typed_hex};
 
-use crate::workspace_menu::{Area, Mark, Piece, Plate, Words, area};
+use crate::workspace_menu::{Area, HEAD_PT, Mark, Piece, Plate, SWATCH_BOTTOM_PT, Words, area};
 
 /// The popover's width and padding, and how far below the swatch it hangs.
 pub const WIDTH_PT: f32 = 272.0;
 const PAD: f32 = 12.0;
-pub const DROP_PT: f32 = 4.0;
+/// It clears the header's words below the swatch.
+pub const DROP_PT: f32 = 8.0;
 /// A swatch, the gap between two, and one grid row with its name under it.
 const SWATCH: [f32; 2] = [56.0, 26.0];
 const GAP: f32 = 8.0;
@@ -110,14 +111,33 @@ pub fn dragged(key: &str, at: [f32; 2]) -> Option<WorkspaceCommand> {
 /// bundled theme paints them.
 fn ink_on(rgb: Rgb, dark: bool) -> Token {
     let theme = ResolvedTheme::bundled(dark);
-    let [r, g, b] = rgb;
-    let fill = PremultipliedRgba::from_rgb(r, g, b);
+    let fill = PremultipliedRgba::from_rgb(rgb[0], rgb[1], rgb[2]);
     let reads = |token| contrast_ratio(theme.color(token), fill);
     if reads(Token::ChipInk) >= reads(Token::TextPrimary) {
         Token::ChipInk
     } else {
         Token::TextPrimary
     }
+}
+
+/// Pure black or pure white, whichever reads more on `rgb`: a swatch's
+/// initials and check, 4.58:1 at the least on any colour.
+pub(crate) fn mono_ink(rgb: Rgb) -> Rgb {
+    let fill = PremultipliedRgba::from_rgb(rgb[0], rgb[1], rgb[2]);
+    let reads = |v: u8| contrast_ratio(PremultipliedRgba::from_rgb(v, v, v), fill);
+    if reads(0) >= reads(255) {
+        [0; 3]
+    } else {
+        [255; 3]
+    }
+}
+
+/// `mark`, words in `rgb` of their own.
+fn tinted(mut mark: Mark, rgb: Rgb) -> Mark {
+    if let Mark::Text(words) = &mut mark {
+        words.rgb = Some(rgb);
+    }
+    mark
 }
 
 fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark {
@@ -130,6 +150,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         width,
         tracking: 0.0,
         names: false,
+        rgb: None,
     })
 }
 
@@ -206,9 +227,11 @@ fn swatch(
     }];
     if swatch.current {
         marks.extend([ring(at, 3.0, ink.ink), ring(at, 2.0, ink.ink)]);
-        marks.push(centred(measure, at, CHECK, 12.0, ink_on(rgb, dark)));
+        let check = centred(measure, at, CHECK, 12.0, ink.ink);
+        marks.push(tinted(check, mono_ink(rgb)));
     } else if let Some(initials) = &swatch.initials {
-        marks.push(centred(measure, at, initials, NAME_PT, ink_on(rgb, dark)));
+        let initials = centred(measure, at, initials, NAME_PT, ink.ink);
+        marks.push(tinted(initials, mono_ink(rgb)));
     }
     if focused {
         marks.push(ring(at, 2.0, ink.accent));
@@ -257,15 +280,12 @@ fn button(
 ) -> Piece {
     let ink = chrome(dark);
     let primary = FilledButton::primary();
-    let (fill, edge, words) = if filled {
-        (primary.fill, primary.fill, primary.ink)
-    } else {
-        (ink.control, ink.edge, ink.ink)
+    let (fill, edge, words) = match (filled, enabled) {
+        (true, true) => (primary.fill, primary.fill, primary.ink),
+        (_, false) => (ink.control, ink.edge, ink.faint),
+        (false, true) => (ink.control, ink.edge, ink.ink),
     };
-    let mut back = plate(at, 4.0, Some(fill), Some(edge));
-    if !enabled {
-        back.alpha = u8::MAX / 2;
-    }
+    let back = plate(at, 4.0, Some(fill), Some(edge));
     let label = row.label.clone();
     Piece {
         at,
@@ -287,11 +307,12 @@ fn button(
 pub fn popover(
     book: &WorkspaceBook,
     name: &str,
-    state: &ColourPopover,
+    state: &mut ColourPopover,
     dark: bool,
     measure: crate::workspace_menu::Measure<'_>,
 ) -> Option<Popover> {
     let model = palette(book, name)?;
+    settle(&model, state, dark); // A freed question is left; the picker keeps its colour.
     if let Some(question) = question(&model, state) {
         return Some(asked(&model, &question, state.focus, dark, measure));
     }
@@ -464,7 +485,7 @@ fn custom(
     let line = strip.y + strip.h + 10.0;
     let field = area(PAD, line, FIELD_W, CONTROL_H);
     let hex_row = row("hex", &state.hex, None, POPOVER);
-    let boxed = plate(field, 4.0, Some(ink.control), Some(ink.edge));
+    let boxed = plate(field, 4.0, Some(ink.control), Some(ink.accent)); // It holds the focus.
     marks.pieces.push(Piece {
         row: Some(hex_row),
         ..Piece::plain(field, vec![Mark::Box(boxed)])
@@ -476,15 +497,16 @@ fn custom(
         field.h - 8.0,
     ));
     let preview = area(field.x + field.w + 6.0, line, CONTROL_H, CONTROL_H);
-    let preview_mark = typed.map_or(
-        Mark::Box(plate(preview, 4.0, None, Some(ink.edge))),
-        |rgb| Mark::Colour {
-            at: preview,
-            radius: 4.0,
-            rgb,
-        },
-    );
-    marks.pieces.push(Piece::plain(preview, vec![preview_mark]));
+    let chip = typed.map(|rgb| Mark::Colour {
+        at: preview,
+        radius: 4.0,
+        rgb,
+    });
+    let edge = Mark::Box(plate(preview, 4.0, None, Some(ink.edge)));
+    marks.pieces.push(Piece {
+        row: Some(row("preview", &state.hex, None, POPOVER)),
+        ..Piece::plain(preview, chip.into_iter().chain([edge]).collect())
+    });
     let apply_label = "Apply";
     let apply_at = area(
         preview.x + preview.w + 8.0,
@@ -624,13 +646,22 @@ fn asked(
     }
     pieces.extend([swap, cancel]);
     Popover {
-        size: [WIDTH_PT, swap_at.y + CONTROL_H + PAD],
+        size: [WIDTH_PT, on_a_row(swap_at.y + CONTROL_H + PAD)],
         pieces,
         field: None,
         cells: Vec::new(),
         current: None,
         applies: false,
     }
+}
+
+/// The least height from `content` up at which the popover, hung under the
+/// header swatch, ends on a boundary of the list rows behind it.
+fn on_a_row(content: f32) -> f32 {
+    use quantick_session::workspace_menu::{CHIP_MENU_BORDER_PT, CHIP_MENU_ROW_PT};
+    let (frame, top) = (2.0 * CHIP_MENU_BORDER_PT, SWATCH_BOTTOM_PT + DROP_PT);
+    let rows = ((top + content + frame - HEAD_PT) / CHIP_MENU_ROW_PT).ceil();
+    HEAD_PT + rows * CHIP_MENU_ROW_PT - top - frame
 }
 
 #[cfg(test)]

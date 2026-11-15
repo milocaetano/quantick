@@ -36,6 +36,9 @@ const HIGHLIGHT_GAP_PT: f32 = 1.0;
 const SLOT_RADIUS_PT: f32 = 1.5;
 /// The header's colour swatch, its press and its corner radius.
 pub const SWATCH_PT: f32 = 16.0;
+/// Where the header's swatch ends, from the header block's top: centred on
+/// its 34 pt line 8 pt down.
+pub const SWATCH_BOTTOM_PT: f32 = 8.0 + (34.0 + SWATCH_PT) / 2.0;
 const SWATCH_HIT_PT: f32 = 24.0;
 const SWATCH_RADIUS_PT: f32 = 4.0;
 /// The miniatures: the header's as large as the capsule's, a row's smaller.
@@ -89,6 +92,8 @@ pub struct Words {
     pub width: f32,
     pub tracking: f32,
     pub names: bool,
+    /// A colour of its own instead of `ink`'s: black or white on a swatch.
+    pub rgb: Option<[u8; 3]>,
 }
 
 /// One thing to paint.
@@ -175,6 +180,7 @@ fn text(x: f32, y: f32, words: &str, size: f32, ink: Token, width: f32) -> Mark 
         width,
         tracking: 0.0,
         names: false,
+        rgb: None,
     })
 }
 

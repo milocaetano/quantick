@@ -165,6 +165,7 @@ fn colour_popover(
             if let Some(f) = pop.field {
                 let place = Rect::from_min_size(rect.min + vec2(f.x, f.y), vec2(f.w, f.h));
                 let mut field = ui.new_child(egui::UiBuilder::new().max_rect(place));
+                field.visuals_mut().text_cursor.stroke.color = ink(Some(Token::TextPrimary));
                 let edit = egui::TextEdit::singleline(&mut state.hex).frame(false);
                 field.add(edit).request_focus();
             }
@@ -204,7 +205,8 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
                 let words = galley(ui, words.extra_letter_spacing(t.tracking), t.width);
                 let place = at + vec2(t.x, t.y - words.size().y / 2.0);
                 cut |= words.elided && t.names;
-                painter.galley(place, words, ink(Some(t.ink)));
+                let own = t.rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b));
+                painter.galley(place, words, own.unwrap_or_else(|| ink(Some(t.ink))));
             }
             Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree, Token::Accent),
             Mark::Colour { at, radius, rgb } => {

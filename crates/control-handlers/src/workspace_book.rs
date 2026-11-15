@@ -148,6 +148,11 @@ pub trait WorkspaceBookHost {
     fn workspace_menu(&mut self) -> Option<&mut WorkspaceMenuState> {
         None
     }
+    /// Whether the window paints in a dark theme: what a colour's value is
+    /// read in where the call names no theme.
+    fn workspace_dark(&self) -> bool {
+        true
+    }
     /// Close a market tab; `false` when it is its window's last. With `close`
     /// false nothing closes and the answer says whether it would: asked
     /// before anything is saved or flushed, so the refusal writes nothing.
