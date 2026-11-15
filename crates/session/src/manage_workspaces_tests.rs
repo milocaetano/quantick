@@ -196,6 +196,24 @@ fn the_undo_row_stands_until_its_time() {
     assert!(dialog.undo.is_empty());
 }
 
+/// The keys go to the open palette, or only Esc to a typed name.
+#[test]
+fn a_palette_or_a_field_takes_the_keys_first() {
+    let mut dialog = ManageDialog::new(7);
+    assert!(ManageKey::ALL.iter().all(|key| dialog.takes(*key)));
+    dialog.local(&ManageIntent::BeginRename("Scalp".to_owned()));
+    assert!(dialog.takes(ManageKey::Escape) && !dialog.takes(ManageKey::Colour));
+    dialog.local(&ManageIntent::Chip("Scalp".to_owned()));
+    assert!(!dialog.takes(ManageKey::Escape), "the palette's own Esc");
+    assert_eq!(ManageKey::Undo.name(), "Z");
+    assert!(ManageKey::Undo.command() && !ManageKey::Delete.command());
+    assert_eq!(ManageKeys::of([true; 8]), {
+        let mut all = ManageKeys::default();
+        ManageKey::ALL.into_iter().for_each(|key| all.press(key));
+        all
+    });
+}
+
 /// A capture stages each face of the dialog by its token.
 #[test]
 fn a_capture_stages_the_dialog_s_faces() {
@@ -209,6 +227,15 @@ fn a_capture_stages_the_dialog_s_faces() {
     assert!(dialog.stage("colour=Scalp:ask=violet"));
     let palette = dialog.palette.as_ref().unwrap();
     assert_eq!(palette.popover.asked.as_deref(), Some("violet"));
+    assert!(dialog.stage("undo=Scalp"));
+    let rows = rows();
+    let first = dialog.keys(ManageKeys::default(), &rows, 9);
+    assert_eq!(
+        first,
+        Some(ManageIntent::Delete { now_ms: 9 }),
+        "deleted at once"
+    );
+    assert_eq!(dialog.keys(ManageKeys::default(), &rows, 10), None, "once");
     assert!(dialog.stage("focus=3"));
     assert_eq!(dialog.focus, Some(3));
     assert!(!dialog.stage("drop=Scalp"));

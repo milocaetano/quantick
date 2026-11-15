@@ -273,13 +273,17 @@ fn a_menu_set_and_delete_journal_the_rows_the_calls_do() {
     )
     .unwrap();
     let mut menu = WorkspaceMenuState::default();
-    for command in [
-        WorkspaceCommand::Set("Scalp".to_owned()),
-        WorkspaceCommand::Delete("Scalp".to_owned()),
+    menu.open_manage(2);
+    use quantick_session::manage_workspaces::ManageIntent::{Arm, Delete};
+    let now_ms = actor.requested_at_unix_ms;
+    for (command, says) in [
+        (WorkspaceCommand::Set("Scalp".to_owned()), true),
+        (WorkspaceCommand::Manage(Arm("Scalp".to_owned())), false),
+        (WorkspaceCommand::Manage(Delete { now_ms }), true),
     ] {
         let journal = Some((&mut hand_access, &hand));
         let note = apply_row_command(&mut by_hand, journal, &mut menu, 2, "WDOV26", command);
-        assert!(note.is_some(), "each row changed something and says so");
+        assert_eq!(note.is_some(), says, "each change says so");
     }
 
     let kinds: Vec<_> = rows(&call_access).into_iter().map(|row| row.1).collect();
