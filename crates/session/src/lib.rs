@@ -29,6 +29,7 @@ mod native;
 mod paging;
 pub mod paper;
 pub mod prompt;
+mod series;
 pub mod strategies;
 pub mod tab_chip;
 mod venue;
@@ -50,6 +51,7 @@ use quantick_sources::ohlcv::OhlcvSlice;
 
 pub use button::{HistoryPagingOff, fmt_history_span};
 pub use paging::REBUILD_FAILED_NOTE;
+pub use series::{LiveCloses, PaneSeries};
 pub use view::{PaneView, TabView};
 
 use native::NativeCandles;
@@ -537,6 +539,8 @@ pub struct TabSession {
     events: VecDeque<SessionEvent>,
     /// Moves whenever the timeline is thrown away; a resuming attach keeps it.
     timeline_generation: u64,
+    /// Every pane's bars, keyed by the pane's id.
+    series: series::SeriesBook,
 }
 
 impl Default for TabSession {
@@ -603,6 +607,7 @@ impl TabSession {
             paging: TradePaging::default(),
             events: VecDeque::new(),
             timeline_generation: 0,
+            series: series::SeriesBook::new(),
         }
     }
 
@@ -625,6 +630,33 @@ impl TabSession {
             self.events.push_back(event);
         }
         answer.map(|()| step.effects)
+    }
+
+    /// [`Self::dispatch`], judged against the tab `judge` reads over this
+    /// session's own pane series: `judge` builds the view from the series and
+    /// hands it to the dispatch it is lent, once.
+    pub fn dispatch_reading<F>(
+        &mut self,
+        act: Act<'_>,
+        now: Instant,
+        judge: F,
+    ) -> Result<Vec<Effect>, Refusal>
+    where
+        F: FnOnce(
+            &std::collections::BTreeMap<u64, PaneSeries>,
+            &mut dyn FnMut(&TabView<'_>) -> Result<Vec<Effect>, Refusal>,
+        ) -> Result<Vec<Effect>, Refusal>,
+    {
+        // Lent out for the read: the dispatch judges the view, never the series.
+        let series = std::mem::take(&mut self.series);
+        let mut act = Some(act);
+        let mut run = |tab: &TabView<'_>| match act.take() {
+            Some(act) => self.dispatch(Msg { act, tab }, now),
+            None => Ok(Vec::new()),
+        };
+        let answer = judge(&series, &mut run);
+        self.series = series;
+        answer
     }
 
     fn apply(&mut self, act: Act<'_>, step: &mut Step<'_>) -> Result<(), Refusal> {
@@ -955,6 +987,8 @@ impl TabSession {
 mod native_tests;
 #[cfg(test)]
 mod paper_tests;
+#[cfg(test)]
+mod series_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]

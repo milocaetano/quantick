@@ -197,9 +197,13 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `strategy` for the armed instances a tab's panes carry, and `sim` for
     // the commands they owe the paper account. `paper` for the desk and
     // account a tab trades on, which the tab's session now holds and joins.
+    // `chart` for the bars each pane cuts and the venue candles in front of
+    // them: the session owns every pane's series, keyed by pane id.
     (
         "session",
-        &["civil", "engine", "paper", "sim", "sources", "strategy"],
+        &[
+            "chart", "civil", "engine", "paper", "sim", "sources", "strategy",
+        ],
     ),
     // What a source is, below the host that runs one: the provider settings
     // the config document reads and the history reach the feed host spends.

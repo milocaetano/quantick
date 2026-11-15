@@ -9,6 +9,9 @@ publish.workspace = true
 [dependencies]
 # The clock face a history note is written in, and the sentence's time.
 quantick-civil = { path = "../civil" }
+# The bars a pane cuts and the venue candles in front of them, which the tab
+# session owns per pane id.
+quantick-chart = { path = "../chart" }
 quantick-engine = { path = "../engine" }
 # The desk and account a tab trades on (`paper`).
 quantick-paper = { path = "../paper" }

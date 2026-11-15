@@ -3331,6 +3331,7 @@ dependencies = [
 name = "quantick-session"
 version = "0.1.0"
 dependencies = [
+ "quantick-chart",
  "quantick-civil",
  "quantick-engine",
  "quantick-paper",
