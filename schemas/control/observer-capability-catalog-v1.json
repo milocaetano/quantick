@@ -32747,6 +32747,42 @@
             ],
             "type": "object"
           },
+          "IntakeLagSnapshot": {
+            "description": "How long live prints waited inside one window drain before paper trading\nsaw them: the drain's receipt stamp (taken at its first live print) to the\npaper-trading stage, per print, over a bounded window of the newest prints\n(nearest-rank). Time spent queued before the drain began is not included;\n`arrival_latency_ms` carries that. Wall-clock milliseconds: sub-millisecond\nhandling reads zero, and a forward clock step reads as lag.",
+            "properties": {
+              "clamped": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Of the prints the window covers, those whose stage stamp preceded the\nreceipt stamp (a wall-clock step back), counted as zero lag rather than\ndropped."
+              },
+              "max_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "p50_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "p99_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "samples": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Prints the window covers."
+              }
+            },
+            "required": [
+              "p50_ms",
+              "p99_ms",
+              "max_ms",
+              "samples",
+              "clamped"
+            ],
+            "type": "object"
+          },
           "LoadingTaskSnapshot": {
             "properties": {
               "operation_count": {
@@ -33061,6 +33097,17 @@
                   "null"
                 ],
                 "x-unit": "milliseconds"
+              },
+              "intake_lag": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IntakeLagSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Drain-receipt-to-paper-trading delay over the newest live prints;\n`None` before the feed session's first live print."
               },
               "sampled_prints": {
                 "$ref": "#/$defs/WireU64",

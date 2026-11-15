@@ -15,7 +15,7 @@
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
 //! reach every tab holding it, and a workspace's whole promise is that nothing
 //! reaches another tab until Save to.
-use crate::canvas::{CanvasState, preset};
+use crate::canvas::{CanvasState, PaneKind, PaneTree, preset};
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -322,29 +322,29 @@ impl WorkspaceRecipe {
         }
     }
 
-    /// One line the workspace menu shows beside the name: the panes, then the
-    /// indicator count when there is one, e.g. `Time · Flow · 3 ind`. The factory `Default` names no
-    /// arrangement, so it says what it means instead.
+    /// One line the workspace menu and `workspace.list` show beside the name:
+    /// [`Self::summary_of`] the canvas it shows.
     #[must_use]
     pub fn summary(&self) -> String {
+        self.summary_of(self.canvas_state().tree())
+    }
+
+    /// What this recipe holds on a canvas laid out as `tree`: its panes'
+    /// kinds, timeframe charts first, then its indicators, even none, e.g.
+    /// `Time · Flow · 3 ind`. The factory `Default` names no arrangement, so
+    /// it says what it means instead.
+    #[must_use]
+    pub fn summary_of(&self, tree: &PaneTree) -> String {
         if self.is_factory() {
             return FACTORY_SUMMARY.to_owned();
         }
-        let mut parts: Vec<String> = (0..self.layout.context_panes())
-            .map(|_| CONTEXT_PANE_LABEL.to_owned())
-            .collect();
-        if self.layout != DeclaredLayout::Time {
-            parts.push("Flow".to_owned());
-        }
-        let indicators = self.flow_indicators.len()
-            + self
-                .context_panes
-                .iter()
-                .map(|pane| pane.indicators.len())
-                .sum::<usize>();
-        if indicators > 0 {
-            parts.push(format!("{indicators} ind"));
-        }
+        let kinds: Vec<PaneKind> = tree.panes().into_iter().map(|(_, kind)| kind).collect();
+        let count = |kind| kinds.iter().filter(|held| **held == kind).count();
+        let mut parts = vec![CONTEXT_PANE_LABEL; count(PaneKind::Time)];
+        parts.extend((count(PaneKind::Flow) > 0).then_some("Flow"));
+        let panes = self.context_panes.iter().map(|pane| pane.indicators.len());
+        let indicators = format!("{} ind", self.flow_indicators.len() + panes.sum::<usize>());
+        parts.push(&indicators);
         parts.join(SUMMARY_SEPARATOR)
     }
 

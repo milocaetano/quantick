@@ -74,7 +74,7 @@ pub mod stack;
 mod stack_tests;
 
 pub use column::{ColumnFrame, column_frame};
-pub use named::CanvasLayout;
+pub use named::{CanvasLayout, recipe_canvas};
 pub use split::{Span, Split, split};
 pub use stack::{
     ContextPairResult, ContextResizeError, ContextStack, ResizeContextPair, StackFrame,
@@ -352,5 +352,34 @@ mod kind_tests {
         resolve_shares(&widths, 1000.0, &mut shares);
         let spent: f32 = shares.iter().sum();
         assert!((spent - 1.0).abs() < 1e-3, "the row spent {spent}");
+    }
+}
+
+#[cfg(test)]
+mod recipe_tests {
+    use super::*;
+    use crate::workspace_recipe::{DeclaredLayout, WorkspaceRecipe};
+
+    /// A recipe from before the canvas model opens on its declared layout;
+    /// one with a saved canvas on that canvas's preset. The canvas it
+    /// restores holds the layout's panes, folds as saved.
+    #[test]
+    fn a_recipe_opens_on_its_saved_canvas_else_its_declared_layout() {
+        let old = WorkspaceRecipe {
+            layout: DeclaredLayout::TimeAndFlow,
+            flow_collapsed: true,
+            ..WorkspaceRecipe::default()
+        };
+        assert_eq!(CanvasLayout::of_recipe(&old), CanvasLayout::TimeAndFlow);
+        let state = recipe_canvas(&old);
+        let kinds: Vec<PaneKind> = state.tree().panes().into_iter().map(|(_, k)| k).collect();
+        assert_eq!(kinds, [PaneKind::Time, PaneKind::Flow]);
+        let preset = crate::canvas::preset("time").expect("a preset");
+        let saved = WorkspaceRecipe {
+            canvas: Some(crate::canvas::CanvasState::from_preset(preset)),
+            ..old
+        };
+        assert_eq!(CanvasLayout::of_recipe(&saved), CanvasLayout::Time);
+        assert_eq!(recipe_canvas(&saved).tree(), preset.tree);
     }
 }

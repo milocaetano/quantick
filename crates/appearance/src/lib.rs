@@ -19,6 +19,7 @@ pub mod paper;
 mod state;
 pub mod tab_strip;
 mod typography;
+pub mod workspace_menu;
 
 pub use color::PremultipliedRgba;
 pub use document::{

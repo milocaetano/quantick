@@ -184,7 +184,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         time: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
     };
     tab.restore_canvas(
-        super::canvas_wiring::recipe_layout(recipe),
+        crate::tab::CanvasLayout::of_recipe(recipe),
         recipe.split_fraction,
         CanvasCollapseRestore {
             context: recipe.context_collapsed,
@@ -196,7 +196,7 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
-    tab.canvas.state = super::canvas_wiring::recipe_state(recipe);
+    tab.canvas.state = quantick_workspace::canvas_layout::recipe_canvas(recipe);
     let mut monitors = quantick_platform::monitors();
     monitors.push(quantick_control_handlers::canvas::PRIMARY_MONITOR.to_owned());
     let area = super::canvas_wiring::tab_area(&tab.canvas);

@@ -1,6 +1,6 @@
 //! Native window menu geometry and settings/dialog host state.
 use eframe::egui;
-use quantick_control_handlers::workspace_book::cell_menu::CellRow;
+use quantick_control_handlers::workspace_book::cell_menu::{CellMenuCache, CellRow};
 use quantick_control_schema::{settings_sections::SettingsSection, window_menu::HelpPage};
 
 /// The button the menu hangs from. Both open the same menu; the door only
@@ -25,6 +25,7 @@ pub(in crate::app) struct WindowMenuState {
     /// The chip's menu, the armed delete and the name dialog.
     pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
     pub(in crate::app) cell_rows: Vec<(CellRow, egui::Rect)>,
+    pub(in crate::app) cell_cache: CellMenuCache,
     pub(in crate::app) keyboard: bool,
 }
 
@@ -85,8 +86,4 @@ impl WindowMenuState {
         self.open = false;
         self.keyboard = false;
     }
-}
-
-pub(super) fn flat_rows(ui: &mut egui::Ui) {
-    crate::surfaces::chrome_menu_bar::flat_rows(ui);
 }

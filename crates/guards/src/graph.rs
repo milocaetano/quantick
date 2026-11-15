@@ -140,6 +140,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "indicators",
             "layers",
+            "operability",
             "orderbook",
             "orderflow",
             "pine",
@@ -212,6 +213,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         "feed",
         &[
             "engine",
+            "operability",
             "orderbook",
             "replay",
             "sources",

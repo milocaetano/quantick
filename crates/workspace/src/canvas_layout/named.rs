@@ -2,7 +2,8 @@
 //! painter draws, and any other registry entry, drawn from its tree.
 
 use super::{LayoutPreset, PaneKind};
-use crate::workspace_recipe::DeclaredLayout;
+use crate::canvas::CanvasState;
+use crate::workspace_recipe::{DeclaredLayout, WorkspaceRecipe};
 
 /// How many charts a tab's canvas shows for its market (§11), and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,6 +81,30 @@ impl CanvasLayout {
     pub const fn is_column(self) -> bool {
         !matches!(self, CanvasLayout::Preset(_))
     }
+}
+
+impl CanvasLayout {
+    /// The layout a recipe opens on: its saved canvas's preset, else its
+    /// declared layout.
+    #[must_use]
+    pub fn of_recipe(recipe: &WorkspaceRecipe) -> Self {
+        (recipe.canvas.as_ref())
+            .and_then(CanvasState::preset)
+            .map_or_else(|| Self::from(recipe.layout), Self::from_preset)
+    }
+}
+
+/// The canvas model a recipe restores, saved or rebuilt, its fold flags in:
+/// what a tab put on it shows and what the workspace menu pictures.
+#[must_use]
+pub fn recipe_canvas(recipe: &WorkspaceRecipe) -> CanvasState {
+    let (preset, split) = (
+        CanvasLayout::of_recipe(recipe).preset(),
+        recipe.split_fraction,
+    );
+    let rebuilt = || CanvasState::from_preset_split(preset, split);
+    let state = (recipe.canvas.clone()).unwrap_or_else(rebuilt);
+    state.with_folds(recipe.context_collapsed, recipe.flow_collapsed)
 }
 
 impl From<DeclaredLayout> for CanvasLayout {

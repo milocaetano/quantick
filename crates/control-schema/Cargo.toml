@@ -12,6 +12,7 @@ quantick-control-host = { path = "../control-host" }
 quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-layers = { path = "../layers" }
+quantick-operability = { path = "../operability" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-orderflow = { path = "../orderflow" }
 quantick-pine = { path = "../pine" }

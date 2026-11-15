@@ -481,7 +481,7 @@ fn list_names_every_workspace_with_its_summary_and_tabs() {
         rows["workspaces"],
         json!([
             { "name": "Default", "summary": "as the feed opens", "tabs": ["2"] },
-            { "name": "Scalp", "summary": "Flow", "tabs": ["1"] },
+            { "name": "Scalp", "summary": "Flow · 0 ind", "tabs": ["1"] },
         ])
     );
 }

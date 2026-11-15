@@ -1,6 +1,6 @@
 [package]
 name = "quantick-operability"
-description = "Headless operability contract: every supported UI behaviour, the capability that reaches it or the recorded exclusion, and the drift comparison against what an interface registers"
+description = "Headless operability contract: every supported UI behaviour, the capability that reaches it or the recorded exclusion, and the drift comparison against what an interface registers; plus the bounded live-trade intake-lag window the health diagnostics read"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

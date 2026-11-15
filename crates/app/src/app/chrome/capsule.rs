@@ -22,7 +22,7 @@ pub(in crate::app) fn snapshot(app: &QuantickApp, ctx: &egui::Context) -> Capsul
     let saved = book
         .book()
         .recipe(&workspace)
-        .map(crate::app::canvas_wiring::recipe_state);
+        .map(quantick_workspace::canvas_layout::recipe_canvas);
     CapsuleState {
         tree: live.tree().clone(),
         unsaved,

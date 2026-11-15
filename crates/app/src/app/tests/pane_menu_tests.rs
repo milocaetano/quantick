@@ -291,7 +291,7 @@ fn remove_pending_follows_tabs_and_prunes_only_closed_owners() {
         .book()
         .recipe(&book.tab_row(second).0)
         .expect("saved second tab");
-    assert!(crate::app::canvas_wiring::recipe_state(saved).holds(slot));
+    assert!(quantick_workspace::canvas_layout::recipe_canvas(saved).holds(slot));
     assert_eq!(pending(&mut app), None);
     press(&mut app, &ctx, &format!("pane_menu.{slot}"));
     press(&mut app, &ctx, &format!("pane_menu.{slot}.remove"));
