@@ -194,14 +194,14 @@ panel_stripe_loss = "#EF5350"
 panel_gain_ink = "#88CEC7"
 # A folded pane's rail, lit so it reads as a pane put away rather than a
 # border: a band, a 1 px edge on each long side not on the window's chrome
-# and the grip (chevron and ticks); then the three while the pointer is on
+# and the marks (chevron and dashes); then the three while the pointer is on
 # the rail's hit area.
-rail_band = "#283042"
-rail_edge = "#3B4560"
-rail_grip = "#AAB4C3"
-rail_band_hover = "#343D54"
-rail_edge_hover = "#56627F"
-rail_grip_hover = "#EEF2F6"
+rail_band = "#38425C"
+rail_edge = "#4A5573"
+rail_grip = "#C8D0DC"
+rail_band_hover = "#4A5A80"
+rail_edge_hover = "#63739C"
+rail_grip_hover = "#FFFFFF"
 
 # Logical pixels. Both families retain the bundled glyph fallback chain.
 [typography.heading]

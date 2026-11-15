@@ -41,7 +41,7 @@ mod panes;
 mod strategies;
 
 pub use canvas::CanvasChrome;
-pub(crate) use canvas::paint_rail;
+pub(crate) use canvas::{paint_rail, rail_hot};
 #[cfg(test)]
 pub use quantick_session::HISTORY_NOTE_LINGER;
 pub use quantick_session::HistoryPolicy;

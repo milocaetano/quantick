@@ -56,9 +56,7 @@ impl PaneMenus {
     /// A rail as drawn, named `id` and saying `words`: its restore, as a strip's is.
     pub(crate) fn publish_rail(&mut self, id: String, rect: Rect, words: String) {
         self.publish(id, "Restore", rect, Some(item_capability(Item::Restore)));
-        if let Some(rail) = self.drawn.last_mut() {
-            rail.description = Some(words);
-        }
+        self.drawn.last_mut().expect("published above").description = Some(words);
     }
 }
 

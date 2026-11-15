@@ -9,14 +9,13 @@
 //! folded strip beside a seam is skipped: the seam trades with the nearest
 //! open child past it, and the strip slides along.
 
-use super::bands::inset_seams;
 use super::metrics::COLLAPSED_HIT_PX;
 #[cfg(doc)]
 use super::metrics::COLLAPSED_PANE_WIDTH_PX;
 use super::presets::{LayoutPreset, PaneKind};
 use super::rail_look::{RailHolds, RailLook};
 use super::state::{CanvasRefusal, CanvasState};
-use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis};
+use super::tree::{CanvasRect, PaneSlot, PaneTree, SplitAxis, inset_seams};
 
 /// A boundary that moved less than this many points did not move.
 const STILL_PX: f32 = 0.01;
@@ -70,6 +69,28 @@ impl SeamRail {
     #[must_use]
     pub fn control_id(&self) -> String {
         format!("pane_menu.{}.rail", self.slot)
+    }
+
+    /// Where a pointer finds it: [`COLLAPSED_HIT_PX`] from its outer edge
+    /// through its seam into the open side, as that seam's grab reaches.
+    #[must_use]
+    pub fn hit(&self) -> CanvasRect {
+        let (at, row) = (self.rect, self.axis == SplitAxis::Row);
+        let (low, high) = if row {
+            (at.x, at.right())
+        } else {
+            (at.y, at.bottom())
+        };
+        let from = if self.meets_after {
+            low
+        } else {
+            high - COLLAPSED_HIT_PX
+        };
+        if row {
+            CanvasRect::new(from, at.y, COLLAPSED_HIT_PX, at.h)
+        } else {
+            CanvasRect::new(at.x, from, at.w, COLLAPSED_HIT_PX)
+        }
     }
 
     /// How it is drawn on a canvas of `area`: flat when folded across a

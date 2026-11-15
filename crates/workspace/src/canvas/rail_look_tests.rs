@@ -208,19 +208,22 @@ fn a_rail_lights_on_hover_and_its_own_drag_never_on_another() {
 fn a_rail_says_what_it_holds_and_how_to_open_it() {
     let chart = RailHolds::of([PaneKind::Time]);
     assert_eq!(
-        chart.words(Some("Time · 1m · WINQ26")),
+        chart.words(|| Some("Time · 1m · WINQ26".to_owned())),
         "Time · 1m · WINQ26 · drag to open"
     );
-    assert_eq!(chart.words(None), "1 chart · drag to open");
+    assert_eq!(chart.words(|| None), "1 chart · drag to open");
     let flow = RailHolds::of([PaneKind::Flow]);
-    assert_eq!(flow.words(None), "Order flow · drag to open");
+    assert_eq!(flow.words(|| None), "Order flow · drag to open");
     let grid = RailHolds::of([PaneKind::Time; 4]);
     assert_eq!(
-        (grid.panes(), grid.words(Some("ignored"))),
+        (
+            grid.panes(),
+            grid.words(|| panic!("a grid is no lone pane"))
+        ),
         (4, "4 charts · drag to open".to_owned())
     );
     let both = RailHolds::of([PaneKind::Time, PaneKind::Flow]);
-    assert_eq!(both.words(None), "2 panes · drag to open");
+    assert_eq!(both.words(|| None), "2 panes · drag to open");
 }
 
 /// The grid's context side folded behind one rail: it holds four charts,
@@ -241,6 +244,14 @@ fn the_grid_folded_behind_one_rail_holds_four_charts_and_its_neighbour_meets_it(
         .find(|seam| seam.rail.is_some())
         .expect("the rail's seam");
     assert!(!beside.is_line());
+    let grab = beside.grab(4.0);
+    let hit = rails[0].hit();
+    assert_eq!(
+        (hit.x, hit.right()),
+        (grab.x, grab.right()),
+        "the seam's reach"
+    );
+    assert_eq!(hit.w, COLLAPSED_HIT_PX);
     let open = CanvasState::from_preset(preset("grid4+flow").unwrap());
     assert!((tree_seams(&open, CANVAS, CANVAS_DIVIDER_PX).iter()).all(TreeSeam::is_line));
 

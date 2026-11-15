@@ -205,11 +205,11 @@ panel_stripe_loss = "#B3261E"
 # The buy ink reads 4.0:1 on the footer grey; gains there go one step deeper.
 panel_gain_ink = "#145A24"
 # A folded pane's rail: a grey band a step under the chrome, a 1 px edge on
-# each long side not on the window's chrome and the grip (chevron and
-# ticks); then the three while the pointer is on the rail's hit area.
+# each long side not on the window's chrome and the marks (chevron and
+# dashes); then the three while the pointer is on the rail's hit area.
 rail_band = "#D0D0D0"
 rail_edge = "#7C7C7C"
-rail_grip = "#3A3A3A"
+rail_grip = "#3A4049"
 rail_band_hover = "#BFC3C9"
 rail_edge_hover = "#5F6670"
 rail_grip_hover = "#000000"

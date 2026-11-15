@@ -56,8 +56,9 @@ pub use presets::{
 };
 pub use rail::{Hand, SeamDrag};
 pub use rail_look::{
-    RAIL_CHEVRON_ROWS, RAIL_CHEVRON_STROKE_PX, RAIL_EDGE_PX, RAIL_MAX_TICKS, RAIL_TICK_GAP_PX,
-    RAIL_TICK_PX, RAIL_TICKS_AFTER_PX, RailHolds, RailInk, RailLook, rail_marks,
+    RAIL_CHEVRON_BOX_PX, RAIL_CHEVRON_ROWS, RAIL_CHEVRON_STROKE_PX, RAIL_DASH_PITCH_PX,
+    RAIL_DASH_PX, RAIL_DASHES_AFTER_PX, RAIL_EDGE_PX, RAIL_MAX_DASHES, RailHolds, RailInk,
+    RailLook, rail_lit, rail_marks,
 };
 pub use seams::{MIN_TREE_PANE_PX, SeamAddress, SeamRail, TreeSeam, tree_rails, tree_seams};
 pub use state::{

@@ -286,11 +286,10 @@ impl Tab {
                     // Its hit area is the dividers' beside it, as far as they reach.
                     let near = [slot.wrapping_sub(1), slot].map(|at| bands.dividers.get(at));
                     let reach = egui::vec2(0.0, canvas_layout::COLLAPSED_HIT_PX / 2.0);
-                    let hit = |at: &&egui::Rect| ui.rect_contains_pointer(at.expand2(reach));
-                    let hot = ui.ctx().dragged_id().is_none() && near.iter().flatten().any(hit);
+                    let hits: Vec<_> = near.iter().flatten().map(|at| at.expand2(reach)).collect();
                     let way = (true, slot + 1 < context_shown);
                     let look = RailLook::on(model_rect(*band), model_rect(column), way, 1);
-                    paint_rail(ui.painter(), *band, look, hot);
+                    paint_rail(ui.painter(), *band, look, rail_hot(ui.ctx(), &hits));
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1112,7 +1111,7 @@ impl Tab {
         let (at, area) = (model_rect(rail), model_rect(canvas));
         let (held, look) = self.canvas.state.side_rail(right, at, area);
         let side = [PaneSide::Time(0), PaneSide::Flow][usize::from(right)];
-        let words = held.words(Some(&self.strip_name(side)));
+        let words = held.words(|| Some(self.strip_name(side)));
         let reach = canvas_layout::COLLAPSED_HIT_PX.max(rail.width());
         let hit = if right {
             rail.with_min_x(rail.right() - reach)
@@ -1130,7 +1129,7 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        paint_rail(ui.painter(), rail, look, response.hovered());
+        paint_rail(ui.painter(), rail, look, rail_hot(ui.ctx(), &[hit]));
         if let Some(id) = self.canvas.state.side_rail_id(right) {
             self.canvas.menus.publish_rail(id, rail, words);
         }
@@ -1248,6 +1247,13 @@ impl Tab {
 pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
     let delta = [r.drag_delta().y, r.drag_delta().x][usize::from(row)];
     Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
+}
+
+/// Whether a rail with these hit areas lights: the workspace's one rule.
+pub(crate) fn rail_hot(ctx: &egui::Context, hits: &[egui::Rect]) -> bool {
+    let on = |at: Option<egui::Pos2>| at.is_some_and(|at| hits.iter().any(|hit| hit.contains(at)));
+    let (hover, press) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.press_origin()));
+    quantick_workspace::canvas::rail_lit(on(hover), on(press), ctx.dragged_id().is_some())
 }
 
 /// A folded side's rail, one look for every fold: the workspace's marks for

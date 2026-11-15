@@ -51,13 +51,9 @@ impl Tab {
         );
         // A rail is painted over its whole node with the seams.
         let bands = bands.into_iter().filter(|band| !band.railed).map(|band| {
-            let at = egui::Rect::from_min_size(
-                egui::pos2(band.rect.x, band.rect.y),
-                egui::vec2(band.rect.w, band.rect.h),
-            );
             (
                 band.seat.map_or(PaneSide::Flow, PaneSide::Time),
-                at,
+                floating_panes::screen_rect(band.rect),
                 band.minimized,
                 band.slot,
             )
@@ -157,9 +153,7 @@ impl Tab {
     pub(super) fn draw_tree_seams(&mut self, tab_id: u64, ui: &egui::Ui, area: egui::Rect) {
         let palette = theme::get(ui.ctx());
         let canvas = CanvasRect::new(area.left(), area.top(), area.width(), area.height());
-        let rect =
-            |at: CanvasRect| egui::Rect::from_min_size((at.x, at.y).into(), (at.w, at.h).into());
-        let mut hot = None;
+        let rect = floating_panes::screen_rect;
         for seam in tree_seams(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
             let ink = [egui::Color32::TRANSPARENT, palette.border()][usize::from(seam.is_line())];
             ui.painter()
@@ -170,13 +164,9 @@ impl Tab {
             let row = seam.axis == SplitAxis::Row;
             let id = egui::Id::new(("tree_seam", tab_id, &seam.address));
             let grab = rect(seam.grab(CANVAS_DIVIDER_HANDLE_PX));
-            let mut handle = ui.interact(grab, id, egui::Sense::drag());
-            if let Some(rail) = seam.rail {
-                handle = handle.on_hover_text(self.rail_words(&rail));
-            }
+            let handle = ui.interact(grab, id, egui::Sense::drag());
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(CURSORS[usize::from(row)]);
-                hot = hot.or(seam.rail.map(|rail| rail.slot));
             }
             // Every step the pointer took since the press, as the column
             // divider adds them up: an off-centre grab never jumps the seam,
@@ -186,7 +176,11 @@ impl Tab {
         }
         for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
             let (at, words) = (rect(rail.rect), self.rail_words(&rail));
-            super::paint_rail(ui.painter(), at, rail.look(canvas), hot == Some(rail.slot));
+            let lit = super::rail_hot(ui.ctx(), &[rect(rail.hit())]);
+            if lit && ui.ctx().dragged_id().is_none() {
+                egui::show_tooltip_text(ui.ctx(), ui.layer_id(), egui::Id::new(rail.slot), &words);
+            }
+            super::paint_rail(ui.painter(), at, rail.look(canvas), lit);
             self.canvas.menus.publish_rail(rail.control_id(), at, words);
         }
     }
@@ -358,8 +352,7 @@ impl Tab {
     fn rail_words(&mut self, rail: &SeamRail) -> String {
         let seat = slot_seat(&self.canvas.state, &mut self.canvas.seats, rail.slot);
         let side = seat.map(|seat| seat.map_or(PaneSide::Flow, PaneSide::Time));
-        rail.holds
-            .words(side.map(|side| self.strip_name(side)).as_deref())
+        rail.holds.words(|| side.map(|side| self.strip_name(side)))
     }
 
     /// What a folded chart's strip calls it: "Time · 1m · BTCUSDT".
