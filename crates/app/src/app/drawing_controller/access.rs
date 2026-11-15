@@ -121,8 +121,11 @@ impl<'a> DrawingAccess<'a> {
         self.tabs[self.tabs.active_index()].drawing_pane()
     }
     fn pane_mut(&mut self) -> &mut ChartPane {
+        self.tab_mut().drawing_pane_mut()
+    }
+    fn tab_mut(&mut self) -> &mut crate::tab::Tab {
         let active = self.tabs.active_index();
-        self.tabs.runtime_mut(active).drawing_pane_mut()
+        self.tabs.runtime_mut(active)
     }
     pub(super) fn target(&self) -> (u64, PaneSide) {
         (
@@ -222,10 +225,11 @@ impl<'a> DrawingAccess<'a> {
     pub(crate) fn remove_authored(&mut self) -> usize {
         let mut removed = 0;
         for tab in self.tabs.iter_mut() {
-            for pane in tab.panes_mut() {
-                let taken = pane.drawings.remove_authored();
+            let sides: Vec<PaneSide> = tab.sides().collect();
+            for side in sides {
+                let taken = tab.pane_mut(side).drawings.remove_authored();
                 if taken > 0 {
-                    pane.strategies.sweep_orphans(&pane.drawings);
+                    tab.sweep_strategy_orphans(side);
                     removed += taken;
                 }
             }
@@ -242,7 +246,9 @@ impl DrawingAccess<'_> {
         &mut self.pane_mut().drawings
     }
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {
-        self.pane_mut().strategies.remove_for_drawing(id);
+        let tab = self.tab_mut();
+        let pane = tab.drawing_pane().id;
+        tab.strategies.pane_mut(pane).remove_for_drawing(id);
     }
     // Each destructive operation keeps its original owner even if it clears
     // the selection. The next independent command resolves its owner afresh.
@@ -252,17 +258,19 @@ impl DrawingAccess<'_> {
         &mut self,
         intent: quantick_drawings::DrawingIntent,
     ) -> Vec<quantick_drawings::DrawingEffect> {
-        let pane = self.pane_mut();
-        let effects = quantick_drawings::update(&mut pane.drawings, intent);
+        let tab = self.tab_mut();
+        let side = tab.drawing_side();
+        let effects = quantick_drawings::update(&mut tab.pane_mut(side).drawings, intent);
         if quantick_drawings::DrawingEffect::any_strand_riders(&effects) {
-            pane.strategies.sweep_orphans(&pane.drawings);
+            tab.sweep_strategy_orphans(side);
         }
         effects
     }
     pub(super) fn delete_all_drawings(&mut self) -> usize {
-        let pane = self.pane_mut();
-        let deleted = pane.drawings.delete_all();
-        pane.strategies.sweep_orphans(&pane.drawings);
+        let tab = self.tab_mut();
+        let side = tab.drawing_side();
+        let deleted = tab.pane_mut(side).drawings.delete_all();
+        tab.sweep_strategy_orphans(side);
         deleted
     }
     pub(super) fn selected_value_per_px(&self) -> Option<f64> {
@@ -288,9 +296,8 @@ impl DrawingAccess<'_> {
         source: drawings::DrawingId,
     ) -> Option<(crate::strategy_presets::StoredPreset, String)> {
         use quantick_strategy::ArmedState;
-        self.pane()
-            .strategies
-            .anchors
+        let tab = &self.tabs[self.tabs.active_index()];
+        (tab.strategies.anchors(tab.drawing_pane().id))?
             .for_drawing(source)
             .filter(|instance| {
                 matches!(

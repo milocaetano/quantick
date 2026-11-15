@@ -39,6 +39,7 @@ use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
 /// The actual effect owners for one print; no app, transport or layout access.
 struct LiveTradeOwners<'a> {
     paper: &'a mut crate::paper_trading::PaperTrading,
+    strategies: &'a mut crate::strategy_anchors::TabStrategies,
     flow: &'a mut crate::pane::ChartPane,
     context: &'a mut [crate::pane::ChartPane],
     pending_sounds: &'a mut Vec<crate::audio::Cue>,
@@ -61,8 +62,9 @@ impl LiveTradeOwners<'_> {
                 LiveTradeStage::PaneTrades => {
                     for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
                         pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
+                            self.strategies.queue_closed(pane.id, bar, slot);
                             self.observer.pane(
-                                pane.into(),
+                                super::alerts::facts(pane),
                                 Some(super::alerts::Observation {
                                     trade,
                                     received_at_ms: self.received_at_ms,
@@ -71,7 +73,7 @@ impl LiveTradeOwners<'_> {
                             );
                         });
                         self.observer.pane(
-                            (&*pane).into(),
+                            super::alerts::facts(pane),
                             Some(super::alerts::Observation {
                                 trade,
                                 received_at_ms: self.received_at_ms,
@@ -82,21 +84,15 @@ impl LiveTradeOwners<'_> {
                 }
                 LiveTradeStage::StrategyEvaluation => {
                     // Preserve the per-print alarm gate: idle charts never read a clock.
-                    let alarm =
-                        std::iter::once(&*self.flow)
-                            .chain(self.context.iter())
-                            .any(|pane| {
-                                pane.strategies
-                                    .anchors
-                                    .instances
-                                    .iter()
-                                    .any(|instance| instance.alarm.is_some())
-                            });
-                    let now_ms = if alarm { clock() } else { 0 };
+                    let now_ms = if self.strategies.any_alarm() {
+                        clock()
+                    } else {
+                        0
+                    };
                     super::strategies::evaluate(
                         self.paper,
-                        self.flow,
-                        self.context,
+                        self.strategies,
+                        (&*self.flow, &*self.context),
                         self.pending_sounds,
                         now_ms,
                     );
@@ -344,17 +340,13 @@ impl Tab {
         // nothing there (§D7b).
         for pane in self.panes_mut() {
             pane.drawings.mark_market_changed();
-            // The regions those instances watched belong to the market that
-            // just left; a bot must never fire on a level from another
-            // instrument. Disarmed by name, never silently dropped. Their
-            // pending entries need no sweep of ours: the paper reset a few
-            // lines down cancels every order with the honest `reset` label.
-            let _ = pane
-                .strategies
-                .anchors
-                .disarm_all(quantick_strategy::DisarmReason::MarketChanged);
-            let _ = pane.strategies.take_bars();
         }
+        // The regions those instances watched belong to the market that just
+        // left; a bot must never fire on a level from another instrument.
+        // Disarmed by name, never silently dropped. Their pending entries need
+        // no sweep of ours: the paper reset a few lines down cancels every
+        // order with the honest `reset` label.
+        let _ = (self.strategies).disarm_all(quantick_strategy::DisarmReason::MarketChanged);
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
@@ -896,6 +888,7 @@ impl Tab {
         // against its own tape.
         LiveTradeOwners {
             paper: &mut self.paper,
+            strategies: &mut self.strategies,
             flow: &mut self.flow_pane,
             context: &mut self.time_panes,
             pending_sounds: &mut self.pending_alarm_sounds,
@@ -1201,13 +1194,19 @@ impl Tab {
         };
         self.history_trades += trades.len();
         self.link.latest_trade_ms = Some(last.timestamp_ms);
-        for pane in self.panes_mut() {
-            let queued = pane.strategies.pending.len();
+        let Self {
+            flow_pane,
+            time_panes,
+            strategies,
+            ..
+        } = self;
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for trade in trades {
-                pane.ingest_live_trade(trade);
-            }
-            if !to_strategies {
-                pane.strategies.pending.truncate(queued);
+                pane.ingest_live_trade_observed(trade, &mut |pane, bar, slot| {
+                    if to_strategies {
+                        strategies.queue_closed(pane.id, bar, slot);
+                    }
+                });
             }
         }
         self.paper.seed(last);

@@ -901,6 +901,7 @@ fn drive_navigation_asking(
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::drawing_chrome::new_owner();
+    let mut strategies = crate::strategy_anchors::TabStrategies::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),
@@ -922,6 +923,7 @@ fn drive_navigation_asking(
                 tz: crate::timezone::TzOffset::default(),
                 feed_gaps: &[],
                 paper: &mut paper,
+                strategies: &mut strategies,
                 paper_takes_input: false,
                 paper_hud_here: false,
                 shared_pick: None,
@@ -949,6 +951,16 @@ fn drive_navigation_asking(
 /// that does not exist, so the fixture reads nothing off the developer's
 /// disk.
 fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R {
+    with_chrome_over(tool, &mut Default::default(), body)
+}
+
+/// [`with_chrome`] over the tab strategies `strategies`, for a test that
+/// arms, reads or drives them across frames.
+fn with_chrome_over<R>(
+    tool: Tool,
+    strategies: &mut crate::strategy_anchors::TabStrategies,
+    body: impl FnOnce(&mut PaneChrome<'_>) -> R,
+) -> R {
     let mut toolrail = crate::toolrail::ToolRail::new_rail();
     toolrail.arm(tool);
     let presets = drawings::presets::PresetStore::load_from(
@@ -971,6 +983,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
         tz: crate::timezone::TzOffset::default(),
         feed_gaps: &[],
         paper: &mut paper,
+        strategies,
         paper_takes_input: false,
         paper_hud_here: false,
         shared_pick: None,
@@ -2218,14 +2231,10 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
     };
     // Nothing was armed here before, so there is no replaced instance
     // whose resting order would need sweeping.
-    assert!(pane.strategies.anchors.arm(instance).is_empty());
+    let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
+    assert!(anchors.arm(instance).is_empty());
 
-    let badge = strategy_badge_text(
-        &pane.strategies.anchors,
-        &pane.drawings,
-        id,
-        pane.closed_slots(),
-    );
+    let badge = strategy_badge_text(&anchors, &pane.drawings, id, pane.closed_slots());
     assert!(
         badge.contains("region hidden — paused"),
         "the specific fault, with the fix in it: {badge}"
@@ -2344,13 +2353,9 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
             .is_empty()
     );
 
-    assert!(pane.strategies.anchors.arm(instance).is_empty());
-    let badge = strategy_badge_text(
-        &pane.strategies.anchors,
-        &pane.drawings,
-        id,
-        pane.closed_slots(),
-    );
+    let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
+    assert!(anchors.arm(instance).is_empty());
+    let badge = strategy_badge_text(&anchors, &pane.drawings, id, pane.closed_slots());
 
     let ruler = badge
         .find("quiet")
@@ -2393,7 +2398,7 @@ fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
     );
 }
 
-fn g6_badge_pane() -> ChartPane {
+fn g6_badge_pane() -> (ChartPane, crate::strategy_anchors::StrategyAnchors) {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let rectangle = drawings::DRAWING_TOOLS
         .into_iter()
@@ -2428,8 +2433,9 @@ fn g6_badge_pane() -> ChartPane {
         cue: crate::audio::Cue::default(),
         mark: crate::strategy_anchors::AlarmMark::Quiet,
     };
-    assert!(pane.strategies.anchors.arm(instance).is_empty());
-    pane
+    let mut anchors = crate::strategy_anchors::StrategyAnchors::default();
+    assert!(anchors.arm(instance).is_empty());
+    (pane, anchors)
 }
 fn g6_badge_band(top: f32) -> bands::Band {
     let rect = egui::Rect::from_min_max(egui::pos2(10.0, top), egui::pos2(400.0, top + 200.0));
@@ -2446,7 +2452,11 @@ fn g6_badge_band(top: f32) -> bands::Band {
         refusal: None,
     }
 }
-fn g6_badge_output(pane: &ChartPane, band: &bands::Band, pass: DrawPass) -> egui::FullOutput {
+fn g6_badge_output(
+    (pane, anchors): (&ChartPane, &crate::strategy_anchors::StrategyAnchors),
+    band: &bands::Band,
+    pass: DrawPass,
+) -> egui::FullOutput {
     egui::Context::default().run(egui::RawInput::default(), |ctx| {
         crate::pane::render_registry::DrawingPass {
             painter: &ctx.layer_painter(egui::LayerId::background()),
@@ -2462,7 +2472,7 @@ fn g6_badge_output(pane: &ChartPane, band: &bands::Band, pass: DrawPass) -> egui
         }
         .paint(
             pane.layer_renderers,
-            &pane.strategies.anchors,
+            anchors,
             &pane.drawing_projection(),
             pane.closed_slots(),
         );
@@ -2472,7 +2482,7 @@ fn g6_badge_output(pane: &ChartPane, band: &bands::Band, pass: DrawPass) -> egui
 fn g6_characterization_hidden_badges_and_actual_stage_order() {
     let band = g6_badge_band(20.0);
     for (hidden, all_hidden) in [(false, false), (true, false), (false, true)] {
-        let mut pane = g6_badge_pane();
+        let (mut pane, anchors) = g6_badge_pane();
         pane.drawings.items_mut()[0].hidden = hidden;
         let rectangle = drawings::DRAWING_TOOLS
             .into_iter()
@@ -2486,10 +2496,10 @@ fn g6_characterization_hidden_badges_and_actual_stage_order() {
             .set_color32(egui::Color32::from_rgb(227, 91, 17));
         pane.gestures.hover = Some(ChartPoint::at(98.0, 107.0));
         pane.drawings.set_all_hidden(all_hidden);
-        let under = g6_badge_output(&pane, &band, DrawPass::UnderCandles);
+        let under = g6_badge_output((&pane, &anchors), &band, DrawPass::UnderCandles);
         assert!(under.shapes.iter().all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))));
         assert!(under.shapes.iter().all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(227, 91, 17))));
-        let output = g6_badge_output(&pane, &band, DrawPass::OverCandles);
+        let output = g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
         let badges: Vec<_> = output.shapes.iter().enumerate().filter(|(_, shape)| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))).collect();
         assert_eq!(
             badges.len(),
@@ -2513,7 +2523,7 @@ fn g6_characterization_hidden_badges_and_actual_stage_order() {
 }
 #[test]
 fn g6_characterization_all_bands_has_one_clipped_badge() {
-    let mut pane = g6_badge_pane();
+    let (mut pane, anchors) = g6_badge_pane();
     // Retained object fixture, not a new strategy arming capability.
     pane.drawings.items_mut()[0].band = DrawingBand::AllBands;
     let bands = [g6_badge_band(20.0), g6_badge_band(250.0)];
@@ -2533,7 +2543,7 @@ fn g6_characterization_all_bands_has_one_clipped_badge() {
             }
             .paint(
                 pane.layer_renderers,
-                &pane.strategies.anchors,
+                &anchors,
                 &pane.drawing_projection(),
                 pane.closed_slots(),
             );
@@ -2549,7 +2559,7 @@ fn g6_characterization_band_metadata_precedes_cached_geometry() {
     let view = &pane.indicators.all()[0];
     let slot = view.slot;
     let key = crate::bands::pane_key(view);
-    let mut drawing = g6_badge_pane().drawings.items()[0].clone();
+    let mut drawing = g6_badge_pane().0.drawings.items()[0].clone();
     drawing.band = DrawingBand::Indicator(key);
     assert!(pane.frame.bands.is_empty());
     assert!(matches!(
@@ -2617,17 +2627,17 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
             }),
         ],
     };
-    let mut pane = g6_badge_pane();
+    let (mut pane, anchors) = g6_badge_pane();
     pane.layer_renderers = REGISTRY.get_or_init(|| RenderRegistry::new(&[PACKAGE]).unwrap());
     let band = g6_badge_band(20.0);
-    let under = g6_badge_output(&pane, &band, DrawPass::UnderCandles);
+    let under = g6_badge_output((&pane, &anchors), &band, DrawPass::UnderCandles);
     assert!(
         under
             .shapes
             .iter()
             .all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Text(_)))
     );
-    let over = g6_badge_output(&pane, &band, DrawPass::OverCandles);
+    let over = g6_badge_output((&pane, &anchors), &band, DrawPass::OverCandles);
     let texts: Vec<_> = over
         .shapes
         .iter()
@@ -2789,14 +2799,6 @@ fn prefix_install_preserves_live_and_replay_results() {
         assert_eq!(pane.model.viewport.right_edge_bar(pane.slots()), edge + 4.0);
         assert_eq!(pane.drawings.items()[0].points[0].bar, point.bar + 4.0);
         assert_eq!(pane.drawings.items()[0].points[0].time_ms, point.time_ms);
-        assert!(
-            pane.strategies.pending.is_empty(),
-            "history cannot introduce strategy closes"
-        );
-        assert!(
-            pane.strategies.cleanup.is_empty(),
-            "history cannot send paper cleanup commands"
-        );
         assert!(!pane.install_history_prefix(prefix));
         assert!(pane.install_history_prefix(Vec::new()));
         assert_eq!(pane.series_read().closed_bars(), baseline);

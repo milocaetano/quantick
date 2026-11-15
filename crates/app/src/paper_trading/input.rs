@@ -7,9 +7,7 @@
 //! desk's cursor and geometry back into the window's types.
 
 use eframe::egui;
-use quantick_engine::Side;
 use quantick_paper::desk::{ChartCommand, ChartFrame, CursorHint, HeldKeys, PriceAxis};
-use quantick_sim::EntryKind;
 
 #[cfg(test)]
 use super::PaperControl;
@@ -69,22 +67,11 @@ impl PaperTrading {
         tag_right: f32,
         scale: &PriceScale,
     ) -> Option<egui::Pos2> {
-        self.desk
+        self.paper
+            .desk
             .gesture
-            .forced_hover_pointer(&self.account, bounds(chart), tag_right, &Axis(scale))
+            .forced_hover_pointer(&self.paper.account, bounds(chart), tag_right, &Axis(scale))
             .map(pos)
-    }
-
-    /// Whether a chart gesture this module owns is in flight — a line being
-    /// dragged, a bracket leg being pulled into existence.
-    ///
-    /// The tab asks so it can keep the gesture with the pane that started
-    /// it: the price under a grabbed line is read against one pane's scale,
-    /// and letting the pointer wander into a neighbour mid-drag would
-    /// reprice the order to whatever that pane's scale says.
-    #[must_use]
-    pub fn gesture_active(&self) -> bool {
-        self.desk.gesture.active()
     }
 
     /// Cancel the transient chart interaction — an armed placement or a
@@ -92,10 +79,10 @@ impl PaperTrading {
     /// escape stack; returns true when there was something to cancel, so
     /// the stack spends exactly one layer on it.
     pub fn cancel_interaction(&mut self) -> bool {
-        if self.desk.cancel_gesture() {
+        if self.paper.desk.cancel_gesture() {
             return true;
         }
-        if self.account.report.clear_selected_trade() {
+        if self.paper.account.report.clear_selected_trade() {
             return true;
         }
         // The ruler is the *last* layer, not the first: putting it in front
@@ -110,8 +97,8 @@ impl PaperTrading {
     /// drawings must not select under it.
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
         let axis = input.scale.map(Axis);
-        let outcome = self.desk.handle_input(
-            &self.account,
+        let outcome = self.paper.desk.handle_input(
+            &self.paper.account,
             &input.frame(),
             axis.as_ref().map(|axis| axis as &dyn PriceAxis),
         );
@@ -125,10 +112,10 @@ impl PaperTrading {
     /// the account's own funnel. The host shows the ticket's complaint, and
     /// re-reads the report if a close reached the journal.
     fn apply(&mut self, command: ChartCommand) {
-        if let Err(message) = self.desk.carry_out(&mut self.account, command) {
+        if let Err(message) = self.paper.desk.carry_out(&mut self.paper.account, command) {
             self.show_toast(message);
         }
-        self.account.follow_journal();
+        self.paper.account.follow_journal();
     }
 
     /// The cursor that announces what is under the pointer; `None` away
@@ -142,46 +129,19 @@ impl PaperTrading {
         chart: egui::Rect,
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
-        self.desk
+        self.paper
+            .desk
             .gesture
-            .hover_cursor(&self.account, point(pointer), bounds(chart), &Axis(scale))
+            .hover_cursor(
+                &self.paper.account,
+                point(pointer),
+                bounds(chart),
+                &Axis(scale),
+            )
             .map(|hint| match hint {
                 CursorHint::PointingHand => egui::CursorIcon::PointingHand,
                 CursorHint::ResizeVertical => egui::CursorIcon::ResizeVertical,
             })
-    }
-
-    /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
-    /// and offsets; returns whether the simulator accepted it.
-    pub(super) fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        match self
-            .desk
-            .place_resting(&mut self.account, side, kind, raw_price)
-        {
-            Ok(placed) => placed,
-            Err(message) => {
-                self.show_toast(message);
-                false
-            }
-        }
-    }
-
-    /// Whether the ruler spent this frame's wheel travel. The chart asks
-    /// before zooming: one wheel, one meaning at a time.
-    #[must_use]
-    pub fn consumed_scroll(&self) -> bool {
-        self.desk.gesture.scroll_consumed
-    }
-
-    /// Whether an aim is on screen this frame.
-    ///
-    /// The pointer compass asks before writing its own price on the axis:
-    /// the aim already puts one there, on the same pixel, and two chips
-    /// stacked on one pixel is not two facts. Same rule the crosshair tool
-    /// already earns.
-    #[must_use]
-    pub fn aiming(&self) -> bool {
-        self.desk.gesture.cmd_preview.is_some()
     }
 }
 
@@ -194,8 +154,11 @@ impl PaperTrading {
         chart: egui::Rect,
         scale: &PriceScale,
     ) -> Option<PaperControl> {
-        self.desk
-            .gesture
-            .control_at(&self.account, point(pointer), bounds(chart), &Axis(scale))
+        self.paper.desk.gesture.control_at(
+            &self.paper.account,
+            point(pointer),
+            bounds(chart),
+            &Axis(scale),
+        )
     }
 }

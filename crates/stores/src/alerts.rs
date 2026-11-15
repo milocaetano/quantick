@@ -3,6 +3,9 @@ use quantick_alerts::{AlertBook, AlertCommand, CommandResult};
 pub use quantick_alerts::{AlertDocument, AlertError};
 use std::path::PathBuf;
 
+mod cache;
+pub use cache::{Cache, Observation, PaneFacts, Source};
+
 pub const ALERTS_FILE: &str = "alerts.toml";
 pub const BUNDLE_ENABLED: bool = true;
 

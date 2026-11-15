@@ -24,7 +24,7 @@
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
 | `control-handlers` | alerts, control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores, workspace | Port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
-| `stores` | alerts, appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
+| `stores` | alerts, appearance, chart, drawings, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle; the alert observer cache. |
 | `ui-model` | none | UI model contract and catalog. |
 | `alerts` | civil, workspace | Alerts and sounds. |
 | `appearance` | — | Colors and typography. |

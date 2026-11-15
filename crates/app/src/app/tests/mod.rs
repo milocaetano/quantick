@@ -675,6 +675,7 @@ fn with_flow_pane<R>(
         tz: *tz,
         feed_gaps: &[],
         paper: &mut tab.paper,
+        strategies: &mut tab.strategies,
         paper_takes_input: true,
         paper_hud_here: true,
         // One pane in hand and no tab around it: there is no other pane

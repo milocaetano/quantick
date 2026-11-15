@@ -974,9 +974,7 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
     assert!(popup.error.is_some());
     assert!(
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .is_none()
     );
@@ -1002,9 +1000,7 @@ fn strategy_popup_host_routes_audition_refusal_and_successful_arm() {
     );
     assert!(
         app.active_tab()
-            .flow_pane
-            .strategies
-            .anchors
+            .anchors_on(crate::pane::PaneSide::Flow)
             .for_drawing(drawing)
             .is_some()
     );

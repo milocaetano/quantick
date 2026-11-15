@@ -1,3 +1,6 @@
+// What the tab's paper decides alone - the reversal, the ticket's refusal,
+// the ruler following the symbol - is tested in `quantick_session::paper_tests`.
+//
 // The `paper_trading.rs` unit tests, moved out of the file so a session
 // opening the ticket to change one control no longer reads 3,651 lines of
 // tests it did not ask for.
@@ -43,17 +46,6 @@ fn utc_dates_format_from_the_same_civil_math() {
     assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
 }
 
-#[test]
-fn a_bad_offset_toasts_and_blocks_the_order() {
-    let mut paper = PaperTrading::new();
-    paper.desk.ticket.stop_offset_text = "abc".to_owned();
-    assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
-    assert!(
-        paper.account.peek_toast().is_some(),
-        "the refusal teaches, never silent"
-    );
-}
-
 /// Esc puts the ruler away - but only once the gestures it was already
 /// for have nothing to cancel. A standing distance must not shadow
 /// disarming an order.
@@ -85,23 +77,6 @@ fn escape_clears_the_ruler_but_only_after_an_armed_placement() {
         !paper.cancel_interaction(),
         "and then there is nothing left"
     );
-}
-
-/// The opening instrument is arrival, not departure. The app names the
-/// symbol a frame after construction, so a ruler standing before that
-/// first call — the launch hook's, or a session restored into a fresh
-/// simulator — must survive it. Only leaving an instrument forgets.
-#[test]
-fn the_first_symbol_of_a_session_keeps_a_standing_ruler() {
-    let mut paper = PaperTrading::new();
-    paper.desk.ruler.notches = 6;
-    paper.set_symbol("BTCUSDT");
-    assert_eq!(
-        paper.desk.ruler.notches, 6,
-        "arriving at the opening instrument is not a switch"
-    );
-    paper.set_symbol("WIN$N");
-    assert_eq!(paper.desk.ruler.notches, 0, "leaving one still forgets");
 }
 
 /// A frame with the aim's modifier held and wheel travel to spend.
@@ -844,32 +819,6 @@ fn a_band_too_short_for_a_tag_survives_the_paint_and_the_press() {
     let _ = cmd_preview_layout(sliver, sliver.right(), pointer);
 }
 
-/// Reverse flips side and size in one market order, and the form's
-/// protective offsets ride along to the new entry.
-#[test]
-fn reverse_flips_the_position_with_the_forms_bracket() {
-    let mut paper = PaperTrading::new();
-    paper.desk.ticket.qty_text = "2".to_owned();
-    paper.seed(&print(0, 100));
-    paper.market(Side::Buy);
-    paper.on_trade(&print(1, 100));
-    paper.desk.ticket.stop_offset_text = "5".to_owned();
-    paper.reverse_position();
-    paper.on_trade(&print(2, 100));
-    let position = paper
-        .account
-        .venue()
-        .position()
-        .expect("reversed, not flat");
-    assert_eq!(position.side, Side::Sell);
-    assert_eq!(position.quantity, Decimal::from(2));
-    assert_eq!(
-        position.stop_loss,
-        Some(Decimal::from(105)),
-        "the new short is protected by the form's offset"
-    );
-}
-
 #[test]
 fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
     let dir = crate::scratch::ScratchDir::new("paper-reset-test");
@@ -1132,6 +1081,43 @@ fn a_close_refreshes_an_open_report_by_itself() {
         1,
         "the close re-read the journal without a manual refresh"
     );
+}
+
+/// C5: a live print reaches the account through the tab's paper, and the
+/// host re-reads the open report when that print closes a journaled trade.
+#[test]
+fn live_print_fills_a_resting_limit_through_tab_paper() {
+    let utc = TzOffset::new(0);
+    let dir = crate::scratch::ScratchDir::new("paper-tab-limit");
+    let mut paper = PaperTrading::new();
+    paper.account.redirect_history_dir(dir.path().to_path_buf());
+    paper.set_symbol("LIMITX");
+    {
+        let (state, env) = paper.report_parts();
+        state.open(&env)
+    };
+    paper.seed(&print(0, 100));
+    let events = paper.account.venue_mut().submit(
+        quantick_sim::OrderIntent::limit(Side::Buy, Decimal::ONE, Decimal::from(95))
+            .with_bracket(Bracket::whole(None, Some(Decimal::from(105)))),
+    );
+    paper.account.handle_events(events);
+    assert_eq!(paper.working_orders().len(), 1, "the limit rests");
+
+    paper.on_trade(&print(1, 95));
+    assert!(
+        !paper.is_flat(),
+        "the print crossed the limit and it filled"
+    );
+
+    paper.on_trade(&print(2, 105));
+    assert_eq!(paper.session_trades().len(), 1, "the target closed it");
+    paper
+        .account
+        .report_state_mut()
+        .ensure_report_view(utc, quantick_paper::pnl::PnlReader::plain());
+    let view = paper.account.report_state().view_rows().expect("re-read");
+    assert_eq!(view.len(), 1, "the open report re-read the journal");
 }
 
 #[test]

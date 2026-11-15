@@ -225,6 +225,25 @@ fn alert_target_binding_end_to_end() {
     );
 }
 
+/// C9: a live print that closes a bar through an armed level reaches the
+/// alert cache in `stores`, and the runtime records the trigger.
+#[test]
+fn live_close_reaches_the_alert_cache() {
+    let (mut app, events, ..) = test_app();
+    ready(&mut app);
+    events
+        .try_send(FeedEvent::Backfilled(vec![trade(1)]))
+        .unwrap();
+    app.drain_tabs();
+    app.alert_command(AlertCommand::Create(spec(&app))).unwrap();
+    let mut print = trade(2);
+    print.price = Decimal::from(102);
+    events.try_send(FeedEvent::Live(print)).unwrap();
+    app.drain_tabs();
+    let history = app.runtime.alerts.core.book.history(0, 10).unwrap();
+    assert_eq!(history.len(), 1, "the closing print fires once");
+}
+
 #[test]
 fn alert_native_dense_tape_no_fire() {
     use crate::tab::alerts::{Observation, Observer};
@@ -249,7 +268,7 @@ fn alert_native_dense_tape_no_fire() {
             close: None,
         })
     };
-    runtime.pane((&tab.flow_pane).into(), observation());
+    runtime.pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
     assert_eq!(
         runtime.core.book.views().unwrap()[0].status,
         quantick_alerts::AlertStatus::Monitoring
@@ -257,7 +276,7 @@ fn alert_native_dense_tape_no_fire() {
     let before = crate::work_meter::tally();
     let started = std::time::Instant::now();
     for _ in 0..100_000 {
-        runtime.pane((&tab.flow_pane).into(), observation());
+        runtime.pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
     }
     let elapsed = started.elapsed();
     let spent = crate::work_meter::tally().since(before);
@@ -270,7 +289,8 @@ fn alert_native_dense_tape_no_fire() {
     let mut baseline = ();
     let base_started = std::time::Instant::now();
     for _ in 0..100_000 {
-        std::hint::black_box(&mut baseline).pane((&tab.flow_pane).into(), observation());
+        std::hint::black_box(&mut baseline)
+            .pane(crate::tab::alerts::facts(&tab.flow_pane), observation());
     }
     eprintln!(
         "alerts_native_dense_tape observations=100000 adapter_us={} scaffold_us={} allocations={} bytes={}",

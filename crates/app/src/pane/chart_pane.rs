@@ -129,9 +129,6 @@ pub struct ChartPane {
     /// What the right-click that opened the layer menu resolved — see
     /// [`PaneContextMenu`].
     pub context_menu: PaneContextMenu,
-    /// The strategies armed on this pane's drawings — see
-    /// [`PaneStrategies`].
-    pub strategies: PaneStrategies,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -391,7 +388,6 @@ impl ChartPane {
             history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
-            strategies: PaneStrategies::default(),
             drawings,
             gestures: PaneGestures::default(),
         }
@@ -687,8 +683,8 @@ impl ChartPane {
         };
         // Any strategy instance bound to a drawing holds it, armed or not:
         // its extent is that strategy's window.
-        let anchors = &self.strategies.anchors;
-        let held = |id| anchors.for_drawing(id).is_some();
+        let anchors = chrome.strategies.anchors(self.id);
+        let held = |id| anchors.is_some_and(|anchors| anchors.for_drawing(id).is_some());
         let outcome = self.gestures.handle_pointer_tool(
             &mut self.drawings,
             &projection,
@@ -817,21 +813,6 @@ impl ChartPane {
 
 #[cfg(test)]
 impl ChartPane {
-    /// The strategies beside the series their rulers warm on, for a
-    /// re-arm from outside the pane.
-    pub(crate) fn strategies_with_series(
-        &mut self,
-    ) -> (&mut PaneStrategies, gesture::PaneSeriesRead<'_>) {
-        (
-            &mut self.strategies,
-            gesture::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-        )
-    }
-
     pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
         self.model.pending_indicator_guide = Some((slot.0, enabled));
     }
@@ -853,6 +834,7 @@ impl ChartPane {
         &'a mut self,
         capabilities: FeedCapabilities,
         style: &'a crate::style::ChartStyle,
+        strategies: Option<&'a crate::strategy_anchors::PaneStrategies>,
     ) -> (
         &'a mut PaneContextMenu,
         &'a mut quantick_chart_interaction::pane::Model,
@@ -875,7 +857,7 @@ impl ChartPane {
         let view = PaneMenuView {
             drawings: &self.drawings,
             indicators: &self.indicators,
-            strategies: &self.strategies,
+            strategies,
             series: gesture::PaneSeriesRead {
                 history_prefix: &self.history_prefix,
                 state: &self.state,
@@ -908,7 +890,9 @@ impl ChartPane {
     /// The layer menu, drawn and applied: what the right-click opens.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         let intents = {
-            let (menu, model, view) = self.menu_parts(chrome.capabilities, chrome.style);
+            let strategies = chrome.strategies.pane(self.id);
+            let (menu, model, view) =
+                self.menu_parts(chrome.capabilities, chrome.style, strategies);
             let hosts = PaneMenuHosts {
                 paper: &mut *chrome.paper,
             };
@@ -1099,12 +1083,12 @@ impl ChartPane {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    self.strategies.remove_for_drawing(id);
+                    chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
                 }
             }
             PaneMenuIntent::StrategyAdd(id) => {
                 if self.drawings.index_of(id).is_some() {
-                    self.strategies.popup_request = Some(id);
+                    chrome.strategies.pane_mut(self.id).request_popup(id);
                 }
             }
             // The drawing went without its strategy being swept yet: the
@@ -1113,16 +1097,14 @@ impl ChartPane {
             | PaneMenuIntent::StrategyRearm(id)
             | PaneMenuIntent::StrategyRemove(id)
                 if self.drawings.index_of(id).is_none() => {}
-            PaneMenuIntent::StrategyDisarm(id) => self.strategies.disarm(id),
+            PaneMenuIntent::StrategyDisarm(id) => chrome.strategies.pane_mut(self.id).disarm(id),
             PaneMenuIntent::StrategyRearm(id) => {
-                let series = gesture::PaneSeriesRead {
-                    history_prefix: &self.history_prefix,
-                    state: &self.state,
-                    spec: &self.spec,
-                };
-                self.strategies.rearm(id, series);
+                let series = self.series_read();
+                (chrome.strategies.pane_mut(self.id)).rearm(id, |depth| series.warmup_bars(depth));
             }
-            PaneMenuIntent::StrategyRemove(id) => self.strategies.remove_for_drawing(id),
+            PaneMenuIntent::StrategyRemove(id) => {
+                chrome.strategies.pane_mut(self.id).remove_for_drawing(id);
+            }
             PaneMenuIntent::ObjectsAsk(action) => {
                 use quantick_chart_interaction::pane::ObjectAction;
                 let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();

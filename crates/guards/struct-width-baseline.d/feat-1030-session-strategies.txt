@@ -1,0 +1,6 @@
+# #1030: a pane's armed strategies move off `ChartPane` into the tab's one
+# `TabStrategies` (crates/session), keyed by pane id — the field moves, the
+# total does not.
+app::ChartPane -1
+app::Tab +1
+!budget +0

@@ -72,11 +72,12 @@ impl PaperTrading {
             pointer,
         };
 
-        for order in self.account.venue().working_orders() {
+        for order in self.paper.account.venue().working_orders() {
             let Some(level) = order.price else { continue };
-            let dragged = self.desk.gesture.drag == PaperDrag::Order(order.id);
+            let dragged = self.paper.desk.gesture.drag == PaperDrag::Order(order.id);
             let price = if dragged {
-                self.desk
+                self.paper
+                    .desk
                     .gesture
                     .drag_price
                     .unwrap_or_else(|| level.to_f64().unwrap_or_default())
@@ -99,16 +100,17 @@ impl PaperTrading {
             // At rest the tag is a pill; it opens under the pointer. Read,
             // never recomputed — this frame's input already decided it,
             // from the pointer and the rect the *press* will use.
-            let open = self.desk.gesture.open_tag(TagKey::Order(order.id));
+            let open = self.paper.desk.gesture.open_tag(TagKey::Order(order.id));
             let expanded = open.is_some();
             // The line's own emphasis keeps its own 10 px band: that band
             // is `line_at`'s, so a line that lights up is a line the press
             // can actually grab. The tag opens over a wider row and near a
             // chart edge over a different one, which is why the two
             // questions stayed separate.
-            let hovered = ctx.hovers_line(y) || self.desk.gesture.hovered_order == Some(order.id);
+            let hovered =
+                ctx.hovers_line(y) || self.paper.desk.gesture.hovered_order == Some(order.id);
             let shown = if dragged {
-                self.account.snap(price)
+                self.paper.account.snap(price)
             } else {
                 level
             };
@@ -168,7 +170,7 @@ impl PaperTrading {
         // written inside the block below, read by the bracket paint after
         // it, because the tag's rect is only known once it is drawn.
         let mut position_reveal = false;
-        if let Some(position) = self.account.venue().position().cloned() {
+        if let Some(position) = self.paper.account.venue().position().cloned() {
             let color = palette.side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
@@ -180,13 +182,14 @@ impl PaperTrading {
                     fmt_decimal(position.quantity),
                 );
                 let points = self
+                    .paper
                     .account
                     .venue()
                     .mark_price()
                     .map(|mark| position.open_points(mark))
                     .map(|open| {
                         (
-                            self.account.pnl_compact(open, position.quantity),
+                            self.paper.account.pnl_compact(open, position.quantity),
                             points_color(&palette, open),
                         )
                     });
@@ -206,7 +209,7 @@ impl PaperTrading {
             self.draw_bracket_of(&ctx, BracketTarget::Position, false, position_reveal);
         }
 
-        if let Some(armed) = self.desk.armed {
+        if let Some(armed) = self.paper.desk.armed {
             let hint = format!(
                 "click a price to place your {} {} - Esc cancels",
                 side_word(armed.side),
@@ -243,7 +246,7 @@ impl PaperTrading {
             return;
         }
         let laddered = preview.bracket.is_laddered();
-        let pnl = self.account.symbol_pnl();
+        let pnl = self.paper.account.symbol_pnl();
         for part in preview.bracket.parts() {
             for (level, leg, color) in [
                 (part.stop_loss, Leg::StopLoss, palette.sell()),
@@ -306,7 +309,7 @@ impl PaperTrading {
                 // whole bracket's leg does: what the trader sees moving is
                 // what the release will submit.
                 let dragging = order.is_some_and(|id| {
-                    self.desk.gesture.drag
+                    self.paper.desk.gesture.drag
                         == PaperDrag::Rung {
                             order: id,
                             index,
@@ -314,10 +317,11 @@ impl PaperTrading {
                         }
                 });
                 let shown = if dragging {
-                    self.desk
+                    self.paper
+                        .desk
                         .gesture
                         .drag_price
-                        .map_or(level, |price| self.account.snap(price))
+                        .map_or(level, |price| self.paper.account.snap(price))
                 } else {
                     level
                 };
@@ -341,7 +345,7 @@ impl PaperTrading {
                         leg.word(),
                         fmt_decimal(shown),
                         fmt_decimal(share),
-                        self.account.pnl_compact(points, share),
+                        self.paper.account.pnl_compact(points, share),
                     ),
                     order.is_some() && !dragging,
                     false,
@@ -367,7 +371,8 @@ impl PaperTrading {
         reveal: bool,
     ) {
         let palette = &ctx.palette;
-        let Some((side, reference, bracket, quantity)) = self.account.bracket_owner(owner) else {
+        let Some((side, reference, bracket, quantity)) = self.paper.account.bracket_owner(owner)
+        else {
             return;
         };
         // A ladder's rungs are several prices and none of them is amendable
@@ -394,7 +399,7 @@ impl PaperTrading {
                 },
             );
         }
-        if self.desk.gesture.drag != PaperDrag::None {
+        if self.paper.desk.gesture.drag != PaperDrag::None {
             return;
         }
         let reference_y = ctx.scale.y(reference.to_f64().unwrap_or_default());
@@ -437,13 +442,13 @@ impl PaperTrading {
     fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, paint: &LegPaint) {
         let palette = &ctx.palette;
         let identity = (paint.owner, paint.leg);
-        let drag = self.desk.gesture.drag;
+        let drag = self.paper.desk.gesture.drag;
         let amending = matches!(drag, PaperDrag::Leg { owner, leg } if (owner, leg) == identity);
         let creating = matches!(drag, PaperDrag::CreateLeg { owner, leg } if (owner, leg) == identity)
             && paint.level.is_none();
         let resting = paint.level.map(|level| level.to_f64().unwrap_or_default());
         let price = if amending || creating {
-            self.desk.gesture.drag_price.or(resting)
+            self.paper.desk.gesture.drag_price.or(resting)
         } else {
             resting
         };
@@ -455,9 +460,11 @@ impl PaperTrading {
         let dragging = amending || creating;
         let hovered = ctx.hovers_line(y);
         let shown = if dragging {
-            self.account.snap(price)
+            self.paper.account.snap(price)
         } else {
-            paint.level.unwrap_or_else(|| self.account.snap(price))
+            paint
+                .level
+                .unwrap_or_else(|| self.paper.account.snap(price))
         };
         let color = leg_color(palette, paint.leg);
         // Dashed while it is being created (it is not placed yet) and while
@@ -479,10 +486,11 @@ impl PaperTrading {
         };
         ctx.level_chip(y, color, &fmt_decimal(shown), state);
         let open = self
+            .paper
             .desk
             .gesture
             .open_tag(TagKey::Leg(paint.owner, paint.leg));
-        let pnl = self.account.symbol_pnl();
+        let pnl = self.paper.account.symbol_pnl();
         let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging, pnl);
         ctx.chip_tag(
             y,
@@ -502,7 +510,7 @@ impl PaperTrading {
     /// rather than hugging the edge.
     pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>, aimed_here: bool) {
         let palette = &ctx.palette;
-        if self.desk.gesture.cmd_preview.is_none() {
+        if self.paper.desk.gesture.cmd_preview.is_none() {
             return;
         }
         // Lay out against the area the input aims in: the whole plot, the
@@ -514,6 +522,7 @@ impl PaperTrading {
         // The aim belongs to the pane that made it; every other pane of
         // the split paints only its echo. The desk decides which.
         let preview = match self
+            .paper
             .desk
             .aim_paint(bounds(band), aimed_here, &Axis(ctx.scale))
         {
@@ -572,7 +581,7 @@ impl PaperTrading {
         // knows never reads it twice.
         // Under the label the press was laid out against: the same band, the
         // same pointer, so the same rect.
-        if preview.bracket.is_empty() && !self.desk.ruler.rolled {
+        if preview.bracket.is_empty() && !self.paper.desk.ruler.rolled {
             ctx.painter.text(
                 egui::pos2(label.center().x, label.max.y + 3.0),
                 egui::Align2::CENTER_TOP,

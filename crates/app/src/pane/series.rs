@@ -349,9 +349,6 @@ impl ChartPane {
         self.price_view.set_inverted(inverted);
         self.frame.auto_range = None;
         self.hover_pos = None;
-        // Bars queued for the strategies belong to the series that just
-        // died; the tab disarms the instances with the reset's own reason.
-        self.strategies.pending.clear();
     }
 
     /// Fill a pane opened mid-session from the trades another pane of the same
@@ -379,6 +376,12 @@ impl ChartPane {
         self.send_indicator_rebuild();
     }
 
+    /// [`Self::ingest_live_trade_observed`], with nobody listening.
+    #[cfg(test)]
+    pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
+        self.ingest_live_trade_observed(trade, &mut |_, _, _| {});
+    }
+
     /// Take one live trade into the series, the tape and the indicators.
     ///
     /// The forming bar is *not* published here: it changes with every print
@@ -387,10 +390,10 @@ impl ChartPane {
     /// batch was 500 bar clones down the channel for the worker to collapse
     /// back into one. Closed bars stay per trade — each is a distinct event
     /// the indicators have to see.
-    pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
-        self.ingest_live_trade_observed(trade, &mut |_, _, _| {});
-    }
-
+    ///
+    /// `closed_observer` hears each bar the print closed, at its *composed*
+    /// slot (venue history prefix + live bars) — the space the drawings'
+    /// anchors live in, which is why the tab queues strategy closes from it.
     pub(crate) fn ingest_live_trade_observed(
         &mut self,
         trade: &quantick_engine::Trade,
@@ -424,23 +427,14 @@ impl ChartPane {
             let closed = self.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker
-                .send(IndicatorCommand::BarClosed(closed.clone()));
-            // Queued for the armed instances only while any exist: an idle
-            // chart clones nothing on the per-trade path. The slot is the
-            // *composed* one (venue history prefix + live bars) — the same
-            // space the drawings' anchors live in, or the region's time
-            // window would be off by the prefix length.
-            if !self.strategies.anchors.is_empty() {
-                let slot = self.history_prefix.len() + index;
-                self.strategies.pending.push((closed, slot));
-            }
+                .send(IndicatorCommand::BarClosed(closed));
         }
     }
 
     /// Hand the indicators the forming bar as it stands now.
     ///
     /// Sent once per drain that took in live trades — see
-    /// [`Self::ingest_live_trade`] for why it is not sent per trade.
+    /// [`Self::ingest_live_trade_observed`] for why it is not sent per trade.
     pub fn publish_partial(&mut self) {
         let command = self.partial_command();
         self.indicator_worker.send(command);
