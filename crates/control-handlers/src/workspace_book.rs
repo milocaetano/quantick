@@ -16,9 +16,6 @@ use quantick_control::{
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::window_menu as text;
 use quantick_control_schema::workspace::{MODULE_ID, WorkspaceColourDto, WorkspaceColourRow};
-use quantick_control_schema::workspace_colour::{
-    ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
-};
 use quantick_control_schema::workspace_book::{
     LAST_TAB_CODE, TAB_CLOSED_EVENT_KIND, TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND,
     TabCloseInput, TabCloseResult, TabWorkspaceSetInput, TabWorkspaceSetResult, UNSAVED_EDITS_CODE,
@@ -33,6 +30,9 @@ use quantick_control_schema::workspace_book::{
     workspace_delete_descriptor, workspace_list_descriptor, workspace_new_descriptor,
     workspace_rename_descriptor, workspace_revert_descriptor, workspace_save_as_descriptor,
     workspace_save_to_descriptor,
+};
+use quantick_control_schema::workspace_colour::{
+    ColourWarningDto, workspace_colour_palette_descriptor, workspace_colour_popover_descriptor,
 };
 use quantick_session::close_queue::{
     CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,

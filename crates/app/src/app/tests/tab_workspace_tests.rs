@@ -2502,7 +2502,10 @@ fn swap_reaches_the_colour_handler_and_the_toast_names_the_holder() {
     assert_eq!(book.colour("Scalp"), Some(preset(4)));
     assert_eq!(book.colour("Default"), Some(held), "Scalp's old colour");
     let note = app.surfaces.toast.model_state.message();
-    assert_eq!(note, Some(format!("Default is now {}", held.name()).as_str()));
+    assert_eq!(
+        note,
+        Some(format!("Default is now {}", held.name()).as_str())
+    );
 }
 
 /// Cancel on the question changes nothing.
