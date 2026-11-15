@@ -634,144 +634,182 @@ mod tests {
         rect(900.0, 40.0, 1000.0, 66.0)
     }
 
-    fn fixed_pt() -> f32 {
-        CHIP_MENU_FIXED_ROWS as f32 * METRICS.row_pt
-            + CHIP_MENU_SEPARATORS as f32 * METRICS.separator_pt
-            + METRICS.frame_pt
+    fn full_hd() -> MenuBounds {
+        rect(0.0, 0.0, 1920.0, 1000.0)
     }
 
-    #[test]
-    fn nine_workspaces_on_a_full_hd_window_show_whole_below_the_capsule() {
-        let screen = rect(0.0, 0.0, 1920.0, 1000.0);
-        let budget = chip_menu_budget(screen, capsule(), 9, METRICS);
-        assert_eq!(budget.max_width, CHIP_MENU_MAX_WIDTH_PT);
-        assert_eq!(budget.min_width, CHIP_MENU_MIN_WIDTH_PT);
-        assert_eq!(budget.list_height, 9.0 * METRICS.row_pt);
-        assert!(!budget.scrolls, "nothing scrolls");
-        assert_eq!(budget.list_max(), f32::INFINITY, "a short row never clips");
-        assert_eq!(budget.max_height, fixed_pt() + budget.list_height);
-        let top = capsule().bottom + CHIP_MENU_DROP_PT;
-        assert!(top + budget.max_height <= screen.bottom - CHIP_MENU_EDGE_PT);
-    }
-
-    #[test]
-    fn thirty_or_forty_workspaces_show_twelve_rows_and_scroll() {
-        let screen = rect(0.0, 0.0, 1920.0, 1000.0);
-        for workspaces in [13, 30, 40] {
-            let budget = chip_menu_budget(screen, capsule(), workspaces, METRICS);
-            let twelve = CHIP_MENU_MAX_LIST_ROWS as f32 * METRICS.row_pt;
-            assert_eq!(budget.list_height, twelve, "{workspaces}");
-            assert!(budget.scrolls);
-            assert_eq!(budget.list_max(), twelve);
-            assert_eq!(budget.max_height, fixed_pt() + twelve);
-        }
-        let budget = chip_menu_budget(screen, capsule(), 12, METRICS);
-        assert!(!budget.scrolls, "twelve fit whole");
-    }
-
-    #[test]
-    fn a_window_shorter_than_twelve_rows_scrolls_sooner_and_ends_above_its_edge() {
-        let screen = rect(0.0, 0.0, 1280.0, 560.0);
-        let budget = chip_menu_budget(screen, capsule(), 30, METRICS);
-        let top = capsule().bottom + CHIP_MENU_DROP_PT;
-        let room = screen.bottom - CHIP_MENU_EDGE_PT - top;
-        assert!(budget.list_height < CHIP_MENU_MAX_LIST_ROWS as f32 * METRICS.row_pt);
-        assert_eq!(budget.max_height, room, "the menu takes the room below");
-        assert_eq!(budget.list_height, room - fixed_pt());
-    }
-    #[test]
-    fn a_short_window_keeps_three_workspace_rows_and_says_it_overruns() {
-        let screen = rect(0.0, 0.0, 640.0, 360.0);
-        let budget = chip_menu_budget(screen, capsule(), 40, METRICS);
-        let rows = CHIP_MENU_MIN_LIST_ROWS as f32 * METRICS.row_pt;
-        assert_eq!(budget.list_height, rows);
-        let room = screen.bottom - CHIP_MENU_EDGE_PT - capsule().bottom - CHIP_MENU_DROP_PT;
-        assert!(budget.max_height > room, "the window pushes the menu up");
-        assert_eq!(
-            budget.max_width, CHIP_MENU_MAX_WIDTH_PT,
-            "640 is wide enough"
-        );
-    }
-
-    #[test]
-    fn a_list_shorter_than_the_floor_is_never_padded() {
-        let screen = rect(0.0, 0.0, 640.0, 300.0);
-        let budget = chip_menu_budget(screen, capsule(), 2, METRICS);
-        assert_eq!(budget.list_height, 2.0 * METRICS.row_pt);
-        let budget = chip_menu_budget(screen, capsule(), 0, METRICS);
-        assert_eq!(budget.list_height, 0.0);
-    }
-
-    #[test]
-    fn a_narrow_window_narrows_the_menu_and_its_floor() {
-        let budget = chip_menu_budget(rect(0.0, 0.0, 300.0, 1000.0), capsule(), 9, METRICS);
-        assert_eq!(budget.max_width, 300.0 - 2.0 * CHIP_MENU_EDGE_PT);
-        assert_eq!(budget.min_width, CHIP_MENU_MIN_WIDTH_PT);
-        let budget = chip_menu_budget(rect(0.0, 0.0, 150.0, 1000.0), capsule(), 9, METRICS);
-        assert_eq!(budget.max_width, 150.0 - 2.0 * CHIP_MENU_EDGE_PT);
-        assert_eq!(
-            budget.min_width, budget.max_width,
-            "the floor never passes the cap"
-        );
-    }
-
-    #[test]
-    fn a_window_offset_on_the_desktop_measures_from_its_own_edges() {
-        let screen = rect(100.0, 200.0, 2020.0, 1200.0);
-        let anchor = rect(1000.0, 240.0, 1100.0, 266.0);
-        let shifted = chip_menu_budget(screen, anchor, 40, METRICS);
-        let home = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 40, METRICS);
-        assert_eq!(shifted, home);
-    }
-
-    #[test]
-    fn every_opening_measures_then_settles_unseen_then_draws() {
+    fn opened() -> WorkspaceMenuState {
         let mut state = WorkspaceMenuState::default();
         state.toggle_chip_menu(7);
-        let sizing = &mut state.chip_sizing;
-        assert_eq!(sizing.frame(1), (true, false), "the opening frame measures");
-        assert_eq!(sizing.frame(1), (false, false), "then settles unseen");
-        assert_eq!(sizing.frame(1), (false, true), "then draws");
-        assert_eq!(sizing.frame(1), (false, true));
+        state
+    }
+
+    /// Designer B's whole menu at nine workspaces: 81 + 24 + 310 + 65 + 2.
+    #[test]
+    fn nine_workspaces_make_the_mock_s_482_point_menu() {
+        let layout = chip_menu_layout(full_hd(), capsule(), 9, 9);
+        assert_eq!(layout.width, CHIP_MENU_WIDTH_PT);
+        assert_eq!(CHIP_MENU_WIDTH_PT, 320.0);
+        assert!(!layout.filter, "no filter below thirteen");
+        assert!(!layout.scrolls, "nine rows show whole");
+        assert_eq!(layout.list_height, 310.0);
+        assert_eq!(layout.height, 482.0);
+    }
+
+    /// Thirty workspaces: 81 + 24 + 28 + 323 + 65 + 2, nine and a half rows
+    /// in view so the cut row says more below.
+    #[test]
+    fn thirty_workspaces_make_the_mock_s_523_point_menu_showing_nine_and_a_half_rows() {
+        let layout = chip_menu_layout(full_hd(), capsule(), 30, 30);
+        assert!(layout.filter && layout.scrolls);
+        assert_eq!(layout.list_height, 323.0);
+        assert_eq!(layout.list_height / CHIP_MENU_ROW_PT, 9.5);
+        assert_eq!(layout.height, 523.0);
+    }
+
+    #[test]
+    fn one_workspace_makes_a_short_menu() {
+        let layout = chip_menu_layout(full_hd(), capsule(), 1, 1);
+        assert!(!layout.filter && !layout.scrolls);
+        assert_eq!(layout.list_height, CHIP_MENU_ROW_PT + CHIP_MENU_LIST_PAD_PT);
+        assert_eq!(layout.height, 81.0 + 24.0 + 38.0 + 65.0 + 2.0);
+    }
+
+    #[test]
+    fn the_filter_shows_from_thirteen_workspaces_and_stays_while_it_narrows() {
+        assert_eq!(CHIP_MENU_FILTER_FROM, 13);
+        assert!(!chip_menu_layout(full_hd(), capsule(), 12, 12).filter);
+        let thirteen = chip_menu_layout(full_hd(), capsule(), 13, 13);
+        assert!(thirteen.filter && thirteen.scrolls);
+        let narrowed = chip_menu_layout(full_hd(), capsule(), 13, 2);
+        assert!(narrowed.filter, "the field stays while it narrows");
+        assert!(!narrowed.scrolls);
+        let two = 2.0 * CHIP_MENU_ROW_PT + CHIP_MENU_LIST_PAD_PT;
+        assert_eq!(narrowed.list_height, two);
+    }
+
+    #[test]
+    fn a_short_window_ends_the_menu_eight_points_above_its_edge() {
+        let screen = rect(0.0, 0.0, 1280.0, 560.0);
+        let layout = chip_menu_layout(screen, capsule(), 30, 30);
+        let top = capsule().bottom + CHIP_MENU_DROP_PT;
+        assert_eq!(layout.height, screen.bottom - CHIP_MENU_EDGE_PT - top);
+        assert!(layout.list_height < CHIP_MENU_LIST_MAX_PT && layout.scrolls);
+    }
+
+    #[test]
+    fn a_tiny_window_keeps_three_rows_and_overruns() {
+        let screen = rect(0.0, 0.0, 640.0, 360.0);
+        let layout = chip_menu_layout(screen, capsule(), 40, 40);
+        let three = CHIP_MENU_MIN_LIST_ROWS as f32 * CHIP_MENU_ROW_PT + CHIP_MENU_LIST_PAD_PT;
+        assert_eq!(layout.list_height, three);
+        let room = screen.bottom - CHIP_MENU_EDGE_PT - capsule().bottom - CHIP_MENU_DROP_PT;
+        assert!(layout.height > room, "the window pushes the menu up");
+    }
+
+    #[test]
+    fn a_narrow_window_narrows_the_menu_and_an_offset_one_measures_from_its_edges() {
+        let narrow = chip_menu_layout(rect(0.0, 0.0, 300.0, 1000.0), capsule(), 9, 9);
+        assert_eq!(narrow.width, 300.0 - 2.0 * CHIP_MENU_EDGE_PT);
+        let shifted = chip_menu_layout(
+            rect(100.0, 200.0, 2020.0, 1200.0),
+            rect(1000.0, 240.0, 1100.0, 266.0),
+            40,
+            40,
+        );
+        assert_eq!(shifted, chip_menu_layout(full_hd(), capsule(), 40, 40));
+    }
+
+    /// On open the list scrolls so the current row is in view, once.
+    #[test]
+    fn opening_scrolls_the_current_row_into_view_once() {
+        let mut state = opened();
+        let view = CHIP_MENU_LIST_MAX_PT;
+        let offset = state.reveal(Some(29), view).expect("the opening reveals");
+        let top = 29.0 * CHIP_MENU_ROW_PT;
+        assert!(top >= offset, "{offset}");
+        assert!(top + CHIP_MENU_ROW_PT <= offset + view - CHIP_MENU_LIST_PAD_PT);
+        assert_eq!(state.reveal(Some(29), view), None, "only the opening");
+        let mut state = opened();
+        assert_eq!(state.reveal(Some(0), view), Some(0.0), "the top needs none");
+    }
+
+    #[test]
+    fn up_and_down_move_the_focus_from_the_current_row_and_stop_at_the_ends() {
+        let mut state = opened();
+        state.move_focus(true, 9, Some(3));
+        assert_eq!(state.focus, Some(4));
+        state.move_focus(false, 9, Some(3));
+        state.move_focus(false, 9, Some(3));
+        assert_eq!(state.focus, Some(2));
+        for _ in 0..20 {
+            state.move_focus(false, 9, Some(3));
+        }
+        assert_eq!(state.focus, Some(0));
+        for _ in 0..20 {
+            state.move_focus(true, 9, Some(3));
+        }
+        assert_eq!(state.focus, Some(8));
+        assert_eq!(state.enter(9), Some(8), "Enter takes the focused row");
+        assert_eq!(state.enter(5), None, "a row the list no longer holds");
+        let mut fresh = opened();
+        fresh.move_focus(true, 9, None);
+        assert_eq!(fresh.focus, Some(0));
+        let mut fresh = opened();
+        fresh.move_focus(false, 9, None);
+        assert_eq!(fresh.focus, Some(8));
+        assert_eq!(opened().enter(9), None, "no focus, nothing to take");
+        let mut empty = opened();
+        empty.move_focus(true, 0, None);
+        assert_eq!(empty.focus, None);
+    }
+
+    /// A focus moved out of view scrolls the list to it.
+    #[test]
+    fn a_moved_focus_is_scrolled_into_view() {
+        let mut state = opened();
+        let view = CHIP_MENU_LIST_MAX_PT;
+        state.reveal(Some(0), view);
+        state.move_focus(false, 30, Some(0));
+        let offset = state.reveal(Some(0), view).expect("the focus moved");
+        let top = 29.0 * CHIP_MENU_ROW_PT;
+        assert!(top >= offset && top + CHIP_MENU_ROW_PT <= offset + view);
+    }
+
+    #[test]
+    fn the_filter_matches_any_part_of_a_name_whatever_its_case() {
+        assert!(filter_matches("", "Scalp"));
+        assert!(filter_matches("  ", "Scalp"));
+        assert!(filter_matches("calp", "Scalp"));
+        assert!(filter_matches("SCA", "Scalp"));
+        assert!(filter_matches(" scalp ", "Scalp"));
+        assert!(!filter_matches("tape", "Scalp"));
+    }
+
+    #[test]
+    fn typing_a_filter_focuses_its_first_match_and_clearing_it_drops_the_focus() {
+        let mut state = opened();
+        state.filter = "desk".to_owned();
+        state.filter_changed();
+        assert_eq!(state.focus, Some(0));
+        state.filter.clear();
+        state.filter_changed();
+        assert_eq!(state.focus, None);
+    }
+
+    #[test]
+    fn reopening_forgets_the_filter_the_focus_and_the_scroll() {
+        let mut state = opened();
+        state.filter = "desk".to_owned();
+        state.filter_changed();
+        state.scrolled(120.0);
         state.toggle_chip_menu(7);
-        state.toggle_chip_menu(8);
-        assert_eq!(state.chip_sizing.frame(1), (true, false), "a reopening too");
+        state.toggle_chip_menu(7);
+        assert!(state.filter.is_empty());
+        assert_eq!((state.focus, state.scroll), (None, 0.0));
+        assert!(state.reveal(Some(0), 100.0).is_some(), "a new opening reveals");
     }
 
-    #[test]
-    fn rows_whose_words_change_are_measured_again() {
-        let sizing = &mut ChipSizing::default();
-        sizing.frame(1);
-        sizing.cut("save", 220.0, 200.0);
-        sizing.frame(1);
-        assert_eq!(sizing.frame(1), (false, true));
-        assert!(!sizing.cut("save", 300.0, 300.0), "measured whole at 220");
-        assert_eq!(sizing.frame(2), (true, false), "a longer Save label");
-        sizing.cut("save", 420.0, 200.0);
-        assert!(
-            !sizing.cut("workspace.New", 200.0, 200.0),
-            "measuring cuts nothing"
-        );
-        sizing.frame(2);
-        assert!(sizing.cut("save", 344.0, 344.0), "measured again at 420");
-        assert!(!sizing.cut("workspace.New", 180.0, 344.0));
-    }
-
-    #[test]
-    fn a_name_is_cut_only_when_its_whole_row_does_not_fit() {
-        let sizing = &mut ChipSizing::default();
-        assert!(sizing.frame(1).0);
-        assert!(
-            !sizing.cut("wide", 420.2, 200.0),
-            "the measuring frame cuts nothing"
-        );
-        assert!(!sizing.cut("narrow", 180.0, 200.0));
-        assert!(!sizing.frame(1).0);
-        assert!(sizing.cut("wide", 344.0, 344.0), "asks the whole room, cut");
-        assert!(!sizing.cut("narrow", 180.0, 344.0));
-        assert!(!sizing.cut("wide", 421.0, 421.0), "fits exactly, whole");
-        assert!(!sizing.cut("unmeasured", 344.0, 344.0));
-    }
     #[test]
     fn the_style_s_heights_become_rows_separators_and_a_frame() {
         let metrics = MenuMetrics::of(20.0, 4.0, 12.0);
@@ -833,12 +871,5 @@ mod tests {
         assert_eq!(fit_caption(Some(100.0), 100.0, 8.0, 0.0), CaptionFit::Whole);
         let open = fit_caption(None, 900.0, 8.0, 900.0);
         assert_eq!(open, CaptionFit::Whole, "a row that extends");
-    }
-
-    #[test]
-    fn the_measuring_frame_keeps_to_the_floor_and_the_others_to_the_cap() {
-        let budget = chip_menu_budget(rect(0.0, 0.0, 1920.0, 1000.0), capsule(), 9, METRICS);
-        assert_eq!(budget.width(true), CHIP_MENU_MIN_WIDTH_PT);
-        assert_eq!(budget.width(false), CHIP_MENU_MAX_WIDTH_PT);
     }
 }
