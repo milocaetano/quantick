@@ -2443,7 +2443,7 @@ fn drawn_row(app: &mut QuantickApp, ctx: &egui::Context, id: &str) -> egui::Rect
     panic!("{id} was never drawn");
 }
 
-/// Tab 1 on a new `Scalp` (Cobalt) beside `Default` (Slate), its menu's
+/// Tab 1 on a new `Scalp` beside `Default` (Slate), its menu's
 /// palette popover staged on `face`.
 fn popover_on(face: &str) -> (QuantickApp, egui::Context, crate::scratch::ScratchFile) {
     let layouts = crate::scratch::ScratchFile::new("colour-popover", "layouts.toml");
@@ -2495,24 +2495,24 @@ fn the_header_swatch_opens_the_popover_and_the_scene_lists_it() {
 #[test]
 fn swap_reaches_the_colour_handler_and_the_toast_names_the_holder() {
     let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let held = app.runtime.workspace.book.book().colour("Scalp").unwrap();
     let swap = drawn_row(&mut app, &ctx, "workspace_menu.colour.swap");
     click_sized(&mut app, &ctx, FULL_HD, swap.center());
     let book = app.runtime.workspace.book.book();
     assert_eq!(book.colour("Scalp"), Some(preset(4)));
-    assert_eq!(book.colour("Default"), Some(preset(0)));
+    assert_eq!(book.colour("Default"), Some(held), "Scalp's old colour");
     let note = app.surfaces.toast.model_state.message();
-    assert_eq!(note, Some("Default is now Cobalt"));
+    assert_eq!(note, Some(format!("Default is now {}", held.name()).as_str()));
 }
 
 /// Cancel on the question changes nothing.
 #[test]
 fn cancel_on_the_question_changes_nothing() {
     let (mut app, ctx, _layouts) = popover_on("cell:colour:ask=slate");
+    let before = app.runtime.workspace.book.book().list();
     let cancel = drawn_row(&mut app, &ctx, "workspace_menu.colour.cancel");
     click_sized(&mut app, &ctx, FULL_HD, cancel.center());
-    let book = app.runtime.workspace.book.book();
-    assert_eq!(book.colour("Scalp"), Some(preset(0)));
-    assert_eq!(book.colour("Default"), Some(preset(4)));
+    assert_eq!(app.runtime.workspace.book.book().list(), before);
     let popover = app.chrome.window_menu.tab_workspace.colour.as_ref();
     assert_eq!(
         popover.map(|popover| popover.asked.is_none()),

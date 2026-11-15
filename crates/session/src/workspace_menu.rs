@@ -105,6 +105,10 @@ pub struct WorkspaceMenuState {
     pub scroll: f32,
     /// The next frame scrolls the list to the focus, else the current row.
     reveal: bool,
+    /// A capture staged the menu before the window presented its tab: the
+    /// first frame that shows the cell carries it there (a replay opening
+    /// at launch hands the window a new tab).
+    staged: bool,
     pub manage: Option<ManageDialog>,
     pub dialog: Option<NameDialog>,
     pub close: CloseQueue,
@@ -251,18 +255,24 @@ impl WorkspaceMenuState {
         let (surface, row) = token.split_once(':').unwrap_or((token, ""));
         if let ("cell", Some(popover)) = (surface, row.strip_prefix("colour")) {
             let mut colour = ColourPopover::default();
-            match popover.strip_prefix(':').and_then(|face| face.split_once('=')) {
+            match popover
+                .strip_prefix(':')
+                .and_then(|face| face.split_once('='))
+            {
                 None if popover.is_empty() => {}
                 Some(("ask", word)) => colour.ask(word),
                 Some(("custom", hex)) => (colour.custom, colour.hex) = (true, hex.to_owned()),
                 _ => return false,
             }
             self.toggle_chip_menu(tab);
-            self.colour = Some(colour);
+            (self.colour, self.staged) = (Some(colour), true);
             return true;
         }
         match (surface, row.split_once('=')) {
-            ("cell", None) => self.toggle_chip_menu(tab),
+            ("cell", None) => {
+                self.toggle_chip_menu(tab);
+                self.staged = true;
+            }
             ("manage", None) => self.open_manage(tab),
             ("manage", Some(("delete", name))) => {
                 self.open_manage(tab);
@@ -297,6 +307,9 @@ impl WorkspaceMenuState {
     /// the shortcut (`toggled`) counts only where the cell stands. Answers
     /// whether the menu is open on `tab`.
     pub fn follow_cell(&mut self, tab: u64, shown: bool, window: &[u64], toggled: bool) -> bool {
+        if shown && std::mem::take(&mut self.staged) && self.chip_menu.is_some() {
+            self.chip_menu = Some(tab);
+        }
         self.follow_window(shown.then_some(tab), window);
         if shown && toggled {
             self.toggle_chip_menu(tab);

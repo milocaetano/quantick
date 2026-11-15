@@ -214,3 +214,15 @@ fn custom_leaves_the_caret_keys_to_its_field() {
     assert!(popover.takes(Key::Tab), "the question takes Tab again");
     assert_eq!(Key::Left.name(), "ArrowLeft");
 }
+
+/// A staged menu follows the window to the tab it first presents: a replay
+/// opening at launch replaces the tab the capture staged it on.
+#[test]
+fn a_staged_menu_opens_on_the_tab_first_presented() {
+    let mut menu = WorkspaceMenuState::default();
+    assert!(menu.stage(7, "cell:colour"));
+    assert!(menu.follow_cell(9, true, &[9], false), "carried to tab 9");
+    assert!(menu.colour.is_some());
+    menu.toggle_chip_menu(9);
+    assert!(!menu.follow_cell(9, true, &[9], false), "only once");
+}
