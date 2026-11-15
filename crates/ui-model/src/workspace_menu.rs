@@ -105,9 +105,9 @@ pub enum Mark {
         radius: f32,
         rgb: [u8; 3],
     },
-    /// A box shaded between its corners' colours: top left, top right,
-    /// bottom right, bottom left (the Custom picker's square and strip).
-    Shade { at: Area, corners: [[u8; 3]; 4] },
+    /// A box shaded between its corners, each a point and its colour: top
+    /// left, top right, bottom right, bottom left (Custom's square and strip).
+    Shade([([f32; 2], [u8; 3]); 4]),
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -241,12 +241,7 @@ fn entry(
         named(text(left, top + 7.5, &row.label, name_pt, ink.ink, width)),
         text(left, top + 23.5, &row.summary, SMALL_PT, ink.support, width),
     ];
-    let face = area(
-        at.x + lead,
-        at.y + (at.h - mini[1]) / 2.0,
-        mini[0],
-        mini[1],
-    );
+    let face = area(at.x + lead, at.y + (at.h - mini[1]) / 2.0, mini[0], mini[1]);
     marks.extend(row.tree.clone().map(|tree| Mark::Tree(face, tree)));
     let slot_at = area(
         at.x,
@@ -266,7 +261,12 @@ fn entry(
 /// The header's swatch on the line `line`: the colour 16 x 16, pressed over
 /// 24 x 24, ringed in the accent on hover; it opens the palette popover.
 fn swatch(line: Area, row: &CellRow, ink: &MenuChrome) -> Piece {
-    let at = area(line.x, line.y + (line.h - SWATCH_PT) / 2.0, SWATCH_PT, SWATCH_PT);
+    let at = area(
+        line.x,
+        line.y + (line.h - SWATCH_PT) / 2.0,
+        SWATCH_PT,
+        SWATCH_PT,
+    );
     let grow = (SWATCH_HIT_PT - SWATCH_PT) / 2.0;
     let hit = area(at.x - grow, at.y - grow, SWATCH_HIT_PT, SWATCH_HIT_PT);
     let ring = area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0);
@@ -443,7 +443,14 @@ pub fn row(row: &CellRow, width: f32, focused: bool, dark: bool) -> Piece {
         marks.push(dot(status + 7.0, y, DOT_PT, ink.accent));
     }
     let line = area(2.0 * PAD, 0.0, width - 3.0 * PAD - 8.0, CHIP_MENU_ROW_PT);
-    let mut line = entry(line, row, (SLOT_WIDTH_PT, MINI_ROW), BODY_PT, STATUS_PT + 8.0, &ink);
+    let mut line = entry(
+        line,
+        row,
+        (SLOT_WIDTH_PT, MINI_ROW),
+        BODY_PT,
+        STATUS_PT + 8.0,
+        &ink,
+    );
     // On the selection fill the support ink falls under 4.5:1 in Dark.
     if let (true, Some(Mark::Text(summary))) = (row.on, line.get_mut(1)) {
         summary.ink = ink.ink;

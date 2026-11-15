@@ -238,6 +238,15 @@ impl CellRow {
     }
 }
 
+/// Where the row under scene key `key` was drawn, among `drawn`.
+#[must_use]
+pub fn drawn<'a, R>(drawn: &'a [(CellRow, R)], key: &str) -> Option<&'a R> {
+    drawn
+        .iter()
+        .find(|(row, _)| row.key == key)
+        .map(|(_, at)| at)
+}
+
 /// The menu: the header on the tab's workspace with what acts on it, the
 /// list, which alone scrolls, and the footer.
 #[derive(Debug, Clone, PartialEq)]

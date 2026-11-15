@@ -46,7 +46,10 @@ fn mock(last_custom: bool) -> WorkspaceBook {
 fn the_swatches_mark_the_current_colour_and_the_held_ones() {
     let model = palette(&mock(true), "Flow").unwrap();
     assert_eq!(model.presets.len(), 16);
-    assert_eq!((model.workspace.as_str(), model.current), ("Flow", preset(3)));
+    assert_eq!(
+        (model.workspace.as_str(), model.current),
+        ("Flow", preset(3))
+    );
     let violet = &model.presets[3];
     assert!(violet.current && violet.holder.is_none() && violet.initials.is_none());
     assert_eq!(violet.tip(), "Violet \u{b7} current");
@@ -58,15 +61,28 @@ fn the_swatches_mark_the_current_colour_and_the_held_ones() {
     let initials: Vec<Option<&str>> = (model.presets.iter())
         .map(|swatch| swatch.initials.as_deref())
         .collect();
-    let held = [Some("O"), Some("T"), Some("Sc"), None, Some("D"), Some("Sw")];
+    let held = [
+        Some("O"),
+        Some("T"),
+        Some("Sc"),
+        None,
+        Some("D"),
+        Some("Sw"),
+    ];
     assert_eq!(initials[..6], held);
     assert_eq!(initials[14..], [Some("M"), Some("N")]);
     let petrol = &model.presets[6];
     assert!(!petrol.current && petrol.holder.is_none());
     assert_eq!(petrol.tip(), "Petrol");
     assert_eq!(model.next_free, preset(6), "Petrol");
-    let last = model.last_custom.as_ref().expect("a custom colour was applied");
-    assert_eq!((last.key.as_str(), last.name.as_str()), (LAST_CUSTOM_KEY, "#3A7BD5"));
+    let last = model
+        .last_custom
+        .as_ref()
+        .expect("a custom colour was applied");
+    assert_eq!(
+        (last.key.as_str(), last.name.as_str()),
+        (LAST_CUSTOM_KEY, "#3A7BD5")
+    );
     assert_eq!(last.colour, WorkspaceColour::Custom(BLUE));
     assert_eq!(last.tip(), "Last custom #3A7BD5");
     assert_eq!(model.swatches().count(), 17);
@@ -88,8 +104,14 @@ fn a_held_colour_asks_to_swap_in_its_own_words() {
     let Pick::Ask(question) = model.pick(preset(2), false) else {
         panic!("Sky is held")
     };
-    assert_eq!(question.words, "Sky is used by Scalp. Swap? Scalp becomes Violet.");
-    assert_eq!((question.owner.as_str(), question.owner_gets), ("Scalp", preset(3)));
+    assert_eq!(
+        question.words,
+        "Sky is used by Scalp. Swap? Scalp becomes Violet."
+    );
+    assert_eq!(
+        (question.owner.as_str(), question.owner_gets),
+        ("Scalp", preset(3))
+    );
     let typed = WorkspaceColour::Custom([0x5D, 0xBD, 0xEB]);
     let Pick::Ask(question) = model.pick(typed, true) else {
         panic!("Sky's Dark value is held")
@@ -141,12 +163,16 @@ fn no_preset_warns_and_light_s_black_sell_is_no_red() {
     let inks = trade_inks();
     let light_sell = ResolvedTheme::bundled(false).color(Token::Sell);
     assert_eq!(light_sell, PremultipliedRgba::from_rgb(0, 0, 0));
-    assert!(!inks.iter().any(|trade| trade.ink == light_sell), "{inks:?}");
+    assert!(
+        !inks.iter().any(|trade| trade.ink == light_sell),
+        "{inks:?}"
+    );
     assert_eq!(inks.len(), 3, "both buys and Dark's sell");
     let book = mock(false);
     for index in 0..16 {
         let warned = warnings(&book, "Flow", preset(index));
-        let trade = |w: &ColourWarning| matches!(w, ColourWarning::NearBuy | ColourWarning::NearSell);
+        let trade =
+            |w: &ColourWarning| matches!(w, ColourWarning::NearBuy | ColourWarning::NearSell);
         assert!(!warned.iter().any(trade), "{index}: {warned:?}");
     }
 }
@@ -163,12 +189,22 @@ fn the_mock_s_custom_values_raise_their_warnings() {
         let found = warnings(&book, "Flow", WorkspaceColour::Custom(hex));
         found.iter().map(ColourWarning::words).collect()
     };
-    assert_eq!(said([0x62, 0xB8, 0xEA]), ["Hard to tell from Scalp's colour (Sky)."]);
+    assert_eq!(
+        said([0x62, 0xB8, 0xEA]),
+        ["Hard to tell from Scalp's colour (Sky)."]
+    );
     assert_eq!(said([0x2B, 0xA5, 0x97]), ["Close to the buy green."]);
     assert_eq!(said([0xEA, 0x56, 0x56]), ["Close to the sell red."]);
-    assert_eq!(said([0x3A, 0x35, 0x50]), ["Low contrast on the Light tab strip."]);
-    let dark_strip = ResolvedTheme::bundled(true).title_strip().color(Token::TabStrip);
-    let light_strip = ResolvedTheme::bundled(false).title_strip().color(Token::TabStrip);
+    assert_eq!(
+        said([0x3A, 0x35, 0x50]),
+        ["Low contrast on the Light tab strip."]
+    );
+    let dark_strip = ResolvedTheme::bundled(true)
+        .title_strip()
+        .color(Token::TabStrip);
+    let light_strip = ResolvedTheme::bundled(false)
+        .title_strip()
+        .color(Token::TabStrip);
     assert_eq!(dark_strip, rgb([0x10, 0x14, 0x1D]));
     assert_eq!(light_strip, rgb([0x25, 0x2F, 0x37]));
     assert!(contrast_ratio(rgb([0x3A, 0x35, 0x50]), dark_strip) >= 1.5);

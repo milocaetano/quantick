@@ -12,7 +12,7 @@ use quantick_workspace::canvas::{CanvasRect, PaneKind, PaneTree};
 
 use super::ToolbarAction;
 use crate::theme;
-use quantick_appearance::tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR;
+use quantick_appearance::{Token, tab_strip::WORKSPACE_CAPSULE_BAR_PT as BAR};
 
 /// The capsule's height: History's.
 const HEIGHT_PX: f32 = 22.0;
@@ -156,7 +156,7 @@ pub fn draw(
     }
     painter.vline(miniature.right() + 0.5, whole.y_range().shrink(4.0), stroke);
     let face = egui::Rect::from_center_size(miniature.center(), MINIATURE);
-    paint_tree(painter, face, model.tree);
+    paint_tree(painter, face, model.tree, Token::CapsuleMiniature); // Grey: the colour is the hue.
     if model.layout_unsaved {
         painter.circle_filled(face.right_top(), DOT_RADIUS_PX, palette.accent());
     }
@@ -223,9 +223,10 @@ pub fn draw(
 }
 
 /// The tree's panes inside `rect`, exactly as the canvas lays them out: a
-/// timeframe chart outlined, the flow pane filled with the accent.
-pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
+/// timeframe chart outlined, the flow pane filled with `flow`'s tint.
+pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree, flow: Token) {
     let palette = theme::get(painter.ctx());
+    let flow_ink = *palette.get(flow);
     let kinds = tree.panes();
     let area = CanvasRect::new(rect.left(), rect.top(), rect.width(), rect.height());
     for (slot, pane) in tree.rects(area) {
@@ -236,7 +237,7 @@ pub fn paint_tree(painter: &egui::Painter, rect: egui::Rect, tree: &PaneTree) {
             .iter()
             .any(|(held, kind)| *held == slot && *kind == PaneKind::Flow);
         let (fill, line) = if flow {
-            (theme::active_tint(palette.accent()), palette.accent())
+            (theme::active_tint(flow_ink), flow_ink)
         } else {
             (egui::Color32::TRANSPARENT, palette.text_faint())
         };

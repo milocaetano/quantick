@@ -89,7 +89,12 @@ fn preset(index: u8) -> WorkspaceColour {
 }
 
 /// A press in the popover, as the window carries it out.
-fn press(host: &mut Host, access: &mut FakeAccess, actor: &ActorContext, intent: ColourIntent) -> Option<String> {
+fn press(
+    host: &mut Host,
+    access: &mut FakeAccess,
+    actor: &ActorContext,
+    intent: ColourIntent,
+) -> Option<String> {
     let mut menu = std::mem::take(&mut host.menu);
     let command = WorkspaceCommand::Colour(intent);
     let note = apply_row_command(host, Some((access, actor)), &mut menu, 1, "WIN", command);
@@ -102,15 +107,28 @@ fn press(host: &mut Host, access: &mut FakeAccess, actor: &ActorContext, intent:
 #[test]
 fn a_free_colour_applies_at_once_and_closes_the_popover() {
     let (mut host, mut access, actor) = host();
-    let note = press(&mut host, &mut access, &actor, ColourIntent::Pick("petrol".to_owned()));
+    let note = press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("petrol".to_owned()),
+    );
     assert_eq!(note, None);
     assert_eq!(host.book.colour("Flow"), Some(preset(6)));
     assert_eq!(host.writes, 1);
     assert_eq!(access.events.len(), 1, "journaled as workspace.colour_set");
     assert!(host.menu.colour.is_none() && host.menu.chip_menu_on(1));
     host.menu.toggle_colour();
-    press(&mut host, &mut access, &actor, ColourIntent::Pick("last_custom".to_owned()));
-    assert_eq!(host.book.colour("Flow"), Some(WorkspaceColour::Custom([0x3A, 0x7B, 0xD5])));
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("last_custom".to_owned()),
+    );
+    assert_eq!(
+        host.book.colour("Flow"),
+        Some(WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]))
+    );
 }
 
 /// A held colour asks first and changes nothing; Cancel changes nothing;
@@ -119,14 +137,35 @@ fn a_free_colour_applies_at_once_and_closes_the_popover() {
 #[test]
 fn a_held_colour_asks_and_swap_tells_which_workspace_changed() {
     let (mut host, mut access, actor) = host();
-    press(&mut host, &mut access, &actor, ColourIntent::Pick("sky".to_owned()));
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("sky".to_owned()),
+    );
     let popover = host.menu.colour.as_ref().unwrap();
     assert_eq!(popover.asked.as_deref(), Some("sky"));
-    assert_eq!((host.writes, host.book.colour("Flow")), (0, Some(preset(3))));
+    assert_eq!(
+        (host.writes, host.book.colour("Flow")),
+        (0, Some(preset(3)))
+    );
     press(&mut host, &mut access, &actor, ColourIntent::Answer(false));
-    assert_eq!(host.menu.colour.as_ref().unwrap().asked, None, "back to the grid");
-    assert_eq!((host.writes, access.events.len()), (0, 0), "Cancel changes nothing");
-    press(&mut host, &mut access, &actor, ColourIntent::Pick("sky".to_owned()));
+    assert_eq!(
+        host.menu.colour.as_ref().unwrap().asked,
+        None,
+        "back to the grid"
+    );
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (0, 0),
+        "Cancel changes nothing"
+    );
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Pick("sky".to_owned()),
+    );
     let note = press(&mut host, &mut access, &actor, ColourIntent::Answer(true));
     assert_eq!(note.as_deref(), Some("Scalp is now Violet"));
     assert_eq!(host.book.colour("Flow"), Some(preset(2)));
@@ -141,32 +180,70 @@ fn a_held_colour_asks_and_swap_tells_which_workspace_changed() {
 #[test]
 fn custom_applies_its_field_and_asks_on_an_identical_colour() {
     let (mut host, mut access, actor) = host();
-    press(&mut host, &mut access, &actor, ColourIntent::Custom { dark: true });
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Custom { dark: true },
+    );
     let popover = host.menu.colour.as_ref().unwrap();
     assert!(popover.custom);
     assert_eq!(popover.hex, "#A887F2", "Violet as Dark paints it");
-    press(&mut host, &mut access, &actor, ColourIntent::Square { x: 0, y: 0 });
-    assert_eq!(host.menu.colour.as_ref().unwrap().hex, "#FFFFFF", "the square's white corner");
-    press(&mut host, &mut access, &actor, ColourIntent::Square { x: 1000, y: 0 });
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Square { x: 0, y: 0 },
+    );
+    assert_eq!(
+        host.menu.colour.as_ref().unwrap().hex,
+        "#FFFFFF",
+        "the square's white corner"
+    );
+    press(
+        &mut host,
+        &mut access,
+        &actor,
+        ColourIntent::Square { x: 1000, y: 0 },
+    );
     press(&mut host, &mut access, &actor, ColourIntent::Hue(0));
     assert_eq!(host.menu.colour.as_ref().unwrap().hex, "#FF0000");
     host.menu.colour.as_mut().unwrap().hex = "#3A7BD".to_owned();
-    assert_eq!(press(&mut host, &mut access, &actor, ColourIntent::Apply), None);
+    assert_eq!(
+        press(&mut host, &mut access, &actor, ColourIntent::Apply),
+        None
+    );
     assert_eq!(host.writes, 0, "a malformed field applies nothing");
     host.menu.colour.as_mut().unwrap().hex = "5dbdeb".to_owned();
     press(&mut host, &mut access, &actor, ColourIntent::Apply);
     let popover = host.menu.colour.as_ref().unwrap();
-    assert_eq!(popover.asked.as_deref(), Some("#5DBDEB"), "Sky's Dark value is Scalp's");
+    assert_eq!(
+        popover.asked.as_deref(),
+        Some("#5DBDEB"),
+        "Sky's Dark value is Scalp's"
+    );
     press(&mut host, &mut access, &actor, ColourIntent::Answer(false));
-    assert!(host.menu.colour.as_ref().unwrap().custom, "Cancel returns to Custom");
+    assert!(
+        host.menu.colour.as_ref().unwrap().custom,
+        "Cancel returns to Custom"
+    );
     host.menu.colour.as_mut().unwrap().hex = "#62B8EA".to_owned();
     press(&mut host, &mut access, &actor, ColourIntent::Apply);
-    assert_eq!(host.book.colour("Flow"), Some(WorkspaceColour::Custom([0x62, 0xB8, 0xEA])));
+    assert_eq!(
+        host.book.colour("Flow"),
+        Some(WorkspaceColour::Custom([0x62, 0xB8, 0xEA]))
+    );
     assert_eq!(host.book.last_custom(), Some([0x62, 0xB8, 0xEA]));
     assert!(host.menu.colour.is_none());
 }
 
-fn call(host: &mut Host, access: &mut FakeAccess, actor: &ActorContext, id: &str, value: Value) -> Value {
+fn call(
+    host: &mut Host,
+    access: &mut FakeAccess,
+    actor: &ActorContext,
+    id: &str,
+    value: Value,
+) -> Value {
     let handler = match id {
         "palette" => palette_read::<Host, FakeAccess>,
         _ => popover_call::<Host, FakeAccess>,
@@ -184,9 +261,16 @@ fn the_palette_read_equals_the_popover_model() {
     assert_eq!(read["presets"][2]["initials"], json!("Sc"));
     assert_eq!(read["last_custom"]["key"], json!("last_custom"));
     assert_eq!(read["next_free"]["preset"], json!("petrol"));
-    let scalp = call(&mut host, &mut access, &actor, "palette", json!({"name": "Scalp"}));
+    let scalp = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "palette",
+        json!({"name": "Scalp"}),
+    );
     assert_eq!(scalp["workspace"], json!("Scalp"));
-    let unknown = palette_read::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"name": "Nope"}));
+    let unknown =
+        palette_read::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"name": "Nope"}));
     assert!(unknown.is_err());
 }
 
@@ -196,31 +280,119 @@ fn the_palette_read_equals_the_popover_model() {
 fn the_popover_call_drives_every_face_without_a_hand() {
     let (mut host, mut access, actor) = host();
     host.menu = WorkspaceMenuState::default();
-    let refused = popover_call::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"act": "apply"}));
+    let refused =
+        popover_call::<Host, FakeAccess>(&mut host, &mut access, &actor, &json!({"act": "apply"}));
     assert!(refused.is_err(), "closed: only open acts");
-    let open = call(&mut host, &mut access, &actor, "popover", json!({"act": "open"}));
-    assert_eq!((open["open"].clone(), open["face"].clone()), (json!(true), json!("grid")));
+    let open = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "open"}),
+    );
+    assert_eq!(
+        (open["open"].clone(), open["face"].clone()),
+        (json!(true), json!("grid"))
+    );
     assert!(host.menu.chip_menu_on(1), "the menu opens with it");
-    let asked = call(&mut host, &mut access, &actor, "popover", json!({"act": "pick", "colour": "sky"}));
+    let asked = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "pick", "colour": "sky"}),
+    );
     assert_eq!(asked["face"], json!("question"));
-    assert_eq!(asked["question"], json!("Sky is used by Scalp. Swap? Scalp becomes Violet."));
-    call(&mut host, &mut access, &actor, "popover", json!({"act": "answer", "swap": false}));
-    let custom = call(&mut host, &mut access, &actor, "popover", json!({"act": "custom", "hex": "#62B8EA"}));
+    assert_eq!(
+        asked["question"],
+        json!("Sky is used by Scalp. Swap? Scalp becomes Violet.")
+    );
+    call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "answer", "swap": false}),
+    );
+    let custom = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "custom", "hex": "#62B8EA"}),
+    );
     assert_eq!(custom["face"], json!("custom"));
-    assert_eq!(custom["warnings"], json!([{"kind": "close", "workspace": "Scalp"}]));
-    let bad = call(&mut host, &mut access, &actor, "popover", json!({"act": "custom", "hex": "#3A7BD"}));
+    assert_eq!(
+        custom["warnings"],
+        json!([{"kind": "close", "workspace": "Scalp"}])
+    );
+    let bad = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "custom", "hex": "#3A7BD"}),
+    );
     assert_eq!(bad["hex_hint"], json!("Use #RRGGBB, for example #3A7BD5"));
-    call(&mut host, &mut access, &actor, "popover", json!({"act": "custom", "hex": "#2BA597"}));
-    let applied = call(&mut host, &mut access, &actor, "popover", json!({"act": "apply"}));
+    call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "custom", "hex": "#2BA597"}),
+    );
+    let applied = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "apply"}),
+    );
     assert_eq!(applied["open"], json!(false));
-    assert_eq!(host.book.colour("Flow"), Some(WorkspaceColour::Custom([0x2B, 0xA5, 0x97])));
-    call(&mut host, &mut access, &actor, "popover", json!({"act": "open"}));
-    call(&mut host, &mut access, &actor, "popover", json!({"act": "pick", "colour": "sky"}));
-    let swapped = call(&mut host, &mut access, &actor, "popover", json!({"act": "answer", "swap": true}));
+    assert_eq!(
+        host.book.colour("Flow"),
+        Some(WorkspaceColour::Custom([0x2B, 0xA5, 0x97]))
+    );
+    call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "open"}),
+    );
+    call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "pick", "colour": "sky"}),
+    );
+    let swapped = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "answer", "swap": true}),
+    );
     assert_eq!(swapped["note"], json!("Scalp is now Custom #2BA597"));
-    call(&mut host, &mut access, &actor, "popover", json!({"act": "open"}));
-    let closed = call(&mut host, &mut access, &actor, "popover", json!({"act": "close"}));
-    assert_eq!((closed["open"].clone(), closed["face"].clone()), (json!(false), json!("closed")));
+    call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "open"}),
+    );
+    let closed = call(
+        &mut host,
+        &mut access,
+        &actor,
+        "popover",
+        json!({"act": "close"}),
+    );
+    assert_eq!(
+        (closed["open"].clone(), closed["face"].clone()),
+        (json!(false), json!("closed"))
+    );
     assert!(host.menu.chip_menu_on(1), "the menu stays");
 }
 

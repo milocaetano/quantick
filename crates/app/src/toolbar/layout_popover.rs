@@ -13,6 +13,7 @@ use super::ToolbarAction;
 use crate::canvas_layout::{LayoutPreset, PresetGroup};
 use crate::theme;
 use crate::widgets::CORNER_RADIUS;
+use quantick_appearance::Token;
 use quantick_workspace::canvas::LayoutMarks;
 
 /// One cell: the thumbnail and a name of up to two lines under it.
@@ -147,7 +148,7 @@ fn cell(
         egui::pos2(rect.center().x - THUMBNAIL.x / 2.0, rect.top() + 4.0),
         THUMBNAIL,
     );
-    super::capsule::paint_tree(painter, thumb, preset.tree);
+    super::capsule::paint_tree(painter, thumb, preset.tree, Token::Accent);
     let name = preset
         .label
         .replacen(" + ", "\n+ ", usize::from(preset.label.len() > 12));

@@ -116,7 +116,11 @@ pub fn act<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 
 /// A press on the hue strip (`hue`) or the square (`square`), in
 /// thousandths: the picker moves there and the field follows.
-fn pressed(popover: &mut ColourPopover, hue: Option<u16>, square: Option<(u16, u16)>) -> Option<String> {
+fn pressed(
+    popover: &mut ColourPopover,
+    hue: Option<u16>,
+    square: Option<(u16, u16)>,
+) -> Option<String> {
     let share = |at: u16| f32::from(at.min(1000)) / 1000.0;
     let mut hsv = shown_hsv(popover);
     if let Some(at) = hue {
@@ -130,11 +134,18 @@ fn pressed(popover: &mut ColourPopover, hue: Option<u16>, square: Option<(u16, u
 }
 
 /// The popover as the call answers it.
-fn read_back(book: &WorkspaceBook, menu: &WorkspaceMenuState, tab: u64, note: Option<String>) -> WorkspaceColourPopoverResult {
+fn read_back(
+    book: &WorkspaceBook,
+    menu: &WorkspaceMenuState,
+    tab: u64,
+    note: Option<String>,
+) -> WorkspaceColourPopoverResult {
     let workspace = state_of(book, tab).0.to_owned();
     let model = palette(book, &workspace);
     let popover = menu.colour.as_ref().filter(|_| menu.chip_menu_on(tab));
-    let asked = popover.zip(model.as_ref()).and_then(|(p, m)| question(m, p));
+    let asked = popover
+        .zip(model.as_ref())
+        .and_then(|(p, m)| question(m, p));
     let asked = asked.map(|question| question.words);
     let custom = popover.filter(|popover| popover.custom);
     let typed = custom.and_then(|popover| parse_typed_hex(&popover.hex));
@@ -151,7 +162,9 @@ fn read_back(book: &WorkspaceBook, menu: &WorkspaceMenuState, tab: u64, note: Op
         face: face.to_owned(),
         question: asked,
         hex: custom.map(|popover| popover.hex.clone()),
-        hex_hint: custom.filter(|_| typed.is_none()).map(|_| HEX_HINT.to_owned()),
+        hex_hint: custom
+            .filter(|_| typed.is_none())
+            .map(|_| HEX_HINT.to_owned()),
         warnings: found.iter().flatten().map(ColourWarningDto::from).collect(),
         note,
     }

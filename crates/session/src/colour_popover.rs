@@ -15,14 +15,19 @@ pub enum ColourIntent {
     Pick(String),
     /// Custom…: fold the picker open on the current colour as `dark` paints
     /// it, or away.
-    Custom { dark: bool },
+    Custom {
+        dark: bool,
+    },
     /// The Custom field's colour.
     Apply,
     /// The question: Swap (`true`) or Cancel.
     Answer(bool),
     /// A press or drag on the saturation and value square, in thousandths
     /// from its left and top.
-    Square { x: u16, y: u16 },
+    Square {
+        x: u16,
+        y: u16,
+    },
     /// A press or drag on the hue strip, in thousandths from its left.
     Hue(u16),
 }
@@ -41,6 +46,21 @@ pub enum Key {
 }
 
 impl Key {
+    /// The name the window's toolkit knows the key by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Left => "ArrowLeft",
+            Self::Right => "ArrowRight",
+            Self::Up => "ArrowUp",
+            Self::Down => "ArrowDown",
+            Self::Tab => "Tab",
+            Self::Enter => "Enter",
+            Self::Space => "Space",
+            Self::Escape => "Escape",
+        }
+    }
+
     pub const ALL: [Self; 8] = [
         Self::Left,
         Self::Right,
@@ -109,6 +129,14 @@ pub struct ColourPopover {
 }
 
 impl ColourPopover {
+    /// Whether the popover takes `key` from the window this frame: every key
+    /// it reads, but while Custom's field is typed in only Enter and Esc, so
+    /// the arrows move the caret.
+    #[must_use]
+    pub fn takes(&self, key: Key) -> bool {
+        self.asked.is_some() || !self.custom || matches!(key, Key::Enter | Key::Escape)
+    }
+
     /// The question replaces the grid; nothing is focused, so a reflex
     /// Enter answers nothing.
     pub fn ask(&mut self, word: &str) {

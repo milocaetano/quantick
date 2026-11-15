@@ -52,7 +52,10 @@ fn drawn(book: &WorkspaceBook, state: &ColourPopover, dark: bool) -> Popover {
 
 fn keyed<'a>(marks: &'a Popover, key: &str) -> &'a Piece {
     let found = marks.pieces.iter().find(|piece| {
-        piece.row.as_ref().is_some_and(|row| row.key == format!("colour.{key}"))
+        piece
+            .row
+            .as_ref()
+            .is_some_and(|row| row.key == format!("colour.{key}"))
     });
     found.unwrap_or_else(|| panic!("{key}"))
 }
@@ -83,16 +86,18 @@ fn palette_b_lays_four_by_four_named_swatches() {
         assert_eq!(words(keyed(&marks, "sky")), ["Sc", "Sky"]);
         let violet = keyed(&marks, "violet");
         assert_eq!(words(violet), ["\u{e182}", "Violet"], "checked");
-        let rings = violet.marks.iter().filter(|mark| {
-            matches!(mark, Mark::Box(plate) if plate.fill.is_none() && plate.edge.is_some())
-        });
+        let rings = violet.marks.iter().filter(
+            |mark| matches!(mark, Mark::Box(plate) if plate.fill.is_none() && plate.edge.is_some()),
+        );
         assert_eq!(rings.count(), 2, "a 2 pt ring");
         let row = violet.row.as_ref().unwrap();
         assert!(row.on);
         assert_eq!(row.tip(false), Some("Violet \u{b7} current"));
         assert_eq!(
             row.command,
-            Some(WorkspaceCommand::Colour(ColourIntent::Pick("violet".to_owned())))
+            Some(WorkspaceCommand::Colour(ColourIntent::Pick(
+                "violet".to_owned()
+            )))
         );
         let last = keyed(&marks, "last_custom");
         assert_eq!(last.at, area(12.0, 216.0, 56.0, 26.0));
@@ -103,9 +108,16 @@ fn palette_b_lays_four_by_four_named_swatches() {
     }
     let fresh = drawn(&mock(false), &ColourPopover::default(), true);
     assert!(fresh.pieces.iter().all(|piece| {
-        piece.row.as_ref().is_none_or(|row| row.key != "colour.last_custom")
+        piece
+            .row
+            .as_ref()
+            .is_none_or(|row| row.key != "colour.last_custom")
     }));
-    assert_eq!(keyed(&fresh, "custom").at.x, 12.0, "Custom… takes the first place");
+    assert_eq!(
+        keyed(&fresh, "custom").at.x,
+        12.0,
+        "Custom… takes the first place"
+    );
 }
 
 /// The keys' cells are the swatches in order, then Custom…; Close, Swap,
@@ -114,15 +126,25 @@ fn palette_b_lays_four_by_four_named_swatches() {
 fn a_key_press_reaches_the_cell_it_names() {
     let marks = drawn(&mock(true), &ColourPopover::default(), true);
     assert_eq!(marks.cells.len(), 18);
-    let pick = |word: &str| Some(WorkspaceCommand::Colour(ColourIntent::Pick(word.to_owned())));
+    let pick = |word: &str| {
+        Some(WorkspaceCommand::Colour(ColourIntent::Pick(
+            word.to_owned(),
+        )))
+    };
     assert_eq!(marks.command(KeyAct::Press(2)), pick("sky"));
     assert_eq!(marks.command(KeyAct::Press(16)), pick("last_custom"));
     let custom = WorkspaceCommand::Colour(ColourIntent::Custom { dark: true });
     assert_eq!(marks.command(KeyAct::Press(17)), Some(custom));
     let colour = |intent| Some(WorkspaceCommand::Colour(intent));
     assert_eq!(marks.command(KeyAct::Close), colour(ColourIntent::Close));
-    assert_eq!(marks.command(KeyAct::Swap), colour(ColourIntent::Answer(true)));
-    assert_eq!(marks.command(KeyAct::Cancel), colour(ColourIntent::Answer(false)));
+    assert_eq!(
+        marks.command(KeyAct::Swap),
+        colour(ColourIntent::Answer(true))
+    );
+    assert_eq!(
+        marks.command(KeyAct::Cancel),
+        colour(ColourIntent::Answer(false))
+    );
     assert_eq!(marks.command(KeyAct::None), None);
     assert_eq!(marks.current, Some(3), "Violet");
 }
@@ -139,7 +161,12 @@ fn the_question_replaces_the_grid() {
         let question = keyed(&marks, "question");
         assert_eq!(
             words(question),
-            ["Sky is used by Scalp. Swap?", "Scalp becomes Violet.", "Flow", "Scalp"]
+            [
+                "Sky is used by Scalp. Swap?",
+                "Scalp becomes Violet.",
+                "Flow",
+                "Scalp"
+            ]
         );
         let swap = keyed(&marks, "swap");
         let Mark::Box(fill) = &swap.marks[0] else {
@@ -147,9 +174,12 @@ fn the_question_replaces_the_grid() {
         };
         let filled = quantick_appearance::workspace_menu::FilledButton::primary();
         assert_eq!((fill.fill, swap_ink(swap)), (Some(filled.fill), filled.ink));
-        assert!(marks.pieces.iter().all(|piece| {
-            piece.row.as_ref().is_none_or(|row| row.key != "colour.sky")
-        }));
+        assert!(
+            marks
+                .pieces
+                .iter()
+                .all(|piece| { piece.row.as_ref().is_none_or(|row| row.key != "colour.sky") })
+        );
     }
 }
 
@@ -176,14 +206,23 @@ fn custom_opens_under_the_grid_with_its_warnings() {
     assert!(keyed(&marks, "square").drag && keyed(&marks, "hue").drag);
     assert!(keyed(&marks, "apply").press);
     let warning = keyed(&marks, "warning.0");
-    assert_eq!(words(warning), ["\u{e4e0}", "Hard to tell from Scalp's colour (Sky)."]);
+    assert_eq!(
+        words(warning),
+        ["\u{e4e0}", "Hard to tell from Scalp's colour (Sky)."]
+    );
     assert_eq!(marks.size[1], 444.0 + 18.0);
-    assert!(marks.field.is_some(), "the window lays its text field there");
+    assert!(
+        marks.field.is_some(),
+        "the window lays its text field there"
+    );
     state.hex = "#3A7BD".to_owned();
     let marks = drawn(&mock(true), &state, true);
     let apply = keyed(&marks, "apply");
     assert!(!apply.press, "Apply is disabled");
-    assert_eq!(words(keyed(&marks, "hint")), ["Use #RRGGBB, for example #3A7BD5"]);
+    assert_eq!(
+        words(keyed(&marks, "hint")),
+        ["Use #RRGGBB, for example #3A7BD5"]
+    );
     assert_eq!(marks.command(KeyAct::Apply), None, "Enter applies nothing");
 }
 
@@ -193,7 +232,10 @@ fn custom_opens_under_the_grid_with_its_warnings() {
 fn a_drag_names_its_place_in_thousandths() {
     assert_eq!(
         dragged("colour.square", [0.25, 1.5]),
-        Some(WorkspaceCommand::Colour(ColourIntent::Square { x: 250, y: 1000 }))
+        Some(WorkspaceCommand::Colour(ColourIntent::Square {
+            x: 250,
+            y: 1000
+        }))
     );
     assert_eq!(
         dragged("colour.hue", [-0.5, 0.0]),
@@ -220,7 +262,10 @@ fn the_header_swatch_is_a_sixteen_point_press() {
         Mark::Colour { at, radius, .. } if at == area(8.0, 17.0, 16.0, 16.0) && radius == 4.0
     ));
     let ring = swatch.hover.expect("a hover ring");
-    assert_eq!((ring.fill, ring.edge), (None, Some(quantick_appearance::Token::Accent)));
+    assert_eq!(
+        (ring.fill, ring.edge),
+        (None, Some(quantick_appearance::Token::Accent))
+    );
     let current = marks
         .iter()
         .find(|piece| piece.row.as_ref().is_some_and(|row| row.key == "current"))
@@ -229,9 +274,16 @@ fn the_header_swatch_is_a_sixteen_point_press() {
         Mark::Tree(at, _) => Some(*at),
         _ => None,
     });
-    assert_eq!(mini.unwrap().x, 8.0 + 16.0 + 8.0, "13 pt right of the old 19");
+    assert_eq!(
+        mini.unwrap().x,
+        8.0 + 16.0 + 8.0,
+        "13 pt right of the old 19"
+    );
     assert!(
-        !current.marks.iter().any(|mark| matches!(mark, Mark::Colour { .. })),
+        !current
+            .marks
+            .iter()
+            .any(|mark| matches!(mark, Mark::Colour { .. })),
         "the swatch paints the colour"
     );
 }

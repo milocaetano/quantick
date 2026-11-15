@@ -104,7 +104,11 @@ pub fn palette(book: &WorkspaceBook, name: &str) -> Option<Palette> {
         .map(|colour| swatch(colour.key(), colour, colour.name().to_owned()))
         .collect();
     let last_custom = book.last_custom().map(|rgb| {
-        swatch(LAST_CUSTOM_KEY.to_owned(), WorkspaceColour::Custom(rgb), hex(rgb))
+        swatch(
+            LAST_CUSTOM_KEY.to_owned(),
+            WorkspaceColour::Custom(rgb),
+            hex(rgb),
+        )
     });
     let held: Vec<WorkspaceColour> = listed.iter().map(|row| row.colour).collect();
     Some(Palette {
@@ -113,7 +117,10 @@ pub fn palette(book: &WorkspaceBook, name: &str) -> Option<Palette> {
         presets,
         last_custom,
         next_free: workspace_colour::next_free(&held, false),
-        colours: listed.into_iter().map(|row| (row.name, row.colour)).collect(),
+        colours: listed
+            .into_iter()
+            .map(|row| (row.name, row.colour))
+            .collect(),
     })
 }
 
@@ -218,11 +225,16 @@ pub fn is_low_contrast(ratio: f32) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColourWarning {
     /// Hard to tell from `workspace`'s colour, named in `colour`.
-    Close { workspace: String, colour: String },
+    Close {
+        workspace: String,
+        colour: String,
+    },
     NearBuy,
     NearSell,
     /// Lost on the Dark (`dark`) or the Light tab strip.
-    LowContrast { dark: bool },
+    LowContrast {
+        dark: bool,
+    },
 }
 
 impl ColourWarning {
@@ -291,7 +303,8 @@ pub fn warnings(book: &WorkspaceBook, name: &str, colour: WorkspaceColour) -> Ve
     let trades = trade_inks();
     let near = |buy: bool| {
         (trades.iter()).any(|trade| {
-            trade.buy == buy && is_near_trade(oklab_distance(ink(colour.rgb(trade.dark)), trade.ink))
+            trade.buy == buy
+                && is_near_trade(oklab_distance(ink(colour.rgb(trade.dark)), trade.ink))
         })
     };
     if near(true) {
@@ -301,7 +314,9 @@ pub fn warnings(book: &WorkspaceBook, name: &str, colour: WorkspaceColour) -> Ve
         found.push(ColourWarning::NearSell);
     }
     for dark in [true, false] {
-        let strip = ResolvedTheme::bundled(dark).title_strip().color(Token::TabStrip);
+        let strip = ResolvedTheme::bundled(dark)
+            .title_strip()
+            .color(Token::TabStrip);
         if is_low_contrast(contrast_ratio(ink(colour.rgb(dark)), strip)) {
             found.push(ColourWarning::LowContrast { dark });
         }

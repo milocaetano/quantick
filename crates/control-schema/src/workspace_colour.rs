@@ -222,13 +222,22 @@ mod tests {
     #[test]
     fn the_popover_acts_read_their_words() {
         let read = |value| serde_json::from_value::<WorkspaceColourPopoverInput>(value);
-        assert!(matches!(read(json!({"act": "open"})), Ok(WorkspaceColourPopoverInput::Open)));
+        assert!(matches!(
+            read(json!({"act": "open"})),
+            Ok(WorkspaceColourPopoverInput::Open)
+        ));
         let pick = read(json!({"act": "pick", "colour": "sky"})).unwrap();
         assert!(matches!(pick, WorkspaceColourPopoverInput::Pick { colour } if colour == "sky"));
         let custom = read(json!({"act": "custom"})).unwrap();
-        assert!(matches!(custom, WorkspaceColourPopoverInput::Custom { hex: None }));
+        assert!(matches!(
+            custom,
+            WorkspaceColourPopoverInput::Custom { hex: None }
+        ));
         let answer = read(json!({"act": "answer", "swap": true})).unwrap();
-        assert!(matches!(answer, WorkspaceColourPopoverInput::Answer { swap: true }));
+        assert!(matches!(
+            answer,
+            WorkspaceColourPopoverInput::Answer { swap: true }
+        ));
         assert!(read(json!({"act": "paint"})).is_err());
         assert!(read(json!({"act": "pick"})).is_err());
     }
@@ -244,8 +253,14 @@ mod tests {
             json!(ColourWarningDto::from(&close)),
             json!({"kind": "close", "workspace": "Scalp"})
         );
-        assert_eq!(json!(ColourWarningDto::NearBuy), json!({"kind": "near_buy"}));
+        assert_eq!(
+            json!(ColourWarningDto::NearBuy),
+            json!({"kind": "near_buy"})
+        );
         let low = ColourWarningDto::from(&ColourWarning::LowContrast { dark: false });
-        assert_eq!(json!(low), json!({"kind": "low_contrast", "theme": "light"}));
+        assert_eq!(
+            json!(low),
+            json!({"kind": "low_contrast", "theme": "light"})
+        );
     }
 }

@@ -13,14 +13,12 @@ use quantick_control_handlers::workspace_book::cell_menu::{CellRow, RowColour, R
 use quantick_control_handlers::workspace_book::colour_popover::{question, shown_hsv};
 use quantick_control_schema::workspace_book::WORKSPACE_COLOUR_SET_CAPABILITY_ID as SET;
 use quantick_control_schema::workspace_colour::WORKSPACE_COLOUR_POPOVER_CAPABILITY_ID as POPOVER;
-use quantick_session::colour_popover::{ColourIntent, ColourPopover, KeyAct};
+use quantick_session::colour_popover::{ColourIntent, ColourPopover, KeyAct, Keys};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::workspaces::palette::{
-    ColourWarning, HEX_HINT, Palette, Swatch, SwapQuestion, palette, warnings,
+    ColourWarning, HEX_HINT, Palette, SwapQuestion, Swatch, palette, warnings,
 };
-use quantick_stores::workspaces::{
-    Rgb, WorkspaceBook, WorkspaceColour, hsv_rgb, parse_typed_hex,
-};
+use quantick_stores::workspaces::{Rgb, WorkspaceBook, WorkspaceColour, hsv_rgb, parse_typed_hex};
 
 use crate::workspace_menu::{Area, Mark, Piece, Plate, Words, area};
 
@@ -69,6 +67,12 @@ pub struct Popover {
 }
 
 impl Popover {
+    /// What `pressed` (one flag per `colour_popover::Key::ALL`) presses on
+    /// `state`, its focus moved.
+    pub fn keyed(&self, state: &mut ColourPopover, pressed: [bool; 8]) -> Option<WorkspaceCommand> {
+        self.command(state.keys(Keys::of(pressed), self.cells.len(), self.current))
+    }
+
     /// What a frame's keys press.
     #[must_use]
     pub fn command(&self, act: KeyAct) -> Option<WorkspaceCommand> {
@@ -77,7 +81,9 @@ impl Popover {
             KeyAct::None => None,
             KeyAct::Close => colour(ColourIntent::Close),
             KeyAct::Press(at) => self.cells.get(at).cloned(),
-            KeyAct::Apply => self.applies.then(|| WorkspaceCommand::Colour(ColourIntent::Apply)),
+            KeyAct::Apply => self
+                .applies
+                .then(|| WorkspaceCommand::Colour(ColourIntent::Apply)),
             KeyAct::Swap => colour(ColourIntent::Answer(true)),
             KeyAct::Cancel => colour(ColourIntent::Answer(false)),
         }
@@ -137,8 +143,20 @@ fn plate(at: Area, radius: f32, fill: Option<Token>, edge: Option<Token>) -> Pla
     }
 }
 
+/// `at` shaded between `colours`: top left, top right, bottom right, bottom left.
+fn shade(at: Area, colours: [Rgb; 4]) -> Mark {
+    let (right, bottom) = (at.x + at.w, at.y + at.h);
+    let corners = [[at.x, at.y], [right, at.y], [right, bottom], [at.x, bottom]];
+    Mark::Shade([0, 1, 2, 3].map(|corner| (corners[corner], colours[corner])))
+}
+
 fn ring(at: Area, grow: f32, ink: Token) -> Mark {
-    let at = area(at.x - grow, at.y - grow, at.w + 2.0 * grow, at.h + 2.0 * grow);
+    let at = area(
+        at.x - grow,
+        at.y - grow,
+        at.w + 2.0 * grow,
+        at.h + 2.0 * grow,
+    );
     Mark::Box(plate(at, RADIUS + grow, None, Some(ink)))
 }
 
@@ -152,9 +170,22 @@ fn row(key: &str, label: &str, command: Option<ColourIntent>, call: &'static str
 }
 
 /// `words` centred in `at`.
-fn centred(measure: crate::workspace_menu::Measure<'_>, at: Area, words: &str, size: f32, ink: Token) -> Mark {
+fn centred(
+    measure: crate::workspace_menu::Measure<'_>,
+    at: Area,
+    words: &str,
+    size: f32,
+    ink: Token,
+) -> Mark {
     let width = measure(words, size);
-    text(at.x + (at.w - width) / 2.0, at.y + at.h / 2.0, words, size, ink, width + 1.0)
+    text(
+        at.x + (at.w - width) / 2.0,
+        at.y + at.h / 2.0,
+        words,
+        size,
+        ink,
+        width + 1.0,
+    )
 }
 
 /// One swatch at `at`: its colour, the current one ringed and checked, a
@@ -184,7 +215,14 @@ fn swatch(
     }
     let named = if swatch.current { ink.ink } else { ink.support };
     let width = SWATCH[0] + GAP;
-    marks.push(text(at.x, at.y + NAME_Y, &swatch.name, NAME_PT, named, width));
+    marks.push(text(
+        at.x,
+        at.y + NAME_Y,
+        &swatch.name,
+        NAME_PT,
+        named,
+        width,
+    ));
     let pick = ColourIntent::Pick(swatch.key.clone());
     Piece {
         at,
@@ -197,14 +235,26 @@ fn swatch(
         }),
         press: true,
         drag: false,
-        hover: Some(plate(area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0), RADIUS + 2.0, None, Some(ink.accent))),
+        hover: Some(plate(
+            area(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0),
+            RADIUS + 2.0,
+            None,
+            Some(ink.accent),
+        )),
         marks,
     }
 }
 
 /// A button at `at` worded `label`: filled for the Enter default, else the
 /// menu's control; `enabled` or faded.
-fn button(at: Area, row: CellRow, filled: bool, enabled: bool, dark: bool, measure: crate::workspace_menu::Measure<'_>) -> Piece {
+fn button(
+    at: Area,
+    row: CellRow,
+    filled: bool,
+    enabled: bool,
+    dark: bool,
+    measure: crate::workspace_menu::Measure<'_>,
+) -> Piece {
     let ink = chrome(dark);
     let primary = FilledButton::primary();
     let (fill, edge, words) = if filled {
@@ -223,7 +273,10 @@ fn button(at: Area, row: CellRow, filled: bool, enabled: bool, dark: bool, measu
         row: Some(row),
         press: enabled,
         drag: false,
-        marks: vec![Mark::Box(back), centred(measure, at, &label, BODY_PT, words)],
+        marks: vec![
+            Mark::Box(back),
+            centred(measure, at, &label, BODY_PT, words),
+        ],
     }
 }
 
@@ -250,25 +303,57 @@ pub fn popover(
 }
 
 /// The sixteen swatches four by four, then the seventeenth and Custom….
-fn grid(model: &Palette, state: &ColourPopover, dark: bool, measure: crate::workspace_menu::Measure<'_>) -> Popover {
+fn grid(
+    model: &Palette,
+    state: &ColourPopover,
+    dark: bool,
+    measure: crate::workspace_menu::Measure<'_>,
+) -> Popover {
     let mut pieces = Vec::new();
     let mut cells = Vec::new();
     let place = |at: usize| {
         let (row, column) = (at / 4, at % 4);
-        area(PAD + column as f32 * (SWATCH[0] + GAP), PAD + row as f32 * PITCH, SWATCH[0], SWATCH[1])
+        area(
+            PAD + column as f32 * (SWATCH[0] + GAP),
+            PAD + row as f32 * PITCH,
+            SWATCH[0],
+            SWATCH[1],
+        )
     };
     for (at, each) in model.swatches().enumerate() {
-        pieces.push(swatch(each, place(at), state.focus == Some(at), dark, measure));
-        cells.push(WorkspaceCommand::Colour(ColourIntent::Pick(each.key.clone())));
+        pieces.push(swatch(
+            each,
+            place(at),
+            state.focus == Some(at),
+            dark,
+            measure,
+        ));
+        cells.push(WorkspaceCommand::Colour(ColourIntent::Pick(
+            each.key.clone(),
+        )));
     }
     let open = cells.len();
     let custom_at = place(open);
     let label = "Custom\u{2026}";
-    let at = area(custom_at.x, custom_at.y, measure(label, BODY_PT) + 16.0, SWATCH[1]);
+    let at = area(
+        custom_at.x,
+        custom_at.y,
+        measure(label, BODY_PT) + 16.0,
+        SWATCH[1],
+    );
     let intent = ColourIntent::Custom { dark };
-    let mut custom = button(at, row("custom", label, Some(intent.clone()), POPOVER), false, true, dark, measure);
+    let mut custom = button(
+        at,
+        row("custom", label, Some(intent.clone()), POPOVER),
+        false,
+        true,
+        dark,
+        measure,
+    );
     if state.custom || state.focus == Some(open) {
-        custom.marks.push(Mark::Box(plate(at, 4.0, None, Some(chrome(dark).accent))));
+        custom
+            .marks
+            .push(Mark::Box(plate(at, 4.0, None, Some(chrome(dark).accent))));
     }
     pieces.push(custom);
     cells.push(WorkspaceCommand::Colour(intent));
@@ -296,57 +381,154 @@ fn custom(
 ) {
     let ink = chrome(dark);
     let top = marks.size[1] - PAD + 4.0;
-    let rule = plate(area(PAD, top, WIDTH_PT - 2.0 * PAD, 1.0), 0.0, Some(ink.block_edge), None);
-    marks.pieces.push(Piece::plain(rule.at, vec![Mark::Box(rule)]));
+    let rule = plate(
+        area(PAD, top, WIDTH_PT - 2.0 * PAD, 1.0),
+        0.0,
+        Some(ink.block_edge),
+        None,
+    );
+    marks
+        .pieces
+        .push(Piece::plain(rule.at, vec![Mark::Box(rule)]));
     let [hue, saturation, value] = shown_hsv(state);
     let square = area(PAD, top + 12.0, WIDTH_PT - 2.0 * PAD, SQUARE_H);
     let mut shades = Vec::new();
     for strip in 0..STRIPS {
-        let (from, to) = (strip as f32 / STRIPS as f32, (strip + 1) as f32 / STRIPS as f32);
-        let at = area(square.x + from * square.w, square.y, (to - from) * square.w, square.h);
+        let (from, to) = (
+            strip as f32 / STRIPS as f32,
+            (strip + 1) as f32 / STRIPS as f32,
+        );
+        let at = area(
+            square.x + from * square.w,
+            square.y,
+            (to - from) * square.w,
+            square.h,
+        );
         let top = |s: f32| hsv_rgb([hue, s, 1.0]);
-        shades.push(Mark::Shade { at, corners: [top(from), top(to), [0; 3], [0; 3]] });
+        shades.push(shade(at, [top(from), top(to), [0; 3], [0; 3]]));
     }
     let typed = parse_typed_hex(&state.hex);
     let shown = typed.unwrap_or_else(|| hsv_rgb([hue, saturation, value]));
-    let handle = area(square.x + saturation * square.w - 5.0, square.y + (1.0 - value) * square.h - 5.0, 10.0, 10.0);
-    shades.push(Mark::Box(plate(handle, 5.0, None, Some(ink_on(shown, dark)))));
+    let handle = area(
+        square.x + saturation * square.w - 5.0,
+        square.y + (1.0 - value) * square.h - 5.0,
+        10.0,
+        10.0,
+    );
+    shades.push(Mark::Box(plate(
+        handle,
+        5.0,
+        None,
+        Some(ink_on(shown, dark)),
+    )));
     let square_row = row("square", "Saturation and brightness", None, POPOVER);
-    marks.pieces.push(Piece { drag: true, press: true, row: Some(square_row), ..Piece::plain(square, shades) });
+    marks.pieces.push(Piece {
+        drag: true,
+        press: true,
+        row: Some(square_row),
+        ..Piece::plain(square, shades)
+    });
     let strip = area(PAD, square.y + SQUARE_H + 8.0, square.w, STRIP_H);
     let mut hues = Vec::new();
     for sixth in 0..6 {
-        let at = area(strip.x + sixth as f32 * strip.w / 6.0, strip.y, strip.w / 6.0, strip.h);
-        let (left, right) = (hsv_rgb([sixth as f32 / 6.0, 1.0, 1.0]), hsv_rgb([(sixth + 1) as f32 / 6.0, 1.0, 1.0]));
-        hues.push(Mark::Shade { at, corners: [left, right, right, left] });
+        let at = area(
+            strip.x + sixth as f32 * strip.w / 6.0,
+            strip.y,
+            strip.w / 6.0,
+            strip.h,
+        );
+        let (left, right) = (
+            hsv_rgb([sixth as f32 / 6.0, 1.0, 1.0]),
+            hsv_rgb([(sixth + 1) as f32 / 6.0, 1.0, 1.0]),
+        );
+        hues.push(shade(at, [left, right, right, left]));
     }
-    let knob = area(strip.x + hue * strip.w - 2.0, strip.y - 2.0, 4.0, strip.h + 4.0);
-    hues.push(Mark::Box(plate(knob, 1.0, Some(Token::TextPrimary), Some(Token::ChipInk))));
-    marks.pieces.push(Piece { drag: true, press: true, row: Some(row("hue", "Hue", None, POPOVER)), ..Piece::plain(strip, hues) });
+    let knob = area(
+        strip.x + hue * strip.w - 2.0,
+        strip.y - 2.0,
+        4.0,
+        strip.h + 4.0,
+    );
+    hues.push(Mark::Box(plate(
+        knob,
+        1.0,
+        Some(Token::TextPrimary),
+        Some(Token::ChipInk),
+    )));
+    marks.pieces.push(Piece {
+        drag: true,
+        press: true,
+        row: Some(row("hue", "Hue", None, POPOVER)),
+        ..Piece::plain(strip, hues)
+    });
     let line = strip.y + strip.h + 10.0;
     let field = area(PAD, line, FIELD_W, CONTROL_H);
     let hex_row = row("hex", &state.hex, None, POPOVER);
     let boxed = plate(field, 4.0, Some(ink.control), Some(ink.edge));
-    marks.pieces.push(Piece { row: Some(hex_row), ..Piece::plain(field, vec![Mark::Box(boxed)]) });
-    marks.field = Some(area(field.x + 6.0, field.y + 4.0, field.w - 12.0, field.h - 8.0));
+    marks.pieces.push(Piece {
+        row: Some(hex_row),
+        ..Piece::plain(field, vec![Mark::Box(boxed)])
+    });
+    marks.field = Some(area(
+        field.x + 6.0,
+        field.y + 4.0,
+        field.w - 12.0,
+        field.h - 8.0,
+    ));
     let preview = area(field.x + field.w + 6.0, line, CONTROL_H, CONTROL_H);
-    let preview_mark = typed.map_or(Mark::Box(plate(preview, 4.0, None, Some(ink.edge))), |rgb| Mark::Colour { at: preview, radius: 4.0, rgb });
+    let preview_mark = typed.map_or(
+        Mark::Box(plate(preview, 4.0, None, Some(ink.edge))),
+        |rgb| Mark::Colour {
+            at: preview,
+            radius: 4.0,
+            rgb,
+        },
+    );
     marks.pieces.push(Piece::plain(preview, vec![preview_mark]));
     let apply_label = "Apply";
-    let apply_at = area(preview.x + preview.w + 8.0, line, measure(apply_label, BODY_PT) + 16.0, CONTROL_H);
+    let apply_at = area(
+        preview.x + preview.w + 8.0,
+        line,
+        measure(apply_label, BODY_PT) + 16.0,
+        CONTROL_H,
+    );
     let mut apply_row = row("apply", apply_label, Some(ColourIntent::Apply), SET);
     apply_row.unavailable = typed.is_none().then_some("the_field_holds_no_colour");
-    marks.pieces.push(button(apply_at, apply_row, true, typed.is_some(), dark, measure));
+    marks.pieces.push(button(
+        apply_at,
+        apply_row,
+        true,
+        typed.is_some(),
+        dark,
+        measure,
+    ));
     let cancel_label = "Cancel";
-    let cancel_at = area(apply_at.x + apply_at.w + 4.0, line, measure(cancel_label, BODY_PT) + 16.0, CONTROL_H);
+    let cancel_at = area(
+        apply_at.x + apply_at.w + 4.0,
+        line,
+        measure(cancel_label, BODY_PT) + 16.0,
+        CONTROL_H,
+    );
     let fold = ColourIntent::Custom { dark };
-    marks.pieces.push(button(cancel_at, row("cancel", cancel_label, Some(fold), POPOVER), false, true, dark, measure));
-    let found: Vec<ColourWarning> = typed.map_or_else(Vec::new, |rgb| warnings(book, &model.workspace, WorkspaceColour::Custom(rgb)));
+    marks.pieces.push(button(
+        cancel_at,
+        row("cancel", cancel_label, Some(fold), POPOVER),
+        false,
+        true,
+        dark,
+        measure,
+    ));
+    let found: Vec<ColourWarning> = typed.map_or_else(Vec::new, |rgb| {
+        warnings(book, &model.workspace, WorkspaceColour::Custom(rgb))
+    });
     let mut y = line + CONTROL_H;
     if typed.is_none() {
         let at = area(PAD, y, WIDTH_PT - 2.0 * PAD, LINE_PT);
         let hint = text(PAD, y + LINE_PT / 2.0, HEX_HINT, NAME_PT, Token::Warn, at.w);
-        marks.pieces.push(Piece { row: Some(row("hint", HEX_HINT, None, POPOVER)), ..Piece::plain(at, vec![hint]) });
+        marks.pieces.push(Piece {
+            row: Some(row("hint", HEX_HINT, None, POPOVER)),
+            ..Piece::plain(at, vec![hint])
+        });
         y += LINE_PT;
     }
     for (index, warning) in found.iter().enumerate() {
@@ -354,10 +536,20 @@ fn custom(
         let at = area(PAD, y, WIDTH_PT - 2.0 * PAD, LINE_PT);
         let lines = vec![
             text(PAD, y + LINE_PT / 2.0, WARNING, NAME_PT, ink.ink, 14.0),
-            text(PAD + 18.0, y + LINE_PT / 2.0, &words, NAME_PT, ink.ink, at.w - 18.0),
+            text(
+                PAD + 18.0,
+                y + LINE_PT / 2.0,
+                &words,
+                NAME_PT,
+                ink.ink,
+                at.w - 18.0,
+            ),
         ];
         let key = format!("warning.{index}");
-        marks.pieces.push(Piece { row: Some(row(&key, &words, None, POPOVER)), ..Piece::plain(at, lines) });
+        marks.pieces.push(Piece {
+            row: Some(row(&key, &words, None, POPOVER)),
+            ..Piece::plain(at, lines)
+        });
         y += LINE_PT;
     }
     marks.size[1] = y + PAD;
@@ -389,17 +581,41 @@ fn asked(
     ];
     for (colour, name) in after {
         let chip = area(x, PAD + 44.0, 12.0, 12.0);
-        lines.push(Mark::Colour { at: chip, radius: 2.0, rgb: colour.rgb(dark) });
-        lines.push(text(x + 18.0, chip.y + 6.0, name, NAME_PT, ink.support, measure(name, NAME_PT) + 1.0));
+        lines.push(Mark::Colour {
+            at: chip,
+            radius: 2.0,
+            rgb: colour.rgb(dark),
+        });
+        lines.push(text(
+            x + 18.0,
+            chip.y + 6.0,
+            name,
+            NAME_PT,
+            ink.support,
+            measure(name, NAME_PT) + 1.0,
+        ));
         x += 18.0 + measure(name, NAME_PT) + 20.0;
     }
     let at = area(0.0, 0.0, WIDTH_PT, 60.0);
-    let mut pieces = vec![Piece { row: Some(row("question", words, None, POPOVER)), ..Piece::plain(at, lines) }];
+    let mut pieces = vec![Piece {
+        row: Some(row("question", words, None, POPOVER)),
+        ..Piece::plain(at, lines)
+    }];
     let swap_at = area(PAD, PAD + 64.0, measure("Swap", BODY_PT) + 16.0, CONTROL_H);
     let swap = row("swap", "Swap", Some(ColourIntent::Answer(true)), SET);
     let mut swap = button(swap_at, swap, true, true, dark, measure);
-    let cancel_at = area(swap_at.x + swap_at.w + 6.0, swap_at.y, measure("Cancel", BODY_PT) + 16.0, CONTROL_H);
-    let cancel = row("cancel", "Cancel", Some(ColourIntent::Answer(false)), POPOVER);
+    let cancel_at = area(
+        swap_at.x + swap_at.w + 6.0,
+        swap_at.y,
+        measure("Cancel", BODY_PT) + 16.0,
+        CONTROL_H,
+    );
+    let cancel = row(
+        "cancel",
+        "Cancel",
+        Some(ColourIntent::Answer(false)),
+        POPOVER,
+    );
     let mut cancel = button(cancel_at, cancel, false, true, dark, measure);
     match focus {
         Some(0) => swap.marks.push(ring(swap_at, 2.0, ink.accent)),
