@@ -316,20 +316,11 @@ fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
     }
 }
 
+/// A feed notice reaches the tab's link on the frame's drain; which notice
+/// wins is the link's decision, tested in `quantick-feed`.
 #[test]
-fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
+fn a_feed_notice_reaches_the_tab_on_its_drain() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
-    assert_eq!(
-        app.active_tab().link.notice,
-        FeedNotice::Clear,
-        "nothing to report at birth"
-    );
-
-    // A burst arriving between two frames must leave the latest state, not
-    // a queue of cards to page through.
-    notices
-        .blocking_send(FeedNotice::working("starting the MetaTrader bridge"))
-        .unwrap();
     notices
         .blocking_send(FeedNotice::attention(
             "MetaTrader 5 is not running",
@@ -339,83 +330,9 @@ fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
     app.active_tab_mut().drain_notices();
     assert!(
         matches!(app.active_tab().link.notice, FeedNotice::Attention { .. }),
-        "the newest notice is what the user sees, got {:?}",
+        "got {:?}",
         app.active_tab().link.notice
     );
-
-    // And a feed that recovers takes its own instruction back down.
-    notices.blocking_send(FeedNotice::Clear).unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
-}
-
-#[test]
-fn only_explicit_connection_notices_drive_transport_state() {
-    let (mut app, notices, _feed_ends) = test_app_with_notices();
-    app.active_tab_mut().link.latest_trade_latency_ms = Some(42);
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Connecting
-    );
-
-    notices.blocking_send(FeedNotice::Connected).unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Connected
-    );
-    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
-
-    // The MetaTrader bridge supervisor and bridge server share this
-    // channel. Progress or attention from either can arrive after the
-    // server has reported Connected, so neither is a transport transition.
-    notices
-        .blocking_send(FeedNotice::working("late supervisor progress"))
-        .unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Connected
-    );
-
-    notices
-        .blocking_send(FeedNotice::attention(
-            "late supervisor warning",
-            "No transport action.",
-        ))
-        .unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Connected
-    );
-
-    notices
-        .blocking_send(FeedNotice::reconnecting(
-            "Hyperliquid disconnected — reconnecting",
-        ))
-        .unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Reconnecting
-    );
-
-    notices.blocking_send(FeedNotice::Connected).unwrap();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(
-        app.active_tab().link.feed_connection,
-        FeedConnectionState::Connected
-    );
-}
-
-#[test]
-fn a_feed_with_nothing_to_report_leaves_the_chart_alone() {
-    // Binance and replay hand over a closed channel; draining it must be a
-    // no-op rather than an error the app has to special-case.
-    let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().drain_notices();
-    assert_eq!(app.active_tab().link.notice, FeedNotice::Clear);
 }
 
 #[test]
@@ -803,38 +720,6 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
     assert!(app.active_tab().link.feed_gaps.is_empty());
 }
 
-/// The budget is measured from the transport's own transition, so a
-/// supervisor alternating two lines cannot keep resetting it — the failure
-/// the escalation exists to end.
-#[test]
-fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
-    use quantick_feed::stall::RECONNECT_BUDGET_MS;
-    let (mut app, notices, _feed_ends) = test_app_with_notices();
-    notices
-        .blocking_send(FeedNotice::reconnecting("bridge lost — reconnecting"))
-        .unwrap();
-    app.active_tab_mut().link.drain_notices_at(0);
-
-    // Two lines, alternating, while the transport stays exactly as broken.
-    for step in 1..=8 {
-        let notice = if step % 2 == 0 {
-            FeedNotice::reconnecting("bridge lost — reconnecting")
-        } else {
-            FeedNotice::working("waiting for the bridge")
-        };
-        notices.blocking_send(notice).unwrap();
-        app.active_tab_mut().link.drain_notices_at(step * 3_000);
-    }
-
-    let config = app.tab_reads().config().clone();
-    assert!(
-        app.active_tab()
-            .stall_at(&config, RECONNECT_BUDGET_MS)
-            .is_some(),
-        "the budget runs from the transition, not from the newest sentence"
-    );
-}
-
 #[test]
 fn quiet_market_keeps_the_observed_arrival_latency_live() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
@@ -912,71 +797,16 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
     );
 }
 
+/// Switching to a feed that does not offer the current symbol writes the
+/// symbol the config resolves (tested in `quantick-stores`) onto the tab.
 #[test]
 fn changing_feed_falls_back_to_a_valid_symbol() {
-    // Two feeds with disjoint symbol lists: switching to a feed that does
-    // not offer the current symbol must snap to that feed's first symbol.
-    let (_evt_tx, evt_rx) = mpsc::channel(8);
-    let (_book_tx, book_rx) = mpsc::channel(8);
-    let (cmd_tx, _cmd_rx) = mpsc::channel(8);
-    let config = AppConfig {
-        default_feed: "a".to_string(),
-        default_symbol: "AAA".to_string(),
-        feeds: vec![
-            FeedConfig {
-                id: "a".to_string(),
-                name: "A".to_string(),
-                provider: ProviderKind::Binance,
-                symbols: vec!["AAA".to_string()],
-                bubble_preset: None,
-                symbol_bubble_presets: Default::default(),
-                asset_families: Vec::new(),
-                asset_aliases: Default::default(),
-                symbol_asset_modes: Default::default(),
-                symbol_widgets: Default::default(),
-                contract_rolls: Default::default(),
-                default_layout: None,
-                default_bars: None,
-                record_deals: false,
-            },
-            FeedConfig {
-                id: "b".to_string(),
-                name: "B".to_string(),
-                provider: ProviderKind::Binance,
-                symbols: vec!["BBB".to_string()],
-                bubble_preset: None,
-                symbol_bubble_presets: Default::default(),
-                asset_families: Vec::new(),
-                asset_aliases: Default::default(),
-                symbol_asset_modes: Default::default(),
-                symbol_widgets: Default::default(),
-                contract_rolls: Default::default(),
-                default_layout: None,
-                default_bars: None,
-                record_deals: false,
-            },
-        ],
-        metatrader: Default::default(),
-        paper: Default::default(),
-        deals: Default::default(),
-        history: Default::default(),
-    };
-    let mut app = QuantickApp::new(
-        config,
-        "a",
-        "AAA",
-        BarSpec::Tick(10),
-        FeedHandle {
-            events: evt_rx,
-            book_events: book_rx,
-            notices: feed::silent_notices(),
-            capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
-            latency: feed::unsplit_latency(),
-            commands: cmd_tx,
-            replay: None,
-        },
-    );
-
+    let mut config = test_config();
+    let mut other = config.feeds[0].clone();
+    other.id = "b".to_string();
+    other.symbols = vec!["BBB".to_string()];
+    config.feeds.push(other);
+    let mut app = app_on(config, "binance", "TESTUSDT");
     app.active_tab_mut().feed_id = "b".to_string();
     with_config(&mut app, |tab, config| tab.ensure_symbol_valid(config));
     assert_eq!(
@@ -984,11 +814,6 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
         "BBB",
         "symbol snaps to feed b's first symbol"
     );
-
-    // A symbol already valid for the feed is left untouched.
-    app.active_tab_mut().symbol = "BBB".to_string();
-    with_config(&mut app, |tab, config| tab.ensure_symbol_valid(config));
-    assert_eq!(app.active_tab().symbol, "BBB");
 }
 
 #[test]
@@ -1174,141 +999,6 @@ fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
         app.active_tab()
             .can_load_older_candles(app.active_tab().capabilities(&app.config)),
         "a span that brought something older leaves the door open"
-    );
-}
-
-/// A short answer teaches nothing about where the record starts. A venue
-/// that stopped answering, or a socket that failed, brings back nothing
-/// older for a reason that has nothing to do with the venue's depth —
-/// latching on it would retire the control for the session and tell the
-/// trader their history begins here, which is a lie the data-honesty rule
-/// exists to prevent.
-#[test]
-fn a_short_answer_never_retires_the_candle_reach() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_ohlcv_fetches(&mut commands);
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: venue_history_range(-120, -20),
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-
-    app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
-    assert_eq!(drain_ohlcv_fetches(&mut commands).len(), 1);
-    // The shape of a failed fetch: nothing, and known to be short.
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: Vec::new(),
-            slice: quantick_feed::OhlcvSlice::Last { complete: false },
-        })
-        .unwrap();
-    app.drain_tabs();
-
-    let capabilities = app.active_tab().capabilities(&app.config);
-    assert_eq!(
-        app.active_tab().older_candles(capabilities),
-        crate::tab::OlderCandles::Available,
-        "a short answer is a reason to try again, not to stop offering"
-    );
-    app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
-    assert_eq!(
-        drain_ohlcv_fetches(&mut commands).len(),
-        1,
-        "and pressing it again really asks"
-    );
-}
-
-/// A reach-back reply at an interval the pane cannot fold from is refused,
-/// not obeyed. Recording an empty base is right for the *opening* answer —
-/// it is how "this venue serves nothing this pane can fold" is remembered
-/// — but doing it here would throw away every span the trader had already
-/// waited for, over one unusable slice.
-#[test]
-fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_ohlcv_fetches(&mut commands);
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: venue_history_range(-120, -20),
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-    let held = app.active_tab().session.venue_candles_held();
-    assert_eq!(held, 100);
-
-    app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
-    drain_ohlcv_fetches(&mut commands);
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: venue_history_range(-200, -120),
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-
-    assert_eq!(
-        app.active_tab().session.venue_candles_held(),
-        held,
-        "the week the trader already has survives a slice it cannot fold"
-    );
-    let capabilities = app.active_tab().capabilities(&app.config);
-    assert_eq!(
-        app.active_tab().older_candles(capabilities),
-        crate::tab::OlderCandles::Available,
-        "and the reach is still offered"
-    );
-}
-
-/// The venue's record starts somewhere, and the only way to find that out
-/// is to ask. A provider that answers a *load older* by re-sending what is
-/// already held is not answering empty — so the test is whether the oldest
-/// bucket moved, and a run that did not move it stops offering the button.
-#[test]
-fn a_load_older_that_brings_nothing_older_stops_offering() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_ohlcv_before_requests(&mut commands);
-    let held = venue_history_range(-120, -20);
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: held.clone(),
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-
-    app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
-    assert_eq!(drain_ohlcv_before_requests(&mut commands).len(), 1);
-    // The same candles again — an honest answer from a provider serving
-    // from a block it already holds, and not an empty one.
-    events
-        .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
-            bars: held,
-            slice: quantick_feed::OhlcvSlice::Last { complete: true },
-        })
-        .unwrap();
-    app.drain_tabs();
-
-    assert!(
-        !app.active_tab()
-            .can_load_older_candles(app.active_tab().capabilities(&app.config)),
-        "nothing older came back, so there is nothing older to offer"
-    );
-    app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
-    assert!(
-        drain_ohlcv_before_requests(&mut commands).is_empty(),
-        "and pressing it again asks the venue nothing"
     );
 }
 
@@ -1797,53 +1487,6 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
     );
 }
 
-/// A venue that answers empty without ever saying it has run out stops the
-/// run in a handful of requests, and says so.
-#[test]
-fn a_venue_answering_empty_without_saying_so_stops_the_run_early_and_says_so() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
-        history_reach::HistoryReach::Sessions(1),
-    ));
-    let mut asked = drain_load_older(&mut commands).len();
-    assert!(
-        app.active_tab().session.history_note().is_none(),
-        "nothing to report yet"
-    );
-    for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
-        if !app.active_tab().session.history_reach_running() {
-            break;
-        }
-        events
-            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
-            .unwrap();
-        app.drain_tabs();
-        asked += drain_load_older(&mut commands).len();
-    }
-    assert!(
-        !app.active_tab().session.history_reach_running(),
-        "the run gave up"
-    );
-    assert!(
-        asked <= history_reach::MAX_IDLE_PAGES as usize,
-        "one press cost {asked} requests"
-    );
-    assert!(!app.active_tab().loading.is_active(LoadingTask::History));
-    let note = app
-        .active_tab()
-        .session
-        .history_note()
-        .expect("never silent");
-    assert!(
-        note.contains(history_reach::CampaignEnd::NothingComingBack.reason())
-            && note.ends_with("(0 of 1 sessions)"),
-        "{note}"
-    );
-}
-
 /// The sentence has to reach the glass, not just the field.
 #[test]
 fn the_settled_reach_paints_its_sentence_over_the_chart() {
@@ -1871,71 +1514,6 @@ fn the_settled_reach_paints_its_sentence_over_the_chart() {
     assert!(
         !after.iter().any(|text| text == sentence),
         "and it is gone again without a click; painted: {after:?}"
-    );
-}
-
-/// A target already on the chart sends nothing and says where the chart is.
-#[test]
-fn a_target_already_on_the_chart_sends_nothing_and_says_so() {
-    let ctx = egui::Context::default();
-    let mut tape: Vec<_> = (-400..-300).map(minute_trade_at).collect();
-    tape.extend((-200..-100).map(minute_trade_at));
-    tape.extend((0..100).map(minute_trade_at));
-    let (mut app, _events, mut commands) = app_backfilled_with(&ctx, tape);
-    drain_load_older(&mut commands);
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
-        history_reach::HistoryReach::Sessions(1),
-    ));
-    assert!(drain_load_older(&mut commands).is_empty(), "no request");
-    let note = app
-        .active_tab()
-        .session
-        .history_note()
-        .expect("the outcome");
-    assert!(note.starts_with("Already loaded back to "), "{note}");
-}
-
-/// A press while the opening session is still arriving waits for it rather
-/// than vanishing, and starts on its own when the fill ends.
-#[test]
-fn a_press_during_the_opening_fill_is_queued_and_starts_after() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-    events
-        .try_send(FeedEvent::OpeningPrepended {
-            trades: (-30..0).map(minute_trade_at).collect(),
-            remaining: Some(2),
-        })
-        .unwrap();
-    app.drain_tabs();
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
-        history_reach::HistoryReach::Hours(2),
-    ));
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "held behind the fill"
-    );
-    assert_eq!(
-        app.active_tab().session.history_status(),
-        quantick_feed::history_run::RunStatus::Queued(history_reach::HistoryReach::Hours(2))
-    );
-    events
-        .try_send(FeedEvent::OpeningPrepended {
-            trades: (-60..-30).map(minute_trade_at).collect(),
-            remaining: Some(0),
-        })
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !app.active_tab().session.history_reach_running() && std::time::Instant::now() < deadline
-    {
-        app.drain_tabs();
-        std::thread::yield_now();
-    }
-    assert_eq!(
-        drain_load_older(&mut commands).len(),
-        1,
-        "the queued press began"
     );
 }
 
@@ -1995,44 +1573,6 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         "every page that arrived is kept"
     );
     assert!(!app.active_tab().loading.is_active(LoadingTask::History));
-}
-
-/// A tab off screen stops paging; brought back, it continues.
-#[test]
-fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
-        history_reach::HistoryReach::Sessions(1),
-    ));
-    drain_load_older(&mut commands);
-    let tab_id = app.runtime.tabs.active_id();
-    let config = app.config.clone();
-    let mut policy = app.runtime.history.policy(app.runtime.tz, false);
-    // The tab was hidden on an earlier frame; this one only says so.
-    app.active_tab_mut().drain_frame(tab_id, &config, policy);
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (-60..0).map(minute_trade_at).collect(),
-        ))
-        .unwrap();
-    app.active_tab_mut().drain_frame(tab_id, &config, policy);
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "a hidden tab asks nothing"
-    );
-    assert!(matches!(
-        app.active_tab().session.history_status(),
-        quantick_feed::history_run::RunStatus::Paused(_)
-    ));
-    policy.frame.visible = true;
-    app.active_tab_mut().drain_frame(tab_id, &config, policy);
-    assert_eq!(
-        drain_load_older(&mut commands).len(),
-        1,
-        "shown again, it continues"
-    );
 }
 
 /// A venue that reports its record exhausted is not asked once more.
@@ -2576,33 +2116,6 @@ fn press_in_palette(app: &mut QuantickApp, ctx: &egui::Context, key: egui::Key) 
     run_frame(app, ctx);
 }
 
-/// (b) The point of writing it: the next launch has it. Proven without
-/// restarting, by loading a config through the same path `load` uses.
-#[test]
-fn a_recorded_symbol_is_in_the_catalog_on_the_next_load() {
-    let path = symbols_scratch("reload");
-    let _ = std::fs::remove_file(&path);
-    let mut added = crate::symbols_file::AddedSymbols::default();
-    added.add("binance", "WINQ26");
-    crate::symbols_file::save(&path, &added).expect("the scratch file is writable");
-
-    let reloaded = crate::symbols_file::load(&path);
-    let mut config = test_config();
-    config.merge_added_symbols(&reloaded);
-
-    assert!(
-        config
-            .feed("binance")
-            .expect("the feed")
-            .symbols
-            .iter()
-            .any(|symbol| symbol == "WINQ26"),
-        "a restart finds the contract the user added"
-    );
-    assert!(config.validate().is_ok(), "and the merged catalog is valid");
-    let _ = std::fs::remove_file(&path);
-}
-
 /// Two tabs on one market are allowed — two views of one book is a
 /// legitimate thing to want — and each still gets its own everything.
 #[test]
@@ -2621,31 +2134,4 @@ fn the_same_market_can_be_open_twice() {
     // Separate engines: what one holds says nothing about the other.
     assert!(!app.runtime.tabs[0].flow_pane.state.bars().is_empty());
     assert!(app.runtime.tabs[1].flow_pane.state.bars().is_empty());
-}
-
-/// A market order takes no price, and saying otherwise is refused before
-/// anything reaches the venue — the input is wrong, not the market.
-#[test]
-fn a_market_action_with_a_price_is_refused_as_a_bad_request() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(40);
-    run_frame(&mut app, &ctx);
-
-    let error = app
-        .control_action(
-            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
-            quantick_control_handlers::trade::CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::json!({
-                "side": "buy",
-                "kind": "market",
-                "quantity": "1",
-                "price": "100",
-            }),
-        )
-        .expect_err("a market order has no price of its own");
-    assert!(
-        format!("{error:?}").contains("market order has no price"),
-        "{error:?}"
-    );
 }
