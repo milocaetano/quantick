@@ -915,13 +915,22 @@ fn a_stop_past_the_budget_blocks_until_the_lock_comes_down() {
     account.on_trade(&print(1, 140_000));
     assert!(account.is_flat(), "the lock refused the placement itself");
 
+    // A named order is measured by its own stop and size: 4000 points x
+    // 0.20 x 10 = 8,000 BRL, refused in the sentence the control plane
+    // answers with.
+    let named = quantick_trading::OrderIntent::market(Side::Buy, Decimal::from(10))
+        .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
+    let refusal = account
+        .risk_refusal_for(&named)
+        .expect("the lock names the over-budget order");
+    assert!(refusal.contains("8000 BRL"), "{refusal}");
+    assert!(refusal.contains("turn the lock off"), "{refusal}");
+
     let mut risk = account.risk_settings().clone();
     risk.lock = false;
     account.set_risk_settings(risk);
     let (state, blocks) = desk.risk_report(&account);
     assert_eq!(state.code(), "clamped_at_minimum", "still over budget");
     assert!(!blocks, "but no longer refused");
-    let named = quantick_trading::OrderIntent::market(Side::Buy, Decimal::from(10))
-        .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
     assert_eq!(account.risk_refusal_for(&named), None);
 }

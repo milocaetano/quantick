@@ -1134,6 +1134,21 @@ fn a_close_refreshes_an_open_report_by_itself() {
     );
 }
 
+#[test]
+fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
+    let mut paper = PaperTrading::new();
+    paper.seed(&print(0, 100));
+    let (chart, scale) = chart_and_scale(80.0, 120.0);
+    paper.handle_chart_input(&cmd_frame(
+        chart,
+        &scale,
+        egui::pos2(400.0, 100.0),
+        egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+        false,
+    ));
+    assert!(paper.desk.gesture.cmd_preview.is_none());
+}
+
 impl PaperTrading {
     /// Arm the ticket's click as its Buy/Sell button does, for the window
     /// tests that press the chart with a ticket armed.
