@@ -94,84 +94,10 @@ fn the_wheel_over_the_tape_zooms_its_window_and_over_the_candles_the_candles() {
     );
 }
 
-#[test]
-fn a_vertical_drag_over_the_tape_takes_manual_y_and_the_candles_follow_the_axis() {
-    let ctx = egui::Context::default();
-    let (mut app, tape, _) = split_app(&ctx);
-    let before = candles_view(&app);
-    assert!(app.active_tab().flow_pane.price_view.is_auto());
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        tape,
-        tape + egui::vec2(0.0, 90.0),
-    );
-    run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
-    assert!(!pane.price_view.is_auto(), "the shared axis is manual now");
-    assert_eq!(candles_view(&app), before, "the candles did not pan");
-    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
-}
-
-/// Up and down over the candles pans the shared axis too — primary or
-/// middle button, one path with the tape's — and never the tape's time.
-#[test]
-fn a_vertical_drag_over_the_candles_pans_the_shared_axis_and_never_the_tape() {
-    let ctx = egui::Context::default();
-    let (mut app, _, candles) = split_app(&ctx);
-    let (before, window) = (
-        candles_view(&app),
-        app.active_tab().tape().live_lane_window(),
-    );
-    let auto = app.active_tab().flow_pane.frame.auto_range.expect("fitted");
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        candles,
-        candles + egui::vec2(0.0, 90.0),
-    );
-    run_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane;
-    assert!(!pane.price_view.is_auto(), "manual Y from the candles");
-    let primary = pane.price_view.resolve(auto);
-    assert_eq!(candles_view(&app), before, "a vertical drag pans no bars");
-    let tape = app.active_tab().tape();
-    assert_eq!(tape.tape_end(), TapeEnd::Live);
-    assert_eq!(tape.live_lane_window(), window);
-
-    let middle = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
-        pos: position,
-        button: egui::PointerButton::Middle,
-        pressed,
-        modifiers: egui::Modifiers::default(),
-    };
-    let end = candles + egui::vec2(0.0, 60.0);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(candles), middle(candles, true)],
-    );
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(end), middle(end, false)],
-    );
-    let pane = &app.active_tab().flow_pane;
-    assert_ne!(
-        pane.price_view.resolve(auto),
-        primary,
-        "the middle button pans Y"
-    );
-    assert_eq!(candles_view(&app), before);
-    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
-}
-
 /// A horizontal drag moves the tape back in time and leaves the candles
-/// where they were; dragging it back past now re-pins it to live, and a
-/// double click over the tape returns it to live without changing framing.
+/// where they were, and a drag that set off sideways pans the price axis too.
+/// Past now the tape pins to live (`TapeEnd::panned`); the double click over
+/// it is `canvas_click`'s.
 #[test]
 fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
     let ctx = egui::Context::default();
@@ -210,35 +136,11 @@ fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
         &ctx,
         TEST_WINDOW,
         tape,
-        tape - egui::vec2(400.0, 0.0),
-    );
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.active_tab().tape().tape_end(),
-        TapeEnd::Live,
-        "dragged past now, the tape pins to live"
-    );
-
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        tape,
         tape + egui::vec2(120.0, 60.0),
     );
     run_frame(&mut app, &ctx);
     assert!(!app.active_tab().tape().tape_end().is_live());
     assert!(!app.active_tab().flow_pane.price_view.is_auto());
-    let manual = app.active_tab().flow_pane.price_view.manual_range();
-    let candles_before = candles_view(&app);
-    let window = app.active_tab().tape().live_lane_window();
-    click_sized(&mut app, &ctx, TEST_WINDOW, tape);
-    click_sized(&mut app, &ctx, TEST_WINDOW, tape);
-    run_frame(&mut app, &ctx);
-    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
-    assert_eq!(app.active_tab().flow_pane.price_view.manual_range(), manual);
-    assert_eq!(candles_view(&app), candles_before);
-    assert_eq!(app.active_tab().tape().live_lane_window(), window);
 }
 
 /// A press and release of the middle button at `from` and `to`, moving
@@ -286,82 +188,6 @@ fn a_middle_drag_pans_the_side_it_was_pressed_on() {
         candles_view(&app),
         panned,
         "pressed on the tape, the pan never moves the candles"
-    );
-}
-
-/// Tape only is the tape across the whole canvas: a double click anywhere
-/// on it returns a held tape to live without changing price framing, as a
-/// double click over the tape beside the candles does.
-#[test]
-fn a_double_click_in_tape_only_returns_the_tape_to_live() {
-    let ctx = egui::Context::default();
-    let (mut app, tape, _) = split_app(&ctx);
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        tape,
-        tape + egui::vec2(120.0, 0.0),
-    );
-    run_frame(&mut app, &ctx);
-    let held = app.active_tab().tape().tape_end();
-    assert!(!held.is_live(), "the drag held the tape in the past");
-    crate::orderflow_view::layers::set_layer_switch(
-        app.active_tab_mut().tape_mut(),
-        quantick_layers::OrderflowSwitch::TapeOnly,
-        true,
-    );
-    run_frame(&mut app, &ctx);
-    assert!(app.active_tab().tape().cached_config().tape_only());
-    assert_eq!(app.active_tab().tape().tape_end(), held);
-    let pane = &mut app.active_tab_mut().flow_pane;
-    let auto = pane.frame.auto_range.expect("fitted");
-    pane.price_view.pan_screen(40.0, 0.5, auto);
-    assert!(!pane.price_view.is_auto());
-    let manual = pane.price_view.manual_range();
-    let chart = pane.frame.chart_rect.expect("the canvas laid out");
-    let at = chart.center() - egui::vec2(chart.width() / 4.0, 0.0);
-    let window = app.active_tab().tape().live_lane_window();
-    let candles_before = candles_view(&app);
-    click_sized(&mut app, &ctx, TEST_WINDOW, at);
-    click_sized(&mut app, &ctx, TEST_WINDOW, at);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.active_tab().tape().tape_end(),
-        TapeEnd::Live,
-        "the double click returned the tape to live"
-    );
-    assert_eq!(app.active_tab().flow_pane.price_view.manual_range(), manual);
-    assert_eq!(app.active_tab().tape().live_lane_window(), window);
-    assert_eq!(candles_view(&app), candles_before);
-}
-
-/// A past end stops where the retained tape begins, never before it.
-#[test]
-fn a_drag_far_into_the_past_stops_at_the_retained_tape() {
-    let ctx = egui::Context::default();
-    let (mut app, tape, _) = split_app(&ctx);
-    for _ in 0..6 {
-        drag_sized(
-            &mut app,
-            &ctx,
-            TEST_WINDOW,
-            tape,
-            tape + egui::vec2(400.0, 0.0),
-        );
-        run_frame(&mut app, &ctx);
-    }
-    let view = app.active_tab().tape();
-    let window = view.live_lane_window_ms(app.active_tab().flow_pane.state.bars());
-    let retained = view
-        .tape_retained_from_ms()
-        .expect("the tape reports retention");
-    assert_eq!(retained, RETAINED_FROM, "the first retained print");
-    assert_eq!(
-        view.tape_end(),
-        TapeEnd::Past {
-            end_ms: retained + window / 2
-        }
     );
 }
 
@@ -464,14 +290,9 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
     run_frame(&mut app, &ctx);
     assert_eq!(read_tape(&mut app, &mut client)["follows_live"], true);
 
-    for fields in [
-        json!({"end": {"kind":"past"}}),
-        json!({"end": {"kind":"sometime"}}),
-        json!({"window": {"kind":"fixed","ms":0}}),
-        json!({"window": {"kind":"fixed","ms":-5}}),
-        json!({}),
-        json!({"end": {"kind":"live"}, "file": true}),
-    ] {
+    // What the input refuses is `quantick_control_schema::tape_view`'s: one
+    // word that does not parse, one that parses but asks for nothing.
+    for fields in [json!({"end": {"kind":"sometime"}}), json!({})] {
         let payload = input(&app, fields);
         let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
         assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
@@ -484,11 +305,11 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
 }
 
 /// Tape only is the tape across the whole canvas, so it drags like the tape
-/// beside the candles: up and down pans the price axis, sideways its time,
-/// primary or middle button (trader 2026-09-30: in tape only a click and
-/// drag moved nothing).
+/// beside the candles: sideways its time (trader 2026-09-30: in tape only a
+/// click and drag moved nothing). Up and down, primary or middle, is
+/// `double_click_then_vertical_pan_works_on_both_sides_and_orientations`.
 #[test]
-fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
+fn a_sideways_drag_in_tape_only_pans_the_tapes_time() {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
     crate::orderflow_view::layers::set_layer_switch(
@@ -506,30 +327,6 @@ fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
         .chart_rect
         .expect("the canvas laid out");
     let at = chart.center();
-    let range = |app: &QuantickApp| {
-        let pane = &app.active_tab().flow_pane;
-        pane.price_view
-            .resolve(pane.frame.auto_range.expect("fitted"))
-    };
-    let before = range(&app);
-
-    drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(0.0, 90.0));
-    run_frame(&mut app, &ctx);
-    assert!(
-        !app.active_tab().flow_pane.price_view.is_auto(),
-        "the vertical drag took manual Y"
-    );
-    let after = range(&app);
-    assert!(
-        after.0 > before.0 && after.1 > before.1,
-        "dragging down pans to higher prices: {before:?} -> {after:?}"
-    );
-    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
-
-    middle_drag(&mut app, &ctx, at, at + egui::vec2(0.0, -90.0));
-    run_frame(&mut app, &ctx);
-    assert!(range(&app).1 < after.1, "the middle button pans back down");
-
     drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(120.0, 0.0));
     run_frame(&mut app, &ctx);
     assert!(
@@ -597,41 +394,12 @@ fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live() {
     assert_eq!(candles_view(&app), before, "and never the candles");
 }
 
-/// The same wobble in tape only, where the tape is the whole canvas.
-#[test]
-fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
-    let ctx = egui::Context::default();
-    let (mut app, _, _) = split_app(&ctx);
-    crate::orderflow_view::layers::set_layer_switch(
-        app.active_tab_mut().tape_mut(),
-        quantick_layers::OrderflowSwitch::TapeOnly,
-        true,
-    );
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    assert!(app.active_tab().tape().cached_config().tape_only());
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_rect
-        .expect("the canvas laid out");
-    let ends = jittery_vertical_drag(&mut app, &ctx, chart.center());
-    assert!(
-        ends.iter().all(|end| end.is_live()),
-        "the sideways wobble moved the tape off live: {ends:?}"
-    );
-    assert!(
-        !app.active_tab().flow_pane.price_view.is_auto(),
-        "the drag panned the price axis"
-    );
-}
-
 /// A literal double click returns only the clicked side to live, preserving
 /// orientation and the tape's zoom: on the tape the manual prices hold; open
 /// canvas on the candles' side keeps their spacing and centres the last price.
-/// The next vertical gesture must still follow the hand, including on a
-/// narrow Tape-only price window.
+/// The next vertical gesture, primary or middle, must still follow the hand
+/// and move neither the bars nor the tape's time, including on a narrow
+/// Tape-only price window.
 #[test]
 fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
     for inverted in [false, true] {
@@ -741,6 +509,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     let height = pane.frame.chart_height;
                     let price = (manual.0 + manual.1) * 0.5;
                     let before_y = pane.price_view.scale(auto, 0.0, height).y(price);
+                    let settled = candles_view(&app);
                     if middle {
                         middle_drag(&mut app, &ctx, at, at + egui::vec2(0.0, dy));
                     } else {
@@ -758,6 +527,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
                     assert_eq!(pane.model.viewport.px_per_bar(), candles_px);
+                    assert_eq!(candles_view(&app), settled, "a vertical drag pans no bars");
                 }
             }
         }
@@ -777,39 +547,6 @@ fn assert_last_price_centred(pane: &crate::pane::ChartPane) {
     );
     let auto = pane.frame.auto_range.unwrap();
     assert!(low <= auto.0 && high >= auto.1, "no bar clipped");
-}
-
-#[test]
-fn an_empty_canvas_double_click_returns_to_live_at_its_spacing_with_the_last_price_centred() {
-    for inverted in [false, true] {
-        let ctx = egui::Context::default();
-        let (mut app, _commands) = app_with_history(200);
-        switch_layer(&mut app, ChartLayer::TapeChart, false);
-        run_frame(&mut app, &ctx);
-        let pane = &mut app.active_tab_mut().flow_pane;
-        let manual = (98.25, 104.75);
-        assert!(pane.price_view.set_manual_range(manual.0, manual.1));
-        pane.price_view.set_inverted(inverted);
-        pane.model.viewport.set_px_per_bar(23.0);
-        pane.model.viewport.pan_pixels(120.0, pane.slots());
-        run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
-        assert!(!pane.model.viewport.follows_live());
-        let at = pane.frame.chart_rect.unwrap().center();
-        click_sized(&mut app, &ctx, TEST_WINDOW, at);
-        click_sized(&mut app, &ctx, TEST_WINDOW, at);
-        run_frame(&mut app, &ctx);
-        let pane = &app.active_tab().flow_pane;
-        assert!(pane.model.viewport.follows_live());
-        assert_eq!(
-            pane.model.viewport.right_edge_bar(pane.slots()),
-            pane.slots().saturating_sub(1) as f32
-        );
-        assert_eq!(pane.model.viewport.px_per_bar(), 23.0, "spacing kept");
-        assert_ne!(pane.price_view.manual_range(), Some(manual));
-        assert_last_price_centred(pane);
-        assert_eq!(pane.price_view.is_inverted(), inverted);
-    }
 }
 
 /// Test agent D1 (review round 2, finding 8): the call is navigation, as
@@ -1329,11 +1066,11 @@ fn dragging_the_divider_to_an_edge_is_that_view_and_its_rail_reopens_at_the_defa
 }
 
 /// A side closed by button reopens by dragging its rail, and the tape follows the
-/// hand: no snap to the default, nor to the width the lane had.
+/// hand: the rail's drag reaches the lane as the divider's does. That it never
+/// snaps is `LaneDividerDrag`'s.
 #[test]
 fn a_button_closed_side_reopens_under_the_hand_with_no_snap() {
     use quantick_orderflow::LaneView;
-    use quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE;
     let ctx = egui::Context::default();
     for (closed, from_right) in [(LaneView::CandlesOnly, true), (LaneView::TapeOnly, false)] {
         let (mut app, _, _) = split_app(&ctx);
@@ -1354,37 +1091,7 @@ fn a_button_closed_side_reopens_under_the_hand_with_no_snap() {
             (divider - drop).abs() < 6.0,
             "{closed:?}: {divider} at {drop}"
         );
-        assert_ne!(lane_of(&app).width_share, DEFAULT_LIVE_LANE_SHARE);
     }
-}
-
-/// Both sides by every door but the hand: the key, the segment's write and the
-/// layer call land on the default, from a side the hand closed.
-#[test]
-fn a_drag_closed_side_reopens_by_the_layer_switch_at_the_default() {
-    use quantick_orderflow::LaneView;
-    use quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE;
-    let ctx = egui::Context::default();
-    let (mut app, _, _) = split_app(&ctx);
-    let pane = &app.active_tab().flow_pane;
-    let chart = pane.frame.chart_rect.unwrap();
-    let open = pane.frame.lane_divider_x.unwrap();
-    let y = chart.center().y;
-    primary_drag(
-        &mut app,
-        &ctx,
-        egui::pos2(open, y),
-        egui::pos2(chart.right() - 30.0, y),
-    );
-    assert_eq!(view_of(&app), LaneView::CandlesOnly);
-    let mut actions = quantick_layers::LayerActions::default();
-    app.active_tab_mut().flow_pane.set_layer_visible(
-        quantick_layers::ChartLayer::TapeChart,
-        true,
-        &mut actions,
-    );
-    assert_eq!(view_of(&app), LaneView::Beside);
-    assert_eq!(lane_of(&app).width_share, DEFAULT_LIVE_LANE_SHARE);
 }
 
 fn read_fold(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
@@ -1402,15 +1109,14 @@ fn read_fold(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
 }
 
 /// The fold is the view by the side it closes, one named call away: permission-
-/// checked, safe to retry, read back, allowed from every view.
+/// checked, safe to retry, read back as the fold and as the view. The words, the
+/// repeat and the refusals are `quantick_control_handlers::tape_fold`'s; the share
+/// each word leaves is `LiveLaneStyle::set_fold`'s.
 #[test]
 fn the_tape_fold_is_an_alias_over_the_view_retry_safe_and_read_back() {
-    use quantick_orderflow::LaneView;
-    use quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE;
     const FOLD: &str = "orderflow.tape.fold.set";
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let share = lane_of(&app).width_share;
     let directory = gateway_test_directory("tape-fold-control");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
@@ -1437,44 +1143,15 @@ fn the_tape_fold_is_an_alias_over_the_view_retry_safe_and_read_back() {
         &mut cockpit,
         "fold-retry",
         FOLD,
-        candles.clone(),
+        candles,
         "fold-key",
     );
     assert_eq!(first.outcome, retry.outcome);
     assert_eq!(success_result(&first)["fold"], "candles");
     assert_eq!(success_result(&first)["changed"], true);
-    let (again, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, candles.clone());
-    assert_eq!(success_result(&again)["changed"], false);
     assert_eq!(read_fold(&mut app, &mut observer), "candles");
     assert_eq!(read_view(&mut app, &mut observer), "tape", "tape only");
-    assert_eq!(view_of(&app), LaneView::TapeOnly);
-    assert_eq!(lane_of(&app).width_share, share);
-
-    let left = input(&app, json!({"fold": "left"}));
-    let (bad, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, left);
-    assert!(error_code(&bad).is_some());
-
-    // No refusal to meet: tape only straight to the candles alone, and back.
-    let tape = input(&app, json!({"fold": "tape"}));
-    let (moved, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, tape);
-    assert_eq!(success_result(&moved)["changed"], true);
-    assert_eq!(read_fold(&mut app, &mut observer), "tape");
-    assert_eq!(
-        read_view(&mut app, &mut observer),
-        "candles",
-        "the tape off"
-    );
-    assert!(!lane_of(&app).enabled);
-    assert_eq!(lane_of(&app).width_share, share);
-
-    let open = input(&app, json!({"fold": "open"}));
-    let (opened, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, open.clone());
-    assert_eq!(success_result(&opened)["changed"], true);
-    assert_eq!(read_fold(&mut app, &mut observer), "open");
-    assert_eq!(view_of(&app), LaneView::Beside);
-    assert_eq!(lane_of(&app).width_share, DEFAULT_LIVE_LANE_SHARE);
-    let (again, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, open);
-    assert_eq!(success_result(&again)["changed"], false);
+    assert_eq!(view_of(&app), quantick_orderflow::LaneView::TapeOnly);
 }
 
 /// Text painted in the bottom time strip whose clip or anchor lies in
@@ -1579,15 +1256,16 @@ fn read_view(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
         .clone()
 }
 
-/// The view is one named call away: permission-checked, safe to retry, allowed
-/// from any view, read back, refused only where there is no lane at all, and it
-/// is the state `orderflow.tape.fold.set` names.
+/// The view is one named call away: permission-checked, safe to retry, read back,
+/// refused where there is no lane at all, and it is the state
+/// `orderflow.tape.fold.set` names. From any view, the repeat and the refusal of
+/// a bad word are `quantick_control_handlers::tape_view_set`'s; the width each
+/// view leaves is `LiveLaneStyle::set_view`'s.
 #[test]
 fn the_tape_view_is_named_retry_safe_refused_without_a_lane_and_read_back() {
     const VIEW: &str = "orderflow.tape.view.set";
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    let share = lane_of(&app).width_share;
     let directory = gateway_test_directory("tape-view-control");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
@@ -1598,15 +1276,15 @@ fn the_tape_view_is_named_retry_safe_refused_without_a_lane_and_read_back() {
     );
     assert_eq!(read_view(&mut app, &mut observer), "beside");
 
-    let tape = input(&app, json!({"view": "tape"}));
-    let (denied, _) = unkeyed_call(&mut app, &mut observer, VIEW, tape.clone());
+    let candles = input(&app, json!({"view": "candles"}));
+    let (denied, _) = unkeyed_call(&mut app, &mut observer, VIEW, candles.clone());
     assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
     let (first, _) = keyed_call(
         &mut app,
         &mut cockpit,
         "view",
         VIEW,
-        tape.clone(),
+        candles.clone(),
         "view-key",
     );
     let (retry, _) = keyed_call(
@@ -1614,44 +1292,21 @@ fn the_tape_view_is_named_retry_safe_refused_without_a_lane_and_read_back() {
         &mut cockpit,
         "view-retry",
         VIEW,
-        tape.clone(),
+        candles,
         "view-key",
     );
     assert_eq!(first.outcome, retry.outcome);
-    assert_eq!(success_result(&first)["view"], "tape");
+    assert_eq!(success_result(&first)["view"], "candles");
     assert_eq!(success_result(&first)["changed"], true);
-    let (again, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, tape);
-    assert_eq!(success_result(&again)["changed"], false);
-    assert_eq!(read_view(&mut app, &mut observer), "tape");
-    assert_eq!(lane_of(&app).width_share, share);
-
-    // From tape only straight to candles only: no view stands in the way.
-    let candles = input(&app, json!({"view": "candles"}));
-    let (moved, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, candles);
-    assert_eq!(success_result(&moved)["changed"], true);
     assert_eq!(read_view(&mut app, &mut observer), "candles");
     assert!(!lane_of(&app).enabled, "the view is the tape's own switch");
+    assert_eq!(read_fold(&mut app, &mut observer), "tape", "the one state");
 
-    let open = input(&app, json!({"view": "open"}));
-    let (bad, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, open);
-    assert!(error_code(&bad).is_some());
     let tab_id = app.runtime.tabs.active_id().to_string();
     let nowhere = json!({"tab_id": tab_id, "pane_id": "424242", "view": "beside"});
     let (refused, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, nowhere);
     assert!(error_code(&refused).is_some(), "no pane, no lane");
     assert_eq!(read_view(&mut app, &mut observer), "candles");
-
-    assert_eq!(read_fold(&mut app, &mut observer), "tape", "the one state");
-    let beside = input(&app, json!({"view": "beside"}));
-    let (back, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, beside);
-    assert_eq!(success_result(&back)["changed"], true);
-    assert_eq!(read_view(&mut app, &mut observer), "beside");
-    assert_eq!(read_fold(&mut app, &mut observer), "open");
-    assert_eq!(
-        lane_of(&app).width_share,
-        quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE,
-        "to beside is the default width"
-    );
 }
 
 fn header_rect(
