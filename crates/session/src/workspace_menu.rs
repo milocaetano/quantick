@@ -4,6 +4,7 @@
 
 use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 use crate::colour_popover::{ColourIntent, ColourPopover};
+pub use crate::manage_workspaces::{DeleteClick, ManageDialog, ManageIntent};
 
 /// What a workspace row or the dialog asked the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,10 @@ pub enum WorkspaceCommand {
     AnswerClose(CloseAnswer),
     /// A press in the header swatch's palette popover.
     Colour(ColourIntent),
+    /// A press or key in Manage workspaces.
+    Manage(ManageIntent),
+    /// A press in the create dialog's palette.
+    NameColour(ColourIntent),
 }
 
 /// What the name dialog is asking for.
@@ -44,7 +49,7 @@ pub enum NameDialogMode {
 }
 
 /// The dialog that asks for a workspace name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NameDialog {
     /// The tab whose menu asked: the dialog shows in that tab's window and
     /// Enter acts on that tab, whichever window has the focus.
@@ -56,37 +61,11 @@ pub struct NameDialog {
     /// The field takes the keyboard on the dialog's first frame, and again
     /// after a refusal, so the trader retypes without reaching for the mouse.
     pub wants_focus: bool,
-}
-
-/// What a click on a row's Delete meant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeleteClick {
-    /// The first click: the row now states the outcome and asks.
-    Armed,
-    /// The second click on the same workspace.
-    Confirmed,
-}
-
-/// The Manage workspaces dialog: every workspace, with its Rename and Delete.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ManageDialog {
-    /// The tab whose menu opened it: the dialog shows in that tab's window.
-    pub tab: u64,
-    /// The workspace whose Delete asks for its confirmation.
-    pub armed: Option<String>,
-}
-
-impl ManageDialog {
-    /// A click on `name`'s Delete. Arming another workspace disarms the first,
-    /// so no confirmation ever lands on a name it did not read.
-    pub fn click_delete(&mut self, name: &str) -> DeleteClick {
-        if self.armed.as_deref() == Some(name) {
-            self.armed = None;
-            return DeleteClick::Confirmed;
-        }
-        self.armed = Some(name.to_owned());
-        DeleteClick::Armed
-    }
+    /// The create dialogs' colour, as a call names it (`petrol`,
+    /// `#3A7BD5`): the next free one until a pick; `None` for a rename.
+    pub colour: Option<String>,
+    /// The create dialogs' palette: its focus and Custom.
+    pub palette: ColourPopover,
 }
 
 /// The menus' state across frames.
@@ -237,7 +216,7 @@ impl WorkspaceMenuState {
 
     /// Open the Manage workspaces dialog in the window presenting `tab`.
     pub fn open_manage(&mut self, tab: u64) {
-        self.manage = Some(ManageDialog { tab, armed: None });
+        self.manage = Some(ManageDialog::new(tab));
     }
 
     pub fn close_manage(&mut self) {
@@ -248,9 +227,9 @@ impl WorkspaceMenuState {
     /// `cell` the cell's menu, `cell:colour` with its palette popover,
     /// `cell:colour:ask=<word>` with the swap question on that colour,
     /// `cell:colour:custom=<hex>` with Custom open on those words, `manage`
-    /// the dialog, `manage:delete=<name>` with that row's Delete armed,
-    /// `manage:rename=<name>` with its Rename asked over it. Answers false,
-    /// opening nothing, for any other token.
+    /// the dialog, `manage:<face>` on one of [`ManageDialog::stage`]'s faces,
+    /// `save_as` and `new` the create dialogs (their name and colour are the
+    /// handler's to fill). Answers false, opening nothing, for any other token.
     pub fn stage(&mut self, tab: u64, token: &str) -> bool {
         let (surface, row) = token.split_once(':').unwrap_or((token, ""));
         if let ("cell", Some(popover)) = (surface, row.strip_prefix("colour")) {
@@ -268,22 +247,21 @@ impl WorkspaceMenuState {
             (self.colour, self.staged) = (Some(colour), true);
             return true;
         }
-        match (surface, row.split_once('=')) {
-            ("cell", None) => {
+        match (surface, row) {
+            ("cell", "") => {
                 self.toggle_chip_menu(tab);
                 self.staged = true;
             }
-            ("manage", None) => self.open_manage(tab),
-            ("manage", Some(("delete", name))) => {
-                self.open_manage(tab);
-                if let Some(dialog) = &mut self.manage {
-                    dialog.click_delete(name);
+            ("manage", "") => self.open_manage(tab),
+            ("manage", face) => {
+                let mut dialog = ManageDialog::new(tab);
+                if !dialog.stage(face) {
+                    return false;
                 }
+                self.manage = Some(dialog);
             }
-            ("manage", Some(("rename", name))) => {
-                self.open_manage(tab);
-                self.open_rename(tab, name);
-            }
+            ("save_as", "") => self.open_save_as(tab),
+            ("new", "") => self.open_new(tab),
             _ => return false,
         }
         true
@@ -330,6 +308,8 @@ impl WorkspaceMenuState {
             name,
             refusal: None,
             wants_focus: true,
+            colour: None,
+            palette: ColourPopover::default(),
         });
     }
 
@@ -529,14 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_asks_twice_for_the_same_name() {
-        let mut dialog = managing();
-        assert_eq!(dialog.click_delete("Scalp"), DeleteClick::Armed);
-        assert_eq!(dialog.click_delete("Scalp"), DeleteClick::Confirmed);
-        assert_eq!(dialog.armed, None);
-    }
-
-    #[test]
     fn a_second_click_on_another_name_only_moves_the_arm() {
         let mut dialog = managing();
         dialog.click_delete("Scalp");
@@ -555,10 +527,15 @@ mod tests {
             Some("Scalp")
         );
         assert!(state.stage(7, "manage:rename=Scalp"));
-        assert!(
-            state.dialog.is_some(),
-            "the rename is asked over the dialog"
+        let manage = state.manage.as_ref().unwrap();
+        assert_eq!(manage.rename.as_ref().unwrap().from, "Scalp", "inline");
+        assert!(state.stage(7, "save_as"));
+        assert_eq!(
+            state.dialog.as_ref().unwrap().mode,
+            NameDialogMode::SaveAsNew
         );
+        assert!(state.stage(7, "new"));
+        assert_eq!(state.dialog.as_ref().unwrap().mode, NameDialogMode::New);
         let mut fresh = WorkspaceMenuState::default();
         assert!(!fresh.stage(7, "manage:drop=Scalp"));
         assert!(!fresh.stage(7, "file"));
