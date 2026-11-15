@@ -204,6 +204,14 @@ panel_live_row = "#E9ECEF"
 panel_stripe_loss = "#B3261E"
 # The buy ink reads 4.0:1 on the footer grey; gains there go one step deeper.
 panel_gain_ink = "#145A24"
+# A folded pane's rail: a grey band, a 1 px edge on each long side and the
+# grip; then the three while the pointer is on the rail's hit area.
+rail_band = "#DADADA"
+rail_edge = "#7C7C7C"
+rail_grip = "#3A3A3A"
+rail_band_hover = "#C9CDD3"
+rail_edge_hover = "#5F6670"
+rail_grip_hover = "#000000"
 
 # TradingView's axis widths and label sizes, in logical pixels; the gutter
 # excludes the plot's 16 px right margin, and the strip counts its top rule.

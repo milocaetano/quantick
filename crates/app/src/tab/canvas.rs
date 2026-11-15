@@ -11,10 +11,10 @@ use crate::surfaces::drawing_chrome::DrawingChromeExt as _;
 use eframe::egui;
 use quantick_chart::pane_header::{CapsuleSide, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_workspace::canvas::{Hand, PANE_MENU_BUTTON_PX, seat_slot};
+use quantick_workspace::canvas::{CanvasRect, Hand, PANE_MENU_BUTTON_PX, rail_marks, seat_slot};
 use smallvec::SmallVec;
 
-use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
+use super::{FOCUS_FRAME_PX, SharedPicks, Tab};
 use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
@@ -282,16 +282,11 @@ impl Tab {
                 .flatten();
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 if self.canvas.context_stack.heights[slot].is_collapsed() {
-                    ui.painter()
-                        .rect_filled(*band, egui::Rounding::ZERO, palette.chrome());
-                    ui.painter().rect_filled(
-                        egui::Rect::from_center_size(
-                            band.center(),
-                            egui::vec2(RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX),
-                        ),
-                        egui::Rounding::same(1.0),
-                        palette.text_muted(),
-                    );
+                    // Its hit area is the dividers' beside it, as far as they reach.
+                    let near = [slot.wrapping_sub(1), slot].map(|at| bands.dividers.get(at));
+                    let reach = egui::vec2(0.0, CONTEXT_RAIL_REACH);
+                    let hit = |at: &&egui::Rect| ui.rect_contains_pointer(at.expand2(reach));
+                    paint_rail(ui.painter(), *band, true, near.iter().flatten().any(hit));
                     rects.context_charts.push(None);
                     continue;
                 }
@@ -1131,8 +1126,7 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        let edge_x = if right { rail.left() } else { rail.right() };
-        paint_rail(ui.painter(), rail, (edge_x, false), response.hovered());
+        paint_rail(ui.painter(), rail, false, response.hovered());
         if let Some(id) = self.canvas.state.side_rail_id(right) {
             self.canvas.menus.publish_rail(id, rail);
         }
@@ -1205,7 +1199,7 @@ impl Tab {
                     divider.expand2(egui::vec2(
                         0.0,
                         if upper_collapsed || lower_collapsed {
-                            canvas_layout::COLLAPSED_HIT_PX / 2.0
+                            CONTEXT_RAIL_REACH
                         } else {
                             CANVAS_DIVIDER_HANDLE_PX
                         },
@@ -1252,27 +1246,18 @@ pub(super) fn hand(r: &egui::Response, row: bool) -> Hand {
     Hand::of([r.drag_started(), r.dragged(), r.drag_stopped()], delta)
 }
 
-/// A folded side's rail, one look for every fold: chrome, the inner edge
-/// where it meets the open side at `edge` (so it reads as chrome rather than
-/// a stripe the chart starts after), and a grip in the colour a reader knows
-/// means "chrome you can take hold of", lit while `hot`. A rail folded
-/// across a column (`edge.1`) lies flat: its edge and grip run sideways.
-pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge: (f32, bool), hot: bool) {
+/// How far a divider beside a folded context chart reaches either side.
+const CONTEXT_RAIL_REACH: f32 = canvas_layout::COLLAPSED_HIT_PX / 2.0;
+
+/// A folded side's rail, one look for every fold: the workspace's marks
+/// (band, an edge on each long side, the grip) in the theme's rail inks, lit
+/// while `hot`. A rail folded across a column (`flat`) lies flat.
+pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, flat: bool, hot: bool) {
     let palette = theme::get(painter.ctx());
-    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
-    let stroke = egui::Stroke::new(1.0_f32, palette.border());
-    let mut size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
-    if edge.1 {
-        painter.hline(rail.x_range(), edge.0, stroke);
-        size = egui::vec2(size.y, size.x);
-    } else {
-        painter.vline(edge.0, rail.y_range(), stroke);
+    let at = CanvasRect::new(rail.left(), rail.top(), rail.width(), rail.height());
+    let inks = quantick_appearance::rail::rail_inks(hot);
+    for ((mark, radius), ink) in rail_marks(at, flat).into_iter().zip(inks) {
+        let mark = egui::Rect::from_min_size((mark.x, mark.y).into(), (mark.w, mark.h).into());
+        painter.rect_filled(mark, egui::Rounding::same(radius), *palette.get(ink));
     }
-    let grip = egui::Rect::from_center_size(rail.center(), size);
-    let colour = if hot {
-        palette.accent()
-    } else {
-        palette.text_muted()
-    };
-    painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

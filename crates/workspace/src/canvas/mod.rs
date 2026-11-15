@@ -48,12 +48,14 @@ pub use menu::{
     add_menu, menu_hook, pane_menu, remove_prompt, strip_label,
 };
 pub use metrics::{
-    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX, MIN_PANE_WIDTH_PX,
+    CANVAS_DIVIDER_PX, COLLAPSE_AT_PX, COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX,
+    MIN_PANE_WIDTH_PX, RAIL_EDGE_PX, RAIL_GRIP_LENGTH_PX, RAIL_GRIP_RADIUS_PX,
+    RAIL_GRIP_THICKNESS_PX,
 };
 pub use presets::{
     LAYOUT_PRESETS, LayoutPreset, MAX_CANVAS_PANES, PaneKind, PresetGroup, matching_preset, preset,
 };
-pub use rail::{Hand, SeamDrag};
+pub use rail::{Hand, SeamDrag, rail_marks};
 pub use seams::{MIN_TREE_PANE_PX, SeamAddress, SeamRail, TreeSeam, tree_rails, tree_seams};
 pub use state::{
     CanvasRefusal, CanvasState, FloatHost, FloatingPane, MINIMIZED_STRIP_PX, PaneMode,

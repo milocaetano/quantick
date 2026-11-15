@@ -7,7 +7,9 @@
 //! and open it again when dragged back past the threshold. The constants have
 //! their one owner in [`super::metrics`]; `canvas_layout` re-exports them.
 
-use super::metrics::COLLAPSE_AT_PX;
+use super::metrics::{
+    COLLAPSE_AT_PX, RAIL_EDGE_PX, RAIL_GRIP_LENGTH_PX, RAIL_GRIP_RADIUS_PX, RAIL_GRIP_THICKNESS_PX,
+};
 #[cfg(doc)]
 use super::metrics::{COLLAPSED_HIT_PX, COLLAPSED_PANE_WIDTH_PX};
 use super::presets::PaneKind;
@@ -46,6 +48,40 @@ impl Hand {
             released,
         }
     }
+}
+
+/// What a rail paints over `rail`, back to front, each with its corner
+/// radius: the band over the whole rail, a [`RAIL_EDGE_PX`] edge along each
+/// long side and a grip [`RAIL_GRIP_LENGTH_PX`] long, centred, never past
+/// the rail's ends. A rail folded across a column (`flat`) lies flat. The
+/// theme's inks for them come in the same order
+/// (`quantick_appearance::rail::rail_inks`).
+#[must_use]
+pub fn rail_marks(rail: CanvasRect, flat: bool) -> [(CanvasRect, f32); 4] {
+    let (along, across) = if flat {
+        (rail.w, rail.h)
+    } else {
+        (rail.h, rail.w)
+    };
+    // A mark `length` long from `from` along the rail, `thick` from `at` across.
+    let mark = |from: f32, length: f32, at: f32, thick: f32| match flat {
+        true => CanvasRect::new(rail.x + from, rail.y + at, length, thick),
+        false => CanvasRect::new(rail.x + at, rail.y + from, thick, length),
+    };
+    let edge = RAIL_EDGE_PX.min(across / 2.0);
+    let (grip, thick) = (
+        RAIL_GRIP_LENGTH_PX.min(along),
+        RAIL_GRIP_THICKNESS_PX.min(across),
+    );
+    [
+        (rail, 0.0),
+        (mark(0.0, along, 0.0, edge), 0.0),
+        (mark(0.0, along, across - edge, edge), 0.0),
+        (
+            mark((along - grip) / 2.0, grip, (across - thick) / 2.0, thick),
+            RAIL_GRIP_RADIUS_PX,
+        ),
+    ]
 }
 
 /// A seam drag in flight: the seam, where the first of its pair ended at the

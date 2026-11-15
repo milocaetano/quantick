@@ -181,10 +181,8 @@ impl Tab {
             state.seam_hand(held, (&seam.address, super::hand(&handle, row)), canvas);
         }
         for rail in tree_rails(&self.canvas.state, canvas, CANVAS_DIVIDER_PX) {
-            let (at, across) = (rect(rail.rect), rail.axis == SplitAxis::Column);
-            let edges = [[at.left(), at.right()], [at.top(), at.bottom()]][usize::from(across)];
-            let edge = (edges[usize::from(rail.meets_after)], across);
-            super::paint_rail(ui.painter(), at, edge, hot == Some(rail.slot));
+            let (at, flat) = (rect(rail.rect), rail.axis == SplitAxis::Column);
+            super::paint_rail(ui.painter(), at, flat, hot == Some(rail.slot));
             self.canvas.menus.publish_rail(rail.control_id(), at);
         }
     }

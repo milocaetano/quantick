@@ -21,6 +21,18 @@ pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// collapse leaves something to click.
 pub const COLLAPSED_PANE_WIDTH_PX: f32 = 8.0;
 
+/// Length of the grip centred on a rail, along it: long enough to read as a
+/// handle on a rail that has no other mark.
+pub const RAIL_GRIP_LENGTH_PX: f32 = 44.0;
+
+/// The grip's thickness across the rail, and the radius of its corners.
+pub const RAIL_GRIP_THICKNESS_PX: f32 = 2.0;
+pub const RAIL_GRIP_RADIUS_PX: f32 = 1.0;
+
+/// The edge that frames a rail along each of its long sides, so it reads as
+/// a band of its own rather than a border of the pane beside it.
+pub const RAIL_EDGE_PX: f32 = 1.0;
+
 /// How narrow a divider drag has to get before the pane is dismissed rather
 /// than squeezed.
 ///
