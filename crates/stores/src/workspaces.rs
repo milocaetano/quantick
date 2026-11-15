@@ -1,8 +1,10 @@
 //! The workspaces file: validation and guarded disk persistence, beside the
 //! layouts file. The book itself is [`quantick_workspace::workspace_book`].
+use quantick_appearance::{
+    PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio, tab_strip,
+};
 use quantick_workspace::book_upkeep::UpkeepSave;
 use quantick_workspace::write_refusal::guard_write;
-use quantick_appearance::{PremultipliedRgba, ResolvedTheme, Token, contrast::contrast_ratio, tab_strip};
 use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{

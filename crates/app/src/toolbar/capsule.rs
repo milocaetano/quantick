@@ -136,9 +136,8 @@ pub fn draw(
         Some(colour) => {
             let [r, g, b, a] = quantick_stores::workspaces::capsule_fill(colour, &palette.resolved);
             let [ir, ig, ib] = colour.rgb(palette.resolved.dark);
-            let ink = egui::Color32::from_rgb(ir, ig, ib);
-            let fill = egui::Color32::from_rgba_premultiplied(r, g, b, a);
-            (fill, (stroke.width, ink).into())
+            let edge = (stroke.width, egui::Color32::from_rgb(ir, ig, ib)).into();
+            (egui::Color32::from_rgba_premultiplied(r, g, b, a), edge)
         }
         None => (palette.control(), stroke),
     };

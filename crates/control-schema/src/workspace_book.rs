@@ -603,10 +603,9 @@ mod tests {
         let input: WorkspaceColourSetInput =
             serde_json::from_value(json!({"name": "Scalp", "colour": "sky"})).unwrap();
         assert_eq!((input.colour.as_str(), input.swap), ("sky", false));
-        let input: WorkspaceColourSetInput = serde_json::from_value(
-            json!({"name": "Scalp", "colour": "#3A7BD5", "swap": true}),
-        )
-        .unwrap();
+        let input: WorkspaceColourSetInput =
+            serde_json::from_value(json!({"name": "Scalp", "colour": "#3A7BD5", "swap": true}))
+                .unwrap();
         assert_eq!((input.colour.as_str(), input.swap), ("#3A7BD5", true));
         for refused in [
             json!({"name": "Scalp"}),

@@ -371,7 +371,9 @@ fn stored_colours<S: serde::Serializer>(colours: &Colours, out: S) -> Result<S::
     for (name, colour) in colours {
         match colour {
             WorkspaceColour::Preset(index) => map.serialize_entry(name, index)?,
-            WorkspaceColour::Custom(rgb) => map.serialize_entry(name, &workspace_colour::hex(*rgb))?,
+            WorkspaceColour::Custom(rgb) => {
+                map.serialize_entry(name, &workspace_colour::hex(*rgb))?
+            }
         }
     }
     map.end()

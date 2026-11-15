@@ -377,7 +377,9 @@ pub fn cell_menu(
         dot: modified && !auto,
         capability: Some(MENU_CAPABILITY_ID),
         tree: Some(live.clone()),
-        colour: book.colour(workspace).map(|colour| RowColour::of(colour, dark)),
+        colour: book
+            .colour(workspace)
+            .map(|colour| RowColour::of(colour, dark)),
         ..CellRow::new(RowKind::Current, "current", workspace)
     };
     CellMenu {
@@ -503,7 +505,14 @@ impl CellMenuCache {
         let same = (self.read.as_ref())
             .is_some_and(|(b, t, k, l, d, ls)| (b, *t, k.as_str(), l, *d, ls) == read);
         if !same {
-            let owned = (book.clone(), tab, keys.to_owned(), live.clone(), dark, labels);
+            let owned = (
+                book.clone(),
+                tab,
+                keys.to_owned(),
+                live.clone(),
+                dark,
+                labels,
+            );
             (self.read, self.menu) = (Some(owned), None);
         }
         let builds = &mut self.builds;

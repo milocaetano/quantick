@@ -115,7 +115,9 @@ fn a_colour_word_is_a_preset_name_or_a_hex_code() {
     let custom = WorkspaceColour::Custom([0x3A, 0x7B, 0xD5]);
     assert_eq!(WorkspaceColour::parse("#3A7BD5"), Some(custom));
     assert_eq!(WorkspaceColour::parse("#3a7bd5"), Some(custom));
-    for refused in ["", "green", "#3A7BD", "#3A7BD55", "3A7BD5", "#GGGGGG", "Custom"] {
+    for refused in [
+        "", "green", "#3A7BD", "#3A7BD55", "3A7BD5", "#GGGGGG", "Custom",
+    ] {
         assert_eq!(WorkspaceColour::parse(refused), None, "{refused}");
     }
 }
@@ -134,7 +136,10 @@ fn the_eight_old_words_map_through_the_fixed_table() {
         ("cobalt", "Ultramarine"),
     ];
     for (word, name) in table {
-        assert_eq!(WorkspaceColour::legacy(word).map(WorkspaceColour::name), Some(name));
+        assert_eq!(
+            WorkspaceColour::legacy(word).map(WorkspaceColour::name),
+            Some(name)
+        );
     }
     assert_eq!(WorkspaceColour::legacy("green"), None);
 }
@@ -186,7 +191,10 @@ fn past_sixteen_workspaces_get_generated_customs_deterministically() {
         }
     }
     // The first candidate is the OKLab midpoint of Cobalt's two values.
-    assert_eq!(extra[0], generated(&(0..16).map(preset).collect::<Vec<_>>()));
+    assert_eq!(
+        extra[0],
+        generated(&(0..16).map(preset).collect::<Vec<_>>())
+    );
 }
 
 /// Every candidate taken: the next round lifts the midpoints' lightness.

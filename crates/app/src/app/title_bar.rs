@@ -2,6 +2,7 @@
 use crate::theme;
 use eframe::egui;
 
+use super::workspace_runtime::WorkspaceRuntime;
 use crate::config::AppConfig;
 use quantick_control_schema::native_window::WindowState;
 mod resize;
@@ -67,7 +68,7 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
 pub(super) use crate::surfaces::chrome_title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
 
 /// The tabs and their workspace book, and the config the venues' codes come from.
-pub(super) type Market<'a> = (&'a super::workspace_runtime::WorkspaceRuntime, &'a AppConfig);
+pub(super) type Market<'a> = (&'a WorkspaceRuntime, &'a AppConfig);
 
 /// One chip per tab of this strip: symbol, venue code, the feed's mark when
 /// it is not healthy and live, and its workspace's colour for `theme`.

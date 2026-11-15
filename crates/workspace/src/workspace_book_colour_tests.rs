@@ -137,7 +137,11 @@ fn a_taken_colour_is_refused_without_swap_and_swapped_with_it() {
 fn defaults_colour_can_change() {
     let mut book = book();
     let custom = Custom([0x3A, 0x7B, 0xD5]);
-    assert!(book.set_colour(DEFAULT_WORKSPACE, custom, false).unwrap().changed);
+    assert!(
+        book.set_colour(DEFAULT_WORKSPACE, custom, false)
+            .unwrap()
+            .changed
+    );
     assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(custom));
     assert_eq!(colours(&reload(&book)), colours(&book));
 }
@@ -183,7 +187,8 @@ fn a_main_era_file_without_colours_gets_them_in_book_order_then_keeps_them() {
 fn the_stored_form_is_an_index_or_a_hex_string_and_round_trips() {
     let mut book = book();
     book.create(1, "Scalp").unwrap();
-    book.set_colour("Scalp", Custom([0x3A, 0x7B, 0xD5]), false).unwrap();
+    book.set_colour("Scalp", Custom([0x3A, 0x7B, 0xD5]), false)
+        .unwrap();
     let text = toml::to_string_pretty(&book).unwrap();
     assert!(text.contains("[colours]"), "{text}");
     assert!(text.contains("Default = 4"), "{text}");
@@ -199,7 +204,10 @@ fn an_index_and_hex_of_either_case_read_as_written() {
     assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(9)));
     assert_eq!(book.colour("Scalp"), Some(Custom([0x3A, 0x7B, 0xD5])));
     let book = stored("Default = \"#3A7BD5\"\nScalp = 0\n");
-    assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(Custom([0x3A, 0x7B, 0xD5])));
+    assert_eq!(
+        book.colour(DEFAULT_WORKSPACE),
+        Some(Custom([0x3A, 0x7B, 0xD5]))
+    );
     assert_eq!(book.colour("Scalp"), Some(preset(0)));
 }
 
@@ -227,7 +235,15 @@ fn the_old_words_read_through_the_fixed_table() {
 /// file, and every other colour, is kept.
 #[test]
 fn an_unreadable_value_is_dropped_and_the_workspace_settles_on_a_free_colour() {
-    for bad in ["16", "-1", "\"#12345\"", "\"#GG0000\"", "\"green\"", "1.5", "true"] {
+    for bad in [
+        "16",
+        "-1",
+        "\"#12345\"",
+        "\"#GG0000\"",
+        "\"green\"",
+        "1.5",
+        "true",
+    ] {
         let book = stored(&format!("Default = 9\nScalp = {bad}\n"));
         assert_eq!(book.list().len(), 2, "every recipe is kept: {bad}");
         assert_eq!(book.colour(DEFAULT_WORKSPACE), Some(preset(9)), "{bad}");

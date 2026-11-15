@@ -276,6 +276,9 @@ fn the_colour_fills_the_slot_in_every_row_and_the_header() {
         assert_eq!(slot(&scalp).2, [0x3A, 0x7B, 0xD5]);
         let pieces = head(&menu, 318.0, dark, &measure);
         let header = slot(keyed(&pieces, "current"));
-        assert_eq!(header, (area(8.0, 14.0, 3.0, 22.0), 1.5, [0x3A, 0x7B, 0xD5]));
+        assert_eq!(
+            header,
+            (area(8.0, 14.0, 3.0, 22.0), 1.5, [0x3A, 0x7B, 0xD5])
+        );
     }
 }

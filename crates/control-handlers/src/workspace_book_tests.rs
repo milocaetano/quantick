@@ -536,15 +536,15 @@ fn every_journal_row_reads_a_field_the_event_carries() {
 }
 
 /// Slate, Cobalt and Sky as the wire spells a preset.
-static SLATE: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
-    json!({ "preset": "slate", "index": 4, "light": "#56606E", "dark": "#A3ADBA" })
-});
-static COBALT: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
-    json!({ "preset": "cobalt", "index": 0, "light": "#2F5BD8", "dark": "#7393F5" })
-});
-static SKY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
-    json!({ "preset": "sky", "index": 2, "light": "#1F86BF", "dark": "#5DBDEB" })
-});
+static SLATE: std::sync::LazyLock<Value> = std::sync::LazyLock::new(
+    || json!({ "preset": "slate", "index": 4, "light": "#56606E", "dark": "#A3ADBA" }),
+);
+static COBALT: std::sync::LazyLock<Value> = std::sync::LazyLock::new(
+    || json!({ "preset": "cobalt", "index": 0, "light": "#2F5BD8", "dark": "#7393F5" }),
+);
+static SKY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(
+    || json!({ "preset": "sky", "index": 2, "light": "#1F86BF", "dark": "#5DBDEB" }),
+);
 
 /// A free colour is taken at once; a held one is refused without `swap`,
 /// naming its owner and what the owner would get, and swapped with it; a
@@ -561,7 +561,10 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
         json!({ "workspace": "Scalp", "colour": SKY.clone(), "changed": true,
                 "swapped_with": null, "holder_colour": null })
     );
-    assert_eq!((host.writes, access.events.len()), (writes + 1, journaled + 1));
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 1, journaled + 1)
+    );
 
     let held = json!({ "name": "Scalp", "colour": "slate" });
     let refused = colour_set(&mut host, &mut access, &actor, &held).unwrap_err();
@@ -569,7 +572,10 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     let details = refused.context.details.as_ref().unwrap();
     assert_eq!(details["owner"], "Default");
     assert_eq!(details["owner_would_get"], SKY.clone());
-    assert_eq!((host.writes, access.events.len()), (writes + 1, journaled + 1));
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 1, journaled + 1)
+    );
 
     let swap = json!({ "name": "Scalp", "colour": "slate", "swap": true });
     let swapped = colour_set(&mut host, &mut access, &actor, &swap).unwrap();
@@ -582,11 +588,17 @@ fn colour_set_takes_a_free_colour_and_swaps_a_held_one_only_when_asked() {
     assert_eq!(event.payload["colour"], "slate");
     assert_eq!(event.payload["swapped_with"], "Default");
     assert_eq!(event.payload["holder_colour"], "sky");
-    assert_eq!((host.writes, access.events.len()), (writes + 2, journaled + 2));
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 2, journaled + 2)
+    );
 
     let again = colour_set(&mut host, &mut access, &actor, &swap).unwrap();
     assert_eq!(again["changed"], false);
-    assert_eq!((host.writes, access.events.len()), (writes + 2, journaled + 2));
+    assert_eq!(
+        (host.writes, access.events.len()),
+        (writes + 2, journaled + 2)
+    );
 
     let value = json!({ "name": "Nope", "colour": "sky" });
     let refused = colour_set(&mut host, &mut access, &actor, &value).unwrap_err();

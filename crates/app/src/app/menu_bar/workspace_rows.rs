@@ -36,8 +36,8 @@ pub(super) fn chip_menu(
     let label = |id| tabs.by_id(id).map(|t| t.symbol.clone()).unwrap_or_default();
     let live = app.active_tab().canvas.state.tree();
     let (palette, border) = (crate::theme::get(ctx), model::CHIP_MENU_BORDER_PT);
-    let dark = palette.resolved.dark;
-    let rows = cache.menu(app.runtime.workspace.book.book(), tab, &keys, live, dark, label);
+    let (book, dark) = (app.runtime.workspace.book.book(), palette.resolved.dark);
+    let rows = cache.menu(book, tab, &keys, live, dark, label);
     let keys = [Key::ArrowDown, Key::ArrowUp, Key::Enter, Key::Escape];
     let [down, up, enter, escape] =
         ctx.input_mut(|i| keys.map(|k| i.consume_key(Modifiers::NONE, k)));
@@ -160,7 +160,8 @@ fn paint(ui: &egui::Ui, at: egui::Pos2, piece: &Piece, ink: &Ink<'_>, drawn: &mu
             }
             Mark::Tree(area, tree) => paint_tree(painter, rect(*area), tree),
             Mark::Colour { at, radius, rgb } => {
-                painter.rect_filled(rect(*at), *radius, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                let [r, g, b] = *rgb;
+                painter.rect_filled(rect(*at), *radius, Color32::from_rgb(r, g, b));
             }
         }
         if let Some(hover) = piece.hover.filter(|_| index == 0 && response.hovered()) {

@@ -2226,7 +2226,10 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
     };
     call("workspace.save_as", json!({ "name": "Scalp" }));
     let wire = json!({ "custom": "#3A7BD5", "light": "#3A7BD5", "dark": "#3A7BD5" });
-    let set = call("workspace.colour.set", json!({ "name": "Scalp", "colour": "#3a7bd5" }));
+    let set = call(
+        "workspace.colour.set",
+        json!({ "name": "Scalp", "colour": "#3a7bd5" }),
+    );
     assert_eq!(set["colour"], wire);
     let listed = call("workspace.list", json!({}));
     assert_eq!(listed["workspaces"][1]["colour"], wire);
@@ -2236,15 +2239,24 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
     let shown = open_cell_menu(&mut app, &ctx);
     let output = run_frame_sized(&mut app, &ctx, FULL_HD, Vec::new(), egui::Modifiers::NONE);
     let [fills, edges, texts] = painted_in(&output, custom);
-    assert!(texts >= 2, "the open tab's symbol in its two strikes: {texts}");
+    assert!(
+        texts >= 2,
+        "the open tab's symbol in its two strikes: {texts}"
+    );
     assert!(edges >= 1, "the capsule's border: {edges}");
-    assert!(fills >= 3, "the capsule's bar, the row's and the header's slot: {fills}");
+    assert!(
+        fills >= 3,
+        "the capsule's bar, the row's and the header's slot: {fills}"
+    );
     let dark = crate::theme::get(&ctx).resolved.dark;
     let slate = WorkspaceColour::preset(4).unwrap().rgb(dark);
     let slate = egui::Color32::from_rgb(slate[0], slate[1], slate[2]);
     assert!(painted_in(&output, slate)[0] >= 1, "Default's row slot");
     assert!(shown.row("workspace_menu.workspace.Scalp").is_some());
-    assert!(painted_rows(&output, "COLOUR OF").is_empty(), "no colour section");
+    assert!(
+        painted_rows(&output, "COLOUR OF").is_empty(),
+        "no colour section"
+    );
 
     let scene = crate::control::scene_snapshot(&app);
     let said = |id: &str| {
@@ -2252,8 +2264,14 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
         let control = controls.find(|control| control.control_id == id);
         control.and_then(|control| control.description.clone())
     };
-    let ids = ["toolbar.capsule.workspace", "toolbar.workspace_menu.current"];
-    for id in ids.into_iter().chain(["toolbar.workspace_menu.workspace.Scalp"]) {
+    let ids = [
+        "toolbar.capsule.workspace",
+        "toolbar.workspace_menu.current",
+    ];
+    for id in ids
+        .into_iter()
+        .chain(["toolbar.workspace_menu.workspace.Scalp"])
+    {
         let said = said(id).unwrap_or_else(|| panic!("{id}"));
         assert!(said.ends_with("Custom #3A7BD5"), "{id}: {said}");
     }
@@ -2267,8 +2285,13 @@ fn a_colour_set_by_call_reads_alike_on_every_surface() {
         .unwrap();
     let summary = &capture.scopes[&scope].value;
     let tabs = summary["tabs"].as_array().unwrap();
-    let tab = tabs.iter().find(|tab| tab["tab_id"] == json!(first.to_string()));
+    let tab = tabs
+        .iter()
+        .find(|tab| tab["tab_id"] == json!(first.to_string()));
     assert_eq!(tab.unwrap()["workspace_colour"], wire);
     let rows = summary["workspaces"].as_array().unwrap();
-    assert!(rows.iter().any(|row| row["name"] == "Scalp" && row["colour"] == wire));
+    assert!(
+        rows.iter()
+            .any(|row| row["name"] == "Scalp" && row["colour"] == wire)
+    );
 }

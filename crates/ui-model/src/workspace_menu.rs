@@ -93,7 +93,11 @@ pub enum Mark {
     Tree(Area, PaneTree),
     /// A workspace's colour in its slot, as the theme resolves it: a custom
     /// colour is no theme token.
-    Colour { at: Area, radius: f32, rgb: [u8; 3] },
+    Colour {
+        at: Area,
+        radius: f32,
+        rgb: [u8; 3],
+    },
 }
 
 /// A part of the menu: its box, the row the scene lists it as, whether a
@@ -229,7 +233,12 @@ fn entry(
         mini[1],
     );
     marks.extend(row.tree.clone().map(|tree| Mark::Tree(face, tree)));
-    let slot = area(at.x, at.y + (at.h - SLOT_HEIGHT_PT) / 2.0, 3.0, SLOT_HEIGHT_PT);
+    let slot = area(
+        at.x,
+        at.y + (at.h - SLOT_HEIGHT_PT) / 2.0,
+        3.0,
+        SLOT_HEIGHT_PT,
+    );
     marks.extend(row.colour.as_ref().map(|colour| Mark::Colour {
         at: slot,
         radius: SLOT_RADIUS_PT,

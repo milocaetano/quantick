@@ -224,7 +224,10 @@ mod tests {
     #[test]
     fn the_capsule_tint_moves_a_fixed_share_toward_the_colour() {
         assert_eq!(workspace_tint([255; 4], [255; 3]), [255; 4]);
-        assert_eq!(workspace_tint([0, 0, 0, 200], [100, 200, 0]), [12, 24, 0, 200]);
+        assert_eq!(
+            workspace_tint([0, 0, 0, 200], [100, 200, 0]),
+            [12, 24, 0, 200]
+        );
     }
     use super::*;
     use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};

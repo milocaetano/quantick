@@ -390,38 +390,60 @@
       "type": "string"
     },
     "WorkspaceColourDto": {
-      "description": "A workspace's colour: one slot of a fixed palette of eight, never held by\ntwo workspaces (`workspace.colour.set`).",
-      "enum": [
-        "steel",
-        "violet",
-        "cyan",
-        "magenta",
-        "azure",
-        "indigo",
-        "chalk",
-        "cobalt"
+      "description": "A workspace's colour as the wire reads it: a preset names itself and its\nindex (`{\"preset\": \"sky\", \"index\": 2, ...}`), a custom colour its hex\n(`{\"custom\": \"#3A7BD5\", ...}`); both give the value painted in each theme.\nNo two workspaces hold identical colours (`workspace.colour.set`).",
+      "properties": {
+        "custom": {
+          "description": "The custom colour's `#RRGGBB`; absent on a preset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dark": {
+          "description": "`#RRGGBB` painted in the Dark theme.",
+          "type": "string"
+        },
+        "index": {
+          "description": "The preset's place in the palette, as files store it.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "light": {
+          "description": "`#RRGGBB` painted in the Light theme.",
+          "type": "string"
+        },
+        "preset": {
+          "description": "The preset's name in lower case; absent on a custom colour.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "light",
+        "dark"
       ],
-      "type": "string"
+      "type": "object"
     },
     "WorkspaceColourRow": {
-      "description": "One workspace's colour; `None` for a ninth while all eight are held.",
+      "description": "One workspace's colour.",
       "properties": {
         "colour": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/WorkspaceColourDto"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/WorkspaceColourDto"
         },
         "name": {
           "type": "string"
         }
       },
       "required": [
-        "name"
+        "name",
+        "colour"
       ],
       "type": "object"
     },
@@ -571,7 +593,7 @@
             }
           ],
           "default": null,
-          "description": "That workspace's colour, the bar on the tab's left edge. Additive."
+          "description": "That workspace's colour: the open tab's symbol and the capsule wear\nit. Additive."
         }
       },
       "required": [

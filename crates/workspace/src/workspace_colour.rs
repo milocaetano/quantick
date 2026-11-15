@@ -133,7 +133,9 @@ impl WorkspaceColour {
         if let Some(rgb) = parse_hex(word) {
             return Some(Self::Custom(rgb));
         }
-        let found = PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(word));
+        let found = PRESETS
+            .iter()
+            .position(|p| p.name.eq_ignore_ascii_case(word));
         found.and_then(|index| Self::preset(index as u8))
     }
 
@@ -207,7 +209,8 @@ pub fn generated(held: &[WorkspaceColour]) -> WorkspaceColour {
             let [l2, a2, b2] = oklab(preset.dark);
             let lift = f64::from(round) * ROUND_LIGHTNESS;
             let lightness = ((l1 + l2) / 2.0 + lift).clamp(0.0, 1.0);
-            let candidate = WorkspaceColour::Custom(srgb([lightness, (a1 + a2) / 2.0, (b1 + b2) / 2.0]));
+            let candidate =
+                WorkspaceColour::Custom(srgb([lightness, (a1 + a2) / 2.0, (b1 + b2) / 2.0]));
             if free(held, candidate) {
                 return candidate;
             }
@@ -342,7 +345,9 @@ pub fn pick(
         workspace: name.to_owned(),
         colour,
         changed: previous != Some(colour),
-        holder_colour: holder.as_ref().and_then(|owner| colours.get(owner).copied()),
+        holder_colour: holder
+            .as_ref()
+            .and_then(|owner| colours.get(owner).copied()),
         swapped_with: holder,
     })
 }

@@ -5,7 +5,10 @@ use quantick_appearance::contrast::contrast_ratio;
 use quantick_appearance::{LIGHT, PremultipliedRgba, ResolvedTheme, Token};
 
 fn themes() -> [ResolvedTheme; 2] {
-    [ResolvedTheme::default(), ResolvedTheme::parse(LIGHT).unwrap()]
+    [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    ]
 }
 
 fn rgb([r, g, b]: Rgb) -> PremultipliedRgba {
@@ -21,7 +24,10 @@ fn presets() -> impl Iterator<Item = WorkspaceColour> {
 #[test]
 fn the_capsule_name_reads_on_every_preset_tint_in_both_themes() {
     for theme in themes() {
-        assert_eq!(capsule_fill(WorkspaceColour::Custom([255; 3]), &theme)[3], 255);
+        assert_eq!(
+            capsule_fill(WorkspaceColour::Custom([255; 3]), &theme)[3],
+            255
+        );
         let ink = theme.color(Token::TextPrimary);
         for colour in presets() {
             let fill = PremultipliedRgba::from_premultiplied(capsule_fill(colour, &theme));
