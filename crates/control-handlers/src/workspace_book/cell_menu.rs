@@ -201,14 +201,11 @@ impl CellRow {
         bounds: Option<SceneBoundsSnapshot>,
     ) -> SceneControlSnapshot {
         let marked = self.kind == RowKind::Current && self.dot;
-        let mut description = match (self.summary.is_empty(), marked) {
-            (true, _) => None,
-            (false, false) => Some(self.summary.clone()),
-            (false, true) => Some(format!("{}{SEPARATOR}{UNSAVED}", self.summary)),
-        };
-        if let (Some(said), Some(colour)) = (description.as_mut(), &self.colour) {
-            *said = format!("{said}{SEPARATOR}{}", colour.words);
-        }
+        let summary = Some(self.summary.as_str()).filter(|said| !said.is_empty());
+        let unsaved = marked.then_some(UNSAVED);
+        let colour = self.colour.as_ref().map(|colour| colour.words.as_str());
+        let parts: Vec<&str> = [summary, unsaved, colour].into_iter().flatten().collect();
+        let description = (!parts.is_empty()).then(|| parts.join(SEPARATOR));
         SceneControlSnapshot {
             control_id: format!("{owner}.{}", self.scene_id()),
             label: self.label.clone(),

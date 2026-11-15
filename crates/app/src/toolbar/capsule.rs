@@ -33,7 +33,7 @@ const PANE_STROKE_PX: f32 = 1.0;
 pub struct CapsuleModel<'a> {
     /// The docked panes the canvas draws, as the model's tree.
     pub tree: &'a PaneTree,
-    /// The tab's workspace name, and its colour on the capsule's underline.
+    /// The tab's workspace name, and its colour: the tint, border and left bar.
     pub workspace: &'a str,
     pub colour: Option<quantick_workspace::workspace_colour::WorkspaceColour>,
     /// Auto save is off and the workspace differs from its save.

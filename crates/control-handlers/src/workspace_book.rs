@@ -38,9 +38,9 @@ use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
-    ColourOutcome, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome,
-    SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceColour,
-    WorkspaceRecipe, WorkspaceRefusal,
+    ColourOutcome, ColourTaken, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome,
+    SaveOutcome, SetOutcome, UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore,
+    WorkspaceColour, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -293,13 +293,17 @@ fn refused(refusal: &WorkspaceRefusal) -> ControlError {
     }
     let mut error = ControlError::invalid_request(refusal.to_string());
     let mut details = json!({ "code": refusal.code() });
-    if let WorkspaceRefusal::ColourTaken {
-        owner,
-        owner_would_get,
-    } = refusal
-    {
-        details["owner"] = json!(owner);
-        details["owner_would_get"] = json!(WorkspaceColourDto::from(*owner_would_get));
+    if let WorkspaceRefusal::ColourTaken(taken) = refusal {
+        details["owners"] = json!(taken.owners());
+        if let ColourTaken::Held {
+            owner_would_get, ..
+        }
+        | ColourTaken::SwapClashes {
+            owner_would_get, ..
+        } = taken
+        {
+            details["owner_would_get"] = json!(WorkspaceColourDto::from(*owner_would_get));
+        }
     }
     error.context.details = Some(details);
     error

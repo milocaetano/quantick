@@ -219,6 +219,8 @@ pub fn workspace_tint(base: [u8; 4], colour: [u8; 3]) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
 
     /// The tint moves the fill a fixed share toward the colour, alpha kept.
     #[test]
@@ -229,8 +231,6 @@ mod tests {
             [12, 24, 0, 200]
         );
     }
-    use super::*;
-    use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
 
     #[test]
     fn each_feed_state_has_its_own_shape_or_colour() {

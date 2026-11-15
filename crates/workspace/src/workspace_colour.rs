@@ -303,20 +303,46 @@ pub struct ColourOutcome {
     pub holder_colour: Option<WorkspaceColour>,
 }
 
-/// A colour another workspace holds, picked without `swap`.
+/// Why a colour cannot be taken as asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColourTaken {
-    pub owner: String,
-    /// What the owner would take in a swap: the picker's colour.
-    pub owner_would_get: WorkspaceColour,
+pub enum ColourTaken {
+    /// One workspace holds it; a swap gives that one `owner_would_get`, the
+    /// picker's old colour.
+    Held {
+        owner: String,
+        owner_would_get: WorkspaceColour,
+    },
+    /// Several workspaces hold colours identical to it (identical is not
+    /// transitive: a custom equal to a preset's Light value and another equal
+    /// to its Dark value both match that preset), so no swap frees it.
+    HeldByMany { owners: Vec<String> },
+    /// A swap would give `owner` a colour identical to `other`'s.
+    SwapClashes {
+        owner: String,
+        owner_would_get: WorkspaceColour,
+        other: String,
+    },
+}
+
+impl ColourTaken {
+    /// Every workspace holding the colour, by name.
+    #[must_use]
+    pub fn owners(&self) -> Vec<&str> {
+        match self {
+            Self::Held { owner, .. } | Self::SwapClashes { owner, .. } => vec![owner.as_str()],
+            Self::HeldByMany { owners } => owners.iter().map(String::as_str).collect(),
+        }
+    }
 }
 
 /// Give `name` the colour `colour`. A workspace holding an identical one is
-/// refused unless `swap`, then takes `name`'s old colour, so no workspace is
-/// ever left without one. The caller has checked that `name` is a workspace.
+/// refused unless `swap`; with it, the one holder takes `name`'s old colour,
+/// so no workspace is ever left without one. The caller has checked that
+/// `name` is a workspace.
 ///
 /// # Errors
-/// Another workspace holds the colour and `swap` is false.
+/// Another workspace holds the colour and `swap` is false; or, even with
+/// `swap`, several hold it, or the holder's give-back matches a third.
 pub fn pick(
     colours: &mut Colours,
     name: &str,
@@ -324,16 +350,32 @@ pub fn pick(
     swap: bool,
 ) -> Result<ColourOutcome, ColourTaken> {
     let previous = colours.get(name).copied();
-    let holder = colours
-        .iter()
-        .find(|(held, c)| held.as_str() != name && c.identical(colour))
-        .map(|(held, _)| held.clone());
+    let holders: Vec<String> = (colours.iter())
+        .filter(|(held, c)| held.as_str() != name && c.identical(colour))
+        .map(|(held, _)| held.clone())
+        .collect();
+    let holder = match holders.as_slice() {
+        [] => None,
+        [owner] => Some(owner.clone()),
+        _ => return Err(ColourTaken::HeldByMany { owners: holders }),
+    };
     if let Some(owner) = holder.clone() {
         let mut held: Vec<WorkspaceColour> = colours.values().copied().collect();
         held.push(colour);
         let owner_would_get = previous.unwrap_or_else(|| next_free(&held, false));
+        let third = (colours.iter()).find(|(other, c)| {
+            ![name, owner.as_str()].contains(&other.as_str()) && c.identical(owner_would_get)
+        });
+        if let Some((other, _)) = third {
+            let other = other.clone();
+            return Err(ColourTaken::SwapClashes {
+                owner,
+                owner_would_get,
+                other,
+            });
+        }
         if !swap {
-            return Err(ColourTaken {
+            return Err(ColourTaken::Held {
                 owner,
                 owner_would_get,
             });

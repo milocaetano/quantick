@@ -280,8 +280,10 @@ fn a_colour_two_workspaces_match_is_refused_and_a_reload_keeps_everything() {
     for name in ["A", "B", "C"] {
         book.create(1, name).unwrap();
     }
-    book.set_colour("A", Custom([0x2F, 0x5B, 0xD8]), false).unwrap();
-    book.set_colour("B", Custom([0x73, 0x93, 0xF5]), false).unwrap();
+    book.set_colour("A", Custom([0x2F, 0x5B, 0xD8]), false)
+        .unwrap();
+    book.set_colour("B", Custom([0x73, 0x93, 0xF5]), false)
+        .unwrap();
     let before = colours(&book);
     let refused = book.set_colour("C", preset(0), true).unwrap_err();
     let owners = vec!["A".to_owned(), "B".to_owned()];

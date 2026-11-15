@@ -532,5 +532,8 @@ fn a_row_without_a_summary_still_names_its_colour() {
     let mut header = menu.current.clone();
     (header.summary.clear(), header.dot = true);
     let said = header.scene_control("toolbar", None).description.unwrap();
-    assert!(said.starts_with(UNSAVED) && said.contains(" \u{b7} "), "{said}");
+    assert!(
+        said.starts_with(UNSAVED) && said.contains(" \u{b7} "),
+        "{said}"
+    );
 }

@@ -24,7 +24,7 @@ use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
 use crate::market_settings::DrawingKey;
-use crate::workspace_colour::{self, ColourOutcome, Colours, WorkspaceColour};
+use crate::workspace_colour::{self, ColourOutcome, ColourTaken, Colours, WorkspaceColour};
 use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -55,11 +55,9 @@ pub enum WorkspaceRefusal {
     RevertRemoved,
     /// Neither a preset's name nor `#RRGGBB`.
     ColourInvalid(String),
-    /// Another workspace holds an identical colour and no swap was asked.
-    ColourTaken {
-        owner: String,
-        owner_would_get: WorkspaceColour,
-    },
+    /// Another workspace holds an identical colour: no swap was asked, or
+    /// none can free it.
+    ColourTaken(ColourTaken),
 }
 
 impl WorkspaceRefusal {
@@ -76,7 +74,7 @@ impl WorkspaceRefusal {
             Self::TabOpening(_) => "workspace.tab_not_ready",
             Self::RevertRemoved => "workspace.revert_removed",
             Self::ColourInvalid(_) => "workspace.colour_invalid",
-            Self::ColourTaken { .. } => "workspace.colour_taken",
+            Self::ColourTaken(_) => "workspace.colour_taken",
         }
     }
 }
@@ -106,12 +104,28 @@ impl std::fmt::Display for WorkspaceRefusal {
                 f,
                 "{word:?} is no colour: name a preset (sky, slate, ...) or give #RRGGBB"
             ),
-            Self::ColourTaken {
+            Self::ColourTaken(ColourTaken::Held {
                 owner,
                 owner_would_get,
-            } => write!(
+            }) => write!(
                 f,
                 "{owner} uses this colour; swap to give {owner} {}",
+                owner_would_get.name()
+            ),
+            Self::ColourTaken(ColourTaken::HeldByMany { owners }) => write!(
+                f,
+                "{} use colours identical to this one in Light or Dark; no swap \
+                 frees it, so pick another",
+                owners.join(" and ")
+            ),
+            Self::ColourTaken(ColourTaken::SwapClashes {
+                owner,
+                owner_would_get,
+                other,
+            }) => write!(
+                f,
+                "{owner} uses this colour, and a swap would give {owner} {}, which \
+                 {other} already matches; pick another",
                 owner_would_get.name()
             ),
         }
@@ -553,12 +567,8 @@ impl WorkspaceBook {
         if !self.recipes.contains_key(name) {
             return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
         }
-        workspace_colour::pick(&mut self.colours, name, colour, swap).map_err(|taken| {
-            WorkspaceRefusal::ColourTaken {
-                owner: taken.owner,
-                owner_would_get: taken.owner_would_get,
-            }
-        })
+        workspace_colour::pick(&mut self.colours, name, colour, swap)
+            .map_err(WorkspaceRefusal::ColourTaken)
     }
 
     /// What a workspace holds, in the one line the menu and `workspace.list`
