@@ -9,7 +9,7 @@ use quantick_control_schema::alerts::{DrawingSelector, TargetResolveError};
 pub(crate) struct Runtime {
     pub core: quantick_stores::alerts::AlertRuntime,
     pub clock_origin: std::time::Instant,
-    pub(crate) cache: crate::tab::alerts::Cache,
+    pub(crate) cache: quantick_stores::alerts::Cache,
 }
 
 impl Runtime {
@@ -17,7 +17,7 @@ impl Runtime {
         Self {
             core: quantick_stores::alerts::AlertRuntime::open(path, utc_ms),
             clock_origin: std::time::Instant::now(),
-            cache: crate::tab::alerts::Cache::default(),
+            cache: quantick_stores::alerts::Cache::default(),
         }
     }
 
